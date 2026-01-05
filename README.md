@@ -22,7 +22,7 @@ A detailed architectural description can be found in the [Documentation](/docs/A
 
 ## 🏗️ Project Structure
 This monorepository contains all core components of the Eigen OS stack.
-
+```text
 eigen-os/ (this repository)
 ├── .github/ # GitHub workflows, templates
 ├── eigen-rfcs/ # Architectural RFCs
@@ -33,7 +33,7 @@ eigen-os/ (this repository)
 ├── eigen-compiler/ # Neurosymbolic Compiler & Optimizer [Python]
 ├── eigen-cli/ # Command-line interface [Rust]
 └── eigen-examples/ # Tutorials and example programs
-
+```
 
 ## 🚀 Getting Started
 The project is currently in the active architectural design and early development phase.
