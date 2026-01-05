@@ -4,6 +4,8 @@
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 ![Status](https://img.shields.io/badge/Status-Architectural%20Blueprint-orange)
+![Python](https://img.shields.io/badge/Python-3.12%2B-blue)
+![Rust](https://img.shields.io/badge/Rust-1.92%2B-orange)
 
 ## 🎯 Vision
 Eigen OS is an open, modular operating system designed to transform heterogeneous and unstable quantum hardware resources into a unified, predictable, and efficient computing environment. Our goal is to make quantum computing programmable, efficient, and accessible for domain specialists.
