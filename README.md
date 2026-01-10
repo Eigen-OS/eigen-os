@@ -1,95 +1,157 @@
-# Eigen OS — Operating System for Hybrid Quantum-Classical Computing
+# Eigen OS — Operating System for Hybrid Quantum‑Classical Computing
 
 **The bridge between declarative intent and quantum hardware.**
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-![Status](https://img.shields.io/badge/Status-Architectural%20Blueprint-orange)
+![Status](https://img.shields.io/badge/Status-Architecture%20%26%20Contracts-orange)
 ![Python](https://img.shields.io/badge/Python-3.12%2B-blue)
 ![Rust](https://img.shields.io/badge/Rust-1.92%2B-orange)
 
-## 🎯 Vision
-Eigen OS is an open, modular operating system designed to transform heterogeneous and unstable quantum hardware resources into a unified, predictable, and efficient computing environment. Our goal is to make quantum computing programmable, efficient, and accessible for domain specialists.
-
-## 🏗️ Architecture (High-Level)
-The system is built upon a four-layer architecture:
-
-1.  **Abstraction Layer (EigenLang & System API):** The declarative EigenLang DSL and a unified gRPC/REST API.
-2.  **OS Kernel (Eigen Kernel):** The Quantum Real-Time Executive (QRTX) scheduler, a three-tier storage system, and adaptive monitoring.
-3.  **Runtime Services:** A neuro-symbolic compiler, a hardware GNN optimizer, and a driver manager.
-4.  **Hardware Abstraction Layer (HAL):** A unified QDriver API for all types of quantum processors.
-
-A detailed architectural description can be found in the [Documentation](/docs/ARCHITECTURE.md).
-
-## 🏗️ Project Structure
-This monorepository contains all core components of the Eigen OS stack.
-```text
-eigen-os/ (this repository)
-├── .github/ # GitHub workflows, templates
-├── eigen-rfcs/ # Architectural RFCs
-├── eigen-docs/ # Documentation source (MkDocs)
-├── eigen-kernel/ # OS Kernel (QRTX, Scheduler, Storage) [Rust]
-├── eigen-qdal/ # Quantum Device Abstraction Layer [Rust]
-├── eigen-lang/ # High-level DSL & API [Python]
-├── eigen-compiler/ # Neurosymbolic Compiler & Optimizer [Python]
-├── eigen-cli/ # Command-line interface [Rust]
-└── eigen-examples/ # Tutorials and example programs
-```
-
-## 🚀 Getting Started
-The project is currently in the active architectural design and early development phase.
-
-### Prerequisites
-*   **Rust & Cargo** (for `eigen-kernel`, `eigen-qdal`, `eigen-cli`)
-*   **Python 3.10+ & pip** (for `eigen-lang`, `eigen-compiler`)
-*   **Git**
-
-### Development Setup
-1.  **Clone the repository:**
-    ```bash
-    git clone https://github.com/Eigen-OS/eigen-os.git
-    cd eigen-os
-    ```
-2.  **Set up the Rust components:**
-    ```bash
-    # You can build all Rust crates from the root
-    cargo build --workspace
-    # Or build each component individually
-    cd eigen-kernel && cargo build
-    ```
-3.  **Set up the Python components:**
-    ```bash
-    # Install eigen-lang and eigen-compiler in editable mode
-    cd eigen-lang && pip install -e .
-    cd ../eigen-compiler && pip install -e .
-    ```
-4.  **Explore the examples:**
-    ```bash
-    cd eigen-examples/basic/bell_state
-    # Follow the example's README
-    ```
-
-**Next steps for participants:**
-1.  Review the **architectural vision** and **roadmap** in discussions.
-2.  Study the key **RFCs (Request for Comments)** in the `eigen-rfcs/` directory, which define the project's core interfaces (QDriver API, job format, etc.).
-3.  Join the discussion in Issues and Discussions.
-
-## 👥 Contributing
-We welcome contributions from the community! The development process is centralized in this monorepository.
-
-Before getting started, please:
-1.  Read our **[Code of Conduct](CODE_OF_CONDUCT.md)** and **[Contributing Guide](CONTRIBUTING.md)** (to be created).
-2.  **Fork & Clone this repository** – you get the entire stack with one clone.
-3.  Create a feature branch, make your changes across relevant components, and submit a **single Pull Request** to this main repository.
-4.  Ensure changes are consistent across the stack (e.g., API updates in `eigen-kernel` reflected in `eigen-cli`).
-5.  Explore open Issues and discussions.
-
-## 📚 Documentation
-*   **Architectural Decisions & Specifications:** See the `/eigen-rfcs/` directory.
-*   **User & Developer Guides:** The source for the official website is in `/eigen-docs/`. The rendered site is available at [https://eigen-os.github.io](https://eigen-os.github.io) (when deployed).
-*   **Component Documentation:** Each major component (`eigen-kernel/`, `eigen-lang/`, etc.) contains its own detailed `README.md` and source code documentation.
-
-## 📄 License
-This project is licensed under the **Apache License 2.0**. The full license text is available in the [LICENSE](LICENSE) file. Note that all components within this monorepo are collectively under this license unless explicitly stated otherwise.
+> ⚠️ **Project status:** Eigen OS is in the **architecture + contracts** phase (pre‑alpha).  
+> Expect breaking changes until **v1.0**. Contracts are frozen only when an RFC is marked **Accepted** and the corresponding reference docs/tests exist.
 
 ---
-*Eigen OS represents a paradigm shift towards the declarative orchestration of hybrid computing.*
+
+## 🎯 Vision
+
+Eigen OS is an open, modular operating system designed to transform heterogeneous and unstable quantum hardware resources into a unified, predictable, and efficient computing environment — with first‑class support for **hybrid quantum‑classical workflows**.
+
+### What we want to enable
+- Domain specialists describe **intent** (circuits, objectives, constraints).
+- Eigen OS compiles intent into a portable IR and orchestrates execution on simulators and real backends.
+- A stable device abstraction layer makes “different hardware” feel consistent.
+
+---
+
+## ✅ What we’re building now (MVP scope)
+
+This repository currently focuses on **freezing the MVP contracts** and preparing an implementation that can run end‑to‑end on a simulator.
+
+### MVP deliverables (architecture → runnable skeleton)
+**Contracts (source of truth)**
+- **JobSpec v0.1** (`job.yaml`) — how jobs are described.
+- **Public gRPC API** (`eigen_api.v0.1`) — job/device lifecycle.
+- **Internal RPC** (kernel/compiler/driver manager).
+- **AQO v0.1** — canonical intermediate representation (IR).
+- **Error model + error mapping** — consistent behavior across layers.
+
+**Eigen‑Lang v0.1 (MVP)**
+- **RFC 0012**: language scope + safety + compatibility policy.
+- Reference spec: syntax/semantics/allowlist + mapping to AQO.
+- **AST‑only compilation** (no execution of user Python on the server).
+
+**Runnability (MVP target)**
+- Local stack that supports: `submit → compile → execute(sim) → results`.
+- Simulator driver as a “golden backend”.
+- Basic observability: metrics endpoint + trace context propagation.
+
+---
+
+## 🧭 What comes later (Post‑MVP)
+
+These are intentionally **out of MVP** and will be designed/implemented in later phases:
+
+- Real hardware drivers (multiple vendors) + calibration pipelines
+- Advanced scheduling (multi‑tenant quotas, fairness, priority classes)
+- Hybrid workflow engine expansions (rich loop constructs, distributed execution)
+- Knowledge Base / GNN optimizer / neuro‑symbolic expansions beyond MVP baseline
+- HA / multi‑region deployments, production hardening
+
+---
+
+## 🏗️ Architecture (high‑level)
+
+Eigen OS is organized as layered contracts:
+
+1) **Abstraction**: Eigen‑Lang + System API (public boundary)  
+2) **Kernel**: orchestration + scheduling + job lifecycle (QRTX)  
+3) **Runtime services**: compiler + driver manager + storage (QFS)  
+4) **HAL**: device drivers (QDriver) for simulators and hardware
+
+📌 Start here: **`docs/README.md`**  
+- Architecture overview: `docs/architecture/overview.md`  
+- Contract map: `docs/architecture/contract-map.md`  
+- Components: `docs/architecture/components.md`
+
+---
+
+## 📚 Documentation & RFCs
+
+### Documentation (developers)
+Docs are structured using **Diátaxis** (Tutorials / How‑to / Reference / Explanation).  
+- Entry point: `docs/README.md`
+- Language reference: `docs/reference/eigen-lang/README.md`
+- API/contracts: `docs/reference/`
+- MVP DoD: `docs/development/mvp-definition-of-done.md`
+
+### RFCs (design contracts)
+- RFCs live in: `rfcs/`
+- A change that affects users or cross‑service contracts **must** go through an RFC.
+
+---
+
+---
+
+## 🔖 Versioning & stability
+
+- Until **v1.0**, Eigen OS APIs and file formats may change (breaking changes are expected while we iterate).
+- When contracts are accepted, we treat them as the project’s **public API** and document changes.
+- Releases will follow **Semantic Versioning** and changes will be recorded in **CHANGELOG.md** (Keep a Changelog format).
+
+
+## 🧩 Repository structure (current / target)
+
+> Names can be adjusted during design. The goal is: **contracts are obvious**, and implementation follows.
+
+```text
+eigen-os/
+├── rfcs/                       # RFCs (design proposals, contract freezes)
+├── docs/                       # Developer docs (source of truth)
+├── proto/                      # Protobuf contracts (public + internal)
+├── eigen-kernel/               # Kernel (QRTX, scheduler, state machine) [Rust]
+├── eigen-driver-manager/       # Driver manager + plugin runtime [Rust]
+├── eigen-qdrivers/             # Drivers (simulator first, then hardware) [Rust]
+├── eigen-compiler/             # Eigen‑Lang → AQO compiler [Python]
+├── eigen-lang/                 # Eigen‑Lang stdlib + tooling (validator) [Python]
+├── eigen-cli/                  # CLI client [Rust]
+└── eigen-examples/             # Examples / tutorials
+```
+
+---
+
+## 🚀 Getting started (right now)
+
+Eigen OS is not “install and run” yet. **Today you can contribute by freezing contracts and docs.**
+
+### For contributors (design phase)
+1) Read `docs/README.md` (architecture + contracts).
+2) Analyze the RFC in rfcs/and leave comments in the GitHub discussion (RFC discussion).
+3) Help complete reference docs:
+   - JobSpec, AQO, error model, Eigen‑Lang reference
+4) Help set up CI gates:
+   - protobuf lint + breaking checks
+   - conformance tests (Eigen‑Lang → AQO)
+
+### Planned “first runnable” milestone
+A local simulator E2E quickstart will appear in:
+- `docs/tutorials/quickstart-local-sim.md`
+
+---
+
+## 👥 Contributing
+
+We welcome contributions — especially on contracts and docs while the project is in blueprint mode.
+
+**How to help now**
+- Review RFCs / propose ADRs
+- Improve reference docs and examples
+- Implement the simulator driver and conformance tests
+- Wire up CI (proto checks, linting, integration tests)
+
+> `CONTRIBUTING.md` / `CODE_OF_CONDUCT.md` / `SECURITY.md` will be added as the repo stabilizes.
+
+---
+
+## 📄 License
+
+Licensed under the **Apache License 2.0**. See [LICENSE](LICENSE).
