@@ -1,20 +1,28 @@
 # Protobuf contracts (source of truth)
 
-This directory contains the **single source of truth** for all Eigen OS gRPC contracts.
+This directory contains **all** `.proto` definitions for Eigen OS.
 
-- **Public API**: `proto/eigen_api/v1/*.proto` (client-facing)
-- **Internal APIs**: `proto/eigen_internal/v1/*.proto` (service-to-service)
+## Packages
 
-Reference docs:
-- Public API: `docs/reference/api/grpc-public.md`
-- Internal API: `docs/reference/api/grpc-internal.md`
-- Error model: `docs/reference/error-model.md`
-- Error mapping: `docs/reference/error-mapping.md`
+- **Public API** (client-facing): `eigen.api.v1`
+  - `proto/eigen_api/v1/*.proto`
+  - Services: `JobService`, `DeviceService`
 
-RFCs:
-- `rfcs/0004-public-gRPC-API-v0.1.md`
-- `rfcs/0006-qdriver-api-v0.1.md`
+- **Internal APIs** (kernel-facing, private network): `eigen.internal.v1`
+  - `proto/eigen_internal/v1/*.proto`
+  - Services: `KernelGateway`, `DriverManagerService`, `CompilationService`
 
-## Generating stubs
+## Rust generation
 
-See: `docs/howto/generate-protos.md`.
+Rust bindings are generated at **compile time** via the `eigen-proto` crate (`src/rust/crates/eigen-proto`).
+
+```bash
+cd src/rust
+cargo build -p eigen-proto
+```
+
+## Rules
+
+- Protos in this folder are the **single source of truth**.
+- Generated stubs must be derived from these files.
+- Do not fork/duplicate `.proto` files across services.
