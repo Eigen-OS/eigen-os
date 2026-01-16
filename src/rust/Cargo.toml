@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+  "crates/eigen-kernel",
   "crates/observability",
   "crates/qrtx",
   "crates/qfs",
@@ -9,7 +10,7 @@ members = [
 ]
 
 [workspace.package]
-edition = "2026"
+edition = "2024"
 license = "Apache-2.0"
 version = "0.1.0"
 

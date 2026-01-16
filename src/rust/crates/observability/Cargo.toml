@@ -1,0 +1,11 @@
+[package]
+name = "observability"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+tracing = "0.1.44"
