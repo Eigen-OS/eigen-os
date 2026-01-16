@@ -1,9 +1,13 @@
-//! Security module hooks (MVP scaffold).
+//! Security module (MVP placeholder).
 //!
-//! In Phase 0, System API is responsible for authentication.
-//! The kernel will later call into this module for authorization and isolation checks.
+//! Future responsibilities:
+//! - authentication / authorization enforcement
+//! - secret management
+//! - policy evaluation
 
-/// Placeholder authorization check.
-pub fn authorize(_principal: &str, _action: &str) -> bool {
-    true
+#![forbid(unsafe_code)]
+
+/// Returns a stable placeholder value.
+pub fn hello_security_module() -> &'static str {
+    "security-module"
 }

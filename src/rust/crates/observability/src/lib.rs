@@ -1,9 +1,13 @@
-//! Observability primitives (MVP scaffold).
+//! Observability (MVP placeholder).
 //!
-//! For Phase 0 we keep this crate intentionally minimal.
-//! It will evolve into the unified tracing/metrics facade used by kernel services.
+//! This crate will provide:
+//! - tracing setup + structured logs
+//! - metrics (Prometheus/OpenTelemetry)
+//! - context propagation helpers (trace_id / request_id)
 
-/// Emits a structured startup log.
-pub fn log_startup(service_name: &str) {
-    tracing::info!(service_name, "service starting");
+#![forbid(unsafe_code)]
+
+/// Returns a stable placeholder value.
+pub fn hello_observability() -> &'static str {
+    "observability"
 }

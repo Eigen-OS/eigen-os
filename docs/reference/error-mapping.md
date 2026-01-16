@@ -26,7 +26,7 @@
 ### 1.3 MVP recommendation for results access
 - `GetJobResults(job_id)`:
   - If job is `DONE` → OK + results
-  - If job is `ERROR` → OK + `JobResults` containing `error_summary` + `error_details_ref` (QFS)  
+  - If job is `ERROR` → OK + `JobResults` containing `error_summary` + `error_details_ref` (QFS, e.g. `results/error.json`)  
   - If job is not terminal → `FAILED_PRECONDITION` (optionally with RetryInfo hint)
 
 ---
