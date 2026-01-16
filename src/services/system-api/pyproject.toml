@@ -5,8 +5,23 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "system-api"
 version = "0.1.0"
-description = "Eigen OS system-api (MVP scaffold)."
+description = "Eigen OS system-api (MVP gRPC skeleton)."
 requires-python = ">=3.12"
+dependencies = [
+  "grpcio>=1.76",
+  "grpcio-tools>=1.76",
+  "grpcio-status>=1.76",
+  "googleapis-common-protos>=1.72",
+  "protobuf>=6.33",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=9",
+]
+
+[project.scripts]
+system-api = "system_api.main:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

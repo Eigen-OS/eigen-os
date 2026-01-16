@@ -1,5 +1,25 @@
 # System API Server
 
+## 🚀 MVP skeleton quickstart (Issue #24)
+
+This repository currently implements a **minimal** gRPC server skeleton exposing:
+
+- `eigen.api.v1.JobService`
+- `eigen.api.v1.DeviceService`
+
+Run locally (from repo root):
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e src/services/system-api
+SYSTEM_API_GRPC_BIND=0.0.0.0:50051 system-api
+```
+
+The server performs basic required-field validation and returns structured validation
+errors using `google.rpc.BadRequest` field violations.
+
+
 ***System API Server** is the primary interface layer for Eigen OS, providing unified access to quantum computing resources through a high-performance gRPC interface and a compatible REST adapter.
 
 ## 🌟 Overview
@@ -1531,3 +1551,30 @@ System API Server is part of Eigen OS and is licensed under the [Apache License 
 
 
 **System API Server** — The unified gateway to quantum computing, providing secure, scalable, and performant access to Eigen OS capabilities through modern API standards.
+---
+
+## MVP skeleton (Issue #24)
+
+This service currently provides a **minimal** public gRPC surface:
+- `JobService`
+- `DeviceService`
+
+### Run locally
+
+```bash
+cd src/services/system-api
+python -m venv .venv
+source .venv/bin/activate
+pip install -e .
+
+# start server
+SYSTEM_API_GRPC_ADDR=0.0.0.0:50051 python -m system_api.main
+```
+
+### Run unit tests
+
+```bash
+cd src/services/system-api
+pip install -e '.[test]'
+pytest -q
+```
