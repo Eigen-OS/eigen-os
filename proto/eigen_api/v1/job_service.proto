@@ -1,0 +1,86 @@
+syntax = "proto3";
+
+package eigen.api.v1;
+
+import "google/protobuf/timestamp.proto";
+
+import "eigen_api/v1/types.proto";
+
+// Public job lifecycle service (MVP).
+// Source of truth: RFC 0004 + docs/reference/api/grpc-public.md
+service JobService {
+  rpc SubmitJob(SubmitJobRequest) returns (JobResponse);
+  rpc GetJobStatus(JobStatusRequest) returns (JobStatusResponse);
+  rpc CancelJob(CancelJobRequest) returns (CancelJobResponse);
+  rpc StreamJobUpdates(JobUpdatesRequest) returns (stream JobUpdate);
+  rpc GetJobResults(JobResultsRequest) returns (JobResultsResponse);
+}
+
+message SubmitJobRequest {
+  string name = 1;
+
+  oneof program {
+    EigenLangSource eigen_lang = 2;
+    QasmSource qasm = 3;
+    AqoRef aqo_ref = 4;
+  }
+
+  // Target identifier, e.g. "sim:local" or "vendor:device".
+  string target = 5;
+
+  // 0..100, default 50.
+  int32 priority = 6;
+
+  map<string, string> compiler_options = 7;
+  map<string, string> metadata = 8;
+  repeated string dependencies = 9;
+}
+
+message JobResponse {
+  string job_id = 1;
+  JobStatus status = 2;
+}
+
+message JobStatusRequest {
+  string job_id = 1;
+}
+
+message JobStatusResponse {
+  JobStatus status = 1;
+}
+
+message CancelJobRequest {
+  string job_id = 1;
+}
+
+message CancelJobResponse {
+  // true if a cancellation request was accepted.
+  bool accepted = 1;
+}
+
+message JobUpdatesRequest {
+  string job_id = 1;
+
+  // Best-effort resume point (MVP): server MAY start from the next event.
+  uint64 last_event_seq = 2;
+}
+
+message JobResultsRequest {
+  string job_id = 1;
+}
+
+message JobResultsResponse {
+  string job_id = 1;
+  JobState state = 2;
+
+  // Generic quantum result payload (MVP): normalized histogram.
+  map<string, int64> counts = 10;
+  map<string, string> metadata = 11;
+
+  // If job ended in ERROR, these fields provide the reason + details pointer.
+  string error_code = 20;
+  string error_summary = 21;
+  string error_details_ref = 22;
+
+  google.protobuf.Timestamp completed_at = 30;
+}

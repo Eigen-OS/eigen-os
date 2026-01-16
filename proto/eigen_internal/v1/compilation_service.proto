@@ -1,0 +1,46 @@
+syntax = "proto3";
+
+package eigen.internal.v1;
+
+import "eigen_internal/v1/types.proto";
+
+// Internal compilation service contract.
+// Source of truth: RFC 0004 (CompilationService) + reference docs.
+service CompilationService {
+  rpc CompileCircuit(CompileCircuitRequest) returns (CompileCircuitResponse);
+  rpc OptimizeCircuit(OptimizeCircuitRequest) returns (OptimizeCircuitResponse);
+  rpc ValidateCircuit(ValidateCircuitRequest) returns (ValidateCircuitResponse);
+}
+
+message CompileCircuitRequest {
+  // Source language identifier, e.g. "eigen-lang" or "qasm3".
+  string language = 1;
+  bytes source = 2;
+  map<string, string> options = 3;
+}
+
+message CompileCircuitResponse {
+  CircuitPayload circuit = 1;
+  map<string, string> metadata = 2;
+}
+
+message OptimizeCircuitRequest {
+  CircuitPayload circuit = 1;
+  map<string, string> options = 2;
+}
+
+message OptimizeCircuitResponse {
+  CircuitPayload circuit = 1;
+  map<string, string> metrics = 2;
+}
+
+message ValidateCircuitRequest {
+  string language = 1;
+  bytes source = 2;
+  map<string, string> options = 3;
+}
+
+message ValidateCircuitResponse {
+  // Return OK on success, and INVALID_ARGUMENT with BadRequest details on failure.
+  bool valid = 1;
+}

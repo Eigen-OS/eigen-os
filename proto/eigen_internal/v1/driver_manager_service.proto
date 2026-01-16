@@ -1,0 +1,56 @@
+syntax = "proto3";
+
+package eigen.internal.v1;
+
+import "eigen_internal/v1/types.proto";
+
+// Kernel-facing driver manager contract.
+// Source of truth: RFC 0006.
+service DriverManagerService {
+  rpc ListDevices(ListDevicesRequest) returns (ListDevicesResponse);
+  rpc GetDeviceStatus(DeviceStatusRequest) returns (DeviceStatusResponse);
+  rpc ExecuteCircuit(ExecuteCircuitRequest) returns (ExecuteCircuitResponse);
+  rpc CalibrateDevice(CalibrateDeviceRequest) returns (CalibrateDeviceResponse);
+}
+
+message ListDevicesRequest {}
+
+message ListDevicesResponse {
+  repeated DeviceInfo devices = 1;
+}
+
+message DeviceStatusRequest {
+  string device_id = 1;
+}
+
+message DeviceStatusResponse {
+  string device_id = 1;
+  DeviceStatus status = 2;
+  int32 queue_depth = 3;
+  int32 estimated_wait_sec = 4;
+  map<string, string> metadata = 5;
+}
+
+message ExecuteCircuitRequest {
+  string job_id = 1;
+  string device_id = 2;
+  CircuitPayload payload = 3;
+  int32 shots = 4;
+  map<string, string> options = 5;
+}
+
+message ExecuteCircuitResponse {
+  map<string, int64> counts = 1;
+  double execution_time_sec = 2;
+  map<string, string> metadata = 3;
+}
+
+message CalibrateDeviceRequest {
+  string device_id = 1;
+  map<string, string> options = 2;
+}
+
+message CalibrateDeviceResponse {
+  // For MVP this is just a reference to the stored calibration artifact.
+  string calibration_ref = 1;
+}
