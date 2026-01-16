@@ -1,0 +1,10 @@
+[package]
+name = "resource-manager"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
