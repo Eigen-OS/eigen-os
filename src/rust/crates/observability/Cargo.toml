@@ -8,4 +8,3 @@ license.workspace = true
 path = "src/lib.rs"
 
 [dependencies]
-tracing = "0.1.44"

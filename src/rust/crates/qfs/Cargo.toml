@@ -8,3 +8,5 @@ license.workspace = true
 path = "src/lib.rs"
 
 [dependencies]
+tempfile = "3"
+thiserror = "2"

@@ -62,7 +62,8 @@ Without a standardized artifact layout:
 ├── results/
 │   ├── counts.json                # Normalized measurement counts
 │   ├── metadata.json              # Execution metadata
-│   └── raw_backend_response.json  # Optional: raw backend output
+│   ├── raw_backend_response.json  # Optional: raw backend output
+│   └── error.json                 # Optional: structured job error details (MVP helper)
 ├── logs/
 │   ├── kernel.log                 # Kernel pipeline logs
 │   ├── compiler.log               # Compilation logs

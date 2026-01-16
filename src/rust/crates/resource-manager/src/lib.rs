@@ -1,9 +1,13 @@
-//! Resource manager (MVP scaffold).
+//! Resource manager (MVP placeholder).
 //!
-//! For Phase 0, this is a placeholder that will later track queue depth,
-//! reservations, and provide wait-time estimates.
+//! Future responsibilities:
+//! - allocate devices / simulators
+//! - enforce per-tenant quotas
+//! - implement scheduling hints for QRTX
 
-/// Returns a placeholder queue depth.
-pub fn queue_depth() -> u32 {
-    0
+#![forbid(unsafe_code)]
+
+/// Returns a stable placeholder value.
+pub fn hello_resource_manager() -> &'static str {
+    "resource-manager"
 }

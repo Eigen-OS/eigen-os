@@ -1,22 +1,14 @@
-//! Eigen QFS (Quantum File System) - MVP scaffold.
+//! Eigen QFS (Quantum File System) — MVP implementation.
 //!
-//! For Phase 0, QFS-L3 is a local filesystem layout for per-job artifacts.
-//! This crate will eventually provide:
-//! - canonical paths for artifacts by `job_id`
-//! - atomic writes and basic metadata
-//! - retention policies
+//! This crate implements **CircuitFS (QFS Level 3)** as a **local filesystem** layout
+//! for per-job artifacts.
+//!
+//! See: `docs/reference/formats/qfs-layout.md`.
 
-/// Returns the canonical directory name for a job.
-pub fn job_dir(job_id: &str) -> String {
-    format!("jobs/{job_id}")
-}
+#![forbid(unsafe_code)]
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+mod local_circuit_fs;
 
-    #[test]
-    fn job_dir_is_stable() {
-        assert_eq!(job_dir("abc"), "jobs/abc");
-    }
-}
+pub use local_circuit_fs::{
+    CircuitFsError, CircuitFsLocal, ErrorDetails, ResultsBundle, SourceBundle,
+};
