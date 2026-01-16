@@ -1,0 +1,7 @@
+// Placeholder proto file.
+//
+// This will be replaced by real API definitions (JobService, DeviceService, etc.).
+
+syntax = "proto3";
+
+package eigen_api.v0.1;
