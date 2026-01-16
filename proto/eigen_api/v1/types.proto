@@ -1,0 +1,101 @@
+syntax = "proto3";
+
+package eigen.api.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// Common types for the public Eigen OS API (MVP).
+// Source of truth: proto/ (see RFC 0004).
+
+// --- Jobs ---
+
+enum JobState {
+  JOB_STATE_UNSPECIFIED = 0;
+  PENDING = 1;
+  COMPILING = 2;
+  QUEUED = 3;
+  RUNNING = 4;
+  DONE = 5;
+  ERROR = 6;
+  CANCELLED = 7;
+  TIMEOUT = 8;
+}
+
+message JobStatus {
+  string job_id = 1;
+  JobState state = 2;
+
+  // Optional stage label for UI/observability (e.g. "COMPILING", "EXECUTING").
+  string stage = 3;
+
+  // Optional progress hint in range [0..1].
+  float progress = 4;
+
+  // Optional human-readable message.
+  string message = 5;
+
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp updated_at = 7;
+
+  // Error payload for terminal ERROR state (see docs/reference/error-model.md).
+  string error_code = 20;        // Stable machine-readable reason.
+  string error_summary = 21;     // Human-readable summary.
+  string error_details_ref = 22; // QFS reference with full details (logs/trace).
+}
+
+message JobUpdate {
+  string job_id = 1;
+  JobState state = 2;
+
+  string stage = 3;
+  float progress = 4;
+  string message = 5;
+
+  // Monotonic per-job sequence number, starts at 1.
+  uint64 event_seq = 6;
+
+  google.protobuf.Timestamp timestamp = 7;
+}
+
+// Job program sources for MVP.
+message EigenLangSource {
+  bytes source = 1;
+  string entrypoint = 2; // default: "main"
+  string sha256 = 3;     // optional; may be used for deduplication
+}
+
+message QasmSource {
+  bytes source = 1;
+  string version = 2; // e.g. "3"
+}
+
+message AqoRef {
+  // QFS ref of an AQO artifact.
+  string qfs_ref = 1;
+}
+
+// --- Devices ---
+
+enum DeviceStatus {
+  DEVICE_STATUS_UNSPECIFIED = 0;
+  ONLINE = 1;
+  OFFLINE = 2;
+  CALIBRATING = 3;
+  MAINTENANCE = 4;
+  ERROR_STATUS = 5;
+}
+
+message DeviceInfo {
+  string device_id = 1;
+  string name = 2;
+
+  // e.g. "simulator", "ibmq", "rigetti".
+  string backend_type = 3;
+
+  DeviceStatus status = 4;
+
+  int32 queue_depth = 5;
+  int32 estimated_wait_sec = 6;
+
+  map<string, string> capabilities = 7;
+}

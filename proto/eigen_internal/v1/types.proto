@@ -1,0 +1,43 @@
+syntax = "proto3";
+
+package eigen.internal.v1;
+
+// Common internal types for Eigen OS services (MVP).
+
+enum CircuitFormat {
+  CIRCUIT_FORMAT_UNSPECIFIED = 0;
+
+  // Canonical intermediate representation.
+  AQO_JSON = 1;
+  AQO_PROTO = 2;
+
+  // OpenQASM 3 text.
+  QASM3_TEXT = 3;
+
+  // Vendor-specific native payload.
+  BACKEND_NATIVE = 4;
+}
+
+message CircuitPayload {
+  CircuitFormat format = 1;
+  bytes data = 2;
+}
+
+enum DeviceStatus {
+  DEVICE_STATUS_UNSPECIFIED = 0;
+  ONLINE = 1;
+  OFFLINE = 2;
+  CALIBRATING = 3;
+  MAINTENANCE = 4;
+  ERROR_STATUS = 5;
+}
+
+message DeviceInfo {
+  string device_id = 1;
+  string name = 2;
+  string backend_type = 3;
+  DeviceStatus status = 4;
+  int32 queue_depth = 5;
+  int32 estimated_wait_sec = 6;
+  map<string, string> capabilities = 7;
+}

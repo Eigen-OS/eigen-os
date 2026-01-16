@@ -1,0 +1,91 @@
+syntax = "proto3";
+
+package eigen.internal.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// Internal gateway between System API and Kernel.
+// Source of truth: RFC 0004 (Appendix A).
+service KernelGateway {
+  rpc EnqueueJob(EnqueueJobRequest) returns (EnqueueJobResponse);
+  rpc GetJobStatus(GetJobStatusRequest) returns (GetJobStatusResponse);
+  rpc CancelJob(CancelJobRequest) returns (CancelJobResponse);
+  rpc GetJobResults(GetJobResultsRequest) returns (GetJobResultsResponse);
+}
+
+enum TaskState {
+  TASK_STATE_UNSPECIFIED = 0;
+  PENDING = 1;
+  COMPILING = 2;
+  QUEUED = 3;
+  RUNNING = 4;
+  DONE = 5;
+  ERROR = 6;
+  CANCELLED = 7;
+  TIMEOUT = 8;
+}
+
+message EnqueueJobRequest {
+  string name = 1;
+
+  // Program bytes (system-api may already normalize this into AQO).
+  bytes program = 2;
+  string program_format = 3; // e.g. "aqo_proto", "aqo_json"
+
+  string target = 4;
+  int32 priority = 5;
+
+  map<string, string> compiler_options = 6;
+  map<string, string> metadata = 7;
+}
+
+message EnqueueJobResponse {
+  string job_id = 1;
+  TaskState state = 2;
+  google.protobuf.Timestamp created_at = 3;
+}
+
+message GetJobStatusRequest {
+  string job_id = 1;
+}
+
+message GetJobStatusResponse {
+  string job_id = 1;
+  TaskState state = 2;
+  string stage = 3;
+  float progress = 4;
+  string message = 5;
+
+  // Optional error payload for ERROR state.
+  string error_code = 20;
+  string error_summary = 21;
+  string error_details_ref = 22;
+
+  google.protobuf.Timestamp updated_at = 30;
+}
+
+message CancelJobRequest {
+  string job_id = 1;
+}
+
+message CancelJobResponse {
+  bool accepted = 1;
+}
+
+message GetJobResultsRequest {
+  string job_id = 1;
+}
+
+message GetJobResultsResponse {
+  string job_id = 1;
+  TaskState state = 2;
+
+  map<string, int64> counts = 10;
+  map<string, string> metadata = 11;
+
+  string error_code = 20;
+  string error_summary = 21;
+  string error_details_ref = 22;
+
+  google.protobuf.Timestamp completed_at = 30;
+}
