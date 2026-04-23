@@ -24,6 +24,10 @@ jobs:
         with:
           workspaces: src/rust
 
+      # Fix for --locked: regenerate the lock file so it's always in sync
+      - name: Regenerate Cargo.lock
+        run: cargo generate-lockfile
+
       - name: Build workspace
         run: cargo build --workspace --locked
 
@@ -66,7 +70,6 @@ jobs:
         working-directory: ${{ matrix.component.path }}
         run: ${{ matrix.component.test_cmd }}
 
-    
   e2e-smoke-simulator:
     name: E2E smoke (submit -> watch -> results)
     runs-on: ubuntu-latest
@@ -101,7 +104,7 @@ jobs:
 
       - name: Buf lint
         working-directory: proto
-        run: buf lint        # optionally add --ignore-unstable-packages if you need
+        run: buf lint
 
       - name: Buf breaking (against main)
         working-directory: proto
