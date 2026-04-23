@@ -1,11 +1,19 @@
-"""eigen-compiler entrypoint (scaffold).
+"""eigen-compiler entrypoint."""
 
-MVP expectation: AST-only compilation from Eigen-Lang Python DSL to AQO JSON.
-"""
+import logging
+
+from .grpc_server import serve
+
+
+logging.basicConfig(level=logging.INFO)
 
 
 def main() -> int:
-    print("eigen-compiler scaffold: not implemented")
+    server = serve()
+    try:
+        server.wait_for_termination()
+    except KeyboardInterrupt:  # pragma: no cover
+        server.stop(grace=0)
     return 0
 
 

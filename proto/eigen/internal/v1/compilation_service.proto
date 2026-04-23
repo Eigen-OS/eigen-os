@@ -13,6 +13,7 @@ option java_package = "com.eigen.api.internal.v1";
 // Source of truth: RFC 0004 (CompilationService) + reference docs.
 service CompilationService {
   rpc CompileCircuit(CompileCircuitRequest) returns (CompileCircuitResponse);
+  rpc CompileJob(CompileJobRequest) returns (CompileJobResponse);
   rpc OptimizeCircuit(OptimizeCircuitRequest) returns (OptimizeCircuitResponse);
   rpc ValidateCircuit(ValidateCircuitRequest) returns (ValidateCircuitResponse);
 }
@@ -20,13 +21,32 @@ service CompilationService {
 message CompileCircuitRequest {
   // Source language identifier, e.g. "eigen-lang" or "qasm3".
   string language = 1;
-  bytes source = 2;
+  oneof input {
+    bytes source = 2;
+    string source_ref = 4; // QFS ref
+  }
   map<string, string> options = 3;
 }
 
 message CompileCircuitResponse {
   CircuitPayload circuit = 1;
   map<string, string> metadata = 2;
+}
+
+message CompileJobRequest {
+  string job_id = 1;
+  string language = 2;
+  oneof input {
+    bytes source = 3;
+    string source_ref = 4; // QFS ref
+  }
+  map<string, string> options = 5;
+}
+
+message CompileJobResponse {
+  string job_id = 1;
+  CircuitPayload circuit = 2;
+  map<string, string> metadata = 3;
 }
 
 message OptimizeCircuitRequest {
