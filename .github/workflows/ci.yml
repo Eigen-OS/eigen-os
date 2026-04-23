@@ -47,8 +47,8 @@ jobs:
             test_cmd: pytest
           - name: eigen-compiler
             path: src/services/eigen-compiler
-            install_cmd: pip install -e .
-            test_cmd: python -m eigen_compiler.main
+            install_cmd: pip install -e . grpcio grpcio-tools grpcio-status googleapis-common-protos pytest
+            test_cmd: pytest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
