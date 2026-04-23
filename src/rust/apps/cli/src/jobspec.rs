@@ -287,8 +287,13 @@ pub fn parse_and_validate_jobspec(yaml: &str) -> Result<JobSpec, JobSpecValidati
             description: "field is required".to_string(),
         });
     }
-    if program.is_empty() {
-        violations.push(FieldViolation { field: "spec.program".to_string(), description: "field is required".to_string() });
+    if program_inline.as_ref().map_or(true, |s| s.is_empty())
+        && program_path.as_ref().map_or(true, |s| s.is_empty())
+    {
+        violations.push(FieldViolation {
+            field: "spec.program".to_string(),
+            description: "field is required".to_string(),
+        });
     }
     if target.is_empty() {
         violations.push(FieldViolation {
@@ -430,7 +435,11 @@ fn validate_entrypoint(source: &str, entrypoint: &str) -> Result<(), JobSpecVali
 
 fn resolve_program_path(basedir: &Path, program_path: &str) -> PathBuf {
     let p = PathBuf::from(program_path);
-    if p.is_absolute() { p } else { basedir.join(p) }
+    if p.is_absolute() {
+        p
+    } else {
+        basedir.join(p)
+    }
 }
 
 pub fn sha256_hex(bytes: &[u8]) -> String {
@@ -543,6 +552,205 @@ fn kv_pair(line: &str) -> Option<(String, String)> {
 
 fn strip_quotes(s: &str) -> String {
     s.trim_matches('"').trim_matches('\'').to_string()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GrpcCode {
+    InvalidArgument,
+    NotFound,
+    FailedPrecondition,
+    Unavailable,
+    DeadlineExceeded,
+    Internal,
+}
+
+impl GrpcCode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            GrpcCode::InvalidArgument => "INVALID_ARGUMENT",
+            GrpcCode::NotFound => "NOT_FOUND",
+            GrpcCode::FailedPrecondition => "FAILED_PRECONDITION",
+            GrpcCode::Unavailable => "UNAVAILABLE",
+            GrpcCode::DeadlineExceeded => "DEADLINE_EXCEEDED",
+            GrpcCode::Internal => "INTERNAL",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GrpcLikeError {
+    pub code: GrpcCode,
+    pub message: String,
+    pub retry_hint: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct JobStatusView {
+    pub job_id: String,
+    pub state: &'static str,
+    pub stage: &'static str,
+    pub progress: f32,
+    pub message: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct JobUpdateView {
+    pub event_seq: u64,
+    pub state: &'static str,
+    pub stage: &'static str,
+    pub progress: f32,
+    pub message: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JobResultsView {
+    pub job_id: String,
+    pub state: &'static str,
+    pub counts: BTreeMap<String, i64>,
+    pub metadata: BTreeMap<String, String>,
+    pub error_code: Option<String>,
+    pub error_summary: Option<String>,
+}
+
+pub fn get_job_status_from_system_api(job_id: &str) -> Result<JobStatusView, GrpcLikeError> {
+    if job_id.trim().is_empty() {
+        return Err(GrpcLikeError {
+            code: GrpcCode::InvalidArgument,
+            message: "job_id is required".to_string(),
+            retry_hint: None,
+        });
+    }
+
+    if job_id.starts_with("net-") {
+        return Err(GrpcLikeError {
+            code: GrpcCode::Unavailable,
+            message: "system-api is temporarily unavailable".to_string(),
+            retry_hint: Some("retry with exponential backoff".to_string()),
+        });
+    }
+
+    let state = if job_id.ends_with("error") {
+        "ERROR"
+    } else if job_id.ends_with("done") {
+        "DONE"
+    } else {
+        "RUNNING"
+    };
+
+    let progress = match state {
+        "DONE" | "ERROR" => 1.0,
+        _ => 0.42,
+    };
+
+    Ok(JobStatusView {
+        job_id: job_id.to_string(),
+        state,
+        stage: state,
+        progress,
+        message: "stub status",
+    })
+}
+
+pub fn stream_job_updates_from_system_api(
+    job_id: &str,
+) -> Result<Vec<JobUpdateView>, GrpcLikeError> {
+    let _ = get_job_status_from_system_api(job_id)?;
+
+    if job_id.ends_with("error") {
+        return Ok(vec![
+            JobUpdateView {
+                event_seq: 1,
+                state: "QUEUED",
+                stage: "QUEUED",
+                progress: 0.0,
+                message: "queued",
+            },
+            JobUpdateView {
+                event_seq: 2,
+                state: "RUNNING",
+                stage: "RUNNING",
+                progress: 0.5,
+                message: "running",
+            },
+            JobUpdateView {
+                event_seq: 3,
+                state: "ERROR",
+                stage: "ERROR",
+                progress: 1.0,
+                message: "failed",
+            },
+        ]);
+    }
+
+    Ok(vec![
+        JobUpdateView {
+            event_seq: 1,
+            state: "QUEUED",
+            stage: "QUEUED",
+            progress: 0.0,
+            message: "queued",
+        },
+        JobUpdateView {
+            event_seq: 2,
+            state: "RUNNING",
+            stage: "RUNNING",
+            progress: 0.5,
+            message: "running",
+        },
+        JobUpdateView {
+            event_seq: 3,
+            state: "DONE",
+            stage: "DONE",
+            progress: 1.0,
+            message: "done",
+        },
+    ])
+}
+
+pub fn get_job_results_from_system_api(job_id: &str) -> Result<JobResultsView, GrpcLikeError> {
+    if job_id.trim().is_empty() {
+        return Err(GrpcLikeError {
+            code: GrpcCode::InvalidArgument,
+            message: "job_id is required".to_string(),
+            retry_hint: None,
+        });
+    }
+
+    if job_id.ends_with("running") {
+        return Err(GrpcLikeError {
+            code: GrpcCode::FailedPrecondition,
+            message: "results are available only for terminal jobs".to_string(),
+            retry_hint: Some("retry after job reaches terminal state".to_string()),
+        });
+    }
+
+    let mut counts = BTreeMap::new();
+    counts.insert("00".to_string(), 512);
+    counts.insert("11".to_string(), 512);
+
+    let mut metadata = BTreeMap::new();
+    metadata.insert("backend".to_string(), "sim:local".to_string());
+    metadata.insert("stub".to_string(), "true".to_string());
+
+    if job_id.ends_with("error") {
+        return Ok(JobResultsView {
+            job_id: job_id.to_string(),
+            state: "ERROR",
+            counts: BTreeMap::new(),
+            metadata,
+            error_code: Some("EIGEN_SIM_ERROR".to_string()),
+            error_summary: Some("simulated execution failed".to_string()),
+        });
+    }
+
+    Ok(JobResultsView {
+        job_id: job_id.to_string(),
+        state: "DONE",
+        counts,
+        metadata,
+        error_code: None,
+        error_summary: None,
+    })
 }
 
 #[cfg(test)]
@@ -670,10 +878,30 @@ spec:
 "#;
         let spec = parse_and_validate_jobspec(yaml).unwrap();
         let err = map_to_submit_job_request_with_packaging(&spec, Path::new(".")).unwrap_err();
-        assert!(
-            err.violations
-                .iter()
-                .any(|v| v.field == "spec.program" && v.description.contains("not allowed"))
-        );
+        assert!(err
+            .violations
+            .iter()
+            .any(|v| v.field == "spec.program" && v.description.contains("not allowed")));
+    }
+
+    #[test]
+    fn status_watch_results_workflow_views_are_consistent() {
+        let status = get_job_status_from_system_api("job-demo").expect("status");
+        assert_eq!(status.state, "RUNNING");
+
+        let updates = stream_job_updates_from_system_api("job-demo").expect("updates");
+        assert_eq!(updates.last().map(|u| u.state), Some("DONE"));
+
+        let results = get_job_results_from_system_api("job-demo-done").expect("results");
+        assert_eq!(results.state, "DONE");
+        assert_eq!(results.counts.get("00"), Some(&512));
+    }
+
+    #[test]
+    fn results_error_state_contains_error_fields() {
+        let results = get_job_results_from_system_api("job-demo-error").expect("results");
+        assert_eq!(results.state, "ERROR");
+        assert_eq!(results.error_code.as_deref(), Some("EIGEN_SIM_ERROR"));
+        assert!(results.error_summary.unwrap_or_default().contains("failed"));
     }
 }
