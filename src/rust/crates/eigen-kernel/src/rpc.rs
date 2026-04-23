@@ -797,9 +797,11 @@ mod tests {
                 return Err(Status::invalid_argument("bad language"));
             }
             let mut metadata = HashMap::new();
-            let program_text = String::from_utf8_lossy(&req.program);
-            if program_text.contains("minimize") {
+            if let Some(crate::proto::compile_job_request::Input::Source(ref source_bytes)) = req.input {
+                let program_text = String::from_utf8_lossy(source_bytes);
+                if program_text.contains("minimize") {
                 metadata.insert("hybrid_plan_marker".to_string(), "minimize".to_string());
+                }
             }
             Ok(Response::new(CompileJobResponse {
                 job_id: req.job_id,
