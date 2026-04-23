@@ -287,14 +287,7 @@ pub fn parse_and_validate_jobspec(yaml: &str) -> Result<JobSpec, JobSpecValidati
             description: "field is required".to_string(),
         });
     }
-    if program_inline.as_ref().map_or(true, |s| s.is_empty())
-        && program_path.as_ref().map_or(true, |s| s.is_empty())
-    {
-        violations.push(FieldViolation {
-            field: "spec.program".to_string(),
-            description: "field is required".to_string(),
-        });
-    }
+    // Removed early check for spec.program – defaulting to program.eigen.py is handled later.
     if target.is_empty() {
         violations.push(FieldViolation {
             field: "spec.target".to_string(),
@@ -870,11 +863,11 @@ kind: QuantumJob
 metadata:
   name: test
 spec:
-    program: |
+  program: |
     @hybrid_program
     def main():
         return 1
-    target: sim:local
+  target: sim:local
 "#;
         let spec = parse_and_validate_jobspec(yaml).unwrap();
         let err = map_to_submit_job_request_with_packaging(&spec, Path::new(".")).unwrap_err();
