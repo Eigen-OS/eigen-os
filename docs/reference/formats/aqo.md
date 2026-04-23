@@ -109,6 +109,15 @@ message Operation {
   map<string, string> params = 4;  // param_name → string value
 }
 ```
+## Canonical bitstring ordering for counts
+
+When AQO execution returns `counts: map<bitstring,int64>`, bitstrings are encoded in **MSB-first classical index order**:
+
+- For measured classical bits `c[0..n-1]`, the output string is `c[n-1]...c[1]c[0]`.
+- `c[0]` is the **rightmost** character (least-significant classical bit).
+- Example: if `q[0] -> c[0] = 1` and `q[1] -> c[1] = 0`, the canonical key is `"01"`.
+
+This rule is global for MVP and must be used by DriverManager normalization for every backend.
 
 ## Error model
 

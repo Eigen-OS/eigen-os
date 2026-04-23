@@ -11,16 +11,16 @@ import grpc
 from .grpc_impl import DriverManagerService
 from .proto_gen import ensure_generated
 from .registry import DriverRegistry
-from .stub_driver import StubDriver
+from .simulator_driver import SimulatorDriver
 
 _LOG = logging.getLogger("driver_manager")
 
 
 def _default_registry(types_pb) -> DriverRegistry:
     registry = DriverRegistry()
-    stub = StubDriver(types_pb=types_pb)
-    stub.initialize(config={})
-    registry.add_driver(stub.name, stub)
+    simulator = SimulatorDriver(types_pb=types_pb)
+    simulator.initialize(config={})
+    registry.add_driver(simulator.name, simulator)
     return registry
 
 
