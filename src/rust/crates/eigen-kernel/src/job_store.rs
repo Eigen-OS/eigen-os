@@ -22,6 +22,7 @@ pub struct JobRecord {
     pub error_summary: Option<String>,
     pub error_details_ref: Option<String>,
     pub counts: HashMap<String, i64>,
+    pub results_metadata: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone)]
@@ -51,6 +52,7 @@ impl JobStore {
             error_summary: None,
             error_details_ref: None,
             counts: HashMap::new(),
+            results_metadata: HashMap::new(),
         };
         self.inner.write().insert(job_id.clone(), record.clone());
         record
@@ -91,6 +93,13 @@ impl JobStore {
     pub fn set_counts(&self, job_id: &str, counts: HashMap<String, i64>) {
         if let Some(rec) = self.inner.write().get_mut(job_id) {
             rec.counts = counts;
+            rec.updated_at_unix_ms = unix_ms();
+        }
+    }
+
+    pub fn set_results_metadata(&self, job_id: &str, metadata: HashMap<String, String>) {
+        if let Some(rec) = self.inner.write().get_mut(job_id) {
+            rec.results_metadata = metadata;
             rec.updated_at_unix_ms = unix_ms();
         }
     }

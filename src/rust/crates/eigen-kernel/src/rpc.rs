@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use serde_json::Value;
 use serde_json::json;
 use tonic::{Code, Request, Response, Status};
 use tracing::Instrument;
@@ -167,7 +168,7 @@ impl KernelGateway for KernelGatewaySvc {
             job_id: rec.job_id,
             state: to_proto_state(rec.state) as i32,
             counts: rec.counts,
-            metadata: HashMap::from([("results_ref".to_string(), format!("{job_id}/results"))]),
+            metadata: rec.results_metadata,
             error_code: rec.error_code.unwrap_or_default(),
             error_summary: rec.error_summary.unwrap_or_default(),
             error_details_ref: rec.error_details_ref.unwrap_or_default(),
@@ -186,6 +187,9 @@ async fn run_pipeline(
     job_id: &str,
     req: EnqueueJobRequest,
 ) -> Result<(), PipelineError> {
+    let mut results_metadata =
+        HashMap::from([("results_ref".to_string(), format!("{job_id}/results"))]);
+
     store
         .apply_event(job_id, JobEvent::StartCompiling)
         .map_err(|e| PipelineError::internal(format!("state transition failed: {e}")))?;
@@ -238,27 +242,240 @@ async fn run_pipeline(
         req.target.clone()
     };
 
-    let execute_res = driver
-        .execute_circuit(Request::new(ExecuteCircuitRequest {
-            job_id: job_id.to_string(),
-            device_id: device_id.clone(),
-            payload: Some(circuit_payload),
-            shots: parse_shots(&req.metadata),
-            options: req.metadata,
-        }))
-        .await
-        .map_err(PipelineError::from_execute_status)?
-        .into_inner();
+    let execute_res = if should_run_vqe_loop(&circuit_payload, &compile_res.metadata) {
+        let vqe_res = run_vqe_loop(
+            &mut driver,
+            &deps,
+            job_id,
+            &device_id,
+            &circuit_payload,
+            &req.metadata,
+        )
+        .await?;
+        results_metadata.extend(vqe_res.results_metadata);
+        vqe_res.last_execution
+    } else {
+        let execute_res = driver
+            .execute_circuit(Request::new(ExecuteCircuitRequest {
+                job_id: job_id.to_string(),
+                device_id: device_id.clone(),
+                payload: Some(circuit_payload),
+                shots: parse_shots(&req.metadata),
+                options: req.metadata,
+            }))
+            .await
+            .map_err(PipelineError::from_execute_status)?
+            .into_inner();
+        execute_res
+    };
 
-    persist_results(&deps, job_id, &device_id, &execute_res)
-        .map_err(|e| PipelineError::persist(format!("failed to persist results: {e}")))?;
+    persist_results(&deps, job_id, &device_id, &execute_res).map_err(|e| {
+        PipelineError::persist(format!("failed to persist final execution results: {e}"))
+    })?;
 
-    store.set_counts(job_id, execute_res.counts);
+    store.set_results_metadata(job_id, results_metadata);
+    store.set_counts(job_id, execute_res.counts.clone());
     store
         .apply_event(job_id, JobEvent::FinishRunningOk)
         .map_err(|e| PipelineError::internal(format!("state transition failed: {e}")))?;
 
     Ok(())
+}
+
+struct VqeLoopOutcome {
+    last_execution: ExecuteCircuitResponse,
+    results_metadata: HashMap<String, String>,
+}
+
+async fn run_vqe_loop(
+    driver: &mut DriverManagerServiceClient<tonic::transport::Channel>,
+    deps: &PipelineDeps,
+    job_id: &str,
+    device_id: &str,
+    circuit_payload: &CircuitPayload,
+    job_metadata: &HashMap<String, String>,
+) -> Result<VqeLoopOutcome, PipelineError> {
+    let mut params = initial_params(circuit_payload);
+    let max_iters = parse_positive_usize(job_metadata, "max_iters").unwrap_or(10);
+    let step_size = parse_positive_f64(job_metadata, "optimizer_step").unwrap_or(0.1);
+    let shots = parse_shots(job_metadata);
+    let zero_state = "0".repeat(estimate_qubits(circuit_payload));
+
+    let mut metrics: Vec<Value> = Vec::with_capacity(max_iters);
+    let mut best_objective = f64::INFINITY;
+    let mut best_params = params.clone();
+    let mut last_execution = None;
+
+    for iter in 0..max_iters {
+        let mut options = job_metadata.clone();
+        options.insert("vqe.params".to_string(), serialize_params(&params));
+        options.insert("vqe.iteration".to_string(), iter.to_string());
+
+        let execute_res = driver
+            .execute_circuit(Request::new(ExecuteCircuitRequest {
+                job_id: job_id.to_string(),
+                device_id: device_id.to_string(),
+                payload: Some(circuit_payload.clone()),
+                shots,
+                options,
+            }))
+            .await
+            .map_err(PipelineError::from_execute_status)?
+            .into_inner();
+
+        let objective = objective_from_counts(&execute_res.counts, &zero_state);
+        if objective < best_objective {
+            best_objective = objective;
+            best_params = params.clone();
+        }
+        metrics.push(json!({
+            "iteration": iter,
+            "params": params.clone(),
+            "objective": objective,
+            "counts": execute_res.counts.clone(),
+        }));
+        params = update_params(iter, &params, objective, step_size);
+        last_execution = Some(execute_res);
+    }
+
+    let metrics_json = serde_json::to_vec_pretty(&json!({
+        "version": "0.1",
+        "kind": "vqe_metrics",
+        "optimizer": "simple_gradient_free_step",
+        "max_iters": max_iters,
+        "iterations": metrics,
+        "best_objective": best_objective,
+        "best_params": best_params,
+    }))
+    .map_err(|e| PipelineError::persist(format!("serialize metrics failed: {e}")))?;
+    deps.qfs
+        .store_metrics_json(job_id, &metrics_json)
+        .map_err(|e| PipelineError::persist(format!("store metrics failed: {e}")))?;
+
+    let mut results_metadata = HashMap::from([
+        ("vqe.enabled".to_string(), "true".to_string()),
+        (
+            "vqe.optimizer".to_string(),
+            "simple_gradient_free_step".to_string(),
+        ),
+        ("vqe.iterations".to_string(), max_iters.to_string()),
+        (
+            "vqe.best_objective".to_string(),
+            format!("{best_objective:.8}"),
+        ),
+        (
+            "vqe.best_params".to_string(),
+            serialize_params(&best_params),
+        ),
+        ("vqe.final_params".to_string(), serialize_params(&params)),
+        (
+            "vqe.metrics_ref".to_string(),
+            format!("{job_id}/meta/metrics.json"),
+        ),
+    ]);
+
+    if let Some(last) = &last_execution {
+        results_metadata.insert(
+            "vqe.last_counts_keys".to_string(),
+            last.counts.len().to_string(),
+        );
+    }
+
+    Ok(VqeLoopOutcome {
+        last_execution: last_execution.ok_or_else(|| {
+            PipelineError::execute("vqe loop produced no execution result".to_string())
+        })?,
+        results_metadata,
+    })
+}
+
+fn should_run_vqe_loop(
+    circuit_payload: &CircuitPayload,
+    metadata: &HashMap<String, String>,
+) -> bool {
+    if metadata
+        .get("hybrid_plan_marker")
+        .map(|v| v == "minimize")
+        .unwrap_or(false)
+    {
+        return true;
+    }
+    parse_hybrid_marker(circuit_payload)
+}
+
+fn parse_hybrid_marker(circuit_payload: &CircuitPayload) -> bool {
+    let parsed: Result<Value, _> = serde_json::from_slice(&circuit_payload.data);
+    parsed
+        .ok()
+        .and_then(|v| {
+            v.get("hybrid_plan_marker")
+                .and_then(|m| m.get("kind"))
+                .and_then(Value::as_str)
+                .map(|kind| kind == "minimize")
+        })
+        .unwrap_or(false)
+}
+
+fn initial_params(circuit_payload: &CircuitPayload) -> Vec<f64> {
+    let parsed: Result<Value, _> = serde_json::from_slice(&circuit_payload.data);
+    let count = parsed
+        .ok()
+        .and_then(|v| v.get("parameters").and_then(Value::as_array).map(Vec::len))
+        .unwrap_or(1)
+        .max(1);
+    vec![0.1; count]
+}
+
+fn estimate_qubits(circuit_payload: &CircuitPayload) -> usize {
+    let parsed: Result<Value, _> = serde_json::from_slice(&circuit_payload.data);
+    parsed
+        .ok()
+        .and_then(|v| v.get("qubits").and_then(Value::as_u64))
+        .map(|q| q as usize)
+        .filter(|q| *q > 0)
+        .unwrap_or(1)
+}
+
+fn objective_from_counts(counts: &HashMap<String, i64>, zero_state: &str) -> f64 {
+    let total: i64 = counts.values().sum();
+    if total <= 0 {
+        return 1.0;
+    }
+    let ground = counts.get(zero_state).copied().unwrap_or(0) as f64;
+    1.0 - (ground / total as f64)
+}
+
+fn update_params(iter: usize, params: &[f64], objective: f64, step: f64) -> Vec<f64> {
+    params
+        .iter()
+        .enumerate()
+        .map(|(idx, p)| {
+            let direction = if (iter + idx) % 2 == 0 { 1.0 } else { -1.0 };
+            p + direction * step * (objective - 0.5)
+        })
+        .collect()
+}
+
+fn serialize_params(params: &[f64]) -> String {
+    params
+        .iter()
+        .map(|v| format!("{v:.6}"))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn parse_positive_usize(metadata: &HashMap<String, String>, key: &str) -> Option<usize> {
+    metadata
+        .get(key)
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|v| *v > 0)
+}
+
+fn parse_positive_f64(metadata: &HashMap<String, String>, key: &str) -> Option<f64> {
+    metadata
+        .get(key)
+        .and_then(|v| v.parse::<f64>().ok())
+        .filter(|v| *v > 0.0)
 }
 
 fn persist_results(
@@ -540,6 +757,22 @@ mod tests {
             if request.get_ref().device_id == "bad-device" {
                 return Err(Status::unavailable("backend down"));
             }
+            if let Some(params) = request.get_ref().options.get("vqe.params") {
+                let score = params
+                    .split(',')
+                    .filter_map(|v| v.parse::<f64>().ok())
+                    .map(|v| v.abs())
+                    .sum::<f64>();
+                let good = ((1024.0 - score * 200.0).round() as i64).clamp(0, 1024);
+                return Ok(Response::new(ExecuteCircuitResponse {
+                    counts: HashMap::from([
+                        ("00".to_string(), good),
+                        ("11".to_string(), 1024 - good),
+                    ]),
+                    execution_time_sec: 0.02,
+                    metadata: HashMap::from([("backend".to_string(), "simulator".to_string())]),
+                }));
+            }
             Ok(Response::new(ExecuteCircuitResponse {
                 counts: HashMap::from([("00".to_string(), 1024)]),
                 execution_time_sec: 0.02,
@@ -712,4 +945,109 @@ mod tests {
 
         panic!("job never transitioned to ERROR state");
     }
+
+    #[tokio::test]
+    async fn integration_vqe_loop_persists_metrics_and_results_metadata() {
+        let temp_qfs = TempDir::new().unwrap();
+        let compiler_addr: SocketAddr = "127.0.0.1:50175".parse().unwrap();
+        let driver_addr: SocketAddr = "127.0.0.1:50176".parse().unwrap();
+
+        tokio::spawn(async move {
+            tonic::transport::Server::builder()
+                .add_service(CompilationServiceServer::new(MockCompiler))
+                .serve(compiler_addr)
+                .await
+                .unwrap();
+        });
+
+        tokio::spawn(async move {
+            tonic::transport::Server::builder()
+                .add_service(DriverManagerServiceServer::new(MockDriver))
+                .serve(driver_addr)
+                .await
+                .unwrap();
+        });
+
+        sleep(Duration::from_millis(80)).await;
+
+        let svc = KernelGatewaySvc {
+            store: JobStore::default(),
+            deps: PipelineDeps {
+                compiler_endpoint: "http://127.0.0.1:50175".to_string(),
+                driver_endpoint: "http://127.0.0.1:50176".to_string(),
+                default_device_id: "sim:local".to_string(),
+                qfs: CircuitFsLocal::new(temp_qfs.path()),
+            },
+        };
+
+        let program = br#"
+from eigen_lang import Param, ExpectationValue, hybrid_program, minimize
+
+@hybrid_program
+def vqe_program():
+    theta1 = Param("theta1")
+    theta2 = Param("theta2")
+    ExpectationValue("Z0 + Z1")
+    minimize(lambda: 0.0, [0.1, 0.2])
+"#
+        .to_vec();
+
+        let job_id = svc
+            .enqueue_job(Request::new(EnqueueJobRequest {
+                name: "vqe-2q".to_string(),
+                program,
+                program_format: "eigen-lang".to_string(),
+                target: "sim:local".to_string(),
+                priority: 1,
+                compiler_options: HashMap::new(),
+                metadata: HashMap::from([("max_iters".to_string(), "5".to_string())]),
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+            .job_id;
+
+        for _ in 0..40 {
+            let status = svc
+                .get_job_status(Request::new(GetJobStatusRequest {
+                    job_id: job_id.clone(),
+                }))
+                .await
+                .unwrap()
+                .into_inner();
+            if status.state == TaskState::Done as i32 {
+                break;
+            }
+            sleep(Duration::from_millis(30)).await;
+        }
+
+        let results = svc
+            .get_job_results(Request::new(GetJobResultsRequest {
+                job_id: job_id.clone(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(results.state, TaskState::Done as i32);
+        assert_eq!(
+            results.metadata.get("vqe.enabled"),
+            Some(&"true".to_string())
+        );
+        assert_eq!(
+            results.metadata.get("vqe.iterations"),
+            Some(&"5".to_string())
+        );
+        assert!(results.metadata.contains_key("vqe.final_params"));
+        assert!(results.metadata.contains_key("vqe.best_objective"));
+        assert!(results.counts.contains_key("00"));
+
+        let metrics_path = CircuitFsLocal::new(temp_qfs.path())
+            .metrics_json_path(&job_id)
+            .unwrap();
+        let metrics_raw = std::fs::read(metrics_path).unwrap();
+        let metrics_json: serde_json::Value = serde_json::from_slice(&metrics_raw).unwrap();
+        assert_eq!(metrics_json["kind"], "vqe_metrics");
+        assert_eq!(metrics_json["iterations"].as_array().unwrap().len(), 5);
+    }
+
 }
