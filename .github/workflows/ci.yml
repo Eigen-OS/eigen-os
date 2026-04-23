@@ -101,8 +101,8 @@ jobs:
 
       - name: Buf lint
         working-directory: proto
-        run: buf lint
+        run: buf lint        # optionally add --ignore-unstable-packages if you need
 
       - name: Buf breaking (against main)
         working-directory: proto
-        run: buf breaking --against '../.git#ref=refs/remotes/origin/main,subdir=proto' --ignore-unstable-packages
+        run: buf breaking --against '../.git#ref=refs/remotes/origin/main,subdir=proto'
