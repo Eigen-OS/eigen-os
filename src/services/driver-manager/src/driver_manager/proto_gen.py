@@ -16,9 +16,9 @@ class ProtoGenPaths:
 
 def _find_repo_root(start: Path) -> Path:
     for p in [start, *start.parents]:
-        if (p / "proto").is_dir() and (p / "rfcs").is_dir():
+        if (p / "proto").is_dir() and ((p / "rfcs").is_dir() or (p / "src" / "services").is_dir()):
             return p
-    raise RuntimeError("Could not locate repo root (expected proto/ and rfcs/)")
+    raise RuntimeError("Could not locate repo root (expected proto/ and either rfcs/ or src/services/)")
 
 
 def _grpc_tools_proto_include() -> Path:
