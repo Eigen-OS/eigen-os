@@ -2,7 +2,8 @@ use std::{env, path::PathBuf};
 
 fn main() {
     // Use a vendored protoc so contributors don't need it installed.
-    let protoc_path = protoc_bin_vendored::protoc_bin_path().expect("vendored protoc not available");
+    let protoc_path =
+        protoc_bin_vendored::protoc_bin_path().expect("vendored protoc not available");
     env::set_var("PROTOC", protoc_path);
 
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
@@ -12,13 +13,15 @@ fn main() {
         .expect("proto/ directory not found");
 
     let protos = [
-        proto_root.join("eigen_internal/v1/kernel_gateway.proto"),
-        proto_root.join("eigen_internal/v1/types.proto"),
+        proto_root.join("eigen/internal/v1/types.proto"),
+        proto_root.join("eigen/internal/v1/kernel_gateway.proto"),
+        proto_root.join("eigen/internal/v1/compilation_service.proto"),
+        proto_root.join("eigen/internal/v1/driver_manager_service.proto"),
     ];
 
     tonic_build::configure()
         .build_server(true)
-        .build_client(false)
+        .build_client(true)
         .compile(
             &protos
                 .iter()
