@@ -2,57 +2,91 @@
 
 ## Goal
 
-Execute a local end-to-end run (`submit -> watch -> results`) with a small 2-qubit VQE example.
+Run a local end-to-end flow (`submit -> watch -> results`) with a minimal 2-qubit VQE example.
 
 Reference example: `examples/basic/vqe_cycle/`.
 
+## What this quickstart validates
+
+This quickstart is verified against the current repository state (MVP scaffold):
+
+- CLI binary: `src/rust/apps/cli` (`eigen` command)
+- Local mocked System API behavior in CLI internals (no external services required for this smoke flow)
+- Example package: `examples/basic/vqe_cycle/{job.yaml,program.eigen.py}`
+
 ## Prerequisites
 
-- Local services started for the MVP stack.
-- `eigen` CLI available in your shell.
+- Rust toolchain installed (`cargo` available).
+- From repository root (`/workspace/eigen-os`).
+
+Optional check:
+
+```bash
+cargo --version
+```
 
 ## Steps
 
-1. Change directory:
+1. Build and run the CLI from the workspace:
+
+```bash
+cargo run -p cli --manifest-path src/rust/Cargo.toml -- --help
+```
+
+2. Go to the example directory:
 
 ```bash
 cd examples/basic/vqe_cycle
 ```
 
-2. Submit:
+3. Submit a job:
 
 ```bash
-eigen submit -f job.yaml
+cargo run -p cli --manifest-path ../../../src/rust/Cargo.toml -- submit -f job.yaml
 ```
 
-3. Watch status:
+Copy the printed `job_id` (example format: `job-xxxxxxxxxxxx`).
+
+4. Watch progress:
 
 ```bash
-eigen watch <job_id>
+cargo run -p cli --manifest-path ../../../src/rust/Cargo.toml -- watch <job_id>
 ```
 
-4. Read results:
+For a happy path demo, you can also force a completed flow using a known suffix:
 
 ```bash
-eigen results <job_id>
+cargo run -p cli --manifest-path ../../../src/rust/Cargo.toml -- watch job-demo-done
 ```
 
-## Expected outputs
+5. Read final results:
 
-A successful run typically includes:
+```bash
+cargo run -p cli --manifest-path ../../../src/rust/Cargo.toml -- results <job_id>
+```
 
-- terminal output with a valid `job_id`;
-- measurement counts from simulator execution;
-- optimization metrics where objective/energy declines before flattening.
+If your generated `job_id` is not done yet, run:
 
-Use this as a sanity check (exact numbers can differ by implementation details):
+```bash
+cargo run -p cli --manifest-path ../../../src/rust/Cargo.toml -- results job-demo-done
+```
 
-- objective improves in early iterations;
-- best value changes less frequently near the end;
-- counts distribution becomes more stable when parameters approach a minimum.
+## Minimal expected output
+
+A successful flow includes:
+
+- `submit`: non-empty `job_id` plus hints for `status/watch/results`;
+- `watch`: sequence of updates ending in `state=DONE`;
+- `results`: `state: DONE`, `counts` map, and `metadata` map.
+
+Example qualitative sanity checks for this VQE sample:
+
+- `counts` is populated with measured bitstrings;
+- metadata includes backend/runtime fields;
+- objective/energy behavior can vary between implementations, but early iterations should typically improve before flattening.
 
 ## Troubleshooting
 
-- **Job stuck in queued/running**: check local service health and retry submit.
-- **Missing program file**: ensure `program.eigen.py` exists beside `job.yaml`.
-- **Unexpected counts/objective**: increase shots and max iterations in `job.yaml` and rerun.
+For common failures and copy/paste fixes, see:
+
+- `docs/howto/troubleshooting.md`
