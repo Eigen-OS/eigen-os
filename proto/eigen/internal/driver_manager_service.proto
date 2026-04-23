@@ -2,13 +2,18 @@ syntax = "proto3";
 
 package eigen.internal.v1;
 
-import "eigen_internal/v1/types.proto";
+import "eigen/internal/v1/types.proto";
+
+option go_package = "github.com/eigen-os/eigen/api/internal/v1;internalv1";
+option java_multiple_files = true;
+option java_outer_classname = "DriverManagerServiceProto";
+option java_package = "com.eigen.api.internal.v1";
 
 // Kernel-facing driver manager contract.
 // Source of truth: RFC 0006.
 service DriverManagerService {
   rpc ListDevices(ListDevicesRequest) returns (ListDevicesResponse);
-  rpc GetDeviceStatus(DeviceStatusRequest) returns (DeviceStatusResponse);
+  rpc GetDeviceStatus(GetDeviceStatusRequest) returns (GetDeviceStatusResponse);
   rpc ExecuteCircuit(ExecuteCircuitRequest) returns (ExecuteCircuitResponse);
   rpc CalibrateDevice(CalibrateDeviceRequest) returns (CalibrateDeviceResponse);
 }
@@ -19,11 +24,11 @@ message ListDevicesResponse {
   repeated DeviceInfo devices = 1;
 }
 
-message DeviceStatusRequest {
+message GetDeviceStatusRequest {
   string device_id = 1;
 }
 
-message DeviceStatusResponse {
+message GetDeviceStatusResponse {
   string device_id = 1;
   DeviceStatus status = 2;
   int32 queue_depth = 3;

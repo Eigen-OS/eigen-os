@@ -4,9 +4,14 @@ package eigen.internal.v1;
 
 import "google/protobuf/timestamp.proto";
 
+option go_package = "github.com/eigen-os/eigen/api/internal/v1;internalv1";
+option java_multiple_files = true;
+option java_outer_classname = "KernelGatewayServiceProto";
+option java_package = "com.eigen.api.internal.v1";
+
 // Internal gateway between System API and Kernel.
 // Source of truth: RFC 0004 (Appendix A).
-service KernelGateway {
+service KernelGatewayService {
   rpc EnqueueJob(EnqueueJobRequest) returns (EnqueueJobResponse);
   rpc GetJobStatus(GetJobStatusRequest) returns (GetJobStatusResponse);
   rpc CancelJob(CancelJobRequest) returns (CancelJobResponse);
@@ -15,14 +20,14 @@ service KernelGateway {
 
 enum TaskState {
   TASK_STATE_UNSPECIFIED = 0;
-  PENDING = 1;
-  COMPILING = 2;
-  QUEUED = 3;
-  RUNNING = 4;
-  DONE = 5;
-  ERROR = 6;
-  CANCELLED = 7;
-  TIMEOUT = 8;
+  TASK_STATE_PENDING = 1;
+  TASK_STATE_COMPILING = 2;
+  TASK_STATE_QUEUED = 3;
+  TASK_STATE_RUNNING = 4;
+  TASK_STATE_DONE = 5;
+  TASK_STATE_ERROR = 6;
+  TASK_STATE_CANCELLED = 7;
+  TASK_STATE_TIMEOUT = 8;
 }
 
 message EnqueueJobRequest {

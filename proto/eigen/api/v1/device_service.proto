@@ -4,14 +4,14 @@ package eigen.api.v1;
 
 import "google/protobuf/timestamp.proto";
 
-import "eigen_api/v1/types.proto";
+import "eigen/api/v1/types.proto";
 
 // Public device querying/reservation service (MVP).
 // Source of truth: RFC 0004 + docs/reference/api/grpc-public.md
 service DeviceService {
   rpc ListDevices(ListDevicesRequest) returns (ListDevicesResponse);
-  rpc GetDeviceDetails(DeviceDetailsRequest) returns (DeviceDetailsResponse);
-  rpc GetDeviceStatus(DeviceStatusRequest) returns (DeviceStatusResponse);
+  rpc GetDeviceDetails(GetDeviceDetailsRequest) returns (GetDeviceDetailsResponse);
+  rpc GetDeviceStatus(GetDeviceStatusRequest) returns (GetDeviceStatusResponse);
   rpc ReserveDevice(ReserveDeviceRequest) returns (ReserveDeviceResponse);
 }
 
@@ -24,19 +24,19 @@ message ListDevicesResponse {
   repeated DeviceInfo devices = 1;
 }
 
-message DeviceDetailsRequest {
+message GetDeviceDetailsRequest {
   string device_id = 1;
 }
 
-message DeviceDetailsResponse {
+message GetDeviceDetailsResponse {
   DeviceInfo device = 1;
 }
 
-message DeviceStatusRequest {
+message GetDeviceStatusRequest {
   string device_id = 1;
 }
 
-message DeviceStatusResponse {
+message GetDeviceStatusResponse {
   string device_id = 1;
   DeviceStatus status = 2;
   int32 queue_depth = 3;

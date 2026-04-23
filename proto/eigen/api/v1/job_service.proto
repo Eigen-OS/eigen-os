@@ -4,16 +4,16 @@ package eigen.api.v1;
 
 import "google/protobuf/timestamp.proto";
 
-import "eigen_api/v1/types.proto";
+import "eigen/api/v1/types.proto";
 
 // Public job lifecycle service (MVP).
 // Source of truth: RFC 0004 + docs/reference/api/grpc-public.md
 service JobService {
-  rpc SubmitJob(SubmitJobRequest) returns (JobResponse);
-  rpc GetJobStatus(JobStatusRequest) returns (JobStatusResponse);
+  rpc SubmitJob(SubmitJobRequest) returns (SubmitJobResponse);
+  rpc GetJobStatus(GetJobStatusRequest) returns (GetJobStatusResponse);
   rpc CancelJob(CancelJobRequest) returns (CancelJobResponse);
-  rpc StreamJobUpdates(JobUpdatesRequest) returns (stream JobUpdate);
-  rpc GetJobResults(JobResultsRequest) returns (JobResultsResponse);
+  rpc StreamJobUpdates(StreamJobUpdatesRequest) returns (stream StreamJobUpdatesResponse);
+  rpc GetJobResults(GetJobResultsRequest) returns (GetJobResultsResponse);
 }
 
 message SubmitJobRequest {
@@ -36,16 +36,16 @@ message SubmitJobRequest {
   repeated string dependencies = 9;
 }
 
-message JobResponse {
+message SubmitJobResponse {
   string job_id = 1;
   JobStatus status = 2;
 }
 
-message JobStatusRequest {
+message GetJobStatusRequest {
   string job_id = 1;
 }
 
-message JobStatusResponse {
+message GetJobStatusResponse {
   JobStatus status = 1;
 }
 
@@ -58,18 +58,22 @@ message CancelJobResponse {
   bool accepted = 1;
 }
 
-message JobUpdatesRequest {
+message StreamJobUpdatesRequest {
   string job_id = 1;
 
   // Best-effort resume point (MVP): server MAY start from the next event.
   uint64 last_event_seq = 2;
 }
 
-message JobResultsRequest {
+message StreamJobUpdatesResponse {
+  JobUpdate update = 1;
+}
+
+message GetJobResultsRequest {
   string job_id = 1;
 }
 
-message JobResultsResponse {
+message GetJobResultsResponse {
   string job_id = 1;
   JobState state = 2;
 
