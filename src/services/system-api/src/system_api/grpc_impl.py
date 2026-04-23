@@ -14,6 +14,7 @@ import threading
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import json
 
 import grpc
 from google.protobuf.timestamp_pb2 import Timestamp
@@ -46,6 +47,9 @@ class _JobRecord:
     job_id: str
     created_at: Timestamp
     updates: list
+    counts: dict[str, int]
+    results_metadata: dict[str, str]
+    terminal_state: int
 
 
 class JobService:
@@ -95,6 +99,107 @@ class JobService:
                 event_seq=3,
             ),
         ]
+    
+    def _mk_vqe_updates(
+        self,
+        *,
+        job_id: str,
+        max_iters: int,
+        trace_id: str,
+    ) -> tuple[list, list[float]]:
+        objective_history: list[float] = []
+        updates = [
+            self._mk_update(
+                job_id=job_id,
+                state=self._types_pb.JOB_STATE_QUEUED,
+                stage="QUEUED",
+                progress=0.0,
+                message=f"queued vqe job trace_id={trace_id}",
+                event_seq=1,
+            ),
+            self._mk_update(
+                job_id=job_id,
+                state=self._types_pb.JOB_STATE_RUNNING,
+                stage="RUNNING",
+                progress=0.1,
+                message=f"starting hybrid loop trace_id={trace_id} iteration=0",
+                event_seq=2,
+            ),
+        ]
+
+        current = -0.22
+        for iter_idx in range(1, max_iters + 1):
+            # Deterministic synthetic convergence curve for CI stability.
+            current = round(current - (0.08 / (iter_idx + 1)), 6)
+            objective_history.append(current)
+            progress = min(0.1 + (0.8 * iter_idx / max_iters), 0.95)
+            updates.append(
+                self._mk_update(
+                    job_id=job_id,
+                    state=self._types_pb.JOB_STATE_RUNNING,
+                    stage="RUNNING",
+                    progress=progress,
+                    message=(
+                        "vqe_iteration "
+                        f"trace_id={trace_id} iteration={iter_idx} objective={current}"
+                    ),
+                    event_seq=2 + iter_idx,
+                )
+            )
+
+        best = min(objective_history) if objective_history else current
+        updates.append(
+            self._mk_update(
+                job_id=job_id,
+                state=self._types_pb.JOB_STATE_DONE,
+                stage="DONE",
+                progress=1.0,
+                message=f"vqe complete trace_id={trace_id} best_objective={best}",
+                event_seq=3 + max_iters,
+            )
+        )
+        return updates, objective_history
+
+    def _build_job_record(self, request, *, job_id: str, created_at: Timestamp) -> _JobRecord:
+        source_text = ""
+        if request.WhichOneof("program") == "eigen_lang":
+            source_text = request.eigen_lang.source.decode("utf-8", errors="ignore").lower()
+
+        is_vqe = "vqe" in request.name.lower() or "vqe" in source_text
+        if not is_vqe:
+            updates = self._mk_default_updates(job_id)
+            return _JobRecord(
+                job_id=job_id,
+                created_at=created_at,
+                updates=updates,
+                counts={"00": 512, "11": 512},
+                results_metadata={"stub": "true"},
+                terminal_state=self._types_pb.JOB_STATE_DONE,
+            )
+
+        max_iters = int(request.metadata.get("max_iters", "6"))
+        max_iters = max(2, min(max_iters, 12))
+        trace_id = request.metadata.get("trace_id", "trace-vqe-ci")
+        updates, objective_history = self._mk_vqe_updates(job_id=job_id, max_iters=max_iters, trace_id=trace_id)
+
+        qfs_base = f"/circuit_fs/{job_id}"
+        metadata = {
+            "workload": "vqe",
+            "objective_history": json.dumps(objective_history),
+            "best_objective": str(min(objective_history)),
+            "qfs_compiled_aqo": f"{qfs_base}/compiled/circuit.aqo.json",
+            "qfs_results_counts": f"{qfs_base}/results/counts.json",
+            "qfs_results_metadata": f"{qfs_base}/results/metadata.json",
+            "qfs_metrics": f"{qfs_base}/results/metrics.json",
+        }
+        return _JobRecord(
+            job_id=job_id,
+            created_at=created_at,
+            updates=updates,
+            counts={"00": 590, "11": 434},
+            results_metadata=metadata,
+            terminal_state=self._types_pb.JOB_STATE_DONE,
+        )
 
     def SubmitJob(self, request, context: grpc.ServicerContext):
         rc = new_request_context(context)
@@ -108,8 +213,8 @@ class JobService:
         now = _ts_now()
 
         with self._lock:
-            updates = self._mk_default_updates(job_id)
-            self._jobs[job_id] = _JobRecord(job_id=job_id, created_at=now, updates=updates)
+                        record = self._build_job_record(request, job_id=job_id, created_at=now)
+            self._jobs[job_id] = record
 
         resp = self._job_pb.SubmitJobResponse(
             job_id=job_id,
@@ -212,7 +317,14 @@ class JobService:
             record = self._jobs.get(request.job_id)
             if record is None:
                 updates = self._mk_default_updates(request.job_id)
-                self._jobs[request.job_id] = _JobRecord(job_id=request.job_id, created_at=_ts_now(), updates=updates)
+                self._jobs[request.job_id] = _JobRecord(
+                    job_id=request.job_id,
+                    created_at=_ts_now(),
+                    updates=updates,
+                    counts={"00": 512, "11": 512},
+                    results_metadata={"stub": "true"},
+                    terminal_state=self._types_pb.JOB_STATE_DONE,
+                )
                 selected_updates = updates
             else:
                 selected_updates = list(record.updates)
@@ -232,13 +344,25 @@ class JobService:
         if violations:
             abort_invalid_argument(context, "validation failed", violations)
 
-        resp = self._job_pb.GetJobResultsResponse(
-            job_id=request.job_id,
-            state=self._types_pb.JOB_STATE_DONE,
-            counts={"00": 512, "11": 512},
-            metadata={"stub": "true"},
-            completed_at=_ts_now(),
-        )
+        with self._lock:
+            record = self._jobs.get(request.job_id)
+
+        if record is None:
+            resp = self._job_pb.GetJobResultsResponse(
+                job_id=request.job_id,
+                state=self._types_pb.JOB_STATE_DONE,
+                counts={"00": 512, "11": 512},
+                metadata={"stub": "true"},
+                completed_at=_ts_now(),
+            )
+        else:
+            resp = self._job_pb.GetJobResultsResponse(
+                job_id=request.job_id,
+                state=record.terminal_state,
+                counts=record.counts,
+                metadata=record.results_metadata,
+                completed_at=_ts_now(),
+            )
 
         log_request_end("JobService.GetJobResults", rc)
         return resp
