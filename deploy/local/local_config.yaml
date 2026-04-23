@@ -1,0 +1,17 @@
+profile: local
+
+services:
+  system_api:
+    grpc: 0.0.0.0:50051
+    metrics: 0.0.0.0:9090
+
+  eigen_kernel:
+    grpc: 0.0.0.0:50052
+
+  eigen_compiler:
+    grpc: 0.0.0.0:50071
+    metrics: 0.0.0.0:9093
+
+  driver_manager:
+    grpc: 0.0.0.0:50061
+    metrics: 0.0.0.0:9092

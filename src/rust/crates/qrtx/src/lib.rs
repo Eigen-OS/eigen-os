@@ -5,7 +5,8 @@
 
 #![forbid(unsafe_code)]
 
-/// Returns a stable placeholder value.
+pub mod state_machine;
+
 pub fn hello_qrtx() -> &'static str {
     "qrtx"
 }

@@ -8,6 +8,10 @@
 #![forbid(unsafe_code)]
 
 /// Returns a stable placeholder value.
-pub fn hello_observability() -> &'static str {
-    "observability"
+pub fn log_startup(service: &str) {
+    tracing::info!(
+        service = service,
+        pid = std::process::id(),
+        "service starting"
+    );
 }

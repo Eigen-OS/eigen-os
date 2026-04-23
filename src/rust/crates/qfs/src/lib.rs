@@ -11,5 +11,10 @@ mod local_circuit_fs;
 
 pub use local_circuit_fs::{
     CircuitFsError, CircuitFsLocal, CompiledArtifacts, CompiledMetadata, ErrorDetails,
-    ResultsBundle, SourceBundle, SourceMetadata,
+    ResultsBundle, SourceBundle, SourceMetadata, DEFAULT_CIRCUIT_FS_ROOT,
 };
+
+/// Returns a stable placeholder value.
+pub fn hello_qrtx() -> &'static str {
+    "qrtx"
+}

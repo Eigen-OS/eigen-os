@@ -1,0 +1,59 @@
+services:
+  system-api:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.api
+    container_name: eigen-system-api
+    environment:
+      SYSTEM_API_GRPC_BIND: 0.0.0.0:50051
+      SYSTEM_API_METRICS_PORT: 9090
+      SYSTEM_API_AUTH_MODE: allow_all
+      EIGEN_KERNEL_ENDPOINT: eigen-kernel:50052
+      EIGEN_COMPILER_ENDPOINT: eigen-compiler:50071
+      DRIVER_MANAGER_ENDPOINT: driver-manager:50061
+    ports:
+      - "50051:50051"
+      - "9090:9090"
+    depends_on:
+      - eigen-kernel
+      - eigen-compiler
+      - driver-manager
+    restart: unless-stopped
+
+  eigen-kernel:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.kernel
+    container_name: eigen-kernel
+    environment:
+      EIGEN_KERNEL_ADDR: 0.0.0.0:50052
+      RUST_LOG: info
+    ports:
+      - "50052:50052"
+    restart: unless-stopped
+
+  eigen-compiler:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.compiler
+    container_name: eigen-compiler
+    environment:
+      EIGEN_COMPILER_GRPC_BIND: 0.0.0.0:50071
+      EIGEN_COMPILER_METRICS_PORT: 9093
+    ports:
+      - "50071:50071"
+      - "9093:9093"
+    restart: unless-stopped
+
+  driver-manager:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.driver-manager
+    container_name: eigen-driver-manager
+    environment:
+      DRIVER_MANAGER_GRPC_BIND: 0.0.0.0:50061
+      DRIVER_MANAGER_METRICS_PORT: 9092
+    ports:
+      - "50061:50061"
+      - "9092:9092"
+    restart: unless-stopped

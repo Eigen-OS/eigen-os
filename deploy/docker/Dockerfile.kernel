@@ -1,0 +1,19 @@
+FROM rust:1.86-slim AS builder
+WORKDIR /build
+
+COPY src/rust /build/src/rust
+COPY proto /build/proto
+
+WORKDIR /build/src/rust
+RUN cargo build --release -p eigen-kernel
+
+FROM debian:bookworm-slim
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /build/src/rust/target/release/eigen-kernel /usr/local/bin/eigen-kernel
+
+EXPOSE 50052
+
+CMD ["eigen-kernel"]

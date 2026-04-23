@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::fmt;
 
 use serde_json::Value;
 use serde_json::json;
@@ -12,7 +13,7 @@ use tracing::Instrument;
 use crate::job_store::{JobRecord, JobStore};
 use crate::proto::compilation_service_client::CompilationServiceClient;
 use crate::proto::driver_manager_service_client::DriverManagerServiceClient;
-use crate::proto::kernel_gateway_server::{KernelGateway, KernelGatewayServer};
+use crate::proto::kernel_gateway_service_server::{KernelGatewayService, KernelGatewayServiceServer};
 use crate::proto::{
     CalibrateDeviceRequest, CalibrateDeviceResponse, CancelJobRequest, CancelJobResponse,
     EnqueueJobRequest, EnqueueJobResponse, GetJobResultsRequest, GetJobResultsResponse,
@@ -38,7 +39,7 @@ pub async fn serve(addr: SocketAddr) -> Result<(), Box<dyn std::error::Error>> {
 
     tracing::info!(%addr, "kernel gRPC server starting");
     tonic::transport::Server::builder()
-        .add_service(KernelGatewayServer::new(svc))
+        .add_service(KernelGatewayServiceServer::new(svc))
         .serve(addr)
         .await?;
     Ok(())
@@ -57,6 +58,14 @@ struct PipelineDeps {
     default_device_id: String,
     qfs: CircuitFsLocal,
 }
+
+impl fmt::Display for PipelineError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}: {} ({})", self.code, self.summary, self.details)
+    }
+}
+
+impl std::error::Error for PipelineError {}
 
 impl PipelineDeps {
     fn from_env() -> Self {
@@ -127,39 +136,48 @@ fn parse_trace_id(traceparent: Option<&str>) -> Option<String> {
 }
 
 #[tonic::async_trait]
-impl KernelGateway for KernelGatewaySvc {
+impl KernelGatewayService for KernelGatewaySvc {
     async fn enqueue_job(
-        &self,
-        request: Request<EnqueueJobRequest>,
-    ) -> Result<Response<EnqueueJobResponse>, Status> {
-        let trace_ctx = TraceContext::from_request_md(request.metadata());
-        if req.name.trim().is_empty() {
-            return Err(Status::invalid_argument("name is required"));
-        }
+    &self,
+    request: Request<EnqueueJobRequest>,
+) -> Result<Response<EnqueueJobResponse>, Status> {
+    let trace_ctx = TraceContext::from_request_md(request.metadata());
+    let req = request.into_inner();
 
-        let record = self.store.create_job(req.name);
-        let job_id = record.job_id.clone();
-
-        let store = self.store.clone_handle();
-        let deps = self.deps.clone();
-        tokio::spawn(async move {
-            let span = tracing::info_span!("job_pipeline", job_id = %job_id);
-            async move {
-                if let Err(err) = run_pipeline(store.clone_handle(), deps, &job_id, req, trace_ctx).await {
-                    tracing::error!(job_id = %job_id, error = %err, "job pipeline failed");
-                    fail_job(&store, &job_id, err).await;
-                }
-            }
-            .instrument(span)
-            .await;
-        });
-
-        Ok(Response::new(EnqueueJobResponse {
-            job_id,
-            state: TaskState::Pending as i32,
-            created_at: Some(ts_now()),
-        }))
+    if req.name.trim().is_empty() {
+        return Err(Status::invalid_argument("name is required"));
     }
+
+    let record = self.store.create_job(req.name.clone());
+    let job_id = record.job_id.clone();
+    let job_id_for_task = job_id.clone();
+
+    let store = self.store.clone_handle();
+    let deps = self.deps.clone();
+    tokio::spawn(async move {
+    let span = tracing::info_span!("job_pipeline", job_id = %job_id_for_task);
+    async move {
+        if let Err(err) = run_pipeline(
+            store.clone_handle(),
+            deps,
+            &job_id_for_task,
+            req,
+            trace_ctx,
+        ).await {
+            tracing::error!(job_id = %job_id_for_task, error = %err, "job pipeline failed");
+            fail_job(&store, &job_id_for_task, err).await;
+        }
+    }
+    .instrument(span)
+    .await;
+});
+
+    Ok(Response::new(EnqueueJobResponse {
+        job_id,
+        state: TaskState::Pending as i32,
+        created_at: Some(ts_now()),
+    }))
+}
 
     async fn get_job_status(
         &self,
