@@ -1,0 +1,13 @@
+apiVersion: eigen.os/v0.1
+kind: QuantumJob
+unknownRoot: true
+metadata:
+  name: qaoa-maxcut
+  ignored: yes
+spec:
+  program: |
+    @hybrid_program
+    def main():
+      return 3
+  target: ibmq:quito
+  extra_in_spec: 123

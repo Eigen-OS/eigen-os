@@ -3,6 +3,8 @@
 //! This binary will evolve into the primary user interface for Phase 0:
 //! `submit`, `status`, `result`, `compile`, `visualize`.
 
+mod jobspec;
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
