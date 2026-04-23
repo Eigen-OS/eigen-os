@@ -19,6 +19,18 @@ SYSTEM_API_GRPC_BIND=0.0.0.0:50051 system-api
 The server performs basic required-field validation and returns structured validation
 errors using `google.rpc.BadRequest` field violations.
 
+## MVP security/isolation baseline (Issue #46)
+
+System API exposes an explicit auth mode:
+
+- `SYSTEM_API_AUTH_MODE=allow_all` (default, local/dev MVP)
+- `SYSTEM_API_AUTH_MODE=static_token` (requires `Authorization: Bearer <token>`)
+- `SYSTEM_API_AUTH_TOKEN=...` (used only in `static_token` mode)
+
+Validation hardening knobs:
+
+- `SYSTEM_API_MAX_PROGRAM_SOURCE_BYTES` (default: `262144`)
+- `SYSTEM_API_MAX_JOBSPEC_YAML_BYTES` (default: `65536`, applies to `metadata[jobspec_yaml]`)
 
 ***System API Server** is the primary interface layer for Eigen OS, providing unified access to quantum computing resources through a high-performance gRPC interface and a compatible REST adapter.
 

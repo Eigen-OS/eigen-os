@@ -71,3 +71,38 @@ def test_compile_job_requires_job_id(grpc_addr: str) -> None:
     assert e.value.code() == grpc.StatusCode.INVALID_ARGUMENT
     bad = _extract_bad_request(e.value)
     assert {v.field for v in bad.field_violations} == {"job_id"}
+
+
+def test_compile_circuit_rejects_forbidden_import(grpc_addr: str) -> None:
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = comp_pb_grpc.CompilationServiceStub(channel)
+
+    with pytest.raises(grpc.RpcError) as e:
+        stub.CompileCircuit(
+            comp_pb.CompileCircuitRequest(
+                language="eigen-lang",
+                source=b"import os\nfrom eigen_lang import *\n",
+            )
+        )
+
+    assert e.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+    bad = _extract_bad_request(e.value)
+    assert {v.field for v in bad.field_violations} == {"source"}
+
+
+def test_compile_circuit_enforces_source_size_limit(
+    grpc_addr: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("EIGEN_COMPILER_MAX_SOURCE_BYTES", "12")
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = comp_pb_grpc.CompilationServiceStub(channel)
+
+    with pytest.raises(grpc.RpcError) as e:
+        stub.CompileCircuit(
+            comp_pb.CompileCircuitRequest(language="eigen-lang", source=b"from eigen_lang import *")
+        )
+
+    assert e.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+    bad = _extract_bad_request(e.value)
+    assert {v.field for v in bad.field_violations} == {"source"}

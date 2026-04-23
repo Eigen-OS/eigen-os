@@ -44,5 +44,10 @@ No arbitrary attribute chains; allow only `eigen_lang.<symbol>` or imported symb
 
 If exceeded → return a clear validation error (choose status code consistently).
 
+Current MVP implementation knobs:
+- `EIGEN_COMPILER_MAX_SOURCE_BYTES` (default: `262144`)
+- `EIGEN_COMPILER_MAX_AST_NODES` (default: `50000`)
+- `EIGEN_COMPILER_MAX_AST_DEPTH` (default: `200`)
+
 ## 5) Validation error structure
 Use BadRequest.FieldViolation in error details: field + description. 

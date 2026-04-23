@@ -2,11 +2,20 @@
 
 from __future__ import annotations
 
+import os
 from typing import List
 
 from .errors import FieldViolation
 
 _SUPPORTED_LANGUAGES = {"eigen-lang"}
+
+def _max_source_bytes() -> int:
+    raw = os.getenv("EIGEN_COMPILER_MAX_SOURCE_BYTES", "262144")
+    try:
+        value = int(raw)
+    except ValueError:
+        return 262_144
+    return max(1, value)
 
 
 def _validate_input_oneof(req, *, source_field: str, source_ref_field: str) -> list[FieldViolation]:
@@ -28,6 +37,7 @@ def _validate_input_oneof(req, *, source_field: str, source_ref_field: str) -> l
 
 def validate_compile_circuit(req) -> List[FieldViolation]:
     violations: list[FieldViolation] = []
+    source_limit = _max_source_bytes()
 
     if not req.language:
         violations.append(FieldViolation(field="language", description="field is required"))
@@ -37,6 +47,13 @@ def validate_compile_circuit(req) -> List[FieldViolation]:
         )
 
     violations.extend(_validate_input_oneof(req, source_field="source", source_ref_field="source_ref"))
+    if req.WhichOneof("input") == "source" and len(req.source) > source_limit:
+        violations.append(
+            FieldViolation(
+                field="source",
+                description=f"source exceeds max allowed size ({source_limit} bytes)",
+            )
+        )
     return violations
 
 

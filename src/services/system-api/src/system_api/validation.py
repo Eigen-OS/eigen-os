@@ -14,10 +14,14 @@ from __future__ import annotations
 from typing import List
 
 from .errors import FieldViolation, positive_int, required_string
+from .security import load_security_config
+
+_JOBSPEC_YAML_KEYS = {"jobspec_yaml", "job_yaml", "job.spec.yaml"}
 
 
 def validate_submit_job(req) -> List[FieldViolation]:
     violations: List[FieldViolation] = []
+    cfg = load_security_config()
 
     violations.extend(required_string(req.name, "name"))
     violations.extend(required_string(req.target, "target"))
@@ -33,13 +37,47 @@ def validate_submit_job(req) -> List[FieldViolation]:
                 violations.append(
                     FieldViolation(field="eigen_lang.source", description="source must be non-empty")
                 )
+            elif len(req.eigen_lang.source) > cfg.max_program_source_bytes:
+                violations.append(
+                    FieldViolation(
+                        field="eigen_lang.source",
+                        description=(
+                            "source exceeds max allowed size "
+                            f"({cfg.max_program_source_bytes} bytes)"
+                        ),
+                    )
+                )
         elif program == "qasm":
             if not req.qasm.source:
                 violations.append(FieldViolation(field="qasm.source", description="source must be non-empty"))
+            elif len(req.qasm.source) > cfg.max_program_source_bytes:
+                violations.append(
+                    FieldViolation(
+                        field="qasm.source",
+                        description=(
+                            "source exceeds max allowed size "
+                            f"({cfg.max_program_source_bytes} bytes)"
+                        ),
+                    )
+                )
             violations.extend(required_string(req.qasm.version, "qasm.version"))
         elif program == "aqo_ref":
             violations.extend(required_string(req.aqo_ref.qfs_ref, "aqo_ref.qfs_ref"))
 
+    for key in _JOBSPEC_YAML_KEYS:
+        yaml_payload = req.metadata.get(key, "")
+        if len(yaml_payload.encode("utf-8")) > cfg.max_jobspec_yaml_bytes:
+            violations.append(
+                FieldViolation(
+                    field=f"metadata[{key}]",
+                    description=(
+                        "jobspec yaml exceeds max allowed size "
+                        f"({cfg.max_jobspec_yaml_bytes} bytes)"
+                    ),
+                )
+            )
+            break
+        
     return violations
 
 

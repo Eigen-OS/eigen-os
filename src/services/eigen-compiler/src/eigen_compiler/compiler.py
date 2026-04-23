@@ -5,9 +5,14 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import os
 from dataclasses import dataclass
 
 from .errors import FieldViolation
+
+_ALLOWED_IMPORT_PREFIXES = ("eigen_lang",)
+_FORBIDDEN_MODULE_ROOTS = {"os", "sys", "subprocess", "socket", "ctypes", "importlib", "requests"}
+_FORBIDDEN_CALLS = {"exec", "eval", "compile", "open", "__import__"}
 
 
 @dataclass(frozen=True)
@@ -18,6 +23,15 @@ class CompilationResult:
 @dataclass(frozen=True)
 class CompilerValidationError(Exception):
     violations: tuple[FieldViolation, ...]
+
+
+def _compiler_limit(name: str, default: int) -> int:
+    raw = os.getenv(name, str(default))
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return max(1, value)
 
 
 def _parse_python_source(source: bytes) -> ast.AST | None:
@@ -41,6 +55,33 @@ def _reject_dynamic_control_flow(tree: ast.AST) -> None:
             )
         )
 
+def _reject_forbidden_imports(tree: ast.AST) -> None:
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                module_root = alias.name.split(".", 1)[0]
+                if module_root in _FORBIDDEN_MODULE_ROOTS or module_root not in _ALLOWED_IMPORT_PREFIXES:
+                    raise CompilerValidationError(
+                        violations=(
+                            FieldViolation(
+                                field="source",
+                                description=f"import '{alias.name}' is not allowed in Eigen-Lang MVP",
+                            ),
+                        )
+                    )
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            module_root = module.split(".", 1)[0]
+            if module_root not in _ALLOWED_IMPORT_PREFIXES:
+                raise CompilerValidationError(
+                    violations=(
+                        FieldViolation(
+                            field="source",
+                            description=f"import from '{module}' is not allowed in Eigen-Lang MVP",
+                        ),
+                    )
+                )
+
 
 def _call_name(node: ast.AST) -> str | None:
     if isinstance(node, ast.Name):
@@ -48,6 +89,54 @@ def _call_name(node: ast.AST) -> str | None:
     if isinstance(node, ast.Attribute):
         return node.attr
     return None
+
+def _reject_forbidden_calls(tree: ast.AST) -> None:
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        name = _call_name(node.func)
+        if name in _FORBIDDEN_CALLS:
+            raise CompilerValidationError(
+                violations=(
+                    FieldViolation(
+                        field="source",
+                        description=f"call '{name}' is not allowed in Eigen-Lang MVP",
+                    ),
+                )
+            )
+
+
+def _enforce_resource_limits(tree: ast.AST) -> None:
+    max_ast_nodes = _compiler_limit("EIGEN_COMPILER_MAX_AST_NODES", 50_000)
+    max_nesting_depth = _compiler_limit("EIGEN_COMPILER_MAX_AST_DEPTH", 200)
+
+    node_count = 0
+    max_depth_seen = 0
+    stack: list[tuple[ast.AST, int]] = [(tree, 1)]
+    while stack:
+        node, depth = stack.pop()
+        node_count += 1
+        if node_count > max_ast_nodes:
+            raise CompilerValidationError(
+                violations=(
+                    FieldViolation(
+                        field="source",
+                        description=f"AST node limit exceeded ({max_ast_nodes})",
+                    ),
+                )
+            )
+        max_depth_seen = max(max_depth_seen, depth)
+        if max_depth_seen > max_nesting_depth:
+            raise CompilerValidationError(
+                violations=(
+                    FieldViolation(
+                        field="source",
+                        description=f"AST depth limit exceeded ({max_nesting_depth})",
+                    ),
+                )
+            )
+        for child in ast.iter_child_nodes(node):
+            stack.append((child, depth + 1))
 
 
 def _collect_params(tree: ast.AST) -> dict[str, str]:
@@ -107,6 +196,9 @@ def compile_eigen_lang(source: bytes, *, source_ref: str | None = None) -> Compi
     tree = _parse_python_source(source)
 
     if tree is not None:
+        _enforce_resource_limits(tree)
+        _reject_forbidden_imports(tree)
+        _reject_forbidden_calls(tree)
         _reject_dynamic_control_flow(tree)
         params = _collect_params(tree)
         operations, qubits = _collect_operations(tree, params)

@@ -21,6 +21,7 @@ from google.protobuf.timestamp_pb2 import Timestamp
 
 from .errors import abort_invalid_argument
 from .observability import log_request_end, log_request_start, new_request_context
+from .security import enforce_authn
 from .validation import (
     validate_device_id,
     validate_job_id,
@@ -202,6 +203,7 @@ class JobService:
         )
 
     def SubmitJob(self, request, context: grpc.ServicerContext):
+        enforce_authn(context, method_name="JobService.SubmitJob")
         rc = new_request_context(context)
         log_request_start("JobService.SubmitJob", rc)
 
@@ -234,6 +236,7 @@ class JobService:
         return resp
 
     def GetJobStatus(self, request, context: grpc.ServicerContext):
+        enforce_authn(context, method_name="JobService.GetJobStatus")
         rc = new_request_context(context)
         rc.job_id = request.job_id
         log_request_start("JobService.GetJobStatus", rc)
@@ -276,6 +279,7 @@ class JobService:
         return resp
 
     def CancelJob(self, request, context: grpc.ServicerContext):
+        enforce_authn(context, method_name="JobService.CancelJob")
         rc = new_request_context(context)
         rc.job_id = request.job_id
         log_request_start("JobService.CancelJob", rc)
@@ -308,6 +312,7 @@ class JobService:
         return resp
 
     def StreamJobUpdates(self, request, context: grpc.ServicerContext):
+        enforce_authn(context, method_name="JobService.StreamJobUpdates")
         rc = new_request_context(context)
         rc.job_id = request.job_id
         log_request_start("JobService.StreamJobUpdates", rc)
@@ -341,6 +346,7 @@ class JobService:
         log_request_end("JobService.StreamJobUpdates", rc)
 
     def GetJobResults(self, request, context: grpc.ServicerContext):
+        enforce_authn(context, method_name="JobService.GetJobResults")
         rc = new_request_context(context)
         rc.job_id = request.job_id
         log_request_start("JobService.GetJobResults", rc)
@@ -381,6 +387,7 @@ class DeviceService:
         self._types_pb = types_pb
 
     def ListDevices(self, request, context: grpc.ServicerContext):
+        enforce_authn(context, method_name="DeviceService.ListDevices")
         rc = new_request_context(context)
         log_request_start("DeviceService.ListDevices", rc)
 
@@ -403,6 +410,7 @@ class DeviceService:
         return resp
 
     def GetDeviceDetails(self, request, context: grpc.ServicerContext):
+        enforce_authn(context, method_name="DeviceService.GetDeviceDetails")
         rc = new_request_context(context)
         log_request_start("DeviceService.GetDeviceDetails", rc)
 
@@ -423,6 +431,7 @@ class DeviceService:
         return resp
 
     def GetDeviceStatus(self, request, context: grpc.ServicerContext):
+        enforce_authn(context, method_name="DeviceService.GetDeviceStatus")
         rc = new_request_context(context)
         log_request_start("DeviceService.GetDeviceStatus", rc)
 
@@ -442,6 +451,7 @@ class DeviceService:
         return resp
 
     def ReserveDevice(self, request, context: grpc.ServicerContext):
+        enforce_authn(context, method_name="DeviceService.ReserveDevice")
         rc = new_request_context(context)
         log_request_start("DeviceService.ReserveDevice", rc)
 
