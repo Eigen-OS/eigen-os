@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-rust:
+    name: Rust workspace build + tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/rust
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src/rust
+
+      - name: Build workspace
+        run: cargo build --workspace --locked
+
+      - name: Run Rust unit tests
+        run: cargo test --workspace --locked
+
+  python-components:
+    name: Python components install + unit tests
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        component:
+          - name: system-api
+            path: src/services/system-api
+            install_cmd: pip install -e .[dev]
+            test_cmd: pytest
+          - name: driver-manager
+            path: src/services/driver-manager
+            install_cmd: pip install -e .[dev]
+            test_cmd: pytest
+          - name: eigen-compiler
+            path: src/services/eigen-compiler
+            install_cmd: pip install -e .
+            test_cmd: python -m eigen_compiler.main
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install package
+        working-directory: ${{ matrix.component.path }}
+        run: ${{ matrix.component.install_cmd }}
+
+      - name: Run component unit tests
+        working-directory: ${{ matrix.component.path }}
+        run: ${{ matrix.component.test_cmd }}
+
+  proto-contract-checks:
+    name: Protobuf lint + breaking checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Buf
+        uses: bufbuild/buf-setup-action@v1
+
+      - name: Buf lint
+        working-directory: proto
+        run: buf lint
+
+      - name: Buf breaking (against main)
+        working-directory: proto
+        run: buf breaking --against '../.git#branch=main'
