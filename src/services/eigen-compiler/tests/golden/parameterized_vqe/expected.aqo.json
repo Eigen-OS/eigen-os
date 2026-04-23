@@ -1,0 +1,1 @@
+{"expectation":{"kind":"ExpectationValue"},"hybrid_plan_marker":{"expanded_by":"kernel","kind":"minimize"},"operations":[{"op":"RY","params":{"theta":"theta"},"q":[0]},{"c":[0],"op":"MEASURE","q":[0]}],"parameters":[{"name":"theta"}],"qubits":1,"version":"0.1"}

@@ -1,6 +1,6 @@
-# Minimal Eigen-Lang source used for conformance golden checks.
-circuit main {
-  qubit q0
-  ry(q0, theta=1.570796)
-  measure(q0)
-}
+from eigen_lang import hybrid_program
+
+
+@hybrid_program(target="sim", shots=1000)
+def main():
+    ry(0, theta=1.570796)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import grpc
 
-from .compiler import compile_eigen_lang
+from .compiler import CompilerValidationError, compile_eigen_lang
 from .errors import abort_invalid_argument
 from .validation import validate_compile_circuit, validate_compile_job
 
@@ -33,7 +33,10 @@ class CompilationService:
 
         source = request.source if request.WhichOneof("input") == "source" else b""
         source_ref = request.source_ref if request.WhichOneof("input") == "source_ref" else None
-        return self._compile_response(source=source, source_ref=source_ref)
+        try:
+            return self._compile_response(source=source, source_ref=source_ref)
+        except CompilerValidationError as exc:
+            abort_invalid_argument(context, message="validation failed", violations=exc.violations)
 
     def CompileJob(self, request, context: grpc.ServicerContext):
         violations = validate_compile_job(request)
@@ -42,7 +45,10 @@ class CompilationService:
 
         source = request.source if request.WhichOneof("input") == "source" else b""
         source_ref = request.source_ref if request.WhichOneof("input") == "source_ref" else None
-        compiled = self._compile_response(source=source, source_ref=source_ref)
+        try:
+            compiled = self._compile_response(source=source, source_ref=source_ref)
+        except CompilerValidationError as exc:
+            abort_invalid_argument(context, message="validation failed", violations=exc.violations)
 
         return self._comp_pb.CompileJobResponse(
             job_id=request.job_id,
