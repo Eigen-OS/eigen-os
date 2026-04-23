@@ -55,10 +55,13 @@ Without a standardized artifact layout:
 ├── input/
 │   ├── job.yaml                    # Resolved JobSpec (without inline program)
 │   └── program.eigen.py            # Original Eigen‑Lang source
+│   └── metadata.json               # Source artifact hashes + schema version
 ├── compiled/
 │   ├── circuit.aqo.json           # Canonical AQO JSON (required)
 │   ├── circuit.aqo.pb             # Optional: AQO Protobuf binary
 │   └── circuit.qasm               # Optional: QASM3 representation
+│   ├── circuit.qasm               # Optional: QASM3 representation
+│   └── metadata.json              # Compiled artifact hashes + compiler version
 ├── results/
 │   ├── counts.json                # Normalized measurement counts
 │   ├── metadata.json              # Execution metadata
@@ -120,7 +123,32 @@ Canonical AQO v0.1 JSON representation (RFC 0005). This is the primary compiled 
 
 OpenQASM 3.0 representation for debugging and interoperability.
 
-### 5. `results/counts.json`
+### 5. `input/metadata.json`
+
+Source artifact metadata generated at submit stage:
+```json
+{
+  "version": "0.1",
+  "schema_version": "source_artifacts.v1",
+  "job_yaml_hash": "a1b2c3...",
+  "program_hash": "d4e5f6..."
+}
+```
+
+### 6. `compiled/metadata.json`
+
+Compilation artifact metadata generated at compile stage:
+```json
+{
+  "version": "0.1",
+  "schema_version": "compiled_artifacts.v1",
+  "compiler_version": "eigen-lang@0.1.0",
+  "aqo_hash": "112233...",
+  "qasm_hash": "445566..."
+}
+```
+
+### 7. `results/counts.json`
 
 Normalized measurement counts in standard format:
 ```json
@@ -141,7 +169,7 @@ Normalized measurement counts in standard format:
 
 **Bitstring ordering**: Most‑significant qubit first (q[0] is leftmost bit).
 
-### 6. `results/metadata.json`
+### 8. `results/metadata.json`
 
 Execution metadata:
 ```json
@@ -163,7 +191,7 @@ Execution metadata:
 }
 ```
 
-### 7. meta.json
+### 9. meta.json
 
 Job manifest and integrity information:
 ```json
@@ -200,7 +228,7 @@ Job manifest and integrity information:
 ### 1. Kernel Pipeline Stages
 ```text
 Validation   → Reads: input/job.yaml, input/program.eigen.py
-Compilation  → Writes: compiled/circuit.aqo.json, compiled/circuit.qasm
+Compilation  → Writes: compiled/circuit.aqo.json, compiled/circuit.qasm, compiled/metadata.json
 Execution    → Reads: compiled/circuit.aqo.json
               Writes: results/counts.json, results/metadata.json
 Completion   → Writes: meta.json, logs/*.log
