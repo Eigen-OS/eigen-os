@@ -32,10 +32,10 @@
 - [ ] Distinction between `INVALID_ARGUMENT` vs `FAILED_PRECONDITION` is documented (important for retry logic).
 
 ### A2. StreamJobUpdates — clear semantics
-- [ ] `JobUpdate` has a **monotonic** `event_seq` (or update_seq) per `job_id`.
-- [ ] Order is defined: the client may receive events with gaps in `event_seq` on reconnect, but **can request “from which seq to continue”**.
+- [x] `JobUpdate` has a **monotonic** `event_seq` (or update_seq) per `job_id`.
+- [x] Order is defined: the client may receive events with gaps in `event_seq` on reconnect, but **can request “from which seq to continue”**.
 - [ ] Heartbeat/keepalive behavior in RUNNING is described.
-- [ ] Terminal events: DONE/ERROR/CANCELLED/TIMEOUT — **final** and after that the stream is closed/or remains open by rule (to be fixed!).
+- [x] Terminal events: DONE/ERROR/CANCELLED/TIMEOUT are **final**; after terminal event, stream is closed.
 
 ### A3. ReserveDevice — meaning for MVP (to avoid “magic”)
 - [ ] Explicitly stated: ReserveDevice = **reserving a slot/quota in the Kernel scheduler**, not “exclusive hardware lock”.
