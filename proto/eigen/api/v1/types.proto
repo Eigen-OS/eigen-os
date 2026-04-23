@@ -11,14 +11,14 @@ import "google/protobuf/timestamp.proto";
 
 enum JobState {
   JOB_STATE_UNSPECIFIED = 0;
-  PENDING = 1;
-  COMPILING = 2;
-  QUEUED = 3;
-  RUNNING = 4;
-  DONE = 5;
-  ERROR = 6;
-  CANCELLED = 7;
-  TIMEOUT = 8;
+  JOB_STATE_PENDING = 1;
+  JOB_STATE_COMPILING = 2;
+  JOB_STATE_QUEUED = 3;
+  JOB_STATE_RUNNING = 4;
+  JOB_STATE_DONE = 5;
+  JOB_STATE_ERROR = 6;
+  JOB_STATE_CANCELLED = 7;
+  JOB_STATE_TIMEOUT = 8;
 }
 
 message JobStatus {
@@ -78,11 +78,11 @@ message AqoRef {
 
 enum DeviceStatus {
   DEVICE_STATUS_UNSPECIFIED = 0;
-  ONLINE = 1;
-  OFFLINE = 2;
-  CALIBRATING = 3;
-  MAINTENANCE = 4;
-  ERROR_STATUS = 5;
+  DEVICE_STATUS_ONLINE = 1;
+  DEVICE_STATUS_OFFLINE = 2;
+  DEVICE_STATUS_CALIBRATING = 3;
+  DEVICE_STATUS_MAINTENANCE = 4;
+  DEVICE_STATUS_ERROR_STATUS = 5;
 }
 
 message DeviceInfo {
