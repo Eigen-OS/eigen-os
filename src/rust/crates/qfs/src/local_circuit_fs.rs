@@ -4,6 +4,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use tempfile::NamedTempFile;
+use serde::{Serialize, Deserialize};
 
 /// Default filesystem root for CircuitFS (QFS-L3).
 ///

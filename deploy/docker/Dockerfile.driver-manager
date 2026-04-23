@@ -1,0 +1,16 @@
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+COPY src/services/driver-manager /app/src/services/driver-manager
+COPY proto /app/proto
+
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -e /app/src/services/driver-manager
+
+EXPOSE 50061 9092
+
+CMD ["driver-manager"]

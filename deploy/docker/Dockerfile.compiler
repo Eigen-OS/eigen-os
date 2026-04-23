@@ -1,0 +1,18 @@
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+COPY src/services/eigen-compiler /app/src/services/eigen-compiler
+COPY proto /app/proto
+
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir \
+      grpcio>=1.76 grpcio-tools>=1.76 grpcio-status>=1.76 googleapis-common-protos>=1.72 protobuf>=6.33 \
+    && pip install --no-cache-dir -e /app/src/services/eigen-compiler
+
+EXPOSE 50071 9093
+
+CMD ["python", "-m", "eigen_compiler.main"]
