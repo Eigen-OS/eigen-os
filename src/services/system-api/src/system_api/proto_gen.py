@@ -34,9 +34,12 @@ class ProtoGenPaths:
 def _find_repo_root(start: Path) -> Path:
     """Walk upwards until we find a directory that looks like the repo root."""
     for p in [start, *start.parents]:
-        if (p / "proto").is_dir() and (p / "rfcs").is_dir():
+        if (p / "proto").is_dir() and (p / "src" / "services" / "system-api").is_dir():
             return p
-    raise RuntimeError("Could not locate repo root (expected to find proto/ and rfcs/)")
+    raise RuntimeError(
+        "Could not locate repo root (expected to find proto/ and src/services/system-api/)"
+    )
+
 
 
 def _grpc_tools_proto_include() -> Path:
