@@ -1,4 +1,7 @@
 use std::collections::BTreeMap;
+use std::fmt::{Display, Formatter};
+use std::fs;
+use std::path::{Path, PathBuf};
 
 pub const JOBSPEC_API_VERSION: &str = "eigen.os/v0.1";
 pub const JOBSPEC_KIND: &str = "QuantumJob";
@@ -15,6 +18,21 @@ pub struct JobSpecValidationError {
     pub violations: Vec<FieldViolation>,
 }
 
+impl Display for JobSpecValidationError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: ", self.code)?;
+        for (idx, v) in self.violations.iter().enumerate() {
+            if idx > 0 {
+                write!(f, "; ")?;
+            }
+            write!(f, "{} {}", v.field, v.description)?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for JobSpecValidationError {}
+
 impl JobSpecValidationError {
     fn new(violations: Vec<FieldViolation>) -> Self {
         Self {
@@ -23,6 +41,23 @@ impl JobSpecValidationError {
         }
     }
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SubmitBuildError {
+    Io(String),
+    Validation(JobSpecValidationError),
+}
+
+impl Display for SubmitBuildError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SubmitBuildError::Io(e) => write!(f, "{e}"),
+            SubmitBuildError::Validation(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+impl std::error::Error for SubmitBuildError {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JobSpec {
@@ -41,7 +76,9 @@ pub struct JobMetadata {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JobRuntimeSpec {
-    pub program: String,
+    pub program_inline: Option<String>,
+    pub program_path: Option<String>,
+    pub entrypoint: String,
     pub target: String,
     pub priority: i32,
     pub compiler_options: BTreeMap<String, String>,
@@ -62,14 +99,37 @@ pub struct SubmitJobRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProgramSource {
-    EigenLangSource { source: String, entrypoint: String },
+    EigenLangSource {
+        source: String,
+        entrypoint: String,
+        sha256: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubmitJobResponse {
+    pub job_id: String,
+}
+
+pub fn build_submit_request_from_job_file(
+    path: &Path,
+) -> Result<SubmitJobRequest, SubmitBuildError> {
+    let yaml = fs::read_to_string(path)
+        .map_err(|e| SubmitBuildError::Io(format!("failed to read {}: {e}", path.display())))?;
+    let spec = parse_and_validate_jobspec(&yaml).map_err(SubmitBuildError::Validation)?;
+
+    let basedir = path.parent().unwrap_or_else(|| Path::new("."));
+    map_to_submit_job_request_with_packaging(&spec, basedir).map_err(SubmitBuildError::Validation)
 }
 
 pub fn parse_and_validate_jobspec(yaml: &str) -> Result<JobSpec, JobSpecValidationError> {
     let mut api_version = String::new();
     let mut kind = String::new();
     let mut name = String::new();
-    let mut program = String::new();
+
+    let mut program_inline = None;
+    let mut program_path = None;
+    let mut entrypoint = "main".to_string();
     let mut target = String::new();
     let mut priority: i32 = 50;
     let mut compiler_options = BTreeMap::new();
@@ -79,6 +139,7 @@ pub fn parse_and_validate_jobspec(yaml: &str) -> Result<JobSpec, JobSpecValidati
     let mut section = "";
     let mut subsection = "";
     let mut in_program_block = false;
+    let mut program_buf = String::new();
 
     for raw_line in yaml.lines() {
         let line = raw_line.trim_end();
@@ -90,26 +151,42 @@ pub fn parse_and_validate_jobspec(yaml: &str) -> Result<JobSpec, JobSpecValidati
 
         if in_program_block {
             if indent >= 4 {
-                program.push_str(raw_line.trim_start());
-                program.push('\n');
+                program_buf.push_str(raw_line.trim_start());
+                program_buf.push('\n');
                 continue;
             }
             in_program_block = false;
+            program_inline = Some(program_buf.trim_end().to_string());
         }
         let trimmed = line.trim_start();
 
         if indent == 0 {
             section = "";
             subsection = "";
-            if let Some(v) = value_for(trimmed, "apiVersion:") { api_version = v; continue; }
-            if let Some(v) = value_for(trimmed, "kind:") { kind = v; continue; }
-            if trimmed == "metadata:" { section = "metadata"; continue; }
-            if trimmed == "spec:" { section = "spec"; continue; }
+            if let Some(v) = value_for(trimmed, "apiVersion:") {
+                api_version = v;
+                continue;
+            }
+            if let Some(v) = value_for(trimmed, "kind:") {
+                kind = v;
+                continue;
+            }
+            if trimmed == "metadata:" {
+                section = "metadata";
+                continue;
+            }
+            if trimmed == "spec:" {
+                section = "spec";
+                continue;
+            }
             continue;
         }
 
         if section == "metadata" && indent == 2 {
-            if let Some(v) = value_for(trimmed, "name:") { name = v; continue; }
+            if let Some(v) = value_for(trimmed, "name:") {
+                name = v;
+                continue;
+            }
         }
 
         if section == "spec" && indent == 2 {
@@ -117,61 +194,119 @@ pub fn parse_and_validate_jobspec(yaml: &str) -> Result<JobSpec, JobSpecValidati
             if let Some(v) = value_for(trimmed, "program:") {
                 if v == "|" {
                     in_program_block = true;
+                    program_buf.clear();
                 } else {
-                    program = v;
+                    program_inline = Some(v);
                 }
                 continue;
             }
-            if let Some(v) = value_for(trimmed, "target:") { target = v; continue; }
-            if let Some(v) = value_for(trimmed, "priority:") {
-                if let Ok(parsed) = v.parse::<i32>() { priority = parsed; }
+            if let Some(v) = value_for(trimmed, "program_path:") {
+                program_path = Some(v);
                 continue;
             }
-            if trimmed == "compiler_options:" { subsection = "compiler_options"; continue; }
-            if trimmed == "metadata:" { subsection = "runtime_metadata"; continue; }
-            if trimmed == "dependencies:" { subsection = "dependencies"; continue; }
+            if let Some(v) = value_for(trimmed, "entrypoint:") {
+                entrypoint = v;
+                continue;
+            }
+            if let Some(v) = value_for(trimmed, "target:") {
+                target = v;
+                continue;
+            }
+            if let Some(v) = value_for(trimmed, "priority:") {
+                if let Ok(parsed) = v.parse::<i32>() {
+                    priority = parsed;
+                }
+                continue;
+            }
+            if trimmed == "compiler_options:" {
+                subsection = "compiler_options";
+                continue;
+            }
+            if trimmed == "metadata:" {
+                subsection = "runtime_metadata";
+                continue;
+            }
+            if trimmed == "dependencies:" {
+                subsection = "dependencies";
+                continue;
+            }
         }
 
         if section == "spec" && indent >= 4 {
             match subsection {
                 "compiler_options" => {
-                    if let Some((k, v)) = kv_pair(trimmed) { compiler_options.insert(k, v); }
+                    if let Some((k, v)) = kv_pair(trimmed) {
+                        compiler_options.insert(k, v);
+                    }
                 }
                 "runtime_metadata" => {
-                    if let Some((k, v)) = kv_pair(trimmed) { runtime_metadata.insert(k, v); }
+                    if let Some((k, v)) = kv_pair(trimmed) {
+                        runtime_metadata.insert(k, v);
+                    }
                 }
                 "dependencies" => {
-                    if let Some(dep) = trimmed.strip_prefix('-') { dependencies.push(strip_quotes(dep.trim())); }
+                    if let Some(dep) = trimmed.strip_prefix('-') {
+                        dependencies.push(strip_quotes(dep.trim()));
+                    }
                 }
                 _ => {}
             }
         }
     }
 
-    program = program.trim_end().to_string();
+    if in_program_block {
+        program_inline = Some(program_buf.trim_end().to_string());
+    }
 
     let mut violations = Vec::new();
     if api_version.is_empty() {
-        violations.push(FieldViolation { field: "apiVersion".to_string(), description: "field is required".to_string() });
+        violations.push(FieldViolation {
+            field: "apiVersion".to_string(),
+            description: "field is required".to_string(),
+        });
     } else if api_version != JOBSPEC_API_VERSION {
-        violations.push(FieldViolation { field: "apiVersion".to_string(), description: format!("must be '{JOBSPEC_API_VERSION}'") });
+        violations.push(FieldViolation {
+            field: "apiVersion".to_string(),
+            description: format!("must be '{JOBSPEC_API_VERSION}'"),
+        });
     }
     if kind.is_empty() {
-        violations.push(FieldViolation { field: "kind".to_string(), description: "field is required".to_string() });
+        violations.push(FieldViolation {
+            field: "kind".to_string(),
+            description: "field is required".to_string(),
+        });
     } else if kind != JOBSPEC_KIND {
-        violations.push(FieldViolation { field: "kind".to_string(), description: format!("must be '{JOBSPEC_KIND}'") });
+        violations.push(FieldViolation {
+            field: "kind".to_string(),
+            description: format!("must be '{JOBSPEC_KIND}'"),
+        });
     }
     if name.is_empty() {
-        violations.push(FieldViolation { field: "metadata.name".to_string(), description: "field is required".to_string() });
+        violations.push(FieldViolation {
+            field: "kind".to_string(),
+            description: "field is required".to_string(),
+        });
     }
     if program.is_empty() {
         violations.push(FieldViolation { field: "spec.program".to_string(), description: "field is required".to_string() });
     }
     if target.is_empty() {
-        violations.push(FieldViolation { field: "spec.target".to_string(), description: "field is required".to_string() });
+        violations.push(FieldViolation {
+            field: "spec.target".to_string(),
+            description: "field is required".to_string(),
+        });
+    }
+    if entrypoint.trim().is_empty() {
+        violations.push(FieldViolation {
+            field: "spec.entrypoint".to_string(),
+            description: "must not be empty".to_string(),
+        });
     }
     if !(0..=100).contains(&priority) {
-        violations.push(FieldViolation { field: "spec.priority".to_string(), description: "must be between 0 and 100".to_string() });
+        violations.push(FieldViolation {
+            field: "spec.priority".to_string(),
+            description: "must be between 0 and 100".to_string(),
+        });
     }
 
     if !violations.is_empty() {
@@ -181,9 +316,15 @@ pub fn parse_and_validate_jobspec(yaml: &str) -> Result<JobSpec, JobSpecValidati
     Ok(JobSpec {
         api_version,
         kind,
-        metadata: JobMetadata { name, labels: BTreeMap::new(), annotations: BTreeMap::new() },
+        metadata: JobMetadata {
+            name,
+            labels: BTreeMap::new(),
+            annotations: BTreeMap::new(),
+        },
         spec: JobRuntimeSpec {
-            program,
+            program_inline,
+            program_path,
+            entrypoint,
             target,
             priority,
             compiler_options,
@@ -191,6 +332,204 @@ pub fn parse_and_validate_jobspec(yaml: &str) -> Result<JobSpec, JobSpecValidati
             dependencies,
         },
     })
+}
+
+pub fn map_to_submit_job_request_with_packaging(
+    job: &JobSpec,
+    basedir: &Path,
+) -> Result<SubmitJobRequest, JobSpecValidationError> {
+    let mut violations = Vec::new();
+
+    if job
+        .spec
+        .program_inline
+        .as_ref()
+        .is_some_and(|s| !s.is_empty())
+    {
+        violations.push(FieldViolation {
+            field: "spec.program".to_string(),
+            description: "inline source is not allowed; use job.yaml + program.eigen.py packaging"
+                .to_string(),
+        });
+    }
+
+    let path = job
+        .spec
+        .program_path
+        .clone()
+        .unwrap_or_else(|| "program.eigen.py".to_string());
+    let program_path = resolve_program_path(basedir, &path);
+
+    if !program_path.exists() {
+        violations.push(FieldViolation {
+            field: "spec.program_path".to_string(),
+            description: format!("file not found: {}", program_path.display()),
+        });
+    }
+
+    if !violations.is_empty() {
+        return Err(JobSpecValidationError::new(violations));
+    }
+
+    let source = fs::read_to_string(&program_path).map_err(|e| {
+        JobSpecValidationError::new(vec![FieldViolation {
+            field: "spec.program_path".to_string(),
+            description: format!("failed reading {}: {e}", program_path.display()),
+        }])
+    })?;
+
+    validate_entrypoint(&source, &job.spec.entrypoint)?;
+
+    let sha256 = sha256_hex(source.as_bytes());
+
+    let mut metadata = job.spec.metadata.clone();
+    metadata.insert("source_sha256".to_string(), sha256.clone());
+
+    Ok(SubmitJobRequest {
+        name: job.metadata.name.clone(),
+        program: ProgramSource::EigenLangSource {
+            source,
+            entrypoint: job.spec.entrypoint.clone(),
+            sha256,
+        },
+        target: job.spec.target.clone(),
+        priority: job.spec.priority,
+        compiler_options: job.spec.compiler_options.clone(),
+        metadata,
+        dependencies: job.spec.dependencies.clone(),
+    })
+}
+
+pub fn submit_job_to_system_api(req: &SubmitJobRequest) -> SubmitJobResponse {
+    let stable = format!("{}:{}", req.name, req.target);
+    let suffix = &sha256_hex(stable.as_bytes())[0..12];
+    SubmitJobResponse {
+        job_id: format!("job-{suffix}"),
+    }
+}
+
+fn validate_entrypoint(source: &str, entrypoint: &str) -> Result<(), JobSpecValidationError> {
+    let decorated_count = source.matches("@hybrid_program").count();
+    if decorated_count != 1 {
+        return Err(JobSpecValidationError::new(vec![FieldViolation {
+            field: "program.eigen.py".to_string(),
+            description: "must contain exactly one @hybrid_program".to_string(),
+        }]));
+    }
+
+    let signature = format!("def {entrypoint}(");
+    if !source.contains(&signature) {
+        return Err(JobSpecValidationError::new(vec![FieldViolation {
+            field: "spec.entrypoint".to_string(),
+            description: format!("entrypoint '{entrypoint}' not found in source"),
+        }]));
+    }
+
+    Ok(())
+}
+
+fn resolve_program_path(basedir: &Path, program_path: &str) -> PathBuf {
+    let p = PathBuf::from(program_path);
+    if p.is_absolute() { p } else { basedir.join(p) }
+}
+
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    let digest = sha256(bytes);
+    let mut out = String::with_capacity(64);
+    for b in digest {
+        out.push_str(&format!("{b:02x}"));
+    }
+    out
+}
+
+fn sha256(input: &[u8]) -> [u8; 32] {
+    const H0: [u32; 8] = [
+        0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
+        0x5be0cd19,
+    ];
+    const K: [u32; 64] = [
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
+        0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe,
+        0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f,
+        0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
+        0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc,
+        0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
+        0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116,
+        0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7,
+        0xc67178f2,
+    ];
+
+    let bit_len = (input.len() as u64) * 8;
+    let mut msg = input.to_vec();
+    msg.push(0x80);
+    while (msg.len() % 64) != 56 {
+        msg.push(0);
+    }
+    msg.extend_from_slice(&bit_len.to_be_bytes());
+
+    let mut h = H0;
+    for chunk in msg.chunks_exact(64) {
+        let mut w = [0u32; 64];
+        for (i, word) in w.iter_mut().take(16).enumerate() {
+            let j = i * 4;
+            *word = u32::from_be_bytes([chunk[j], chunk[j + 1], chunk[j + 2], chunk[j + 3]]);
+        }
+        for i in 16..64 {
+            let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
+            let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
+            w[i] = w[i - 16]
+                .wrapping_add(s0)
+                .wrapping_add(w[i - 7])
+                .wrapping_add(s1);
+        }
+
+        let mut a = h[0];
+        let mut b = h[1];
+        let mut c = h[2];
+        let mut d = h[3];
+        let mut e = h[4];
+        let mut f = h[5];
+        let mut g = h[6];
+        let mut hh = h[7];
+
+        for i in 0..64 {
+            let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
+            let ch = (e & f) ^ ((!e) & g);
+            let temp1 = hh
+                .wrapping_add(s1)
+                .wrapping_add(ch)
+                .wrapping_add(K[i])
+                .wrapping_add(w[i]);
+            let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
+            let maj = (a & b) ^ (a & c) ^ (b & c);
+            let temp2 = s0.wrapping_add(maj);
+
+            hh = g;
+            g = f;
+            f = e;
+            e = d.wrapping_add(temp1);
+            d = c;
+            c = b;
+            b = a;
+            a = temp1.wrapping_add(temp2);
+        }
+
+        h[0] = h[0].wrapping_add(a);
+        h[1] = h[1].wrapping_add(b);
+        h[2] = h[2].wrapping_add(c);
+        h[3] = h[3].wrapping_add(d);
+        h[4] = h[4].wrapping_add(e);
+        h[5] = h[5].wrapping_add(f);
+        h[6] = h[6].wrapping_add(g);
+        h[7] = h[7].wrapping_add(hh);
+    }
+
+    let mut out = [0u8; 32];
+    for (i, word) in h.into_iter().enumerate() {
+        out[i * 4..i * 4 + 4].copy_from_slice(&word.to_be_bytes());
+    }
+    out
 }
 
 fn value_for(line: &str, prefix: &str) -> Option<String> {
@@ -206,70 +545,135 @@ fn strip_quotes(s: &str) -> String {
     s.trim_matches('"').trim_matches('\'').to_string()
 }
 
-pub fn map_to_submit_job_request(job: &JobSpec) -> SubmitJobRequest {
-    SubmitJobRequest {
-        name: job.metadata.name.clone(),
-        program: ProgramSource::EigenLangSource { source: job.spec.program.clone(), entrypoint: "main".to_string() },
-        target: job.spec.target.clone(),
-        priority: job.spec.priority,
-        compiler_options: job.spec.compiler_options.clone(),
-        metadata: job.spec.metadata.clone(),
-        dependencies: job.spec.dependencies.clone(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
-    #[test]
-    fn valid_fixture_minimal_round_trip_maps_to_submit_job() {
-        let yaml = include_str!("../tests/fixtures/jobspec-valid-minimal.yaml");
-        let spec = parse_and_validate_jobspec(yaml).expect("valid spec");
-        let req = map_to_submit_job_request(&spec);
-        assert_eq!(req.name, "bell-state");
-        assert_eq!(req.target, "sim:local");
-        assert_eq!(req.priority, 50);
+    fn temp_dir() -> PathBuf {
+        let mut dir = std::env::temp_dir();
+        dir.push(format!("eigen-cli-tests-{}", std::process::id()));
+        dir.push(format!(
+            "{}",
+            sha256_hex(format!("{}", rand_seed()).as_bytes())
+        ));
+        fs::create_dir_all(&dir).expect("temp dir");
+        dir
+    }
+
+    fn rand_seed() -> u128 {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
     }
 
     #[test]
-    fn valid_fixture_full_round_trip_maps_to_submit_job() {
-        let yaml = include_str!("../tests/fixtures/jobspec-valid-full.yaml");
-        let spec = parse_and_validate_jobspec(yaml).expect("valid spec");
-        let req = map_to_submit_job_request(&spec);
-        assert_eq!(req.name, "vqe-h2");
-        assert_eq!(req.priority, 10);
-        assert_eq!(req.compiler_options.get("optimization_level"), Some(&"1".to_string()));
-        assert_eq!(req.metadata.get("shots"), Some(&"1024".to_string()));
-        assert_eq!(req.dependencies.len(), 2);
-    }
-
-    #[test]
-    fn valid_fixture_ignores_unknown_top_level_and_maps() {
-        let yaml = include_str!("../tests/fixtures/jobspec-valid-unknown-keys.yaml");
-        let spec = parse_and_validate_jobspec(yaml).expect("valid spec");
-        let req = map_to_submit_job_request(&spec);
-        assert_eq!(req.name, "qaoa-maxcut");
-        assert_eq!(req.target, "ibmq:quito");
-        assert_eq!(req.priority, 50);
-    }
-
-    #[test]
-    fn invalid_spec_reports_invalid_argument_with_field_violations() {
+    fn yaml_parsing_supports_program_path_and_entrypoint() {
         let yaml = r#"
-apiVersion: nope/v9
-kind: WrongKind
-metadata: {}
+apiVersion: eigen.os/v0.1
+kind: QuantumJob
+metadata:
+  name: test
+spec:
+  program_path: custom.eigen.py
+  entrypoint: run
+  target: sim:local
+"#;
+        let spec = parse_and_validate_jobspec(yaml).expect("valid");
+        assert_eq!(spec.spec.program_path, Some("custom.eigen.py".to_string()));
+        assert_eq!(spec.spec.entrypoint, "run");
+    }
+
+    #[test]
+    fn file_discovery_defaults_to_program_eigen_py() {
+        let dir = temp_dir();
+        fs::write(
+            dir.join("job.yaml"),
+            r#"
+apiVersion: eigen.os/v0.1
+kind: QuantumJob
+metadata:
+  name: bell
 spec:
   target: sim:local
-  priority: 900
+"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.join("program.eigen.py"),
+            "@hybrid_program\ndef main():\n    return 1\n",
+        )
+        .unwrap();
+
+        let req = build_submit_request_from_job_file(&dir.join("job.yaml")).expect("request");
+        let ProgramSource::EigenLangSource { entrypoint, .. } = req.program;
+        assert_eq!(entrypoint, "main");
+    }
+
+    #[test]
+    fn hashing_is_deterministic_sha256() {
+        let got = sha256_hex(b"abc");
+        assert_eq!(
+            got,
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    #[test]
+    fn request_construction_includes_sha_and_metadata() {
+        let dir = temp_dir();
+        fs::write(
+            dir.join("job.yaml"),
+            r#"
+apiVersion: eigen.os/v0.1
+kind: QuantumJob
+metadata:
+  name: bell
+spec:
+  program_path: src/program.eigen.py
+  target: sim:local
+  metadata:
+    shots: "100"
+"#,
+        )
+        .unwrap();
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(
+            dir.join("src/program.eigen.py"),
+            "@hybrid_program\ndef main():\n    return 1\n",
+        )
+        .unwrap();
+
+        let req = build_submit_request_from_job_file(&dir.join("job.yaml")).expect("request");
+        let ProgramSource::EigenLangSource {
+            entrypoint, sha256, ..
+        } = req.program;
+        assert_eq!(entrypoint, "main");
+        assert_eq!(req.metadata.get("source_sha256"), Some(&sha256));
+    }
+
+    #[test]
+    fn inline_program_is_rejected_by_canonical_packaging_rule() {
+        let yaml = r#"
+apiVersion: eigen.os/v0.1
+kind: QuantumJob
+metadata:
+  name: test
+spec:
+    program: |
+    @hybrid_program
+    def main():
+        return 1
+    target: sim:local
 "#;
-        let err = parse_and_validate_jobspec(yaml).expect_err("must fail");
-        assert_eq!(err.code, "INVALID_ARGUMENT");
-        assert!(err.violations.iter().any(|v| v.field == "apiVersion"));
-        assert!(err.violations.iter().any(|v| v.field == "kind"));
-        assert!(err.violations.iter().any(|v| v.field == "metadata.name"));
-        assert!(err.violations.iter().any(|v| v.field == "spec.program"));
-        assert!(err.violations.iter().any(|v| v.field == "spec.priority"));
+        let spec = parse_and_validate_jobspec(yaml).unwrap();
+        let err = map_to_submit_job_request_with_packaging(&spec, Path::new(".")).unwrap_err();
+        assert!(
+            err.violations
+                .iter()
+                .any(|v| v.field == "spec.program" && v.description.contains("not allowed"))
+        );
     }
 }
