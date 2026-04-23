@@ -1,5 +1,8 @@
 # Rust
 /target/
+Cargo.lock
+**/.rs.bk
+**/.rs~
 
 # Python
 **/__pycache__/
@@ -10,6 +13,22 @@
 # IDE
 .vscode/
 .idea/
+*.swp
+*.swo
 
 # OS
 .DS_Store
+Thumbs.db
+
+# Logs / runtime
+*.log
+logs/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Misc
+*.tmp
+*.bak
