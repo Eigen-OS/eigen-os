@@ -18,13 +18,19 @@ import logging
 import os
 
 from .grpc_server import serve
+from .observability import JsonFormatter, start_metrics_server
 
 
 def main() -> int:
-    logging.basicConfig(
-        level=os.getenv("SYSTEM_API_LOG_LEVEL", "INFO"),
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
+    level = os.getenv("SYSTEM_API_LOG_LEVEL", "INFO")
+    root = logging.getLogger()
+    root.setLevel(level)
+    handler = logging.StreamHandler()
+    handler.setFormatter(JsonFormatter())
+    root.handlers[:] = [handler]
+
+    metrics_port = int(os.getenv("SYSTEM_API_METRICS_PORT", "9090"))
+    start_metrics_server(metrics_port)
 
     server = serve()
     server.wait_for_termination()

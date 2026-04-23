@@ -210,10 +210,11 @@ class JobService:
             abort_invalid_argument(context, "validation failed", violations)
 
         job_id = f"job_{uuid.uuid4().hex[:12]}"
+        rc.job_id = job_id
         now = _ts_now()
 
         with self._lock:
-                        record = self._build_job_record(request, job_id=job_id, created_at=now)
+            record = self._build_job_record(request, job_id=job_id, created_at=now)
             self._jobs[job_id] = record
 
         resp = self._job_pb.SubmitJobResponse(
@@ -234,6 +235,7 @@ class JobService:
 
     def GetJobStatus(self, request, context: grpc.ServicerContext):
         rc = new_request_context(context)
+        rc.job_id = request.job_id
         log_request_start("JobService.GetJobStatus", rc)
 
         violations = validate_job_id(request)
@@ -275,6 +277,7 @@ class JobService:
 
     def CancelJob(self, request, context: grpc.ServicerContext):
         rc = new_request_context(context)
+        rc.job_id = request.job_id
         log_request_start("JobService.CancelJob", rc)
 
         violations = validate_job_id(request)
@@ -306,6 +309,7 @@ class JobService:
 
     def StreamJobUpdates(self, request, context: grpc.ServicerContext):
         rc = new_request_context(context)
+        rc.job_id = request.job_id
         log_request_start("JobService.StreamJobUpdates", rc)
 
         violations = validate_job_id(request)
@@ -338,6 +342,7 @@ class JobService:
 
     def GetJobResults(self, request, context: grpc.ServicerContext):
         rc = new_request_context(context)
+        rc.job_id = request.job_id
         log_request_start("JobService.GetJobResults", rc)
 
         violations = validate_job_id(request)

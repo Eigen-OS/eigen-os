@@ -77,13 +77,62 @@ impl PipelineDeps {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+struct TraceContext {
+    traceparent: Option<String>,
+    trace_id: Option<String>,
+}
+
+impl TraceContext {
+    fn from_request_md(md: &tonic::metadata::MetadataMap) -> Self {
+        let traceparent = md
+            .get("traceparent")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+        let trace_id = md
+            .get("trace_id")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string())
+            .or_else(|| parse_trace_id(traceparent.as_deref()));
+        Self {
+            traceparent,
+            trace_id,
+        }
+    }
+
+    fn inject<T>(&self, req: &mut Request<T>) {
+        if let Some(tp) = &self.traceparent {
+            if let Ok(v) = tp.parse() {
+                req.metadata_mut().insert("traceparent", v);
+            }
+        }
+        if let Some(tid) = &self.trace_id {
+            if let Ok(v) = tid.parse() {
+                req.metadata_mut().insert("trace_id", v);
+            }
+        }
+    }
+}
+
+fn parse_trace_id(traceparent: Option<&str>) -> Option<String> {
+    let raw = traceparent?;
+    let mut parts = raw.split('-');
+    let _version = parts.next()?;
+    let trace_id = parts.next()?;
+    if trace_id.len() == 32 {
+        Some(trace_id.to_string())
+    } else {
+        None
+    }
+}
+
 #[tonic::async_trait]
 impl KernelGateway for KernelGatewaySvc {
     async fn enqueue_job(
         &self,
         request: Request<EnqueueJobRequest>,
     ) -> Result<Response<EnqueueJobResponse>, Status> {
-        let req = request.into_inner();
+        let trace_ctx = TraceContext::from_request_md(request.metadata());
         if req.name.trim().is_empty() {
             return Err(Status::invalid_argument("name is required"));
         }
@@ -96,7 +145,7 @@ impl KernelGateway for KernelGatewaySvc {
         tokio::spawn(async move {
             let span = tracing::info_span!("job_pipeline", job_id = %job_id);
             async move {
-                if let Err(err) = run_pipeline(store.clone_handle(), deps, &job_id, req).await {
+                if let Err(err) = run_pipeline(store.clone_handle(), deps, &job_id, req, trace_ctx).await {
                     tracing::error!(job_id = %job_id, error = %err, "job pipeline failed");
                     fail_job(&store, &job_id, err).await;
                 }
@@ -186,6 +235,7 @@ async fn run_pipeline(
     deps: PipelineDeps,
     job_id: &str,
     req: EnqueueJobRequest,
+    trace_ctx: TraceContext,
 ) -> Result<(), PipelineError> {
     let mut results_metadata =
         HashMap::from([("results_ref".to_string(), format!("{job_id}/results"))]);
@@ -202,15 +252,17 @@ async fn run_pipeline(
         .await
         .map_err(|e| PipelineError::compile(format!("failed to connect to compiler: {e}")))?;
 
-    let compile_res = compiler
-        .compile_job(Request::new(CompileJobRequest {
+    let mut compile_req = Request::new(CompileJobRequest {
             job_id: job_id.to_string(),
             language: language_for(&req),
             input: Some(crate::proto::compile_job_request::Input::Source(
                 req.program,
             )),
             options: req.compiler_options,
-        }))
+        });
+    trace_ctx.inject(&mut compile_req);
+    let compile_res = compiler
+        .compile_job(compile_req)
         .await
         .map_err(PipelineError::from_compile_status)?
         .into_inner();
@@ -250,19 +302,22 @@ async fn run_pipeline(
             &device_id,
             &circuit_payload,
             &req.metadata,
+            &trace_ctx,
         )
         .await?;
         results_metadata.extend(vqe_res.results_metadata);
         vqe_res.last_execution
     } else {
-        let execute_res = driver
-            .execute_circuit(Request::new(ExecuteCircuitRequest {
+        let mut execute_req = Request::new(ExecuteCircuitRequest {
                 job_id: job_id.to_string(),
                 device_id: device_id.clone(),
                 payload: Some(circuit_payload),
                 shots: parse_shots(&req.metadata),
                 options: req.metadata,
-            }))
+            });
+        trace_ctx.inject(&mut execute_req);
+        let execute_res = driver
+            .execute_circuit(execute_req)
             .await
             .map_err(PipelineError::from_execute_status)?
             .into_inner();
@@ -294,6 +349,7 @@ async fn run_vqe_loop(
     device_id: &str,
     circuit_payload: &CircuitPayload,
     job_metadata: &HashMap<String, String>,
+    trace_ctx: &TraceContext,
 ) -> Result<VqeLoopOutcome, PipelineError> {
     let mut params = initial_params(circuit_payload);
     let max_iters = parse_positive_usize(job_metadata, "max_iters").unwrap_or(10);
@@ -311,14 +367,16 @@ async fn run_vqe_loop(
         options.insert("vqe.params".to_string(), serialize_params(&params));
         options.insert("vqe.iteration".to_string(), iter.to_string());
 
-        let execute_res = driver
-            .execute_circuit(Request::new(ExecuteCircuitRequest {
+        let mut execute_req = Request::new(ExecuteCircuitRequest {
                 job_id: job_id.to_string(),
                 device_id: device_id.to_string(),
                 payload: Some(circuit_payload.clone()),
                 shots,
                 options,
-            }))
+            });
+        trace_ctx.inject(&mut execute_req);
+        let execute_res = driver
+            .execute_circuit(execute_req)
             .await
             .map_err(PipelineError::from_execute_status)?
             .into_inner();
@@ -683,8 +741,19 @@ mod tests {
     use super::*;
     use crate::proto::compilation_service_server::CompilationServiceServer;
     use crate::proto::driver_manager_service_server::DriverManagerServiceServer;
+    use std::sync::{Mutex, OnceLock};
     use tempfile::TempDir;
     use tokio::time::{Duration, sleep};
+
+    fn compiler_trace_store() -> &'static Mutex<Vec<String>> {
+        static STORE: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
+        STORE.get_or_init(|| Mutex::new(Vec::new()))
+    }
+
+    fn driver_trace_store() -> &'static Mutex<Vec<String>> {
+        static STORE: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
+        STORE.get_or_init(|| Mutex::new(Vec::new()))
+    }
 
     #[derive(Default)]
     struct MockCompiler;
@@ -702,6 +771,9 @@ mod tests {
             &self,
             request: Request<CompileJobRequest>,
         ) -> Result<Response<CompileJobResponse>, Status> {
+            if let Some(raw) = request.metadata().get("traceparent").and_then(|v| v.to_str().ok()) {
+                compiler_trace_store().lock().unwrap().push(raw.to_string());
+            }
             let req = request.into_inner();
             if req.language == "bad" {
                 return Err(Status::invalid_argument("bad language"));
@@ -754,6 +826,9 @@ mod tests {
             &self,
             request: Request<ExecuteCircuitRequest>,
         ) -> Result<Response<ExecuteCircuitResponse>, Status> {
+            if let Some(raw) = request.metadata().get("traceparent").and_then(|v| v.to_str().ok()) {
+                driver_trace_store().lock().unwrap().push(raw.to_string());
+            }
             if request.get_ref().device_id == "bad-device" {
                 return Err(Status::unavailable("backend down"));
             }
@@ -1048,6 +1123,84 @@ def vqe_program():
         let metrics_json: serde_json::Value = serde_json::from_slice(&metrics_raw).unwrap();
         assert_eq!(metrics_json["kind"], "vqe_metrics");
         assert_eq!(metrics_json["iterations"].as_array().unwrap().len(), 5);
+    }
+
+    #[tokio::test]
+    async fn integration_propagates_traceparent_to_compiler_and_driver() {
+        compiler_trace_store().lock().unwrap().clear();
+        driver_trace_store().lock().unwrap().clear();
+        let temp_qfs = TempDir::new().unwrap();
+        let compiler_addr: SocketAddr = "127.0.0.1:50177".parse().unwrap();
+        let driver_addr: SocketAddr = "127.0.0.1:50178".parse().unwrap();
+
+        tokio::spawn(async move {
+            tonic::transport::Server::builder()
+                .add_service(CompilationServiceServer::new(MockCompiler))
+                .serve(compiler_addr)
+                .await
+                .unwrap();
+        });
+        tokio::spawn(async move {
+            tonic::transport::Server::builder()
+                .add_service(DriverManagerServiceServer::new(MockDriver))
+                .serve(driver_addr)
+                .await
+                .unwrap();
+        });
+        sleep(Duration::from_millis(80)).await;
+
+        let svc = KernelGatewaySvc {
+            store: JobStore::default(),
+            deps: PipelineDeps {
+                compiler_endpoint: "http://127.0.0.1:50177".to_string(),
+                driver_endpoint: "http://127.0.0.1:50178".to_string(),
+                default_device_id: "sim:local".to_string(),
+                qfs: CircuitFsLocal::new(temp_qfs.path()),
+            },
+        };
+
+        let mut req = Request::new(EnqueueJobRequest {
+            name: "trace-propagation".to_string(),
+            program: b"x".to_vec(),
+            program_format: "eigen-lang".to_string(),
+            target: "sim:local".to_string(),
+            priority: 1,
+            compiler_options: HashMap::new(),
+            metadata: HashMap::new(),
+        });
+        let traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+        req.metadata_mut()
+            .insert("traceparent", traceparent.parse().unwrap());
+
+        let job_id = svc.enqueue_job(req).await.unwrap().into_inner().job_id;
+        for _ in 0..40 {
+            let status = svc
+                .get_job_status(Request::new(GetJobStatusRequest {
+                    job_id: job_id.clone(),
+                }))
+                .await
+                .unwrap()
+                .into_inner();
+            if status.state == TaskState::Done as i32 {
+                break;
+            }
+            sleep(Duration::from_millis(30)).await;
+        }
+
+        assert!(
+            compiler_trace_store()
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|entry| entry == traceparent)
+        );
+        assert!(
+            driver_trace_store()
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|entry| entry == traceparent)
+        );
     }
 
 }
