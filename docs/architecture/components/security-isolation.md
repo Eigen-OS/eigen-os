@@ -2,15 +2,33 @@
 
 - Phase: MVP
 
+## MVP Threat Model (Current Baseline)
+
+Protected in MVP:
+
+- Public API ingress must pass through System API authn mode (`allow_all` or `static_token`).
+- Request payloads are bounded (program source bytes + embedded JobSpec YAML bytes).
+- Compiler frontend parses untrusted source without execution and rejects forbidden imports/calls.
+- Compiler frontend enforces basic resource limits (source bytes, AST node count, AST depth).
+
+Not protected in MVP:
+
+- No full multi-tenant sandboxing/isolation of runtime execution.
+- No OIDC/JWT federation and no per-user RBAC policy engine.
+- No hardware-rooted trust, confidential compute, or cryptographic attestation.
+- No comprehensive secret scanning/DLP for submitted source artifacts.
+
 ## Responsibility
 
 The Security & Isolation module in MVP provides **basic access control, authentication, and resource isolation** to ensure safe, multi‑tenant quantum‑classical job execution. It focuses on:
 
-1. **Authentication & Authorization**: Enforcing who can submit jobs, access devices, and view results.
+1. **Authentication boundary (explicit mode)**: Enforcing an explicit auth mode in System API:
+   - `SYSTEM_API_AUTH_MODE=allow_all` (default for local/dev MVP)
+   - `SYSTEM_API_AUTH_MODE=static_token` + `SYSTEM_API_AUTH_TOKEN=<token>`
 
 2. **Security Context Propagation**: Passing authenticated user identity and roles through the system.
 
-3. **Input Validation & Sanitization**: Preventing malicious or malformed job specifications.
+3. **Input Validation & Sanitization**: Preventing malformed/oversized sources and job payload metadata.
 
 4. **Isolation Hooks**: Providing a minimal interface for future hardware‑level isolation checks (stubbed or simulated in MVP).
 
@@ -115,13 +133,18 @@ The Security & Isolation module in MVP provides **basic access control, authenti
 
 ## Implementation Notes for MVP
 
-1. **Authentication**: Simple API‑key validation (symmetric tokens). OIDC integration is post‑MVP.
+1. **Authentication**:
+   - Explicitly configured at runtime (`allow_all` or `static_token`).
+   - In `static_token` mode, missing/invalid `Authorization: Bearer <token>` returns `UNAUTHENTICATED`.
 
 2. **Authorization**: Static role‑permission mapping defined in YAML. No dynamic policy engine.
 
 3. **Isolation**: The `SecurityModule` in the kernel is a stub that logs and approves all requests. Real hardware‑level isolation is Phase 2+.
 
-4. **Input Validation**: Basic checks for payload size, forbidden patterns (e.g., `exec`, `eval`), and allowed imports (Eigen‑Lang DSL only).
+4. **Input Validation**:
+   - `SYSTEM_API_MAX_PROGRAM_SOURCE_BYTES` (default 262144 bytes).
+   - `SYSTEM_API_MAX_JOBSPEC_YAML_BYTES` (default 65536 bytes) for `metadata[jobspec_yaml]`.
+   - Compiler rejects forbidden imports/calls and enforces AST node/depth limits.
 
 5. **Audit**: All security‑sensitive actions (job submission, device reservation) are logged with user context.
 
