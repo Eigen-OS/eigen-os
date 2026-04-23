@@ -54,7 +54,9 @@
 - [ ] deterministic output for same input
 
 ### Must be testable
-- [ ] golden tests source→AQO
+- [ ] conformance suite with golden fixtures (`tests/golden/`) and negative fixtures (`tests/negative/`)
+- [ ] conformance suite runs on every PR in CI
+- [ ] golden changes follow explicit documented update process
 - [ ] invalid source→INVALID_ARGUMENT
 
 ---
