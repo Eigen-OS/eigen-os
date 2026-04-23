@@ -28,9 +28,17 @@ def test_compile_circuit_happy_path(grpc_addr: str) -> None:
     channel = grpc.insecure_channel(grpc_addr)
     stub = comp_pb_grpc.CompilationServiceStub(channel)
 
-    resp = stub.CompileCircuit(
-        comp_pb.CompileCircuitRequest(language="eigen-lang", source=b"circuit main {}")
-    )
+    source = b"""
+from eigen_lang import hybrid_program, QubitRegister, ClassicalRegister, RY, MEASURE
+
+@hybrid_program
+def main():
+    q = QubitRegister(1)
+    c = ClassicalRegister(1)
+    RY(1.570796, q[0])
+    MEASURE(q[0], c[0])
+"""
+    resp = stub.CompileCircuit(comp_pb.CompileCircuitRequest(language="eigen-lang", source=source))
 
     assert resp.circuit.format == types_pb.CIRCUIT_FORMAT_AQO_JSON
     assert resp.metadata["aqo_version"] == "0.1"
@@ -71,3 +79,49 @@ def test_compile_job_requires_job_id(grpc_addr: str) -> None:
     assert e.value.code() == grpc.StatusCode.INVALID_ARGUMENT
     bad = _extract_bad_request(e.value)
     assert {v.field for v in bad.field_violations} == {"job_id"}
+
+
+def test_compile_circuit_rejects_forbidden_construct(grpc_addr: str) -> None:
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = comp_pb_grpc.CompilationServiceStub(channel)
+
+    source = b"""
+from eigen_lang import hybrid_program, QubitRegister, ClassicalRegister
+
+@hybrid_program
+def main():
+    q = QubitRegister(1)
+    c = ClassicalRegister(1)
+    eval('1+1')
+"""
+
+    with pytest.raises(grpc.RpcError) as e:
+        stub.CompileCircuit(comp_pb.CompileCircuitRequest(language="eigen-lang", source=source))
+
+    assert e.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+    bad = _extract_bad_request(e.value)
+    assert {v.field for v in bad.field_violations} == {"source"}
+
+
+def test_compile_circuit_requires_single_entrypoint(grpc_addr: str) -> None:
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = comp_pb_grpc.CompilationServiceStub(channel)
+
+    source = b"""
+from eigen_lang import hybrid_program
+
+@hybrid_program
+def first():
+    return None
+
+@hybrid_program
+def second():
+    return None
+"""
+
+    with pytest.raises(grpc.RpcError) as e:
+        stub.CompileCircuit(comp_pb.CompileCircuitRequest(language="eigen-lang", source=source))
+
+    assert e.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+    bad = _extract_bad_request(e.value)
+    assert {v.field for v in bad.field_violations} == {"entrypoint"}

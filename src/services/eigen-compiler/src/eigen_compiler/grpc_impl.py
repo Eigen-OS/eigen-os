@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import grpc
 
-from .compiler import compile_eigen_lang
-from .errors import abort_invalid_argument
+from .compiler import CompilationValidationError, compile_eigen_lang
+from .errors import FieldViolation, abort_invalid_argument
 from .validation import validate_compile_circuit, validate_compile_job
 
 
@@ -16,8 +16,24 @@ class CompilationService:
         self._comp_pb = comp_pb
         self._types_pb = types_pb
 
-    def _compile_response(self, *, source: bytes, source_ref: str | None = None):
-        result = compile_eigen_lang(source, source_ref=source_ref)
+    def _compile_response(
+        self,
+        *,
+        source: bytes,
+        context: grpc.ServicerContext,
+        source_ref: str | None = None,
+    ):
+        try:
+            result = compile_eigen_lang(source, source_ref=source_ref)
+        except CompilationValidationError as exc:
+            abort_invalid_argument(
+                context,
+                message="validation failed",
+                violations=[
+                    FieldViolation(field=v.field, description=v.description) for v in exc.violations
+                ],
+            )
+
         return self._comp_pb.CompileCircuitResponse(
             circuit=self._types_pb.CircuitPayload(
                 format=self._types_pb.CIRCUIT_FORMAT_AQO_JSON,
@@ -33,7 +49,7 @@ class CompilationService:
 
         source = request.source if request.WhichOneof("input") == "source" else b""
         source_ref = request.source_ref if request.WhichOneof("input") == "source_ref" else None
-        return self._compile_response(source=source, source_ref=source_ref)
+        return self._compile_response(source=source, source_ref=source_ref, context=context)
 
     def CompileJob(self, request, context: grpc.ServicerContext):
         violations = validate_compile_job(request)
@@ -42,7 +58,7 @@ class CompilationService:
 
         source = request.source if request.WhichOneof("input") == "source" else b""
         source_ref = request.source_ref if request.WhichOneof("input") == "source_ref" else None
-        compiled = self._compile_response(source=source, source_ref=source_ref)
+        compiled = self._compile_response(source=source, source_ref=source_ref, context=context)
 
         return self._comp_pb.CompileJobResponse(
             job_id=request.job_id,
