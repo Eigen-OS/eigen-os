@@ -12,6 +12,13 @@ from .registry import DriverRegistry
 from .simulator_driver import DriverExecutionError
 
 
+def _circuit_format_value(types_pb, *names: str) -> int:
+    for name in names:
+        if hasattr(types_pb, name):
+            return int(getattr(types_pb, name))
+    raise AttributeError(f"None of the enum names exist: {names}")
+
+
 class DriverManagerService:
     """Kernel-facing service that delegates to registered drivers."""
 
@@ -49,13 +56,14 @@ class DriverManagerService:
             metadata=info.metadata,
         )
         _log_end("DriverManagerService.GetDeviceStatus", request.device_id, context)
+        return resp
 
     def ExecuteCircuit(self, request, context: grpc.ServicerContext):
         _log_start("DriverManagerService.ExecuteCircuit", request.job_id, context)
         violations: list[FieldViolation] = []
         if not request.device_id:
             violations.append(FieldViolation(field="device_id", description="field is required"))
-        if request.payload.format == self._types_pb.CIRCUIT_FORMAT_UNSPECIFIED:
+        if request.payload.format == _circuit_format_value(self._types_pb, "CIRCUIT_FORMAT_UNSPECIFIED"):
             violations.append(FieldViolation(field="payload.format", description="field is required"))
         if not request.payload.data:
             violations.append(FieldViolation(field="payload.data", description="field is required"))
@@ -71,7 +79,7 @@ class DriverManagerService:
                 f"device not registered: {request.device_id}",
             )
 
-        if request.payload.format != self._types_pb.CIRCUIT_FORMAT_AQO_JSON:
+        if request.payload.format != _circuit_format_value(self._types_pb, "CIRCUIT_FORMAT_AQO_JSON", "AQO_JSON"):
             context.abort(
                 grpc.StatusCode.UNIMPLEMENTED,
                 f"unsupported circuit payload format: {request.payload.format}",
