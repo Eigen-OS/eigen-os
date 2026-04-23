@@ -14,6 +14,13 @@ from eigen.internal.v1 import compilation_service_pb2_grpc as comp_pb_grpc  # no
 from eigen.internal.v1 import types_pb2 as types_pb  # noqa: E402
 
 
+def _enum_value(module, *names: str) -> int:
+    for name in names:
+        if hasattr(module, name):
+            return int(getattr(module, name))
+    raise AttributeError(f"None of enum names exist: {names}")
+
+
 def _extract_bad_request(err: grpc.RpcError) -> error_details_pb2.BadRequest:
     st = rpc_status.from_call(err)
     assert st is not None
@@ -32,7 +39,7 @@ def test_compile_circuit_happy_path(grpc_addr: str) -> None:
         comp_pb.CompileCircuitRequest(language="eigen-lang", source=b"circuit main {}")
     )
 
-    assert resp.circuit.format == types_pb.CIRCUIT_FORMAT_AQO_JSON
+    assert resp.circuit.format == _enum_value(types_pb, "CIRCUIT_FORMAT_AQO_JSON", "AQO_JSON")
     assert resp.metadata["aqo_version"] == "0.1"
     assert len(resp.circuit.data) > 0
 

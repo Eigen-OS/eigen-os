@@ -18,6 +18,13 @@ from eigen_internal.v1 import driver_manager_service_pb2_grpc as drv_pb_grpc  # 
 from eigen_internal.v1 import types_pb2 as types_pb  # noqa: E402
 
 
+def _enum_value(module, *names: str) -> int:
+    for name in names:
+        if hasattr(module, name):
+            return int(getattr(module, name))
+    raise AttributeError(f"None of enum names exist: {names}")
+
+
 def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
@@ -48,7 +55,7 @@ def _execute(
         drv_pb.ExecuteCircuitRequest(
             job_id="job-1",
             device_id="sim:golden",
-            payload=types_pb.CircuitPayload(format=types_pb.CIRCUIT_FORMAT_AQO_JSON, data=payload),
+            payload=types_pb.CircuitPayload(format=_enum_value(types_pb, "CIRCUIT_FORMAT_AQO_JSON", "AQO_JSON"), data=payload),
             shots=shots,
             options=options or {},
         )
@@ -117,7 +124,7 @@ def test_execute_circuit_rejects_unsupported_format(grpc_addr: str) -> None:
                 job_id="job-1",
                 device_id="sim:golden",
                 payload=types_pb.CircuitPayload(
-                    format=types_pb.CIRCUIT_FORMAT_QASM3_TEXT,
+                    format=_enum_value(types_pb, "CIRCUIT_FORMAT_QASM3_TEXT", "QASM3_TEXT"),
                     data=b"OPENQASM 3;",
                 ),
                 shots=128,

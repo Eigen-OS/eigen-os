@@ -12,6 +12,13 @@ from .errors import abort_invalid_argument
 from .validation import validate_compile_circuit, validate_compile_job
 
 
+def _circuit_format_value(types_pb, *names: str) -> int:
+    for name in names:
+        if hasattr(types_pb, name):
+            return int(getattr(types_pb, name))
+    raise AttributeError(f"None of the enum names exist: {names}")
+
+
 class CompilationService:
     """Implementation of eigen.internal.v1.CompilationService."""
 
@@ -23,14 +30,14 @@ class CompilationService:
         result = compile_eigen_lang(source, source_ref=source_ref)
         return self._comp_pb.CompileCircuitResponse(
             circuit=self._types_pb.CircuitPayload(
-                format=self._types_pb.CIRCUIT_FORMAT_AQO_JSON,
+                format=_circuit_format_value(self._types_pb, "CIRCUIT_FORMAT_AQO_JSON", "AQO_JSON"),
                 data=result.aqo_json,
             ),
             metadata=result.metadata,
         )
 
     def CompileCircuit(self, request, context: grpc.ServicerContext):
-        _log_start("CompilationService.CompileCircuit", request.job_id, context)
+        _log_start("CompilationService.CompileCircuit", "", context)
         violations = validate_compile_circuit(request)
         if violations:
             abort_invalid_argument(context, message="validation failed", violations=violations)
@@ -39,7 +46,7 @@ class CompilationService:
         source_ref = request.source_ref if request.WhichOneof("input") == "source_ref" else None
         try:
             resp = self._compile_response(source=source, source_ref=source_ref)
-            _log_end("CompilationService.CompileCircuit", request.job_id, context)
+            _log_end("CompilationService.CompileCircuit", "", context)
             return resp
         except CompilerValidationError as exc:
             abort_invalid_argument(context, message="validation failed", violations=exc.violations)

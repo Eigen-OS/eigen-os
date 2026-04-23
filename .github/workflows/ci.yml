@@ -105,4 +105,4 @@ jobs:
 
       - name: Buf breaking (against main)
         working-directory: proto
-        run: buf breaking --against '../.git#ref=refs/remotes/origin/main' --ignore-unstable-packages
+        run: buf breaking --against '../.git#ref=refs/remotes/origin/main'
