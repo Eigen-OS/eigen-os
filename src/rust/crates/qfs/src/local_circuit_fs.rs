@@ -126,9 +126,19 @@ impl CircuitFsLocal {
         Ok(self.job_root(job_id)?.join("logs"))
     }
 
+    /// `/circuit_fs/{job_id}/meta/`
+    pub fn meta_dir(&self, job_id: &str) -> Result<PathBuf, CircuitFsError> {
+        Ok(self.job_root(job_id)?.join("meta"))
+    }
+
     /// `/circuit_fs/{job_id}/meta.json`
     pub fn meta_json_path(&self, job_id: &str) -> Result<PathBuf, CircuitFsError> {
         Ok(self.job_root(job_id)?.join("meta.json"))
+    }
+
+    /// `/circuit_fs/{job_id}/meta/metrics.json`
+    pub fn metrics_json_path(&self, job_id: &str) -> Result<PathBuf, CircuitFsError> {
+        Ok(self.meta_dir(job_id)?.join("metrics.json"))
     }
 
     /// `/circuit_fs/{job_id}/input/job.yaml`
@@ -193,6 +203,7 @@ impl CircuitFsLocal {
         fs::create_dir_all(self.compiled_dir(job_id)?)?;
         fs::create_dir_all(self.results_dir(job_id)?)?;
         fs::create_dir_all(self.logs_dir(job_id)?)?;
+        fs::create_dir_all(self.meta_dir(job_id)?)?;
 
         Ok(())
     }
@@ -357,6 +368,17 @@ impl CircuitFsLocal {
             .open(&log_path)?;
         writeln!(f, "{line}")?;
 
+        Ok(())
+    }
+
+    /// Stores loop/runtime metrics at `meta/metrics.json`.
+    pub fn store_metrics_json(
+        &self,
+        job_id: &str,
+        metrics_json: &[u8],
+    ) -> Result<(), CircuitFsError> {
+        self.ensure_job_layout(job_id)?;
+        atomic_write_bytes(&self.metrics_json_path(job_id)?, metrics_json)?;
         Ok(())
     }
 }
