@@ -10,8 +10,9 @@ The goal is to compile, run, and validate requests consistently.
 
 from __future__ import annotations
 
-import time
+import threading
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 import grpc
@@ -26,11 +27,25 @@ from .validation import (
     validate_submit_job,
 )
 
+TERMINAL_JOB_STATES = {
+    "JOB_STATE_DONE",
+    "JOB_STATE_ERROR",
+    "JOB_STATE_CANCELLED",
+    "JOB_STATE_TIMEOUT",
+}
+
 
 def _ts_now() -> Timestamp:
     ts = Timestamp()
     ts.FromDatetime(datetime.now(timezone.utc))
     return ts
+
+
+@dataclass
+class _JobRecord:
+    job_id: str
+    created_at: Timestamp
+    updates: list
 
 
 class JobService:
@@ -39,6 +54,47 @@ class JobService:
     def __init__(self, job_pb, types_pb):
         self._job_pb = job_pb
         self._types_pb = types_pb
+        self._jobs: dict[str, _JobRecord] = {}
+        self._lock = threading.RLock()
+
+    def _mk_update(self, *, job_id: str, state: int, stage: str, progress: float, message: str, event_seq: int):
+        return self._types_pb.JobUpdate(
+            job_id=job_id,
+            state=state,
+            stage=stage,
+            progress=progress,
+            message=message,
+            event_seq=event_seq,
+            timestamp=_ts_now(),
+        )
+
+    def _mk_default_updates(self, job_id: str) -> list:
+        return [
+            self._mk_update(
+                job_id=job_id,
+                state=self._types_pb.JOB_STATE_QUEUED,
+                stage="QUEUED",
+                progress=0.0,
+                message="queued (stub)",
+                event_seq=1,
+            ),
+            self._mk_update(
+                job_id=job_id,
+                state=self._types_pb.JOB_STATE_RUNNING,
+                stage="RUNNING",
+                progress=0.5,
+                message="running (stub)",
+                event_seq=2,
+            ),
+            self._mk_update(
+                job_id=job_id,
+                state=self._types_pb.JOB_STATE_DONE,
+                stage="DONE",
+                progress=1.0,
+                message="done (stub)",
+                event_seq=3,
+            ),
+        ]
 
     def SubmitJob(self, request, context: grpc.ServicerContext):
         rc = new_request_context(context)
@@ -51,11 +107,15 @@ class JobService:
         job_id = f"job_{uuid.uuid4().hex[:12]}"
         now = _ts_now()
 
-        resp = self._job_pb.JobResponse(
+        with self._lock:
+            updates = self._mk_default_updates(job_id)
+            self._jobs[job_id] = _JobRecord(job_id=job_id, created_at=now, updates=updates)
+
+        resp = self._job_pb.SubmitJobResponse(
             job_id=job_id,
             status=self._types_pb.JobStatus(
                 job_id=job_id,
-                state=self._types_pb.QUEUED,
+                state=self._types_pb.JOB_STATE_QUEUED,
                 stage="QUEUED",
                 progress=0.0,
                 message="accepted (stub)",
@@ -75,16 +135,33 @@ class JobService:
         if violations:
             abort_invalid_argument(context, "validation failed", violations)
 
-        now = _ts_now()
-        resp = self._job_pb.JobStatusResponse(
-            status=self._types_pb.JobStatus(
+        with self._lock:
+            record = self._jobs.get(request.job_id)
+
+        if record is None:
+            latest = self._types_pb.JobUpdate(
                 job_id=request.job_id,
-                state=self._types_pb.QUEUED,
+                state=self._types_pb.JOB_STATE_QUEUED,
                 stage="QUEUED",
                 progress=0.0,
                 message="stub status",
-                created_at=now,
-                updated_at=now,
+                event_seq=0,
+                timestamp=_ts_now(),
+            )
+            created_at = _ts_now()
+        else:
+            latest = record.updates[-1]
+            created_at = record.created_at
+
+        resp = self._job_pb.GetJobStatusResponse(
+            status=self._types_pb.JobStatus(
+                job_id=request.job_id,
+                state=latest.state,
+                stage=latest.stage,
+                progress=latest.progress,
+                message=latest.message,
+                created_at=created_at,
+                updated_at=latest.timestamp,
             )
         )
 
@@ -99,7 +176,26 @@ class JobService:
         if violations:
             abort_invalid_argument(context, "validation failed", violations)
 
-        resp = self._job_pb.CancelJobResponse(accepted=True)
+        accepted = False
+        with self._lock:
+            record = self._jobs.get(request.job_id)
+            if record is not None:
+                terminal_values = {getattr(self._types_pb, name) for name in TERMINAL_JOB_STATES}
+                if record.updates[-1].state not in terminal_values:
+                    seq = int(record.updates[-1].event_seq) + 1
+                    record.updates.append(
+                        self._mk_update(
+                            job_id=request.job_id,
+                            state=self._types_pb.JOB_STATE_CANCELLED,
+                            stage="CANCELLED",
+                            progress=1.0,
+                            message="cancelled (stub)",
+                            event_seq=seq,
+                        )
+                    )
+                    accepted = True
+
+        resp = self._job_pb.CancelJobResponse(accepted=accepted)
         log_request_end("JobService.CancelJob", rc)
         return resp
 
@@ -111,30 +207,20 @@ class JobService:
         if violations:
             abort_invalid_argument(context, "validation failed", violations)
 
-        # MVP skeleton: emit a small ordered sequence, no persistence.
-        seq = max(1, int(request.last_event_seq) + 1)
-        yield self._types_pb.JobUpdate(
-            job_id=request.job_id,
-            state=self._types_pb.QUEUED,
-            stage="QUEUED",
-            progress=0.0,
-            message="queued (stub)",
-            event_seq=seq,
-            timestamp=_ts_now(),
-        )
+        start_after_seq = int(request.last_event_seq)
+        with self._lock:
+            record = self._jobs.get(request.job_id)
+            if record is None:
+                updates = self._mk_default_updates(request.job_id)
+                self._jobs[request.job_id] = _JobRecord(job_id=request.job_id, created_at=_ts_now(), updates=updates)
+                selected_updates = updates
+            else:
+                selected_updates = list(record.updates)
 
-        # Small delay so clients can observe streaming locally.
-        time.sleep(0.05)
-
-        yield self._types_pb.JobUpdate(
-            job_id=request.job_id,
-            state=self._types_pb.DONE,
-            stage="DONE",
-            progress=1.0,
-            message="done (stub)",
-            event_seq=seq + 1,
-            timestamp=_ts_now(),
-        )
+        for update in selected_updates:
+            if int(update.event_seq) <= start_after_seq:
+                continue
+            yield self._job_pb.StreamJobUpdatesResponse(update=update)
 
         log_request_end("JobService.StreamJobUpdates", rc)
 
@@ -146,9 +232,9 @@ class JobService:
         if violations:
             abort_invalid_argument(context, "validation failed", violations)
 
-        resp = self._job_pb.JobResultsResponse(
+        resp = self._job_pb.GetJobResultsResponse(
             job_id=request.job_id,
-            state=self._types_pb.DONE,
+            state=self._types_pb.JOB_STATE_DONE,
             counts={"00": 512, "11": 512},
             metadata={"stub": "true"},
             completed_at=_ts_now(),
@@ -176,7 +262,7 @@ class DeviceService:
                     device_id="sim:local",
                     name="Local simulator",
                     backend_type="simulator",
-                    status=self._types_pb.ONLINE,
+                    status=self._types_pb.DEVICE_STATUS_ONLINE,
                     queue_depth=0,
                     estimated_wait_sec=0,
                     capabilities={"shots": "1024"},
@@ -195,7 +281,7 @@ class DeviceService:
         if violations:
             abort_invalid_argument(context, "validation failed", violations)
 
-        resp = self._dev_pb.DeviceDetailsResponse(
+        resp = self._dev_pb.GetDeviceDetailsResponse(
             device=self._types_pb.DeviceInfo(
                 device_id=request.device_id,
                 name="Device (stub)",
@@ -215,9 +301,9 @@ class DeviceService:
         if violations:
             abort_invalid_argument(context, "validation failed", violations)
 
-        resp = self._dev_pb.DeviceStatusResponse(
+        resp = self._dev_pb.GetDeviceStatusResponse(
             device_id=request.device_id,
-            status=self._types_pb.ONLINE,
+            status=self._types_pb.DEVICE_STATUS_ONLINE,
             queue_depth=0,
             estimated_wait_sec=0,
             metadata={"stub": "true"},

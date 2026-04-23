@@ -155,11 +155,11 @@ enum DeviceStatus {
 
 - Events are **ordered** per `job_id`
 
-- Terminal events (DONE, ERROR, CANCELLED, TIMEOUT) are emitted exactly once
+- Terminal events (DONE, ERROR, CANCELLED, TIMEOUT) are emitted exactly once; after terminal event, stream closes
 
 - While RUNNING, server may send periodic heartbeats (progress/message updates)
 
-- Reconnection support: client may resume from `last_event_seq` (best‑effort in MVP)
+- Reconnection support: client resumes from `last_event_seq` (server replays events with `event_seq > last_event_seq`)
 
 - **MVP Implementation Note**: Uses polling internally; true event‑driven streaming in Phase 1
 

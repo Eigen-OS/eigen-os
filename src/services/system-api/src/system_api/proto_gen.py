@@ -10,8 +10,8 @@ Generated files are written into the *service python src root*:
 `src/services/system-api/src/`.
 
 That makes them importable as:
-    eigen_api.v1.job_service_pb2
-    eigen_api.v1.job_service_pb2_grpc
+    eigen.api.v1.job_service_pb2
+    eigen.api.v1.job_service_pb2_grpc
 
 NOTE: In a production setup we may prefer generating into `gen/python/` and
 packaging a separate SDK. For MVP scaffolding, local generation is acceptable.
@@ -51,9 +51,9 @@ def _default_proto_files(proto_root: Path) -> list[Path]:
     """Collect proto files needed for public System API (MVP)."""
     return sorted(
         [
-            proto_root / "eigen_api" / "v1" / "types.proto",
-            proto_root / "eigen_api" / "v1" / "job_service.proto",
-            proto_root / "eigen_api" / "v1" / "device_service.proto",
+            proto_root / "eigen" / "api" / "v1" / "types.proto",
+            proto_root / "eigen" / "api" / "v1" / "job_service.proto",
+            proto_root / "eigen" / "api" / "v1" / "device_service.proto",
         ]
     )
 
@@ -75,7 +75,7 @@ def ensure_generated(files: Iterable[Path] | None = None) -> None:
         files = _default_proto_files(paths.proto_root)
 
     # Heuristic: check a representative output file.
-    sentinel = paths.out_dir / "eigen_api" / "v1" / "job_service_pb2.py"
+    sentinel = paths.out_dir / "eigen" / "api" / "v1" / "job_service_pb2.py"
     if sentinel.exists():
         return
 

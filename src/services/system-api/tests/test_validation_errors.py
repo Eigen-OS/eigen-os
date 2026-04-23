@@ -10,10 +10,10 @@ from system_api.proto_gen import ensure_generated
 # Ensure python stubs are importable before importing them.
 ensure_generated()
 
-from eigen_api.v1 import device_service_pb2 as dev_pb  # noqa: E402
-from eigen_api.v1 import device_service_pb2_grpc as dev_pb_grpc  # noqa: E402
-from eigen_api.v1 import job_service_pb2 as job_pb  # noqa: E402
-from eigen_api.v1 import job_service_pb2_grpc as job_pb_grpc  # noqa: E402
+from eigen.api.v1 import device_service_pb2 as dev_pb  # noqa: E402
+from eigen.api.v1 import device_service_pb2_grpc as dev_pb_grpc  # noqa: E402
+from eigen.api.v1 import job_service_pb2 as job_pb  # noqa: E402
+from eigen.api.v1 import job_service_pb2_grpc as job_pb_grpc  # noqa: E402
 
 
 def _extract_bad_request(err: grpc.RpcError) -> error_details_pb2.BadRequest:
@@ -49,7 +49,7 @@ def test_get_job_status_missing_job_id(grpc_addr: str):
     stub = job_pb_grpc.JobServiceStub(channel)
 
     with pytest.raises(grpc.RpcError) as e:
-        stub.GetJobStatus(job_pb.JobStatusRequest())
+        stub.GetJobStatus(job_pb.GetJobStatusRequest())
 
     assert e.value.code() == grpc.StatusCode.INVALID_ARGUMENT
 
