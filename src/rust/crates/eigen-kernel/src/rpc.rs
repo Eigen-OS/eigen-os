@@ -796,13 +796,18 @@ mod tests {
             if req.language == "bad" {
                 return Err(Status::invalid_argument("bad language"));
             }
+            let mut metadata = HashMap::new();
+            let program_text = String::from_utf8_lossy(&req.program);
+            if program_text.contains("minimize") {
+                metadata.insert("hybrid_plan_marker".to_string(), "minimize".to_string());
+            }
             Ok(Response::new(CompileJobResponse {
                 job_id: req.job_id,
                 circuit: Some(CircuitPayload {
                     format: CircuitFormat::AqoJson as i32,
                     data: br#"{"aqo":"ok"}"#.to_vec(),
                 }),
-                metadata: HashMap::new(),
+                metadata,
             }))
         }
 
