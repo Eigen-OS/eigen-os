@@ -1,7 +1,8 @@
 //! Eigen Kernel (MVP).
 //!
 //! Implements the internal KernelGateway gRPC API and a minimal in-memory job store.
-//! Real compilation/execution is intentionally stubbed (see Issue #25).
+//! Compiles and executes jobs through internal gRPC integrations with
+//! eigen-compiler and driver-manager.
 
 pub mod job_store;
 pub mod rpc;

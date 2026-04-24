@@ -1,6 +1,7 @@
-//! In-memory job store (MVP placeholder).
+//! In-memory job store for MVP kernel state.
 //!
-//! TODO: replace with a QFS-backed persistent store.
+//! This matches MVP documentation: runtime task state is in-memory, while
+//! artifacts and results are persisted in QFS.
 
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -10,7 +11,7 @@ use uuid::Uuid;
 
 use qrtx::state_machine::{transition, JobEvent, JobState, TransitionError};
 
-/// A stored job record (MVP subset).
+/// A stored job record for the MVP state machine.
 #[derive(Debug, Clone)]
 pub struct JobRecord {
     pub job_id: String,
