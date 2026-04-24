@@ -257,6 +257,8 @@ def compile_eigen_lang(source: bytes, *, source_ref: str | None = None) -> Compi
     if has_minimize:
         aqo["hybrid_plan_marker"] = {"kind": "minimize", "expanded_by": "kernel"}
 
+    aqo_bytes = json.dumps(aqo, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    
     aqo_digest = hashlib.sha256(aqo_bytes).hexdigest()
 
     metadata = {

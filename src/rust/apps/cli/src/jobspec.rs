@@ -399,11 +399,94 @@ pub fn map_to_submit_job_request_with_packaging(
 }
 
 pub fn submit_job_to_system_api(req: &SubmitJobRequest) -> SubmitJobResponse {
+    let _ = validate_submit_request_against_system_api_schema(req);
     let stable = format!("{}:{}", req.name, req.target);
     let suffix = &sha256_hex(stable.as_bytes())[0..12];
     SubmitJobResponse {
         job_id: format!("job-{suffix}"),
     }
+}
+
+pub fn validate_submit_request_against_system_api_schema(
+    req: &SubmitJobRequest,
+) -> Result<(), JobSpecValidationError> {
+    let mut violations = Vec::new();
+    if req.name.trim().is_empty() {
+        violations.push(FieldViolation {
+            field: "name".to_string(),
+            description: "field is required".to_string(),
+        });
+    }
+    if req.target.trim().is_empty() {
+        violations.push(FieldViolation {
+            field: "target".to_string(),
+            description: "field is required".to_string(),
+        });
+    }
+
+    let ProgramSource::EigenLangSource {
+        source,
+        entrypoint,
+        sha256,
+    } = &req.program;
+    if source.trim().is_empty() {
+        violations.push(FieldViolation {
+            field: "program.eigen_lang_source.source".to_string(),
+            description: "field is required".to_string(),
+        });
+    }
+    if entrypoint.trim().is_empty() {
+        violations.push(FieldViolation {
+            field: "program.eigen_lang_source.entrypoint".to_string(),
+            description: "field is required".to_string(),
+        });
+    }
+    if sha256.len() != 64 || !sha256.chars().all(|c| c.is_ascii_hexdigit()) {
+        violations.push(FieldViolation {
+            field: "program.eigen_lang_source.sha256".to_string(),
+            description: "must be 64-char lowercase hex sha256".to_string(),
+        });
+    }
+
+    if violations.is_empty() {
+        Ok(())
+    } else {
+        Err(JobSpecValidationError::new(violations))
+    }
+}
+
+pub fn build_submit_request_envelope_json(req: &SubmitJobRequest) -> String {
+    let ProgramSource::EigenLangSource {
+        source,
+        entrypoint,
+        sha256,
+    } = &req.program;
+    let escaped_name = json_escape(&req.name);
+    let escaped_target = json_escape(&req.target);
+    let escaped_source = json_escape(source);
+    let escaped_entrypoint = json_escape(entrypoint);
+    let escaped_sha256 = json_escape(sha256);
+
+    format!(
+        concat!(
+            "{{",
+            "\"name\":\"{name}\",",
+            "\"program\":{{",
+            "\"eigen_lang_source\":{{",
+            "\"source\":\"{source}\",",
+            "\"entrypoint\":\"{entrypoint}\",",
+            "\"sha256\":\"{sha256}\"",
+            "}}",
+            "}},",
+            "\"target\":\"{target}\"",
+            "}}"
+        ),
+        name = escaped_name,
+        source = escaped_source,
+        entrypoint = escaped_entrypoint,
+        sha256 = escaped_sha256,
+        target = escaped_target,
+    )
 }
 
 fn validate_entrypoint(source: &str, entrypoint: &str) -> Result<(), JobSpecValidationError> {
@@ -428,11 +511,7 @@ fn validate_entrypoint(source: &str, entrypoint: &str) -> Result<(), JobSpecVali
 
 fn resolve_program_path(basedir: &Path, program_path: &str) -> PathBuf {
     let p = PathBuf::from(program_path);
-    if p.is_absolute() {
-        p
-    } else {
-        basedir.join(p)
-    }
+    if p.is_absolute() { p } else { basedir.join(p) }
 }
 
 pub fn sha256_hex(bytes: &[u8]) -> String {
@@ -640,8 +719,8 @@ pub fn visualize_aqo_json(aqo_json: &str) -> String {
         .unwrap_or_else(|| "unknown".to_string());
     let target =
         extract_json_string_field(aqo_json, "target").unwrap_or_else(|| "unknown".to_string());
-    let entrypoint = extract_json_string_field(aqo_json, "entrypoint")
-        .unwrap_or_else(|| "unknown".to_string());
+    let entrypoint =
+        extract_json_string_field(aqo_json, "entrypoint").unwrap_or_else(|| "unknown".to_string());
 
     format!(
         concat!(
@@ -954,10 +1033,11 @@ spec:
 "#;
         let spec = parse_and_validate_jobspec(yaml).unwrap();
         let err = map_to_submit_job_request_with_packaging(&spec, Path::new(".")).unwrap_err();
-        assert!(err
-            .violations
-            .iter()
-            .any(|v| v.field == "spec.program" && v.description.contains("not allowed")));
+        assert!(
+            err.violations
+                .iter()
+                .any(|v| v.field == "spec.program" && v.description.contains("not allowed"))
+        );
     }
 
     #[test]
@@ -1006,4 +1086,54 @@ spec:
         assert!(viz.contains("AQO Graph (MVP)"));
         assert!(viz.contains("program_sha256:"));
     }
+    
+    #[test]
+    fn client_side_schema_validation_rejects_invalid_submit_request() {
+        let req = SubmitJobRequest {
+            name: "".to_string(),
+            program: ProgramSource::EigenLangSource {
+                source: "".to_string(),
+                entrypoint: "".to_string(),
+                sha256: "abc".to_string(),
+            },
+            target: "".to_string(),
+            priority: 50,
+            compiler_options: BTreeMap::new(),
+            metadata: BTreeMap::new(),
+            dependencies: Vec::new(),
+        };
+
+        let err = validate_submit_request_against_system_api_schema(&req).unwrap_err();
+        assert!(err.violations.iter().any(|v| v.field == "name"));
+        assert!(err.violations.iter().any(|v| v.field == "target"));
+        assert!(
+            err.violations
+                .iter()
+                .any(|v| v.field == "program.eigen_lang_source.sha256")
+        );
+    }
+
+    #[test]
+    fn request_envelope_json_matches_expected_contract_shape() {
+        let req = SubmitJobRequest {
+            name: "bell".to_string(),
+            program: ProgramSource::EigenLangSource {
+                source: "@hybrid_program\ndef main():\n    pass\n".to_string(),
+                entrypoint: "main".to_string(),
+                sha256: "3ac225168df54212a25f4e3f8f7f9fef26f7f2f5de6d9d0bc00f7a5a9bc4d3b6"
+                    .to_string(),
+            },
+            target: "sim:local".to_string(),
+            priority: 10,
+            compiler_options: BTreeMap::new(),
+            metadata: BTreeMap::new(),
+            dependencies: Vec::new(),
+        };
+        let envelope = build_submit_request_envelope_json(&req);
+        assert!(envelope.contains("\"name\":\"bell\""));
+        assert!(envelope.contains("\"eigen_lang_source\""));
+        assert!(envelope.contains("\"entrypoint\":\"main\""));
+        assert!(envelope.contains("\"target\":\"sim:local\""));
+    }
+
 }
