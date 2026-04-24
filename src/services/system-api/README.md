@@ -26,6 +26,14 @@ System API exposes an explicit auth mode:
 - `SYSTEM_API_AUTH_MODE=allow_all` (default, local/dev MVP)
 - `SYSTEM_API_AUTH_MODE=static_token` (requires `Authorization: Bearer <token>`)
 - `SYSTEM_API_AUTH_TOKEN=...` (used only in `static_token` mode)
+- `SYSTEM_API_AUTH_ROLES=admin|user|readonly` (used in `static_token` mode, default `admin`)
+- `SYSTEM_API_AUTH_SUBJECT=...` and `SYSTEM_API_AUTH_TENANT=...` (audit/auth context fields)
+
+Role permissions (MVP):
+
+- `admin`: all permissions (`*`)
+- `user`: `jobs:*`, `devices:list`, `devices:status`
+- `readonly`: `jobs:read`, `devices:list`
 
 Validation hardening knobs:
 

@@ -40,6 +40,18 @@ fn main() {
                 std::process::exit(code);
             }
         }
+        "compile" => {
+            if let Err(err) = run_compile(&args[2..]) {
+                eprintln!("compile failed: {err}");
+                std::process::exit(EXIT_USER_ERROR);
+            }
+        }
+        "visualize" => {
+            if let Err(err) = run_visualize(&args[2..]) {
+                eprintln!("visualize failed: {err}");
+                std::process::exit(EXIT_USER_ERROR);
+            }
+        }
         cmd => {
             eprintln!("Command '{cmd}' is not implemented. Use 'eigen help'.");
             std::process::exit(1);
@@ -172,8 +184,65 @@ fn run_submit(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn run_compile(args: &[String]) -> Result<(), String> {
+    let mut job_file: Option<PathBuf> = None;
+    let mut out_file: PathBuf = PathBuf::from("circuit.aqo.json");
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-f" | "--file" | "--job" => {
+                let Some(next) = args.get(i + 1) else {
+                    return Err("expected path after -f/--file/--job".to_string());
+                };
+                job_file = Some(PathBuf::from(next));
+                i += 2;
+            }
+            "-o" | "--out" => {
+                let Some(next) = args.get(i + 1) else {
+                    return Err("expected path after -o/--out".to_string());
+                };
+                out_file = PathBuf::from(next);
+                i += 2;
+            }
+            unknown => return Err(format!("unknown compile argument: {unknown}")),
+        }
+    }
+    let Some(job_path) = job_file else {
+        return Err("usage: eigen compile -f job.yaml --out circuit.aqo.json".to_string());
+    };
+    let aqo_json = jobspec::compile_job_to_aqo_json(&job_path).map_err(|e| e.to_string())?;
+    std::fs::write(&out_file, aqo_json)
+        .map_err(|e| format!("failed to write {}: {e}", out_file.display()))?;
+    println!("compiled_aqo: {}", out_file.display());
+    Ok(())
+}
+
+fn run_visualize(args: &[String]) -> Result<(), String> {
+    let mut aqo_file: Option<PathBuf> = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-f" | "--file" | "--aqo" => {
+                let Some(next) = args.get(i + 1) else {
+                    return Err("expected path after -f/--file/--aqo".to_string());
+                };
+                aqo_file = Some(PathBuf::from(next));
+                i += 2;
+            }
+            unknown => return Err(format!("unknown visualize argument: {unknown}")),
+        }
+    }
+    let Some(aqo_path) = aqo_file else {
+        return Err("usage: eigen visualize -f circuit.aqo.json".to_string());
+    };
+    let aqo_json = std::fs::read_to_string(&aqo_path)
+        .map_err(|e| format!("failed to read {}: {e}", aqo_path.display()))?;
+    println!("{}", jobspec::visualize_aqo_json(&aqo_json));
+    Ok(())
+}
+
 fn print_help() {
     println!(
-        "Eigen CLI (scaffold)\n\nUsage:\n  eigen <command> [args...]\n\nCommands:\n  help        Show this message\n  version     Print version\n  submit      Submit job: eigen submit -f job.yaml\n  status      Get job status: eigen status <job_id>\n  watch       Stream progress: eigen watch <job_id>\n  results     Fetch results: eigen results <job_id>\n"
+        "Eigen CLI (scaffold)\n\nUsage:\n  eigen <command> [args...]\n\nCommands:\n  help        Show this message\n  version     Print version\n  submit      Submit job: eigen submit -f job.yaml\n  status      Get job status: eigen status <job_id>\n  watch       Stream progress: eigen watch <job_id>\n  results     Fetch results: eigen results <job_id>\n  compile     Compile locally: eigen compile -f job.yaml --out circuit.aqo.json\n  visualize   Visualize AQO: eigen visualize -f circuit.aqo.json\n"
     );
 }

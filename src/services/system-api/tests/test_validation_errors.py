@@ -58,6 +58,19 @@ def test_get_job_status_missing_job_id(grpc_addr: str):
     assert "job_id" in fields
 
 
+def test_unknown_job_id_returns_not_found(grpc_addr: str):
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = job_pb_grpc.JobServiceStub(channel)
+
+    with pytest.raises(grpc.RpcError) as e_status:
+        stub.GetJobStatus(job_pb.GetJobStatusRequest(job_id="job_missing_123"))
+    assert e_status.value.code() == grpc.StatusCode.NOT_FOUND
+
+    with pytest.raises(grpc.RpcError) as e_results:
+        stub.GetJobResults(job_pb.GetJobResultsRequest(job_id="job_missing_123"))
+    assert e_results.value.code() == grpc.StatusCode.NOT_FOUND
+
+
 def test_reserve_device_invalid_ttl(grpc_addr: str):
     channel = grpc.insecure_channel(grpc_addr)
     stub = dev_pb_grpc.DeviceServiceStub(channel)

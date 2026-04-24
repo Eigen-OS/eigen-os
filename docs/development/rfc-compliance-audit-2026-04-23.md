@@ -1,124 +1,129 @@
-# RFC Compliance Audit (codebase vs `rfcs/`)
+# Docs ↔ Code Compliance Audit (MVP)
 
-Date: 2026-04-23
+Date: 2026-04-24
 
 ## Scope
 
-- Reviewed RFCs in `rfcs/0001`–`0012`.
-- Reviewed implementation and tests in:
+- Documentation reviewed under `docs/` with focus on MVP contracts:
+  - `docs/requirements/mvp-scope.md`
+  - `docs/development/mvp-definition-of-done.md`
+  - `docs/architecture/contract-map.md`
+  - `docs/reference/api/grpc-public.md`
+- Implementation reviewed in:
   - `src/services/system-api`
   - `src/services/eigen-compiler`
   - `src/services/driver-manager`
   - `src/rust/apps/cli`
-  - `proto/`
+  - `proto/eigen/api/v1`
 
-## Executive summary
+## Executive Summary
 
-Current status is **partially compliant** with MVP RFC set.
+Current status: **partially compliant**.
 
-- **Strongly aligned:** public proto layout, JobService/DeviceService surface, stream sequencing behavior, compiler AST-only safety checks, basic auth + input validation hooks, observability JSON logs + `/metrics`, JobSpec v0.1 shape in CLI parser.
-- **Partially aligned / gaps:** API includes `CompilationService` in public RFC while separate submission RFCs suggest internal-only ambiguity; some RFC-mandated CI checks (Buf lint/breaking) are not evident here; kernel-level requirements from RFC 0007 are only partially represented in current tree.
-- **Critical hygiene issue fixed in this audit:** RFC 0002 contained unresolved merge-conflict markers and was normalized.
+- The repository has a solid MVP skeleton: public proto contracts, working System API smoke tests, AST-only compiler checks, and basic CLI submit/status/watch/results flow.
+- However, several docs currently overstate implementation completeness (especially around full MVP command surface, kernel orchestration, RBAC authorization, and strict error semantics).
+- Conclusion for MVP closeout: **docs need one reconciliation pass** so “done” claims match the actual shipped behavior.
 
-## Compliance matrix
+## Compliance Matrix
 
-### RFC 0001 (RFC process)
+### 1) CLI surface vs MVP docs
 
-**Status: Partial**
+**Doc expectation**
+- MVP scope states CLI commands include `submit`, `status`, `result`, `compile`, `visualize`.
 
-- RFC files and template exist.
-- Process mechanics like linking tracking issues/owners/status transitions are not consistently enforced by code/CI in this repo snapshot.
+**Code reality**
+- Implemented commands are `submit`, `status`, `watch`, `results` (`result` alias), `help`, `version`.
+- `compile` and `visualize` are not implemented.
 
-### RFC 0002 (architecture boundaries)
+**Status**: ❌ Drift (docs ahead of code)
 
-**Status: Partial**
+---
 
-- Service graph artifacts exist (`system-api`, `eigen-compiler`, `driver-manager`, kernel crate/protos).
-- End-to-end orchestration appears scaffolded/stubbed in service code; not all kernel orchestration guarantees from RFC text are verifiable as implemented.
-- **Fixed now:** removed merge-conflict markers from RFC 0002 file so architecture spec is readable and machine-auditable.
+### 2) System API orchestration model vs MVP docs
 
-### RFC 0003 (JobSpec v0.1)
+**Doc expectation**
+- System API forwards validated requests to kernel; kernel handles pipeline.
 
-**Status: Mostly compliant (CLI layer)**
+**Code reality**
+- `system-api` runs an in-memory stub job store and synthetic updates/results in `grpc_impl.py`.
+- No kernel gRPC client integration in submit/status/results path.
 
-- CLI parser validates `apiVersion=eigen.os/v0.1`, `kind=QuantumJob`, required fields, and preserves extensibility via tolerant parsing of unknown keys.
-- Mapping to submission request with `eigen_lang` payload and sha256 packaging is implemented.
+**Status**: ❌ Drift (docs ahead of code)
 
-### RFC 0004 (public gRPC API)
+---
 
-**Status: Mostly compliant (surface + behavior), partial (kernel gateway in runtime)**
+### 3) Job status semantics and NOT_FOUND behavior
 
-- Public proto tree provides JobService + DeviceService + CompilationService and internal gateway proto.
-- System API implementation includes submit/status/cancel/stream/results and device operations.
-- Stream updates are ordered and use monotonic `event_seq`; terminal state handling exists in stub flow.
-- Full production kernel gateway wiring remains partially stubbed in this snapshot.
+**Doc expectation**
+- Unknown `job_id` should map to `NOT_FOUND` in public API error table.
 
-### RFC 0005 (AQO)
+**Code reality**
+- `GetJobStatus` for missing job returns synthetic QUEUED status instead of gRPC `NOT_FOUND`.
+- `GetJobResults` for missing job returns synthetic DONE + stub counts/metadata instead of `NOT_FOUND`.
 
-**Status: Partial**
+**Status**: ❌ Drift (contract semantics mismatch)
 
-- Compiler emits deterministic JSON AQO (`sort_keys=True`) with versioned payload and mandatory measurement op.
-- MVP gate set is represented in compiler stubs (`RX/RY/RZ/CX/MEASURE`) with params support.
-- Full AQO schema validation and broader operation set constraints from RFC are not fully evident.
+---
 
-### RFC 0006 (QDriver API)
+### 4) Job lifecycle states in acceptance criteria
 
-**Status: Partial**
+**Doc expectation**
+- Acceptance criteria call out `PENDING → COMPILING → RUNNING → DONE` state visibility.
 
-- Internal driver-manager proto/services exist and simulator driver tests are present.
-- Plugin/driver architecture scaffolding exists.
-- Full compliance to execution/result metadata contracts appears incomplete or dependent on runtime not fully verifiable in current environment.
+**Code reality**
+- Default stream updates are `QUEUED → RUNNING → DONE`.
+- No explicit `PENDING`/`COMPILING` state emitted in default path.
 
-### RFC 0007 (QRTX MVP)
+**Status**: ⚠️ Partial
 
-**Status: Partial / not fully verifiable**
+---
 
-- Kernel crates exist; internal gateway proto exists.
-- Required lifecycle/pipeline/QFS persistence guarantees are not fully confirmed due rust workspace build failure in current environment (see checks section).
+### 5) Security model (authn vs authz)
 
-### RFC 0008 (observability)
+**Doc expectation**
+- MVP scope and API docs describe role-based permissions (`jobs:*`, `devices:*`) in addition to authn.
 
-**Status: Mostly compliant (system-api slice)**
+**Code reality**
+- `security.py` enforces authentication mode (`allow_all` or static bearer token).
+- No role extraction/authorization policy checks per method.
 
-- Structured JSON logging includes key fields.
-- Prometheus-style `/metrics` endpoint exists with request count and duration metrics.
-- Trace context extraction via `traceparent` metadata is implemented.
-- Cross-service completeness (kernel/driver-manager metric families from RFC examples) is only partial in this snapshot.
+**Status**: ❌ Drift (docs ahead of code)
 
-### RFC 0009 (security/isolation)
+---
 
-**Status: Partial**
+### 6) Compiler safety claims
 
-- System API has auth modes (`allow_all`, static token), authn enforcement, payload size limits, and validation routing to INVALID_ARGUMENT.
-- Permission matrix / role-based authorization and kernel isolation hook semantics are only partially represented.
+**Doc expectation**
+- AST-only compilation and restricted subset.
 
-### RFC 0010 (eigen-cli MVP)
+**Code reality**
+- Compiler parses source via AST, rejects forbidden imports/calls and dynamic control flow, enforces AST limits, and emits deterministic AQO JSON.
 
-**Status: Partial**
+**Status**: ✅ Aligned
 
-- CLI crate + JobSpec submit-path implementation exists.
-- Full command surface (`status/result/compile/visualize`) and explicit exit-code contract from RFC are not fully confirmed in this audit pass.
+---
 
-### RFC 0011/0012 (Eigen-Lang submission + language contract)
+### 7) Proto/CI contract checks
 
-**Status: Mostly compliant in compiler safety core, partial overall**
+**Doc expectation**
+- Buf lint and breaking checks are part of CI.
 
-- Compiler uses AST parsing only and does not execute user code.
-- Forbidden imports/calls and dynamic control-flow rejection are implemented.
-- Deterministic output hashing and metadata are present.
-- Some language conformance details remain MVP-stub-level and need fuller conformance-suite enforcement across CI.
+**Code reality**
+- CI workflow includes `buf lint` and `buf breaking` job against `main`.
 
-## Evidence highlights
+**Status**: ✅ Aligned
 
-- Public/internal proto split and services: `proto/eigen/api/v1/*`, `proto/eigen/internal/v1/*`.
-- AST-only compilation and safety checks: `src/services/eigen-compiler/src/eigen_compiler/compiler.py`.
-- Compile request validation and size limits: `src/services/eigen-compiler/src/eigen_compiler/validation.py`.
-- System API validation, authn hooks, observability, streaming semantics: `src/services/system-api/src/system_api/{validation.py,security.py,observability.py,grpc_impl.py}`.
-- CLI JobSpec parser and submit mapping: `src/rust/apps/cli/src/jobspec.rs`.
+## Recommended Actions Before MVP Closeout
 
-## Recommended follow-ups
+1. **Decide source of truth for current release messaging**:
+   - either reduce docs claims to “MVP scaffold/skeleton”,
+   - or finish missing implementation (kernel forwarding, NOT_FOUND semantics, authz, CLI compile/visualize).
+2. **Normalize public error semantics** in `system-api` for unknown job/device IDs.
+3. **Update acceptance criteria examples** to match actual event/state sequence (or implement missing states).
+4. **Reconcile `grpc-public.md` and `contract-map.md` wording** around optional/public `CompilationService` and command surface.
+5. Add a short “Current MVP Limitations (Implemented vs Planned)” section in `docs/requirements/mvp-scope.md`.
 
-1. Add/enable CI conformance gates explicitly tied to RFC clauses (Buf lint/breaking, language conformance, stream-order contract tests).
-2. Complete kernel RFC 0007 validation once rust workspace build issues are resolved.
-3. Harmonize RFC 0004 vs RFC 0011/0012 on whether `CompilationService` is public in MVP and freeze one position.
-4. Expand security from authn baseline to RFC 0009 role-permission enforcement and auditable deny metrics.
+## Verification Commands Used
+
+- `pytest -q src/services/system-api/tests`
+- `cargo test -p cli --manifest-path src/rust/Cargo.toml`
