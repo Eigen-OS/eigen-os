@@ -184,9 +184,6 @@ def _collect_operations(tree: ast.AST, params: dict[str, str]) -> tuple[list[dic
             operations.append({"op": "CX", "q": [0, 1]})
             qubit_count = max(qubit_count, 2)
 
-    if not operations:
-        operations = [{"op": "RY", "q": [0], "params": {"theta": 1.570796}}]
-
     operations.append({"op": "MEASURE", "q": list(range(qubit_count)), "c": list(range(qubit_count))})
     return operations, qubit_count
 

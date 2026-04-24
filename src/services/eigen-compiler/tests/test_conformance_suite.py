@@ -43,6 +43,19 @@ def test_golden_cases_match_expected_aqo(case_dir: Path) -> None:
     assert json.loads(first.decode("utf-8")) == expected
 
 
+def test_no_synthetic_gate_stub_is_emitted() -> None:
+    source = (
+        b"from eigen_lang import hybrid_program\n\n"
+        b"@hybrid_program(target=\"sim\", shots=1000)\n"
+        b"def main():\n"
+        b"    pass\n"
+    )
+
+    compiled = json.loads(compile_eigen_lang(source).aqo_json.decode("utf-8"))
+
+    assert compiled["operations"] == [{"op": "MEASURE", "q": [0], "c": [0]}]
+
+
 @pytest.mark.parametrize("case_file", sorted(NEGATIVE_ROOT.glob("*/request.json")), ids=lambda p: p.parent.name)
 def test_negative_cases_return_expected_validation_errors(grpc_addr: str, case_file: Path) -> None:
     case = json.loads(case_file.read_text(encoding="utf-8"))
