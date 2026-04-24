@@ -77,7 +77,7 @@ All user-visible changes require RFC + reference doc updates + conformance updat
 ## Unresolved questions
 - Canonical bitstring ordering for counts (must be frozen globally).
 - Whether static `if/for` is MVP or Post‑MVP.
-- Whether CompilationService is public in MVP or internal only.
+- Whether to add a separate public compile endpoint post‑MVP while keeping the current `CompilationService` internal.
 
 ## Testing plan
 Conformance suite required:
