@@ -11,7 +11,7 @@
 - ADRs are the primary entry point for implementation teams.
 - RFCs remain the canonical history of alternatives and discussion context.
 
-## MVP-2 kickoff RFC set
+## MVP-2 RFC set (implemented)
 
 - [RFC 0013 — MVP-2 JobSpec Parser and Submit Contract](../rfcs/0013-mvp2-jobspec-parser-submit-contract.md)
 - [RFC 0014 — MVP-2 Eigen-Lang AST Safety and Deterministic AQO](../rfcs/0014-mvp2-eigen-lang-ast-safety-deterministic-aqo.md)
