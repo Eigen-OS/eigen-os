@@ -3,9 +3,9 @@ This roadmap is aligned with the current MVP definition and tracks the minimum m
 ## Current delivery focus (as of 2026-04-24)
 
 - ✅ **MVP-1 (Core Services Setup)** completed: repository skeleton, public contracts, service stubs, QRTX/Driver Manager/QFS scaffolding, and CI baseline.
-- 🚧 **MVP-2 (Compilation Pipeline)** started: JobSpec parser/validator, Eigen-Lang AST→AQO compiler hardening, CLI `eigen submit`, and conformance suites.
+- ✅ **MVP-2 (Compilation Pipeline)** completed: JobSpec parser/validator, Eigen-Lang AST→AQO compiler hardening, CLI `eigen submit`, and conformance suites.
 - Detailed MVP-2 execution plan: [`development/mvp-2-compilation-pipeline.md`](development/mvp-2-compilation-pipeline.md)
-- MVP-2 kickoff RFC package: [`../rfcs/0013-mvp2-jobspec-parser-submit-contract.md`](../rfcs/0013-mvp2-jobspec-parser-submit-contract.md), [`../rfcs/0014-mvp2-eigen-lang-ast-safety-deterministic-aqo.md`](../rfcs/0014-mvp2-eigen-lang-ast-safety-deterministic-aqo.md), [`../rfcs/0015-mvp2-conformance-and-ci-gates.md`](../rfcs/0015-mvp2-conformance-and-ci-gates.md)
+- MVP-2 RFC package (implemented): [`../rfcs/0013-mvp2-jobspec-parser-submit-contract.md`](../rfcs/0013-mvp2-jobspec-parser-submit-contract.md), [`../rfcs/0014-mvp2-eigen-lang-ast-safety-deterministic-aqo.md`](../rfcs/0014-mvp2-eigen-lang-ast-safety-deterministic-aqo.md), [`../rfcs/0015-mvp2-conformance-and-ci-gates.md`](../rfcs/0015-mvp2-conformance-and-ci-gates.md)
 
 ## Milestone 1 — API and contract baseline
 
@@ -13,7 +13,7 @@ This roadmap is aligned with the current MVP definition and tracks the minimum m
 - Freeze internal service contracts between kernel, compiler, and driver manager.
 - Validate canonical error mapping and structured error details.
 
-## Milestone 2 — End-to-end MVP execution (MVP-2 active)
+## Milestone 2 — End-to-end MVP execution (MVP-2 completed)
 
 - Deliver submit → compile → execute → results flow on `sim:local`.
 - Ensure deterministic AST-only compilation to AQO for MVP subset.

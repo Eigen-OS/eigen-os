@@ -1,10 +1,10 @@
 # Eigen OS
 
 Eigen OS is a modular platform for **hybrid quantum-classical workloads**.
-This repository is currently focused on architecture, contracts, and an MVP service skeleton.
+This repository currently contains the MVP baseline with service implementations, contracts, conformance suites, and local E2E workflows.
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-![Status](https://img.shields.io/badge/Status-Pre--alpha-orange)
+![Status](https://img.shields.io/badge/Status-alpha-orange)
 ![Python](https://img.shields.io/badge/Python-3.12%2B-blue)
 ![Rust](https://img.shields.io/badge/Rust-1.92%2B-orange)
 
@@ -20,7 +20,7 @@ Contract-level compatibility is treated as stable only after:
 
 Current delivery focus:
 - ✅ MVP-1 (Core Services Setup) complete as of **2026-04-24**.
-- 🚧 MVP-2 (Compilation Pipeline) in progress; see [`docs/development/mvp-2-compilation-pipeline.md`](docs/development/mvp-2-compilation-pipeline.md).
+- ✅ MVP-2 (Compilation Pipeline) complete as of **2026-04-24**; see [`docs/development/mvp-2-compilation-pipeline.md`](docs/development/mvp-2-compilation-pipeline.md).
 
 ### API version policy (MVP freeze)
 
