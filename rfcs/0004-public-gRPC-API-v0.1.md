@@ -1,4 +1,4 @@
-# RFC 0004: Public gRPC API v0.1 (JobService, DeviceService, CompilationService)
+# RFC 0004: Public gRPC API v0.1 (JobService, DeviceService)
 
 - **Status:** Discussion
 - **Authors:** NYankovich
@@ -85,23 +85,22 @@ This decision keeps the public API contract minimal and focused on the core quan
 
 Do not encode errors via `success=false` fields in responses.
 
-**Client-facing services (as per `service.proto`):**
+**Client-facing services (as per public proto):**
 - `JobService`: SubmitJob, GetJobStatus, CancelJob, StreamJobUpdates, GetJobResults
 - `DeviceService`: ListDevices, GetDeviceDetails, GetDeviceStatus, ReserveDevice
-- `CompilationService`: CompileCircuit, OptimizeCircuit, ValidateCircuit
 
 **Call pattern:**
 1) client `SubmitJob` → gets `job_id`
 2) client polls `GetJobStatus` OR subscribes `StreamJobUpdates`
 3) when DONE, client calls `GetJobResults`.
 
-**CompilationService** can be used either directly by clients (advanced) or internally by kernel.
+**MVP decision (frozen):** `CompilationService` is **internal-only** in `eigen.internal.v1` and is called by the kernel.
 
 ## Reference-level design
 
 ### Interfaces / APIs
 
-### service.proto (client-facing)
+### Public services (client-facing)
 
 ```proto
 service JobService {
@@ -118,6 +117,8 @@ service DeviceService {
   rpc GetDeviceStatus(DeviceStatusRequest) returns (DeviceStatusResponse);
   rpc ReserveDevice(ReserveDeviceRequest) returns (ReserveDeviceResponse);
 }
+
+### Internal services (kernel-facing, private network)
 
 service CompilationService {
   rpc CompileCircuit(CompileCircuitRequest) returns (CompileCircuitResponse);
@@ -197,5 +198,4 @@ Add new fields as optional; never change semantics without a new major version.
 
 ## Open questions
 
-- Should `CompilationService` be client-facing long-term or internal-only?
 - Should we adopt `google.rpc.Status` details formally?

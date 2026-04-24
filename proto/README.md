@@ -5,11 +5,11 @@ This directory contains **all** `.proto` definitions for Eigen OS.
 ## Packages
 
 - **Public API** (client-facing): `eigen.api.v1`
-  - `proto/eigen_api/v1/*.proto`
+  - `proto/eigen/api/v1/*.proto`
   - Services: `JobService`, `DeviceService`
 
 - **Internal APIs** (kernel-facing, private network): `eigen.internal.v1`
-  - `proto/eigen_internal/v1/*.proto`
+  - `proto/eigen/internal/v1/*.proto`
   - Services: `KernelGateway`, `DriverManagerService`, `CompilationService`
 
 ## Rust generation

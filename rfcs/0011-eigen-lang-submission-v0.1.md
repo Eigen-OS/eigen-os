@@ -106,4 +106,4 @@ Kernel stores:
 ## Open questions
 
 - Exact allowlist of AST nodes for MVP (appendix TBD).
-- Whether `CompilationService` is public in MVP or internal-only (see RFC 0004).
+- Whether we expose a dedicated user-facing compile RPC in a future API version, while keeping current MVP `CompilationService` internal-only (see RFC 0004).
