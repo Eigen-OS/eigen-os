@@ -1,7 +1,7 @@
 # Eigen‑Lang (MVP) — work items
 
 ## Contract artifacts
-- [ ] RFC 0012 accepted
+- [ ] RFC 0014 accepted (AST safety + deterministic AQO)
 - [ ] Complete reference docs: syntax/semantics/allowlist/mapping/versioning/conformance
 
 ## Compiler frontend
