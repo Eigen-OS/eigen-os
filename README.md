@@ -62,7 +62,7 @@ Start with:
 See exact commands in:
 - [`docs/development/README.md`](docs/development/README.md)
 
-### 3) Bring up the local stack### 3) Bring up the local stack
+### 3) Bring up the local stack
 
 ```bash
 ./deploy/local/dev_env.sh up
