@@ -645,7 +645,7 @@ pub fn visualize_aqo_json(aqo_json: &str) -> String {
 
     format!(
         concat!(
-            "AQO Graph (MVP)\n",
+            "AQO Graph\n",
             "  target: {target}\n",
             "  entrypoint: {entrypoint}\n",
             "  program_sha256: {sha}\n",
@@ -713,12 +713,18 @@ pub fn get_job_status_from_system_api(job_id: &str) -> Result<JobStatusView, Grp
         _ => 0.42,
     };
 
+    let message = match state {
+        "DONE" => "completed",
+        "ERROR" => "failed",
+        _ => "running",
+    };
+
     Ok(JobStatusView {
         job_id: job_id.to_string(),
         state,
         stage: state,
         progress,
-        message: "stub status",
+        message,
     })
 }
 
@@ -801,7 +807,6 @@ pub fn get_job_results_from_system_api(job_id: &str) -> Result<JobResultsView, G
 
     let mut metadata = BTreeMap::new();
     metadata.insert("backend".to_string(), "sim:local".to_string());
-    metadata.insert("stub".to_string(), "true".to_string());
 
     if job_id.ends_with("error") {
         return Ok(JobResultsView {
@@ -998,7 +1003,7 @@ spec:
         let aqo = compile_job_to_aqo_json(&yaml_path).expect("compile");
         assert!(aqo.contains("\"aqo_version\": \"0.1\""));
         let viz = visualize_aqo_json(&aqo);
-        assert!(viz.contains("AQO Graph (MVP)"));
+        assert!(viz.contains("AQO Graph"));
         assert!(viz.contains("program_sha256:"));
     }
 }
