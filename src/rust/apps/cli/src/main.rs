@@ -1,4 +1,4 @@
-//! Eigen CLI - MVP scaffold.
+//! Eigen CLI - MVP.
 
 mod jobspec;
 
@@ -18,7 +18,7 @@ fn main() {
 
     match args[1].as_str() {
         "help" | "--help" | "-h" => print_help(),
-        "version" | "--version" | "-V" => println!("eigen-cli 0.1.0 (scaffold)"),
+        "version" | "--version" | "-V" => println!("eigen-cli 0.1.0"),
         "submit" => {
             if let Err(err) = run_submit(&args[2..]) {
                 eprintln!("submit failed: {err}");
