@@ -17,6 +17,7 @@ This document tracks core community and maintenance documents for Eigen OS.
 
 ## Documentation hygiene checks
 
+- MVP-2 kickoff RFC set is documented in `docs/rfcs-pointer.md` and `rfcs/0013`-`0015`.
 - Roadmap no longer contains placeholder content.
 - Project health status is tracked in this file instead of open checklist placeholders.
 

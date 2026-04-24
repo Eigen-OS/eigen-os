@@ -50,14 +50,12 @@ git fetch origin main:main
 - MVP-1 closeout summary and audit: [`mvp-dod-compliance-audit-2026-04-24.md`](mvp-dod-compliance-audit-2026-04-24.md)
 - MVP-2 implementation plan (current): [`mvp-2-compilation-pipeline.md`](mvp-2-compilation-pipeline.md)
 - ADR decisions for MVP baseline and MVP-2: [`../adr/README.md`](../adr/README.md)
+- MVP-2 RFC package (kickoff): [`../../rfcs/0013-mvp2-jobspec-parser-submit-contract.md`](../../rfcs/0013-mvp2-jobspec-parser-submit-contract.md), [`../../rfcs/0014-mvp2-eigen-lang-ast-safety-deterministic-aqo.md`](../../rfcs/0014-mvp2-eigen-lang-ast-safety-deterministic-aqo.md), [`../../rfcs/0015-mvp2-conformance-and-ci-gates.md`](../../rfcs/0015-mvp2-conformance-and-ci-gates.md)
 
-## MVP phase tracking
-
-- MVP-1 closeout summary and audit: [`mvp-dod-compliance-audit-2026-04-24.md`](mvp-dod-compliance-audit-2026-04-24.md)
-- MVP-2 implementation plan (current): [`mvp-2-compilation-pipeline.md`](mvp-2-compilation-pipeline.md)
 
 ## Related files
 
 - MVP DoD: [`mvp-definition-of-done.md`](mvp-definition-of-done.md)
 - Contract freeze checklist: [`mvp-contract-freeze-checklist.md`](mvp-contract-freeze-checklist.md)
 - Repo layout: [`repo-layout.md`](repo-layout.md)
+- Eigen-Lang work queue: [`eigen-lang-work-items.md`](eigen-lang-work-items.md)
