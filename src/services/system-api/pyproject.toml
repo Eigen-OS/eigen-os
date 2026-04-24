@@ -13,6 +13,7 @@ dependencies = [
   "grpcio-status>=1.76",
   "googleapis-common-protos>=1.72",
   "protobuf>=6.33",
+  "PyYAML>=6.0",
 ]
 
 [project.optional-dependencies]

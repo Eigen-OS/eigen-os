@@ -1,0 +1,15 @@
+{
+  "name": "vqe-h2",
+  "target": "sim:local",
+  "priority": 50,
+  "entrypoint": "main",
+  "compiler_options": {
+    "optimization_level": "1"
+  },
+  "metadata": {
+    "shots": "1024"
+  },
+  "dependencies": [
+    "s3://bucket/input.json"
+  ]
+}

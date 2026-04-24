@@ -1,0 +1,9 @@
+{
+  "name": "file-backed",
+  "target": "sim:local",
+  "priority": 50,
+  "entrypoint": "run",
+  "compiler_options": {},
+  "metadata": {},
+  "dependencies": []
+}
