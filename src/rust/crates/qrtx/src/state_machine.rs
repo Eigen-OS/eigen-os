@@ -160,22 +160,34 @@ mod tests {
 
     #[test]
     fn terminal_states_reject_all_events() {
+        let events = [
+            JobEvent::StartValidation,
+            JobEvent::FinishValidation,
+            JobEvent::StartCompiling,
+            JobEvent::FinishCompiling,
+            JobEvent::StartAllocating,
+            JobEvent::FinishAllocating,
+            JobEvent::StartExecuting,
+            JobEvent::FinishExecuting,
+            JobEvent::StartCompleting,
+            JobEvent::FinishCompleting,
+            JobEvent::Fail,
+            JobEvent::Cancel,
+            JobEvent::TimeOut,
+        ];
+
         for s in [
             JobState::Completed,
             JobState::Failed,
             JobState::Cancelled,
             JobState::Timeout,
         ] {
-            let err = transition(s, JobEvent::Cancel).unwrap_err();
-            assert_eq!(
-                err,
-                TransitionError::Invalid {
-                    from: s,
-                    event: JobEvent::Cancel,
-                }
+            for event in events {
+                let err = transition(s, event).unwrap_err();
+                assert_eq!(
+                    err,
+                    TransitionError::Invalid { from: s, event }
             );
-            assert_eq!(transition(s, JobEvent::Fail).unwrap(), JobState::Failed);
-            assert_eq!(transition(s, JobEvent::TimeOut).unwrap(), JobState::Timeout);
         }
     }
 }
