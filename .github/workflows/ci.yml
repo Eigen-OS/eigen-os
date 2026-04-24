@@ -113,9 +113,20 @@ jobs:
   green-to-green-smoke:
     name: Green-to-Green smoke (sim:local + trace/metrics)
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/rust
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src/rust
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -123,15 +134,15 @@ jobs:
           python-version: "3.12"
 
       - name: Install system-api with test deps
-        working-directory: src/services/system-api
+        working-directory: ../services/system-api
         run: pip install -e .[dev]
 
       - name: Run E2E smoke test
-        working-directory: src/services/system-api
+        working-directory: ../services/system-api
         run: pytest tests/test_e2e_smoke_submit_watch_results.py
 
       - name: Run metrics smoke test
-        working-directory: src/services/system-api
+        working-directory: ../services/system-api
         run: pytest tests/test_observability_smoke.py
 
       - name: Run trace propagation integration test
