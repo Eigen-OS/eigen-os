@@ -605,6 +605,84 @@ pub struct JobResultsView {
     pub error_summary: Option<String>,
 }
 
+pub fn compile_job_to_aqo_json(job_path: &Path) -> Result<String, SubmitBuildError> {
+    let req = build_submit_request_from_job_file(job_path)?;
+    let ProgramSource::EigenLangSource {
+        source,
+        entrypoint,
+        sha256,
+    } = req.program;
+    let escaped_entrypoint = json_escape(&entrypoint);
+    let escaped_target = json_escape(&req.target);
+
+    Ok(format!(
+        concat!(
+            "{{\n",
+            "  \"aqo_version\": \"0.1\",\n",
+            "  \"source_lang\": \"eigen-lang\",\n",
+            "  \"entrypoint\": \"{escaped_entrypoint}\",\n",
+            "  \"target\": \"{escaped_target}\",\n",
+            "  \"program_sha256\": \"{sha256}\",\n",
+            "  \"source_bytes\": {source_bytes},\n",
+            "  \"operations\": [],\n",
+            "  \"metadata\": {{\"compiled_by\": \"eigen-cli-local\"}}\n",
+            "}}"
+        ),
+        escaped_entrypoint = escaped_entrypoint,
+        escaped_target = escaped_target,
+        sha256 = sha256,
+        source_bytes = source.len(),
+    ))
+}
+
+pub fn visualize_aqo_json(aqo_json: &str) -> String {
+    let sha = extract_json_string_field(aqo_json, "program_sha256")
+        .unwrap_or_else(|| "unknown".to_string());
+    let target =
+        extract_json_string_field(aqo_json, "target").unwrap_or_else(|| "unknown".to_string());
+    let entrypoint = extract_json_string_field(aqo_json, "entrypoint")
+        .unwrap_or_else(|| "unknown".to_string());
+
+    format!(
+        concat!(
+            "AQO Graph (MVP)\n",
+            "  target: {target}\n",
+            "  entrypoint: {entrypoint}\n",
+            "  program_sha256: {sha}\n",
+            "\n",
+            "  [START] -> [COMPILE] -> [EXECUTE] -> [MEASURE]\n"
+        ),
+        target = target,
+        entrypoint = entrypoint,
+        sha = sha
+    )
+}
+
+fn json_escape(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+fn extract_json_string_field(doc: &str, field: &str) -> Option<String> {
+    let needle = format!("\"{field}\"");
+    let start = doc.find(&needle)?;
+    let tail = &doc[start + needle.len()..];
+    let quote = tail.find('"')?;
+    let tail = &tail[quote + 1..];
+    let end = tail.find('"')?;
+    Some(tail[..end].to_string())
+}
+
 pub fn get_job_status_from_system_api(job_id: &str) -> Result<JobStatusView, GrpcLikeError> {
     if job_id.trim().is_empty() {
         return Err(GrpcLikeError {
@@ -896,5 +974,31 @@ spec:
         assert_eq!(results.state, "ERROR");
         assert_eq!(results.error_code.as_deref(), Some("EIGEN_SIM_ERROR"));
         assert!(results.error_summary.unwrap_or_default().contains("failed"));
+    }
+
+    #[test]
+    fn local_compile_and_visualize_generate_expected_markers() {
+        let dir = temp_dir();
+        let yaml_path = dir.join("job.yaml");
+        let program_path = dir.join("program.eigen.py");
+        fs::write(
+            &program_path,
+            "@hybrid_program\ndef main():\n    return [('RX', 0.5, 0), ('MEASURE', 0)]\n",
+        )
+        .expect("program");
+        fs::write(
+            &yaml_path,
+            format!(
+                "apiVersion: eigen.os/v0.1\nkind: QuantumJob\nmetadata:\n  name: compile-test\nspec:\n  program_path: {}\n  target: sim:local\n",
+                program_path.display()
+            ),
+        )
+        .expect("yaml");
+
+        let aqo = compile_job_to_aqo_json(&yaml_path).expect("compile");
+        assert!(aqo.contains("\"aqo_version\": \"0.1\""));
+        let viz = visualize_aqo_json(&aqo);
+        assert!(viz.contains("AQO Graph (MVP)"));
+        assert!(viz.contains("program_sha256:"));
     }
 }

@@ -21,7 +21,7 @@ from google.protobuf.timestamp_pb2 import Timestamp
 
 from .errors import abort_invalid_argument
 from .observability import log_request_end, log_request_start, new_request_context
-from .security import enforce_authn
+from .security import enforce_authn, enforce_authz
 from .validation import (
     validate_device_id,
     validate_job_id,
@@ -77,19 +77,27 @@ class JobService:
         return [
             self._mk_update(
                 job_id=job_id,
-                state=self._types_pb.JOB_STATE_QUEUED,
-                stage="QUEUED",
+                state=self._types_pb.JOB_STATE_PENDING,
+                stage="PENDING",
                 progress=0.0,
-                message="queued (stub)",
+                message="pending (stub)",
                 event_seq=1,
+            ),
+            self._mk_update(
+                job_id=job_id,
+                state=self._types_pb.JOB_STATE_COMPILING,
+                stage="COMPILING",
+                progress=0.25,
+                message="compiling (stub)",
+                event_seq=2,
             ),
             self._mk_update(
                 job_id=job_id,
                 state=self._types_pb.JOB_STATE_RUNNING,
                 stage="RUNNING",
-                progress=0.5,
+                progress=0.7,
                 message="running (stub)",
-                event_seq=2,
+                event_seq=3,
             ),
             self._mk_update(
                 job_id=job_id,
@@ -97,7 +105,7 @@ class JobService:
                 stage="DONE",
                 progress=1.0,
                 message="done (stub)",
-                event_seq=3,
+                event_seq=4,
             ),
         ]
     
@@ -112,11 +120,19 @@ class JobService:
         updates = [
             self._mk_update(
                 job_id=job_id,
-                state=self._types_pb.JOB_STATE_QUEUED,
-                stage="QUEUED",
+                state=self._types_pb.JOB_STATE_PENDING,
+                stage="PENDING",
                 progress=0.0,
-                message=f"queued vqe job trace_id={trace_id}",
+                message=f"pending vqe job trace_id={trace_id}",
                 event_seq=1,
+            ),
+            self._mk_update(
+                job_id=job_id,
+                state=self._types_pb.JOB_STATE_COMPILING,
+                stage="COMPILING",
+                progress=0.05,
+                message=f"compiling vqe program trace_id={trace_id}",
+                event_seq=2,
             ),
             self._mk_update(
                 job_id=job_id,
@@ -124,7 +140,7 @@ class JobService:
                 stage="RUNNING",
                 progress=0.1,
                 message=f"starting hybrid loop trace_id={trace_id} iteration=0",
-                event_seq=2,
+                event_seq=3,
             ),
         ]
 
@@ -144,7 +160,7 @@ class JobService:
                         "vqe_iteration "
                         f"trace_id={trace_id} iteration={iter_idx} objective={current}"
                     ),
-                    event_seq=2 + iter_idx,
+                    event_seq=3 + iter_idx,
                 )
             )
 
@@ -156,7 +172,7 @@ class JobService:
                 stage="DONE",
                 progress=1.0,
                 message=f"vqe complete trace_id={trace_id} best_objective={best}",
-                event_seq=3 + max_iters,
+                event_seq=4 + max_iters,
             )
         )
         return updates, objective_history
@@ -204,6 +220,7 @@ class JobService:
 
     def SubmitJob(self, request, context: grpc.ServicerContext):
         enforce_authn(context, method_name="JobService.SubmitJob")
+        enforce_authz(context, required_permission="jobs:submit")
         rc = new_request_context(context)
         log_request_start("JobService.SubmitJob", rc)
 
@@ -223,8 +240,8 @@ class JobService:
             job_id=job_id,
             status=self._types_pb.JobStatus(
                 job_id=job_id,
-                state=self._types_pb.JOB_STATE_QUEUED,
-                stage="QUEUED",
+                state=self._types_pb.JOB_STATE_PENDING,
+                stage="PENDING",
                 progress=0.0,
                 message="accepted (stub)",
                 created_at=now,
@@ -237,6 +254,7 @@ class JobService:
 
     def GetJobStatus(self, request, context: grpc.ServicerContext):
         enforce_authn(context, method_name="JobService.GetJobStatus")
+        enforce_authz(context, required_permission="jobs:read")
         rc = new_request_context(context)
         rc.job_id = request.job_id
         log_request_start("JobService.GetJobStatus", rc)
@@ -249,19 +267,9 @@ class JobService:
             record = self._jobs.get(request.job_id)
 
         if record is None:
-            latest = self._types_pb.JobUpdate(
-                job_id=request.job_id,
-                state=self._types_pb.JOB_STATE_QUEUED,
-                stage="QUEUED",
-                progress=0.0,
-                message="stub status",
-                event_seq=0,
-                timestamp=_ts_now(),
-            )
-            created_at = _ts_now()
-        else:
-            latest = record.updates[-1]
-            created_at = record.created_at
+            context.abort(grpc.StatusCode.NOT_FOUND, f"job_id not found: {request.job_id}")
+        latest = record.updates[-1]
+        created_at = record.created_at
 
         resp = self._job_pb.GetJobStatusResponse(
             status=self._types_pb.JobStatus(
@@ -280,6 +288,7 @@ class JobService:
 
     def CancelJob(self, request, context: grpc.ServicerContext):
         enforce_authn(context, method_name="JobService.CancelJob")
+        enforce_authz(context, required_permission="jobs:cancel")
         rc = new_request_context(context)
         rc.job_id = request.job_id
         log_request_start("JobService.CancelJob", rc)
@@ -291,21 +300,22 @@ class JobService:
         accepted = False
         with self._lock:
             record = self._jobs.get(request.job_id)
-            if record is not None:
-                terminal_values = {getattr(self._types_pb, name) for name in TERMINAL_JOB_STATES}
-                if record.updates[-1].state not in terminal_values:
-                    seq = int(record.updates[-1].event_seq) + 1
-                    record.updates.append(
-                        self._mk_update(
-                            job_id=request.job_id,
-                            state=self._types_pb.JOB_STATE_CANCELLED,
-                            stage="CANCELLED",
-                            progress=1.0,
-                            message="cancelled (stub)",
-                            event_seq=seq,
-                        )
+            if record is None:
+                context.abort(grpc.StatusCode.NOT_FOUND, f"job_id not found: {request.job_id}")
+            terminal_values = {getattr(self._types_pb, name) for name in TERMINAL_JOB_STATES}
+            if record.updates[-1].state not in terminal_values:
+                seq = int(record.updates[-1].event_seq) + 1
+                record.updates.append(
+                    self._mk_update(
+                        job_id=request.job_id,
+                        state=self._types_pb.JOB_STATE_CANCELLED,
+                        stage="CANCELLED",
+                        progress=1.0,
+                        message="cancelled (stub)",
+                        event_seq=seq,
                     )
-                    accepted = True
+                )
+                accepted = True
 
         resp = self._job_pb.CancelJobResponse(accepted=accepted)
         log_request_end("JobService.CancelJob", rc)
@@ -313,6 +323,7 @@ class JobService:
 
     def StreamJobUpdates(self, request, context: grpc.ServicerContext):
         enforce_authn(context, method_name="JobService.StreamJobUpdates")
+        enforce_authz(context, required_permission="jobs:read")
         rc = new_request_context(context)
         rc.job_id = request.job_id
         log_request_start("JobService.StreamJobUpdates", rc)
@@ -325,18 +336,8 @@ class JobService:
         with self._lock:
             record = self._jobs.get(request.job_id)
             if record is None:
-                updates = self._mk_default_updates(request.job_id)
-                self._jobs[request.job_id] = _JobRecord(
-                    job_id=request.job_id,
-                    created_at=_ts_now(),
-                    updates=updates,
-                    counts={"00": 512, "11": 512},
-                    results_metadata={"stub": "true"},
-                    terminal_state=self._types_pb.JOB_STATE_DONE,
-                )
-                selected_updates = updates
-            else:
-                selected_updates = list(record.updates)
+                context.abort(grpc.StatusCode.NOT_FOUND, f"job_id not found: {request.job_id}")
+            selected_updates = list(record.updates)
 
         for update in selected_updates:
             if int(update.event_seq) <= start_after_seq:
@@ -347,6 +348,7 @@ class JobService:
 
     def GetJobResults(self, request, context: grpc.ServicerContext):
         enforce_authn(context, method_name="JobService.GetJobResults")
+        enforce_authz(context, required_permission="jobs:read")
         rc = new_request_context(context)
         rc.job_id = request.job_id
         log_request_start("JobService.GetJobResults", rc)
@@ -359,21 +361,14 @@ class JobService:
             record = self._jobs.get(request.job_id)
 
         if record is None:
-            resp = self._job_pb.GetJobResultsResponse(
-                job_id=request.job_id,
-                state=self._types_pb.JOB_STATE_DONE,
-                counts={"00": 512, "11": 512},
-                metadata={"stub": "true"},
-                completed_at=_ts_now(),
-            )
-        else:
-            resp = self._job_pb.GetJobResultsResponse(
-                job_id=request.job_id,
-                state=record.terminal_state,
-                counts=record.counts,
-                metadata=record.results_metadata,
-                completed_at=_ts_now(),
-            )
+            context.abort(grpc.StatusCode.NOT_FOUND, f"job_id not found: {request.job_id}")
+        resp = self._job_pb.GetJobResultsResponse(
+            job_id=request.job_id,
+            state=record.terminal_state,
+            counts=record.counts,
+            metadata=record.results_metadata,
+            completed_at=_ts_now(),
+        )
 
         log_request_end("JobService.GetJobResults", rc)
         return resp
@@ -388,6 +383,7 @@ class DeviceService:
 
     def ListDevices(self, request, context: grpc.ServicerContext):
         enforce_authn(context, method_name="DeviceService.ListDevices")
+        enforce_authz(context, required_permission="devices:list")
         rc = new_request_context(context)
         log_request_start("DeviceService.ListDevices", rc)
 
@@ -411,6 +407,7 @@ class DeviceService:
 
     def GetDeviceDetails(self, request, context: grpc.ServicerContext):
         enforce_authn(context, method_name="DeviceService.GetDeviceDetails")
+        enforce_authz(context, required_permission="devices:list")
         rc = new_request_context(context)
         log_request_start("DeviceService.GetDeviceDetails", rc)
 
@@ -432,6 +429,7 @@ class DeviceService:
 
     def GetDeviceStatus(self, request, context: grpc.ServicerContext):
         enforce_authn(context, method_name="DeviceService.GetDeviceStatus")
+        enforce_authz(context, required_permission="devices:list")
         rc = new_request_context(context)
         log_request_start("DeviceService.GetDeviceStatus", rc)
 
@@ -452,6 +450,7 @@ class DeviceService:
 
     def ReserveDevice(self, request, context: grpc.ServicerContext):
         enforce_authn(context, method_name="DeviceService.ReserveDevice")
+        enforce_authz(context, required_permission="devices:reserve")
         rc = new_request_context(context)
         log_request_start("DeviceService.ReserveDevice", rc)
 

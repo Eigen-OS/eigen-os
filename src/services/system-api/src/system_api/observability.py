@@ -38,7 +38,7 @@ class JsonFormatter(logging.Formatter):
             "service": "system-api",
             "message": record.getMessage(),
         }
-        for field in ("trace_id", "job_id", "traceparent", "method", "request_id"):
+        for field in ("trace_id", "job_id", "traceparent", "method", "request_id", "subject", "permission"):
             value = getattr(record, field, None)
             if value:
                 payload[field] = value
@@ -49,6 +49,7 @@ class _MetricsState:
     lock = threading.Lock()
     requests_total = 0
     request_duration_seconds_sum = 0.0
+    authz_denied_total = 0
 
 
 class _MetricsHandler(BaseHTTPRequestHandler):
@@ -60,11 +61,14 @@ class _MetricsHandler(BaseHTTPRequestHandler):
         with _MetricsState.lock:
             req_total = _MetricsState.requests_total
             req_sum = _MetricsState.request_duration_seconds_sum
+            authz_denied = _MetricsState.authz_denied_total
         body = (
             "# TYPE eigen_api_requests_total counter\n"
             f"eigen_api_requests_total {req_total}\n"
             "# TYPE eigen_api_request_duration_seconds counter\n"
             f"eigen_api_request_duration_seconds {req_sum:.6f}\n"
+            "# TYPE eigen_api_authz_denied_total counter\n"
+            f"eigen_api_authz_denied_total {authz_denied}\n"
         ).encode()
         self.send_response(200)
         self.send_header("Content-Type", "text/plain; version=0.0.4")
@@ -113,3 +117,16 @@ def log_request_end(method: str, rc: RequestContext) -> None:
         _MetricsState.request_duration_seconds_sum += elapsed
     _LOG.info("rpc_end", extra={"method": method, "request_id": rc.request_id, "trace_id": rc.trace_id, "job_id": rc.job_id})
 
+
+def log_authz_denied(*, method: str, subject: str, permission: str, job_id: str | None = None) -> None:
+    with _MetricsState.lock:
+        _MetricsState.authz_denied_total += 1
+    _LOG.warning(
+        "authz_denied",
+        extra={
+            "method": method,
+            "subject": subject,
+            "permission": permission,
+            "job_id": job_id,
+        },
+    )
