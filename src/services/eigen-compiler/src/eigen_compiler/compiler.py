@@ -20,6 +20,7 @@ class CompilationResult:
     aqo_json: bytes
     metadata: dict[str, str]
 
+
 @dataclass(frozen=True)
 class CompilerValidationError(Exception):
     violations: tuple[FieldViolation, ...]
@@ -48,18 +49,17 @@ def _parse_python_source(source: bytes) -> ast.AST:
         )
 
 
-def _reject_dynamic_control_flow(tree: ast.AST) -> None:
+def _reject_dynamic_control_flow(tree: ast.AST) -> tuple[FieldViolation, ...]:
     banned_nodes = (ast.If, ast.For, ast.AsyncFor, ast.While, ast.Match, ast.IfExp)
     if any(isinstance(node, banned_nodes) for node in ast.walk(tree)):
-        raise CompilerValidationError(
-            violations=(
-                FieldViolation(
-                    field="source",
-                    description="dynamic runtime control flow is not supported in Eigen-Lang MVP",
-                ),
-            )
+        return (
+            FieldViolation(
+                field="source",
+                description="dynamic runtime control flow is not supported in Eigen-Lang MVP",
+            ),
         )
-    
+    return ()
+
 
 def _reject_forbidden_imports(tree: ast.AST) -> tuple[FieldViolation, ...]:
     violations: list[FieldViolation] = []
@@ -84,7 +84,7 @@ def _reject_forbidden_imports(tree: ast.AST) -> tuple[FieldViolation, ...]:
                         description=f"import from '{module}' is not allowed in Eigen-Lang MVP",
                     )
                 )
-        return tuple(violations)
+    return tuple(violations)
 
 
 def _call_name(node: ast.AST) -> str | None:
@@ -94,13 +94,13 @@ def _call_name(node: ast.AST) -> str | None:
         return node.attr
     return None
 
+
 def _reject_forbidden_calls(tree: ast.AST) -> tuple[FieldViolation, ...]:
     violations: list[FieldViolation] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
         name = _call_name(node.func)
-        # Запрещены прямые вызовы exec, eval, compile и т.п.
         if name in _FORBIDDEN_CALLS:
             violations.append(
                 FieldViolation(
@@ -108,14 +108,13 @@ def _reject_forbidden_calls(tree: ast.AST) -> tuple[FieldViolation, ...]:
                     description=f"call '{name}' is not allowed in Eigen-Lang MVP",
                 )
             )
-        # Если вызов метода у объекта, проверяем корень модуля
         elif isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
             module_root = node.func.value.id
             if module_root in _FORBIDDEN_MODULE_ROOTS:
                 violations.append(
                     FieldViolation(
                         field="source",
-                        description=f"call '{name}' is not allowed in Eigen-Lang MVP",
+                        description=f"dynamic I/O call '{module_root}.{name}' is not allowed in Eigen-Lang MVP",
                     )
                 )
     return tuple(violations)
@@ -178,7 +177,6 @@ def _validate_single_entrypoint(tree: ast.AST) -> tuple[FieldViolation, ...]:
     )
 
 
-
 def _collect_params(tree: ast.AST) -> dict[str, str]:
     params: dict[str, str] = {}
     for node in ast.walk(tree):
@@ -224,11 +222,9 @@ def _collect_operations(tree: ast.AST, params: dict[str, str]) -> tuple[list[dic
 
 
 def compile_eigen_lang(source: bytes, *, source_ref: str | None = None) -> CompilationResult:
-    """Compile source bytes into a tiny AQO v0.1 payload.
+    """Compile source bytes into a tiny AQO v0.1 payload."""
 
-    """
-
-    digest = hashlib.sha256(source).hexdigest() if source else ""
+    source_digest = hashlib.sha256(source).hexdigest() if source else ""
     tree = _parse_python_source(source)
     violations = (
         _enforce_resource_limits(tree)
@@ -261,13 +257,14 @@ def compile_eigen_lang(source: bytes, *, source_ref: str | None = None) -> Compi
     if has_minimize:
         aqo["hybrid_plan_marker"] = {"kind": "minimize", "expanded_by": "kernel"}
 
-    aqo_bytes = json.dumps(aqo, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    aqo_digest = hashlib.sha256(aqo_bytes).hexdigest()
 
     metadata = {
         "compiler": "eigen-compiler",
         "aqo_version": "0.1",
         "input_bytes": str(len(source)),
-        "source_sha256": digest,
+        "source_sha256": source_digest,
+        "aqo_sha256": aqo_digest,
     }
     if has_minimize:
         metadata["hybrid_plan_marker"] = "minimize"
