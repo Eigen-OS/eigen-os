@@ -138,3 +138,50 @@ def test_compile_circuit_rejects_invalid_syntax(grpc_addr: str) -> None:
     assert e.value.code() == grpc.StatusCode.INVALID_ARGUMENT
     bad = _extract_bad_request(e.value)
     assert {v.field for v in bad.field_violations} == {"source"}
+
+def test_compile_circuit_requires_single_hybrid_program_entrypoint(grpc_addr: str) -> None:
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = comp_pb_grpc.CompilationServiceStub(channel)
+
+    with pytest.raises(grpc.RpcError) as e:
+        stub.CompileCircuit(
+            comp_pb.CompileCircuitRequest(
+                language="eigen-lang",
+                source=(
+                    b"from eigen_lang import hybrid_program\n\n"
+                    b"def not_entrypoint():\n"
+                    b"    ry(0, theta=1.0)\n"
+                ),
+            )
+        )
+
+    assert e.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+    bad = _extract_bad_request(e.value)
+    assert {v.field for v in bad.field_violations} == {"source"}
+    assert any("exactly one @hybrid_program entrypoint is required" in v.description for v in bad.field_violations)
+
+
+def test_compile_circuit_returns_structured_violations(grpc_addr: str) -> None:
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = comp_pb_grpc.CompilationServiceStub(channel)
+
+    with pytest.raises(grpc.RpcError) as e:
+        stub.CompileCircuit(
+            comp_pb.CompileCircuitRequest(
+                language="eigen-lang",
+                source=(
+                    b"import os\n\n"
+                    b"def bad_program():\n"
+                    b"    eval('1+1')\n"
+                    b"    os.system('echo hi')\n"
+                ),
+            )
+        )
+
+    assert e.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+    bad = _extract_bad_request(e.value)
+    assert len(bad.field_violations) >= 3
+    descriptions = [v.description for v in bad.field_violations]
+    assert any("import 'os'" in desc for desc in descriptions)
+    assert any("call 'eval'" in desc for desc in descriptions)
+    assert any("dynamic I/O call 'os.system'" in desc for desc in descriptions)
