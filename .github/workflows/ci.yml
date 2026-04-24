@@ -146,10 +146,10 @@ jobs:
         run: pytest tests/test_observability_smoke.py
 
       - name: Run trace propagation integration test
-        run: cargo test -p eigen-kernel integration_propagates_traceparent_to_compiler_and_driver --locked
+        run: cargo test -p eigen-kernel integration_propagates_traceparent_to_compiler_and_driver
 
       - name: Run metrics persistence integration test
-        run: cargo test -p eigen-kernel integration_vqe_loop_persists_metrics_and_results_metadata --locked
+        run: cargo test -p eigen-kernel integration_vqe_loop_persists_metrics_and_results_metadata
 
   golden-fixture-review-gate:
     name: Golden fixture review gate
