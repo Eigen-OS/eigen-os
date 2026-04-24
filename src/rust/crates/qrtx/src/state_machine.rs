@@ -159,7 +159,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn terminal_states_reject_all_events() {
         let events = [
             JobEvent::StartValidation,
@@ -189,3 +188,4 @@ mod tests {
             }
         }
     }
+}
