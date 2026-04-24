@@ -34,6 +34,6 @@ Golden outputs are intentionally strict. Any change to `expected.aqo.json` files
 5. Require explicit reviewer approval for golden fixture diffs before merge.
 
 ## Notes
-- The MVP compiler currently returns a canonical AQO scaffold; fixture growth should track Eigen‑Lang feature additions.
+- The MVP compiler currently returns a canonical AQO scaffold; it may append a terminal `MEASURE` op but must not synthesize extra gate operations that are absent in source.
 - Add at least one negative fixture for each new validation rule.
 
