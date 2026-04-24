@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -41,6 +42,23 @@ def test_golden_cases_match_expected_aqo(case_dir: Path) -> None:
 
     assert first == second, "AQO output must be deterministic for the same source"
     assert json.loads(first.decode("utf-8")) == expected
+
+
+def test_aqo_sha256_matches_payload_and_is_stable() -> None:
+    source = (
+        b"from eigen_lang import hybrid_program\n\n"
+        b"@hybrid_program(target=\"sim\", shots=1000)\n"
+        b"def main():\n"
+        b"    ry(0, theta=1.570796)\n"
+    )
+
+    first = compile_eigen_lang(source)
+    second = compile_eigen_lang(source)
+
+    expected_hash = hashlib.sha256(first.aqo_json).hexdigest()
+
+    assert first.metadata["aqo_sha256"] == expected_hash
+    assert second.metadata["aqo_sha256"] == expected_hash
 
 
 def test_no_synthetic_gate_stub_is_emitted() -> None:
