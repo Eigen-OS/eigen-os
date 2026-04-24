@@ -210,8 +210,8 @@ impl KernelGatewayService for KernelGatewaySvc {
             .ok_or_else(|| Status::not_found("job not found"))?;
 
         let accepted = match rec.state {
-            JobState::Done | JobState::Error | JobState::Cancelled => false,
-            _ => self.store.apply_event(&job_id, JobEvent::Cancel).is_ok(),
+            JobState::Completed | JobState::Failed | JobState::Cancelled | JobState::Timeout => false,
+    _           => self.store.apply_event(&job_id, JobEvent::Cancel).is_ok(),
         };
 
         Ok(Response::new(CancelJobResponse { accepted }))
@@ -239,7 +239,7 @@ impl KernelGatewayService for KernelGatewaySvc {
             error_code: rec.error_code.unwrap_or_default(),
             error_summary: rec.error_summary.unwrap_or_default(),
             error_details_ref: rec.error_details_ref.unwrap_or_default(),
-            completed_at: if rec.state == JobState::Done {
+            completed_at: if rec.state == JobState::Completed {
                 Some(ts_from_unix_ms(rec.updated_at_unix_ms))
             } else {
                 None
@@ -259,6 +259,13 @@ async fn run_pipeline(
         HashMap::from([("results_ref".to_string(), format!("{job_id}/results"))]);
 
     store
+        .apply_event(job_id, JobEvent::StartValidation)
+        .map_err(|e| PipelineError::internal(format!("state transition failed: {e}")))?;
+    store
+        .apply_event(job_id, JobEvent::FinishValidation)
+        .map_err(|e| PipelineError::internal(format!("state transition failed: {e}")))?;
+
+    store
         .apply_event(job_id, JobEvent::StartCompiling)
         .map_err(|e| PipelineError::internal(format!("state transition failed: {e}")))?;
 
@@ -271,14 +278,13 @@ async fn run_pipeline(
         .map_err(|e| PipelineError::compile(format!("failed to connect to compiler: {e}")))?;
 
     let mut compile_req = Request::new(CompileJobRequest {
-            job_id: job_id.to_string(),
-            language: language_for(&req),
-            input: Some(crate::proto::compile_job_request::Input::Source(
-                req.program,
-            )),
-            options: req.compiler_options,
-        });
+        job_id: job_id.to_string(),
+        language: language_for(&req),
+        input: Some(crate::proto::compile_job_request::Input::Source(req.program)),
+        options: req.compiler_options,
+    });
     trace_ctx.inject(&mut compile_req);
+
     let compile_res = compiler
         .compile_job(compile_req)
         .await
@@ -291,15 +297,17 @@ async fn run_pipeline(
 
     deps.qfs
         .store_compiled_artifacts(job_id, &circuit_payload.data, None, "remote")
-        .map_err(|e| {
-            PipelineError::persist(format!("failed to persist compiled artifacts: {e}"))
-        })?;
+        .map_err(|e| PipelineError::persist(format!("failed to persist compiled artifacts: {e}")))?;
 
     store
         .apply_event(job_id, JobEvent::FinishCompiling)
         .map_err(|e| PipelineError::internal(format!("state transition failed: {e}")))?;
+
     store
-        .apply_event(job_id, JobEvent::StartRunning)
+        .apply_event(job_id, JobEvent::StartAllocating)
+        .map_err(|e| PipelineError::internal(format!("state transition failed: {e}")))?;
+    store
+        .apply_event(job_id, JobEvent::FinishAllocating)
         .map_err(|e| PipelineError::internal(format!("state transition failed: {e}")))?;
 
     let mut driver = DriverManagerServiceClient::connect(deps.driver_endpoint.clone())
@@ -327,19 +335,19 @@ async fn run_pipeline(
         vqe_res.last_execution
     } else {
         let mut execute_req = Request::new(ExecuteCircuitRequest {
-                job_id: job_id.to_string(),
-                device_id: device_id.clone(),
-                payload: Some(circuit_payload),
-                shots: parse_shots(&req.metadata),
-                options: req.metadata,
-            });
+            job_id: job_id.to_string(),
+            device_id: device_id.clone(),
+            payload: Some(circuit_payload),
+            shots: parse_shots(&req.metadata),
+            options: req.metadata,
+        });
         trace_ctx.inject(&mut execute_req);
-        let execute_res = driver
+
+        driver
             .execute_circuit(execute_req)
             .await
             .map_err(PipelineError::from_execute_status)?
-            .into_inner();
-        execute_res
+            .into_inner()
     };
 
     persist_results(&deps, job_id, &device_id, &execute_res).map_err(|e| {
@@ -348,8 +356,12 @@ async fn run_pipeline(
 
     store.set_results_metadata(job_id, results_metadata);
     store.set_counts(job_id, execute_res.counts.clone());
+
     store
-        .apply_event(job_id, JobEvent::FinishRunningOk)
+        .apply_event(job_id, JobEvent::FinishExecuting)
+        .map_err(|e| PipelineError::internal(format!("state transition failed: {e}")))?;
+    store
+        .apply_event(job_id, JobEvent::FinishCompleting)
         .map_err(|e| PipelineError::internal(format!("state transition failed: {e}")))?;
 
     Ok(())
@@ -717,23 +729,30 @@ fn status_from_record(rec: &JobRecord) -> GetJobStatusResponse {
 fn progress_for(state: JobState) -> f32 {
     match state {
         JobState::Pending => 0.0,
+        JobState::Validating => 0.1,
         JobState::Compiling => 0.25,
-        JobState::Queued => 0.5,
-        JobState::Running => 0.75,
-        JobState::Done => 1.0,
-        JobState::Error | JobState::Cancelled => 1.0,
+        JobState::Queued => 0.35,
+        JobState::Allocating => 0.5,
+        JobState::Executing => 0.75,
+        JobState::Completing => 0.9,
+        JobState::Completed => 1.0,
+        JobState::Failed | JobState::Cancelled | JobState::Timeout => 1.0,
     }
 }
 
 fn to_proto_state(state: JobState) -> TaskState {
     match state {
         JobState::Pending => TaskState::Pending,
+        JobState::Validating => TaskState::Pending,
         JobState::Compiling => TaskState::Compiling,
         JobState::Queued => TaskState::Queued,
-        JobState::Running => TaskState::Running,
-        JobState::Done => TaskState::Done,
-        JobState::Error => TaskState::Error,
+        JobState::Allocating => TaskState::Queued,
+        JobState::Executing => TaskState::Running,
+        JobState::Completing => TaskState::Running,
+        JobState::Completed => TaskState::Done,
+        JobState::Failed => TaskState::Error,
         JobState::Cancelled => TaskState::Cancelled,
+        JobState::Timeout => TaskState::Error,
     }
 }
 
