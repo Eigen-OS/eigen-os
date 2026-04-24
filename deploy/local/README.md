@@ -1,6 +1,6 @@
-# Local deployment (all services)
+# Local deployment (MVP stack)
 
-This directory contains a simple local profile for bringing up the full Eigen OS MVP stack.
+This directory provides a simple local profile to run the Eigen OS MVP services together
 
 ## Services
 
@@ -9,7 +9,7 @@ This directory contains a simple local profile for bringing up the full Eigen OS
 - `eigen-compiler` (`50071`, metrics `9093`)
 - `driver-manager` (`50061`, metrics `9092`)
 
-## Run everything
+## Start stack
 
 From repository root:
 
@@ -17,12 +17,13 @@ From repository root:
 ./deploy/local/dev_env.sh up
 ```
 
-Stop and remove containers:
+## Stop stack
 
 ```bash
 ./deploy/local/dev_env.sh down
 ```
 
-## Config
+## Configuration
 
-`local_config.yaml` documents the default local endpoints used by the stack.
+- `local_config.yaml` defines default local endpoints and service wiring.
+- Use this profile for smoke checks and local integration validation.
