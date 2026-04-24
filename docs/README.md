@@ -50,5 +50,5 @@ If you are new to the repository, read in this order:
 ## RFC & ADR
 
 - RFCs: [`../rfcs/`](../rfcs/)
-- ADRs: [`adr/`](adr/)
+- ADRs: [`adr/README.md`](adr/README.md)
 

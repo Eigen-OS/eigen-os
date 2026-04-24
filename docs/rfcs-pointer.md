@@ -1,9 +1,19 @@
-# RFCs
+# RFCs and ADRs
 
-RFC drafts for MVP exist in the bundle created during architecture work.
+## Purpose
 
-Recommended repo layout:
-- `rfcs/` — proposals (Draft/Accepted)
-- `docs/adr/` — decisions (Accepted)
+- `rfcs/` stores proposals, rationale, and evolution history.
+- `docs/adr/` stores accepted architectural decisions that are operationally binding.
 
-> TODO: copy the RFCs into the repo under `rfcs/` and link them from docs/README.
+## Current policy
+
+- RFC status `Implemented` requires a synchronized ADR record.
+- ADRs are the primary entry point for implementation teams.
+- RFCs remain the canonical history of alternatives and discussion context.
+
+## Quick links
+
+- RFC directory: [`../rfcs/`](../rfcs/)
+- ADR index: [`adr/README.md`](adr/README.md)
+- MVP-2 execution plan: [`development/mvp-2-compilation-pipeline.md`](development/mvp-2-compilation-pipeline.md)
+

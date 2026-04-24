@@ -45,6 +45,17 @@ git fetch origin main:main
 
 - CI uses full git history (`fetch-depth: 0`) so breaking checks can compare branch state.
 
+## MVP phase tracking
+
+- MVP-1 closeout summary and audit: [`mvp-dod-compliance-audit-2026-04-24.md`](mvp-dod-compliance-audit-2026-04-24.md)
+- MVP-2 implementation plan (current): [`mvp-2-compilation-pipeline.md`](mvp-2-compilation-pipeline.md)
+- ADR decisions for MVP baseline and MVP-2: [`../adr/README.md`](../adr/README.md)
+
+## MVP phase tracking
+
+- MVP-1 closeout summary and audit: [`mvp-dod-compliance-audit-2026-04-24.md`](mvp-dod-compliance-audit-2026-04-24.md)
+- MVP-2 implementation plan (current): [`mvp-2-compilation-pipeline.md`](mvp-2-compilation-pipeline.md)
+
 ## Related files
 
 - MVP DoD: [`mvp-definition-of-done.md`](mvp-definition-of-done.md)

@@ -1,16 +1,23 @@
 This roadmap is aligned with the current MVP definition and tracks the minimum milestones required for an end-to-end release.
 
+## Current delivery focus (as of 2026-04-24)
+
+- ✅ **MVP-1 (Core Services Setup)** completed: repository skeleton, public contracts, service stubs, QRTX/Driver Manager/QFS scaffolding, and CI baseline.
+- 🚧 **MVP-2 (Compilation Pipeline)** started: JobSpec parser/validator, Eigen-Lang AST→AQO compiler hardening, CLI `eigen submit`, and conformance suites.
+- Detailed MVP-2 execution plan: [`development/mvp-2-compilation-pipeline.md`](development/mvp-2-compilation-pipeline.md)
+
 ## Milestone 1 — API and contract baseline
 
 - Stabilize public gRPC services (`JobService`, `DeviceService`) for MVP workflows.
 - Freeze internal service contracts between kernel, compiler, and driver manager.
 - Validate canonical error mapping and structured error details.
 
-## Milestone 2 — End-to-end MVP execution
+## Milestone 2 — End-to-end MVP execution (MVP-2 active)
 
 - Deliver submit → compile → execute → results flow on `sim:local`.
 - Ensure deterministic AST-only compilation to AQO for MVP subset.
-- Complete job lifecycle transitions and cancellation behavior in kernel/QRTX.
+- Add a fixture-driven JobSpec→`SubmitJobRequest` parser/validator gate.
+- Enforce conformance tests for Eigen-Lang→AQO and CLI submit request packaging.
 
 ## Milestone 3 — CLI and developer workflow
 
