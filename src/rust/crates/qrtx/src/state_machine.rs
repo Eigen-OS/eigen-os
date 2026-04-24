@@ -184,10 +184,8 @@ mod tests {
         ] {
             for event in events {
                 let err = transition(s, event).unwrap_err();
-                assert_eq!(
-                    err,
-                    TransitionError::Invalid { from: s, event }
-            );
+                assert_eq!(err, TransitionError::Invalid { from: s, event });
+            }
         }
     }
 }
