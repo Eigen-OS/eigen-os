@@ -1,10 +1,10 @@
 # RFC 0014: MVP-2 Eigen-Lang AST Safety and Deterministic AQO
 
-- **Status**: Draft
+- **Status**: Accepted
 - **Authors**: Eigen OS maintainers
 - **Created**: 2026-04-24
 - **Target Milestone**: Phase 0 (MVP-2)
-- **Tracking Issue**: (to be created)
+- **Tracking Issue**: #113
 - **Replaces / Related**: RFC 0011, RFC 0012, ADR 0004
 
 ## Summary

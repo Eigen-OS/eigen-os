@@ -1,156 +1,47 @@
-# Eigen‑Lang submission format (MVP)
+# Eigen-Lang submission format (MVP-2)
 
-## Summary
+## Canonical artifact set
 
-Defines the canonical way a user provides **Eigen‑Lang** to Eigen OS in MVP, and how that source is packaged, validated, stored, and compiled **without executing user Python**.
+MVP-2 submission uses exactly two user-facing artifacts:
 
-## Motivation
+1. `job.yaml` (JobSpec v0.1)
+2. Eigen-Lang source resolved from either:
+   - `spec.program` (inline source), or
+   - `spec.program_path` (safe relative path, default `program.eigen.py`)
 
-Without a strict definition of “user source”, the CLI, System API, compiler, and kernel will drift:
+## Contract at submit boundary
 
-- Different entrypoint discovery rules
+`SubmitJobRequest` carries source in `eigen_lang` fields:
 
-- Inconsistent hashing/dedup
+- `eigen_lang.source` (raw bytes)
+- `eigen_lang.entrypoint` (default `main`)
+- `eigen_lang.sha256` (deterministic hash of source bytes)
 
-- Unsafe “execution” of user code
+This mapping is deterministic and covered by positive/negative fixture tests.
 
-- Irreproducible results
+## Compiler safety model
 
-## Goals
+Compiler is AST-only and never executes user code.
 
-- One canonical submission artifact set: `program.eigen.py` + `job.yaml`
+Validation rejects:
 
-- Deterministic packaging: source bytes + sha256
+- forbidden imports outside allowed Eigen-Lang module roots,
+- forbidden calls (`exec`, `eval`, `compile`),
+- dynamic runtime control flow (`if/for/while/match/...` in MVP subset),
+- invalid entrypoint shape (exactly one `@hybrid_program` required),
+- AST size/depth beyond configured limits.
 
-- Server‑side compilation is **AST‑only** (parse/validate/transform), not execution
+## Deterministic AQO output
 
-- Clear precedence rules for runtime options: CLI flags > JobSpec > source defaults
+For the same input source and compiler config, output AQO JSON is stable via canonical serialization (`sort_keys=True`, compact separators), enabling repeatable hashes and golden tests.
 
-## Non‑Goals
+## Storage contract (QFS)
 
-    A separate non‑Python Eigen syntax (`.eigen`) in MVP
+Per job, the pipeline persists source bundle and compiled artifacts in CircuitFS paths (`job.yaml`, `program.eigen.py`, `compiled.aqo.json`, results/metadata artifacts).
 
-    Full sandboxing / secure multi‑tenant execution (Phase 1+)
+## References
 
-    Large‑data upload through gRPC
-
-## Canonical artifacts
-
-### 1) `program.eigen.py`
-
-A Python file using Eigen‑Lang DSL.
-
-**Rules (MVP):**
-
-- Exactly one entrypoint function decorated with `@hybrid_program`
-
-- Imports are restricted to `eigen_lang.*` (and other allowlisted pure modules)
-
-- No filesystem/network I/O
-
-- Forbidden: `exec`, `eval`, dynamic imports, subprocess, sockets
-
-### 2) `job.yaml` (JobSpec v0.1)
-
-Contains runtime settings, target, compiler options, and input references.
-See RFC 0003.
-
-### 3) Input references
-
-Large inputs (datasets, binaries) are referenced by URI (e.g., `s3://`, `https://`, `file://`) and optional hash.
-
-## Packaging into SubmitJobRequest
-
-### `SubmitJobRequest.program` oneof (proposed)
-
-At the public API boundary, program is carried as a `oneof`:
-
-- `eigen_lang_source { bytes source; string entrypoint; string sha256; }`
-
-- `qasm3_source { bytes source; string sha256; }` (optional)
-
-- `aqo_ref { string qfs_ref; string sha256; }` (optional)
-
-**MVP MUST support `eigen_lang_source`.**
-
-### Determinism & dedup
-
-- CLI SHOULD compute sha256 of source bytes and pass it
-
-- Server MAY deduplicate by (`subject, sha256`) within a retention window
-
-## Compiler behavior (AST‑only)
-
-Compiler MUST:
-
-1. `ast.parse(source)` and validate syntax
-
-2. Enforce allowlist of AST nodes and imports
-
-3. Locate the `@hybrid_program` entrypoint (by name or decorator)
-
-4. Transform into annotated internal AST
-
-5. Compile quantum parts to AQO (RFC 0005), optionally emit QASM3 for debugging
-
-**Compiler MUST NOT execute the module or call user‑defined functions.**
-
-## Storage contract (QFS / CircuitFS)
-
-Kernel stores:
-
-- `circuit_fs/<job_id>/program.eigen.py` (original bytes)
-
-- `circuit_fs/<job_id>/job.yaml` (resolved JobSpec)
-
-- `circuit_fs/<job_id>/compiled.aqo.json`
-
-- `circuit_fs/<job_id>/compiled.qasm` (optional)
-
-- `circuit_fs/<job_id>/results.json`
-
-- `circuit_fs/<job_id>/meta.json` (hashes, versions, timestamps)
-
-## Precedence of options
-
-- CLI flags override JobSpec
-
-- JobSpec overrides defaults declared in source decorators
-
-- Compiler options are immutable once the job is accepted
-
-## Testing plan
-
-- Unit: parser/validator rejects forbidden nodes and imports
-
-- Unit: entrypoint discovery (exactly one `@hybrid_program`)
-
-- Golden: source + options → AQO JSON hash is stable
-
-- Integration: submit job → compile → execute (sim) → results
-
-## Alternatives considered
-
-- Execute user Python in a sandbox: rejected for MVP due to complexity and non‑determinism
-
-- Custom `.eigen` syntax in MVP: postponed
-
-## Open questions
-
-- Exact allowlist of AST nodes for MVP (appendix TBD)
-
-- Whether `CompilationService` is public in MVP or internal‑only (see RFC 0004)
-
----
-
-**References:**
-
-> RFC 0003: JobSpec v0.1
-
-> RFC 0004: Public gRPC API v0.1
-
-> RFC 0005: AQO format v0.1
-
-> RFC 0011: Eigen‑Lang submission format v0.1 (superseded by this document)
-
-> RFC 0012: Eigen‑Lang v0.1 language scope
+- `docs/reference/jobspec.md`
+- `docs/reference/eigen-lang/allowed-subset.md`
+- `rfcs/0013-mvp2-jobspec-parser-submit-contract.md`
+- `rfcs/0014-mvp2-eigen-lang-ast-safety-deterministic-aqo.md`

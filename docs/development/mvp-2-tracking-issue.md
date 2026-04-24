@@ -71,8 +71,8 @@ Launch MVP-2 with deterministic submit → compile → execute flow on `sim:loca
 
 ## Exit criteria
 
-- [ ] RFC 0013 moved from `Draft` to `Accepted`.
-- [ ] RFC 0014 moved from `Draft` to `Accepted`.
-- [ ] RFC 0015 moved from `Draft` to `Accepted`.
-- [ ] MVP-2 checklist in `mvp-2-compilation-pipeline.md` fully closed.
-- [ ] Documentation (`reference/`, tutorials, development docs) synchronized with implementation.
+- [x] RFC 0013 moved from `Draft` to `Accepted`.
+- [x] RFC 0014 moved from `Draft` to `Accepted`.
+- [x] RFC 0015 moved from `Draft` to `Accepted`.
+- [x] MVP-2 checklist in `mvp-2-compilation-pipeline.md` fully closed.
+- [x] Documentation (`reference/`, tutorials, development docs) synchronized with implementation.

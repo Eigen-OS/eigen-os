@@ -1,63 +1,50 @@
-# First job in Eigen‑Lang
+# First job in Eigen-Lang
 
 ## Goal
 
-Run a minimal VQE-style hybrid job on the local simulator using the canonical package:
+Run a minimal submit → watch → results cycle using the canonical MVP-2 package:
 
-- `program.eigen.py`
 - `job.yaml`
+- `program.eigen.py`
 
-This tutorial uses `examples/basic/vqe_cycle/`.
+Example directory: `examples/basic/vqe_cycle/`.
 
 ## Steps
 
-1. Go to the example directory.
+1. Open the example directory.
 
 ```bash
 cd examples/basic/vqe_cycle
 ```
 
-2. Inspect the files:
+2. Check `job.yaml`:
 
-- `program.eigen.py` defines a 2-qubit ansatz with one parameter `theta`.
-- `job.yaml` points to `program.eigen.py` via `spec.program_path`.
+- `apiVersion: eigen.os/v0.1`
+- `kind: QuantumJob`
+- `metadata.name`
+- `spec.target`
+- source via `spec.program_path` (or omit it to use default `program.eigen.py`)
 
-3. Submit the job.
+3. Submit a job.
 
 ```bash
 eigen submit -f job.yaml
 ```
 
-Save the returned `job_id`.
-
-4. Stream job progress.
+4. Track status updates.
 
 ```bash
 eigen watch <job_id>
 ```
 
-5. Fetch final results.
+5. Fetch final output.
 
 ```bash
 eigen results <job_id>
 ```
 
-## Validate output
+## Common validation errors
 
-For this basic VQE run, check two signals:
-
-1. **Counts**: non-trivial bitstring distribution (not all shots in one state unless converged there).
-2. **Objective trend**: reported energy generally decreases during the first iterations and then plateaus.
-
-Expected qualitative pattern:
-
-- early iterations: larger energy improvements;
-- middle iterations: slower improvement;
-- final iterations: small oscillations near best-so-far.
-
-## Troubleshooting
-
-- **`INVALID_ARGUMENT` on submit**: verify `apiVersion: eigen.os/v0.1` and `kind: QuantumJob`.
-- **Entrypoint not found**: keep `entrypoint: main` in `job.yaml` and `def main()` in source.
-- **No convergence**: increase `spec.metadata.max_iters` and `spec.metadata.shots`.
-
+- `apiVersion` mismatch → use exactly `eigen.os/v0.1`.
+- `spec.program_path` path traversal / missing file → keep a safe relative path and ensure file exists.
+- invalid entrypoint → keep one `@hybrid_program` and match `spec.entrypoint`.
