@@ -1,8 +1,10 @@
-# Public gRPC API — eigen_api.v0.1 (MVP)
+# Public gRPC API — eigen.api.v1 (MVP contract freeze)
 
 ## Summary
 
-Defines the stable public gRPC surface used by CLI, SDKs, and external tools in MVP. This API is the **only** client‑facing interface to Eigen OS and must remain backward‑compatible within the MVP timeframe.
+Defines the stable public gRPC surface used by CLI/SDKs in MVP.
+
+Contract source of truth: `proto/eigen/api/v1/*.proto`.
 
 ## Services & Methods
 
@@ -11,20 +13,13 @@ Defines the stable public gRPC surface used by CLI, SDKs, and external tools in 
 Manages quantum job lifecycle.
 ```proto
 service JobService {
-  // Submit a new job
-  rpc SubmitJob(SubmitJobRequest) returns (JobResponse);
-  
-  // Get current job status
-  rpc GetJobStatus(JobStatusRequest) returns (JobStatusResponse);
-  
-  // Cancel a running job
+  rpc SubmitJob(SubmitJobRequest) returns (SubmitJobResponse);
+  rpc GetJobStatus(GetJobStatusRequest) returns (GetJobStatusResponse);
   rpc CancelJob(CancelJobRequest) returns (CancelJobResponse);
-  
-  // Stream job updates (events)
-  rpc StreamJobUpdates(JobUpdatesRequest) returns (stream JobUpdate);
-  
-  // Fetch job results (only when DONE)
-  rpc GetJobResults(JobResultsRequest) returns (JobResultsResponse);
+  rpc CancelJob(CancelJobRequest) returns (CancelJobResponse);
+  rpc StreamJobUpdates(StreamJobUpdatesRequest) returns (stream StreamJobUpdatesResponse);
+  rpc GetJobResults(GetJobResultsRequest) returns (GetJobResultsResponse);
+
 }
 ```
 
@@ -33,37 +28,16 @@ service JobService {
 Queries and reserves quantum devices.
 ```proto
 service DeviceService {
-  // List available devices
   rpc ListDevices(ListDevicesRequest) returns (ListDevicesResponse);
-  
-  // Get detailed device information
-  rpc GetDeviceDetails(DeviceDetailsRequest) returns (DeviceDetailsResponse);
-  
-  // Get current device status
-  rpc GetDeviceStatus(DeviceStatusRequest) returns (DeviceStatusResponse);
-  
-  // Reserve a device for exclusive use
+  rpc GetDeviceDetails(GetDeviceDetailsRequest) returns (GetDeviceDetailsResponse);
+  rpc GetDeviceStatus(GetDeviceStatusRequest) returns (GetDeviceStatusResponse);
   rpc ReserveDevice(ReserveDeviceRequest) returns (ReserveDeviceResponse);
 }
 ```
 
-### 3. CompilationService (Optional in MVP)
+### 3. CompilationService
 
-Compiles quantum circuits without execution.
-```proto
-service CompilationService {
-  // Compile source to circuit IR
-  rpc CompileCircuit(CompileCircuitRequest) returns (CompileCircuitResponse);
-  
-  // Optimize an existing circuit
-  rpc OptimizeCircuit(OptimizeCircuitRequest) returns (OptimizeCircuitResponse);
-  
-  // Validate circuit syntax/semantics
-  rpc ValidateCircuit(ValidateCircuitRequest) returns (ValidateCircuitResponse);
-}
-```
-
-**Note**: `CompilationService` may be internal‑only in MVP; see Open Questions.
+For MVP, compilation is exposed as **internal API** (`eigen.internal.v1.CompilationService`) and is not part of the frozen public boundary.
 
 ## Key Data Types
 
@@ -86,7 +60,7 @@ message SubmitJobRequest {
 message EigenLangSource {
   bytes source = 1;
   string entrypoint = 2;  // Function name (default "main")
-  string sha256 = 3;  // Optional, for dedup
+  string sha256 = 3;  // Optional idempotency fallback key
 }
 ```
 
@@ -150,6 +124,13 @@ enum DeviceStatus {
 3.  When state reaches **DONE**, call **GetJobResults**
 
 4. **CancelJob** may be called while job is in any non‑terminal state
+
+### 1.1 SubmitJob idempotency (MVP freeze rule)
+
+- Preferred idempotency key: `metadata["client_request_id"]`.
+- Fallback key for EigenLang submissions: `eigen_lang.sha256 + entrypoint + target`.
+- If the same idempotency key is reused with the same payload, server returns the same `job_id`.
+- If the same idempotency key is reused with a different payload, server returns `INVALID_ARGUMENT`.
 
 ### 2. StreamJobUpdates Rules
 
@@ -227,9 +208,13 @@ Common error mappings:
 
 ### API Version
 
-- Protobuf package: `eigen_api.v1`
+- Product API version (MVP): `0.1` (fixed)
 
-- Version included in all requests/responses as `api_version` field
+- Protobuf package namespace: `eigen_api.v1` (transport namespace)
+
+- JobSpec version for CLI/YAML: `apiVersion: eigen.os/v0.1`
+
+- Version included in typed payloads where applicable (for example, envelope/meta fields)
 
 - Backward‑compatible changes only (add optional fields, new methods)
 

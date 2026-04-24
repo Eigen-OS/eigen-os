@@ -1,6 +1,6 @@
 # RFC 0006: QDriver API v0.1 and Driver Manager service contract
 
-- **Status:** Discussion
+- **Status:** Implemented
 - **Authors:** NYankovich
 - **Created:** 2026-01-08
 - **Target milestone:** Phase 0 (MVP)

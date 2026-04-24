@@ -19,3 +19,7 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 ### Added
 
 - Project health documentation baseline: `CONTRIBUTING.md`, `SECURITY.md`, and roadmap/project-health alignment.
+
+### Changed
+
+- Documentation now explicitly freezes MVP public API contract version at `0.1`, while clarifying that protobuf `...v1` remains a package/namespace convention.

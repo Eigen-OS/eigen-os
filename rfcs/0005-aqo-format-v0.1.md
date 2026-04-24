@@ -1,6 +1,6 @@
 # RFC 0005: AQO (Abstract Quantum Operations) format v0.1
 
-- **Status:** Discussion
+- **Status:** Implemented
 - **Authors:** NYankovich
 - **Created:** 2026-01-08
 - **Target milestone:** Phase 0 (MVP)

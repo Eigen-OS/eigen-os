@@ -34,7 +34,7 @@ Defines the Minimal Viable Product (MVP) scope for Eigen OS Phase 0. The MVP del
 
 ### 4. Integration Points
 
-- **Public gRPC API (eigen_api.v1)**: `JobService`, `DeviceService`
+- **Public gRPC API (MVP product version 0.1; protobuf namespace `eigen_api.v1`)**: `JobService`, `DeviceService`
 
 - **Internal gRPC APIs**: `KernelGateway`, `CompilationService`, `DriverManagerService`
 

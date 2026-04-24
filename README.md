@@ -18,6 +18,12 @@ Contract-level compatibility is treated as stable only after:
 - reference documentation is updated,
 - and conformance checks exist.
 
+### API version policy (MVP freeze)
+
+- Public product API version is **fixed to `0.1`** for MVP.
+- JobSpec `apiVersion` remains `eigen.os/v0.1`.
+- Protobuf package namespace stays `...v1` (`proto/eigen/api/v1`) as a wire namespace.
+
 ## What is in scope now (MVP)
 
 - Public and internal API contracts (`proto/`).

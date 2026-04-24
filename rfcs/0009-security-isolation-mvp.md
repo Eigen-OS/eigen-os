@@ -1,6 +1,6 @@
 # RFC 0009: Security & Isolation MVP: authz, validation, isolation hooks
 
-- **Status:** Discussion
+- **Status:** Implemented
 - **Authors:** NYankovich
 - **Created:** 2026-01-08
 - **Target milestone:** Phase 0 (MVP)

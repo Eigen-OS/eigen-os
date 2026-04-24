@@ -1,6 +1,6 @@
 # RFC 0003: JobSpec v0.1 (job.yaml) for eigen-cli submit
 
-- **Status:** Discussion
+- **Status:** Implemented
 - **Authors:** NYankovich
 - **Created:** 2026-01-08
 - **Target milestone:** Phase 0 (MVP)

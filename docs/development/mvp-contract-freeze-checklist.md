@@ -136,11 +136,11 @@
 
 ## C) Mini‑matrix “contract is frozen” (what must match between modules)
 
-- [ ] **JobSpec ↔ SubmitJobRequest**: fields and configuration priority are the same (CLI/server).
-- [ ] **Compiler output ↔ CircuitPayload**: list of formats matches.
-- [ ] **DriverManager results ↔ JobResultsResponse**: counts and metadata have the same structure.
-- [ ] **JobStatus mapping**: internal states → external states are unambiguously documented.
-- [ ] **Errors**: no success withс `success=false`; all errors — via status codes.
+- [x] **JobSpec ↔ SubmitJobRequest**: fields and configuration priority are the same (CLI/server).
+- [x] **Compiler output ↔ CircuitPayload**: list of formats matches.
+- [x] **DriverManager results ↔ JobResultsResponse**: counts and metadata have the same structure.
+- [x] **JobStatus mapping**: internal states → external states are unambiguously documented.
+- [x] **Errors**: no success withс `success=false`; all errors — via status codes.
 
 ---
 
