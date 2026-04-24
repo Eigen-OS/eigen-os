@@ -14,7 +14,3 @@ pub use local_circuit_fs::{
     ResultsBundle, SourceBundle, SourceMetadata, DEFAULT_CIRCUIT_FS_ROOT,
 };
 
-/// Returns a stable placeholder value.
-pub fn hello_qrtx() -> &'static str {
-    "qrtx"
-}
