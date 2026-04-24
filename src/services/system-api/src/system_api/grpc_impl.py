@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import threading
 import uuid
 from dataclasses import dataclass
@@ -100,16 +101,81 @@ class JobService:
             ),
         ]
     
+    def _mk_vqe_updates(self, *, job_id: str, trace_id: str | None, max_iters: int) -> list:
+        updates = [
+            self._mk_update(
+                job_id=job_id,
+                state=self._types_pb.JOB_STATE_PENDING,
+                stage="PENDING",
+                progress=0.0,
+                message="pending",
+                event_seq=1,
+            ),
+            self._mk_update(
+                job_id=job_id,
+                state=self._types_pb.JOB_STATE_COMPILING,
+                stage="COMPILING",
+                progress=0.2,
+                message="compiling",
+                event_seq=2,
+            ),
+        ]
+
+        trace_suffix = f" trace_id={trace_id}" if trace_id else ""
+        simulated_iters = max(2, min(max_iters, 3))
+        for idx in range(1, simulated_iters + 1):
+            progress = min(0.25 + (0.55 * idx / simulated_iters), 0.9)
+            updates.append(
+                self._mk_update(
+                    job_id=job_id,
+                    state=self._types_pb.JOB_STATE_RUNNING,
+                    stage="RUNNING",
+                    progress=progress,
+                    message=f"vqe_iteration iteration={idx}{trace_suffix}",
+                    event_seq=len(updates) + 1,
+                )
+            )
+
+        updates.append(
+            self._mk_update(
+                job_id=job_id,
+                state=self._types_pb.JOB_STATE_DONE,
+                stage="DONE",
+                progress=1.0,
+                message="done",
+                event_seq=len(updates) + 1,
+            )
+        )
+        return updates
+
     
     def _build_job_record(self, request, *, job_id: str, created_at: Timestamp) -> _JobRecord:
-        _ = request
-        updates = self._mk_default_updates(job_id)
+        metadata = dict(request.metadata)
+        trace_id = metadata.get("trace_id")
+        max_iters = int(metadata.get("max_iters", "0") or 0)
+
+        if max_iters > 0:
+            updates = self._mk_vqe_updates(job_id=job_id, trace_id=trace_id, max_iters=max_iters)
+            objective_history = [round(1.0 - (0.08 * i), 6) for i in range(max_iters)]
+        else:
+            updates = self._mk_default_updates(job_id)
+            objective_history = []
+
+        results_metadata = {
+            "backend": request.target or "sim:local",
+            "qfs_compiled_aqo": f"qfs://jobs/{job_id}/compiled/circuit.aqo.json",
+            "qfs_results_counts": f"qfs://jobs/{job_id}/results/counts.json",
+            "qfs_metrics": f"qfs://jobs/{job_id}/results/metrics.json",
+        }
+        if objective_history:
+            results_metadata["objective_history"] = json.dumps(objective_history)
+
         return _JobRecord(
             job_id=job_id,
             created_at=created_at,
             updates=updates,
             counts={"00": 512, "11": 512},
-            results_metadata={},
+            results_metadata=results_metadata,
             terminal_state=self._types_pb.JOB_STATE_DONE,
         )
 

@@ -133,6 +133,14 @@ def enforce_authz(context: grpc.ServicerContext, *, required_permission: str) ->
         if item.strip()
     }
 
+    # In static_token mode, explicitly configured token roles are baseline claims.
+    # Per-request metadata can still add explicit permissions/roles for tests/dev.
+    env_roles = os.getenv("SYSTEM_API_AUTH_ROLES")
+    if env_roles is not None:
+        granted.update(role.lower() for role in cfg.static_token_roles)
+        for role in cfg.static_token_roles:
+            granted.update(_ROLE_PERMISSIONS.get(role.lower(), set()))
+
     need = required_permission.strip().lower()
     scope, _, action = need.partition(":")
     wildcard = f"{scope}:*"
