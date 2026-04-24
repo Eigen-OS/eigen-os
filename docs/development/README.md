@@ -1,14 +1,16 @@
 # Development
 
+This section documents local quality checks, delivery controls, and MVP readiness criteria.
+
 ## Run CI checks locally
 
-The GitHub CI workflow (`.github/workflows/ci.yml`) enforces three gate groups:
+The GitHub CI workflow (`.github/workflows/ci.yml`) validates:
 
 1. Rust workspace build + tests.
-2. Python package install + per-component unit checks.
+2. Python components install + tests.
 3. Protobuf contract checks (`buf lint` + `buf breaking`).
 
-Run the same checks locally from the repository root:
+From repository root:
 
 ```bash
 # 1) Rust workspace
@@ -32,11 +34,19 @@ buf lint
 buf breaking --against '../.git#branch=main'
 ```
 
-### Notes
+## Note
 
-- `buf breaking` compares your branch to `main`. If your local clone does not have `main`, fetch it first:
+- `buf breaking` compares against local branch `main`.
+- If `main` is missing locally:
 
 ```bash
 git fetch origin main:main
 ```
-- The CI workflow fetches full git history (`fetch-depth: 0`) so the same `buf breaking` command works in pull requests.
+
+- CI uses full git history (`fetch-depth: 0`) so breaking checks can compare branch state.
+
+## Related files
+
+- MVP DoD: [`mvp-definition-of-done.md`](mvp-definition-of-done.md)
+- Contract freeze checklist: [`mvp-contract-freeze-checklist.md`](mvp-contract-freeze-checklist.md)
+- Repo layout: [`repo-layout.md`](repo-layout.md)

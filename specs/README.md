@@ -1,6 +1,16 @@
 # Specifications
 
-This folder holds **schema-level specifications** that complement the RFCs.
+This directory holds **schema-level specifications** that complement RFCs and reference docs.
 
-- `jobspec/` — schema and examples for the JobSpec YAML/JSON format
-- `ir/` — schema and examples for compiler IR (AQO and beyond)
+## Contents
+
+- `jobspec/` — JobSpec schema and examples (`job.yaml` / JSON views).
+- `ir/` — compiler/intermediate representation schemas (AQO and future extensions).
+
+## How this folder is used
+
+- RFCs define intent and change process.
+- `docs/reference/` defines contract behavior.
+- `specs/` stores concrete schema artifacts and examples.
+
+Use this folder when validating structure and machine-readable shape of contracts.

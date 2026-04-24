@@ -1,57 +1,54 @@
-# Eigen OS Documentation
+# Documentation
 
-The documentation is organized according to **Diátaxis: Tutorials** (learning), **How‑to** (recipes), **Reference** (contracts), **Explanation** (explanations).
-This helps keep contracts (APIs/formats) *in one place* and avoid duplication.
+Eigen OS docs follow the **Diátaxis** model:
+- **Tutorials** — learning by doing.
+- **How-to** — practical recipes.
+- **Reference** — contracts and exact behavior.
+- **Explanation** — rationale and system thinking.
 
-## Getting started (MVP)
+## Start here
+
+If you are new to the repository, read in this order:
+1. [`architecture/overview.md`](architecture/overview.md)
+2. [`reference/README.md`](reference/README.md)
+3. [`development/README.md`](development/README.md)
+
+## Sections
 
 ### Tutorials
-- `tutorials/quickstart-local-sim.md` — set up the stack locally and run a job on the simulator
-- `tutorials/first-job-eigen-lang.md` — write `program.eigen.py` + `job.yaml`, submit a job, get results
+- [`tutorials/quickstart-local-sim.md`](tutorials/quickstart-local-sim.md)
+- [`tutorials/first-job-eigen-lang.md`](tutorials/first-job-eigen-lang.md)
+
+### How-to
+- [`howto/`](howto/)
 
 ### Reference (source of truth)
-- `reference/jobspec.md` — **JobSpec v0.1** (`job.yaml`)
-- `reference/eigen-lang-submission.md` — what a "user source" is and how it is packaged
-- `reference/api/grpc-public.md` — public `eigen_api.v1`
-- `reference/api/grpc-internal.md` — internal `kernel_api.v1 / compiler_api.v1 / driver_api.v1`
-- `reference/error-model.md` — error principles
-- `reference/error-mapping.md` — **error mapping matrix** between layers
-- `reference/formats/aqo.md` — AQO v0.1
-- `reference/formats/qfs-layout.md` — QFS layout (артефакты/results/logs)
+- [`reference/README.md`](reference/README.md)
+- Public API: [`reference/api/grpc-public.md`](reference/api/grpc-public.md)
+- Internal API: [`reference/api/grpc-internal.md`](reference/api/grpc-internal.md)
+- Job contract: [`reference/jobspec.md`](reference/jobspec.md)
+- Error model: [`reference/error-model.md`](reference/error-model.md)
+- Formats: [`reference/formats/`](reference/formats/)
 
-### Architecture (overview and diagrams)
-- `architecture/overview.md` — architecture overview and boundaries
-- `architecture/components.md` — component index
-- `architecture/data-flow.md` — end‑to‑end data flows
-- `architecture/contract-map.md` — who calls whom and with what (interfaces)
-- `architecture/design-decisions.md` — key decisions (links to ADRs)
+### Architecture
+- [`architecture/overview.md`](architecture/overview.md)
+- [`architecture/components.md`](architecture/components.md)
+- [`architecture/data-flow.md`](architecture/data-flow.md)
+- [`architecture/contract-map.md`](architecture/contract-map.md)
+- [`architecture/design-decisions.md`](architecture/design-decisions.md)
 
-### Development (delivery control)
-- `development/mvp-definition-of-done.md` — DoD for services
-- `development/mvp-contract-freeze-checklist.md` — "contract frozen" checklist (RFC 0004/0006/0011)
-- `development/repo-layout.md` — repository structure and source‑of‑truth
+### Development
+- [`development/README.md`](development/README.md)
+- [`development/mvp-definition-of-done.md`](development/mvp-definition-of-done.md)
+- [`development/mvp-contract-freeze-checklist.md`](development/mvp-contract-freeze-checklist.md)
 
-### Explanation / Product
-- `explanation/mission.md` — mission and philosophy
-- `explanation/goals.md` — goals and non‑goals
-- `roadmap.md` — roadmap
+### Explanation
+- [`explanation/mission.md`](explanation/mission.md)
+- [`explanation/goals.md`](explanation/goals.md)
+- [`roadmap.md`](roadmap.md)
 
-## Components
-Details: `architecture/components/`
+## RFC & ADR
 
-- `system-api.md`
-- `kernel-qrtx.md`
-- `compiler.md`
-- `driver-manager.md`
-- `qfs.md`
-- `resource-manager.md`
-- `security-isolation.md`
-- `observability.md`
+- RFCs: [`../rfcs/`](../rfcs/)
+- ADRs: [`adr/`](adr/)
 
-## RFC and ADR
-- RFC: `rfcs/` (proposals, before acceptance and during implementation)
-- ADR: `docs/adr/` (accepted decisions and their consequences)
-
-
-### Eigen‑Lang
-- `reference/eigen-lang/README.md` — Eigen‑Lang language reference (v0.1)

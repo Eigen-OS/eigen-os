@@ -1,20 +1,21 @@
-# Protobuf contracts (source of truth)
+# Protobuf contracts
 
-This directory contains **all** `.proto` definitions for Eigen OS.
+This directory contains **all** `.proto` contracts for Eigen OS.
+These files are the canonical source for generated client/server stubs.
 
 ## Packages
 
-- **Public API** (client-facing): `eigen.api.v1`
-  - `proto/eigen/api/v1/*.proto`
-  - Services: `JobService`, `DeviceService`
+### Public API (`eigen.api.v1`)
+- Path: `proto/eigen/api/v1/*.proto`
+- Services: `JobService`, `DeviceService`
 
-- **Internal APIs** (kernel-facing, private network): `eigen.internal.v1`
-  - `proto/eigen/internal/v1/*.proto`
-  - Services: `KernelGateway`, `DriverManagerService`, `CompilationService`
+### Internal API (`eigen.internal.v1`)
+- Path: `proto/eigen/internal/v1/*.proto`
+- Services: `KernelGateway`, `DriverManagerService`, `CompilationService`
 
-## Rust generation
+## Rust code generation
 
-Rust bindings are generated at **compile time** via the `eigen-proto` crate (`src/rust/crates/eigen-proto`).
+Rust bindings are generated at compile time by crate `src/rust/crates/eigen-proto`.
 
 ```bash
 cd src/rust
@@ -23,6 +24,6 @@ cargo build -p eigen-proto
 
 ## Rules
 
-- Protos in this folder are the **single source of truth**.
-- Generated stubs must be derived from these files.
-- Do not fork/duplicate `.proto` files across services.
+- Keep `.proto` files in this folder as the single source of truth.
+- Do not duplicate/fork proto contracts across services.
+- Regenerate language bindings from these definitions only.
