@@ -1,6 +1,6 @@
 # MVP-2 — Compilation Pipeline Plan
 
-Status: **In Progress**  
+Status: **Completed**  
 Last updated: **2026-04-24**
 
 ## Goal
@@ -94,11 +94,11 @@ Deliver Rust CLI flow that:
 
 ## Delivery checklist
 
-- [ ] JobSpec parser/validator merged with fixtures.
-- [ ] Compiler AST validator + AQO generator merged.
-- [ ] `eigen submit` end-to-end request packaging merged.
-- [ ] Conformance suites (positive/negative) enabled in CI.
-- [ ] Documentation updated in `docs/reference/` and tutorials.
+- [x] JobSpec parser/validator merged with fixtures.
+- [x] Compiler AST validator + AQO generator merged.
+- [x] `eigen submit` end-to-end request packaging merged.
+- [x] Conformance suites (positive/negative) enabled in CI.
+- [x] Documentation updated in `docs/reference/` and tutorials.
 
 ## Suggested execution order
 
