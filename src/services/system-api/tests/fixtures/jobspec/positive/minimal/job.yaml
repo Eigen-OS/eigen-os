@@ -1,0 +1,17 @@
+apiVersion: eigen.os/v0.1
+kind: QuantumJob
+metadata:
+  name: vqe-h2
+spec:
+  program: |
+    @hybrid_program
+    def main():
+        return 1
+  target: sim:local
+  priority: 50
+  compiler_options:
+    optimization_level: "1"
+  metadata:
+    shots: "1024"
+  dependencies:
+    - s3://bucket/input.json
