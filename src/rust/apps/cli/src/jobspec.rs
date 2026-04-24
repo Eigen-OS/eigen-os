@@ -645,7 +645,7 @@ pub fn visualize_aqo_json(aqo_json: &str) -> String {
 
     format!(
         concat!(
-            "AQO Graph\n",
+            "AQO Graph (MVP)\n",
             "  target: {target}\n",
             "  entrypoint: {entrypoint}\n",
             "  program_sha256: {sha}\n",
@@ -1003,7 +1003,7 @@ spec:
         let aqo = compile_job_to_aqo_json(&yaml_path).expect("compile");
         assert!(aqo.contains("\"aqo_version\": \"0.1\""));
         let viz = visualize_aqo_json(&aqo);
-        assert!(viz.contains("AQO Graph"));
+        assert!(viz.contains("AQO Graph (MVP)"));
         assert!(viz.contains("program_sha256:"));
     }
 }
