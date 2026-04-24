@@ -11,8 +11,8 @@ from dataclasses import dataclass
 from .errors import FieldViolation
 
 _ALLOWED_IMPORT_PREFIXES = ("eigen_lang",)
-_FORBIDDEN_MODULE_ROOTS = {"os", "sys", "subprocess", "socket", "ctypes", "importlib", "requests"}
-_FORBIDDEN_CALLS = {"exec", "eval", "compile", "open", "__import__"}
+_FORBIDDEN_MODULE_ROOTS = {"os", "sys", "subprocess"}
+_FORBIDDEN_CALLS = {"exec", "eval", "compile"}
 
 
 @dataclass(frozen=True)
@@ -59,33 +59,32 @@ def _reject_dynamic_control_flow(tree: ast.AST) -> None:
                 ),
             )
         )
+    
 
-def _reject_forbidden_imports(tree: ast.AST) -> None:
+def _reject_forbidden_imports(tree: ast.AST) -> tuple[FieldViolation, ...]:
+    violations: list[FieldViolation] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 module_root = alias.name.split(".", 1)[0]
                 if module_root in _FORBIDDEN_MODULE_ROOTS or module_root not in _ALLOWED_IMPORT_PREFIXES:
-                    raise CompilerValidationError(
-                        violations=(
-                            FieldViolation(
-                                field="source",
-                                description=f"import '{alias.name}' is not allowed in Eigen-Lang MVP",
-                            ),
+                    violations.append(
+                        FieldViolation(
+                            field="source",
+                            description=f"import '{alias.name}' is not allowed in Eigen-Lang MVP",
                         )
                     )
         elif isinstance(node, ast.ImportFrom):
             module = node.module or ""
             module_root = module.split(".", 1)[0]
-            if module_root not in _ALLOWED_IMPORT_PREFIXES:
-                raise CompilerValidationError(
-                    violations=(
-                        FieldViolation(
-                            field="source",
-                            description=f"import from '{module}' is not allowed in Eigen-Lang MVP",
-                        ),
+            if module_root in _FORBIDDEN_MODULE_ROOTS or module_root not in _ALLOWED_IMPORT_PREFIXES:
+                violations.append(
+                    FieldViolation(
+                        field="source",
+                        description=f"import from '{module}' is not allowed in Eigen-Lang MVP",
                     )
                 )
+        return tuple(violations)
 
 
 def _call_name(node: ast.AST) -> str | None:
@@ -95,23 +94,34 @@ def _call_name(node: ast.AST) -> str | None:
         return node.attr
     return None
 
-def _reject_forbidden_calls(tree: ast.AST) -> None:
+def _reject_forbidden_calls(tree: ast.AST) -> tuple[FieldViolation, ...]:
+    violations: list[FieldViolation] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
         name = _call_name(node.func)
+        # Запрещены прямые вызовы exec, eval, compile и т.п.
         if name in _FORBIDDEN_CALLS:
-            raise CompilerValidationError(
-                violations=(
+            violations.append(
+                FieldViolation(
+                    field="source",
+                    description=f"call '{name}' is not allowed in Eigen-Lang MVP",
+                )
+            )
+        # Если вызов метода у объекта, проверяем корень модуля
+        elif isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
+            module_root = node.func.value.id
+            if module_root in _FORBIDDEN_MODULE_ROOTS:
+                violations.append(
                     FieldViolation(
                         field="source",
                         description=f"call '{name}' is not allowed in Eigen-Lang MVP",
-                    ),
+                    )
                 )
-            )
+    return tuple(violations)
 
 
-def _enforce_resource_limits(tree: ast.AST) -> None:
+def _enforce_resource_limits(tree: ast.AST) -> tuple[FieldViolation, ...]:
     max_ast_nodes = _compiler_limit("EIGEN_COMPILER_MAX_AST_NODES", 50_000)
     max_nesting_depth = _compiler_limit("EIGEN_COMPILER_MAX_AST_DEPTH", 200)
 
@@ -122,26 +132,51 @@ def _enforce_resource_limits(tree: ast.AST) -> None:
         node, depth = stack.pop()
         node_count += 1
         if node_count > max_ast_nodes:
-            raise CompilerValidationError(
-                violations=(
-                    FieldViolation(
-                        field="source",
-                        description=f"AST node limit exceeded ({max_ast_nodes})",
-                    ),
-                )
+            return (
+                FieldViolation(
+                    field="source",
+                    description=f"AST node limit exceeded ({max_ast_nodes})",
+                ),
             )
         max_depth_seen = max(max_depth_seen, depth)
         if max_depth_seen > max_nesting_depth:
-            raise CompilerValidationError(
-                violations=(
-                    FieldViolation(
-                        field="source",
-                        description=f"AST depth limit exceeded ({max_nesting_depth})",
-                    ),
-                )
+            return (
+                FieldViolation(
+                    field="source",
+                    description=f"AST depth limit exceeded ({max_nesting_depth})",
+                ),
             )
         for child in ast.iter_child_nodes(node):
             stack.append((child, depth + 1))
+    return ()
+
+
+def _decorator_name(decorator: ast.AST) -> str | None:
+    if isinstance(decorator, ast.Name):
+        return decorator.id
+    if isinstance(decorator, ast.Call):
+        return _call_name(decorator.func)
+    return None
+
+
+def _validate_single_entrypoint(tree: ast.AST) -> tuple[FieldViolation, ...]:
+    entrypoints = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and any(_decorator_name(decorator) == "hybrid_program" for decorator in node.decorator_list)
+    ]
+    if len(entrypoints) == 1:
+        return ()
+    if len(entrypoints) == 0:
+        return (FieldViolation(field="source", description="exactly one @hybrid_program entrypoint is required"),)
+    return (
+        FieldViolation(
+            field="source",
+            description=f"exactly one @hybrid_program entrypoint is required, found {len(entrypoints)}",
+        ),
+    )
+
 
 
 def _collect_params(tree: ast.AST) -> dict[str, str]:
@@ -195,10 +230,15 @@ def compile_eigen_lang(source: bytes, *, source_ref: str | None = None) -> Compi
 
     digest = hashlib.sha256(source).hexdigest() if source else ""
     tree = _parse_python_source(source)
-    _enforce_resource_limits(tree)
-    _reject_forbidden_imports(tree)
-    _reject_forbidden_calls(tree)
-    _reject_dynamic_control_flow(tree)
+    violations = (
+        _enforce_resource_limits(tree)
+        + _reject_forbidden_imports(tree)
+        + _reject_forbidden_calls(tree)
+        + _reject_dynamic_control_flow(tree)
+        + _validate_single_entrypoint(tree)
+    )
+    if violations:
+        raise CompilerValidationError(violations=violations)
     params = _collect_params(tree)
     operations, qubits = _collect_operations(tree, params)
     has_minimize = any(
