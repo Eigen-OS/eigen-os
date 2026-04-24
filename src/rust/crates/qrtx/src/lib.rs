@@ -1,12 +1,9 @@
-//! QRTX (Quantum Real-Time Executive) — MVP placeholder.
+//! QRTX (Quantum Real-Time Executive) — MVP kernel primitives.
 //!
-//! In MVP-1, QRTX provides a deterministic job lifecycle state machine and
-//! minimal scheduling primitives.
+//! This crate currently exposes the deterministic job lifecycle state machine
+//! described in RFC 0007 / architecture docs for the MVP pipeline.
 
 #![forbid(unsafe_code)]
 
 pub mod state_machine;
 
-pub fn hello_qrtx() -> &'static str {
-    "qrtx"
-}
