@@ -64,16 +64,16 @@ impl JobStore {
     }
 
     pub fn apply_event(&self, job_id: &str, event: JobEvent) -> Result<JobRecord, TransitionError> {
-        let mut guard = self.inner.write();
-        let rec = guard.get_mut(job_id).ok_or(TransitionError::Invalid {
-            from: JobState::Error,
-            event,
-        })?;
+    let mut guard = self.inner.write();
+    let rec = guard.get_mut(job_id).ok_or(TransitionError::Invalid {
+        from: JobState::Pending,
+        event,
+    })?;
 
-        let next = transition(rec.state, event)?;
-        rec.state = next;
-        rec.updated_at_unix_ms = unix_ms();
-        Ok(rec.clone())
+    let next = transition(rec.state, event)?;
+    rec.state = next;
+    rec.updated_at_unix_ms = unix_ms();
+    Ok(rec.clone())
     }
 
     pub fn set_error(
