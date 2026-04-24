@@ -6,8 +6,48 @@ on:
   pull_request:
 
 jobs:
-  build-rust:
-    name: Rust workspace build + tests
+  parser-conformance:
+    name: Parser conformance (JobSpec fixtures)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install system-api with dev deps
+        working-directory: src/services/system-api
+        run: pip install -e .[dev]
+
+      - name: Run parser conformance fixtures
+        working-directory: src/services/system-api
+        run: pytest tests/test_jobspec_parser.py
+
+  compiler-conformance:
+    name: Compiler conformance (golden + negative)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install eigen-compiler with test deps
+        working-directory: src/services/eigen-compiler
+        run: pip install -e . grpcio grpcio-tools grpcio-status googleapis-common-protos pytest
+
+      - name: Run compiler conformance suite
+        working-directory: src/services/eigen-compiler
+        run: pytest tests/test_conformance_suite.py
+
+  cli-conformance:
+    name: CLI conformance (submit envelope + parser)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -31,11 +71,11 @@ jobs:
       - name: Build workspace
         run: cargo build --workspace --locked
 
-      - name: Run Rust unit tests
-        run: cargo test --workspace --locked
+      - name: Run CLI conformance tests
+        run: cargo test -p cli --locked
 
   python-components:
-    name: Python components install + unit tests
+    name: Python components install + tests
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -70,8 +110,8 @@ jobs:
         working-directory: ${{ matrix.component.path }}
         run: ${{ matrix.component.test_cmd }}
 
-  e2e-smoke-simulator:
-    name: E2E smoke (submit -> watch -> results)
+  green-to-green-smoke:
+    name: Green-to-Green smoke (sim:local + trace/metrics)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -80,7 +120,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
       - name: Install system-api with test deps
         working-directory: src/services/system-api
@@ -89,6 +129,44 @@ jobs:
       - name: Run E2E smoke test
         working-directory: src/services/system-api
         run: pytest tests/test_e2e_smoke_submit_watch_results.py
+
+      - name: Run metrics smoke test
+        working-directory: src/services/system-api
+        run: pytest tests/test_observability_smoke.py
+
+      - name: Run trace propagation integration test
+        run: cargo test -p eigen-kernel integration_propagates_traceparent_to_compiler_and_driver --locked
+
+      - name: Run metrics persistence integration test
+        run: cargo test -p eigen-kernel integration_vqe_loop_persists_metrics_and_results_metadata --locked
+
+  golden-fixture-review-gate:
+    name: Golden fixture review gate
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Detect golden fixture changes
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            golden:
+              - 'src/services/eigen-compiler/tests/golden/**'
+              - 'src/services/system-api/tests/fixtures/jobspec/**'
+              - 'src/rust/apps/cli/tests/fixtures/**'
+
+      - name: Require maintainer approval label for fixture updates
+        if: steps.filter.outputs.golden == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const labels = (context.payload.pull_request.labels || []).map((label) => label.name);
+            const requiredLabel = "golden-fixtures-approved";
+            if (!labels.includes(requiredLabel)) {
+              core.setFailed(
+                `Golden fixtures changed. A maintainer must add the '${requiredLabel}' label to acknowledge and approve the update.`
+              );
+            }
 
   proto-contract-checks:
     name: Protobuf lint + breaking checks
