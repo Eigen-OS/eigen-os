@@ -1,4 +1,4 @@
-# Issue: MVP-2 tracking — Compilation Pipeline
+# MVP-2 tracking: compilation pipeline readiness
 
 - **Type**: Tracking issue
 - **Created**: 2026-04-24
@@ -19,33 +19,55 @@ Launch MVP-2 with deterministic submit → compile → execute flow on `sim:loca
 
 ## Work breakdown
 
-### A) JobSpec parser and contract mapping
+### A) JobSpec parser and contract mapping (RFC 0013)
+- [ ] Finalize required/optional field matrix for JobSpec v0.1 and implement canonical mapping to `SubmitJobRequest`.
+  - **Branch**: `feat/jobspec-v0.1-mapping`
+  - **Commit**: `feat(parser): implement SubmitJobRequest canonical mapping for v0.1`
+- [ ] Enforce field-level `INVALID_ARGUMENT` diagnostics, path traversal blocks, and size caps.
+  - **Branch**: `feat/jobspec-security-diagnostics`
+  - **Commit**: `feat(parser): enforce field diagnostics and security boundaries`
+- [ ] Add deterministic positive and negative fixtures (`job.yaml` -> expected request payload).
+  - **Branch**: `test/jobspec-fixtures`
+  - **Commit**: `test(parser): add deterministic positive and negative jobspec fixtures`
 
-- [ ] Finalize required/optional field matrix for JobSpec v0.1.
-- [ ] Add deterministic fixtures (`job.yaml` -> expected request payload).
-- [ ] Enforce field-level `INVALID_ARGUMENT` diagnostics.
-- [ ] Add parser tests to CI required checks.
-
-### B) Eigen-Lang AST safety and deterministic AQO
-
-- [ ] Freeze MVP allowlist/forbidden constructs.
-- [ ] Enforce AST structural limits (nodes/depth/input size).
-- [ ] Ensure deterministic AQO serialization and hash stability.
-- [ ] Add golden + negative conformance test sets.
+### B) Eigen-Lang AST safety and deterministic AQO (RFC 0014)
+- [ ] Freeze MVP allowlist/forbidden constructs (block `exec`, `eval`, dynamic I/O) and enforce exactly one `@hybrid_program`.
+  - **Branch**: `feat/ast-allowlist-policy`
+  - **Commit**: `feat(compiler): enforce AST allowlist and entrypoint constraints`
+- [ ] Enforce AST structural limits (node counts, depth limits, input size).
+  - **Branch**: `feat/ast-structural-limits`
+  - **Commit**: `feat(compiler): apply structural safety limits to AST parser`
+- [ ] Ensure deterministic AQO serialization (stable key ordering) and hash stability.
+  - **Branch**: `feat/aqo-determinism`
+  - **Commit**: `feat(compiler): ensure deterministic AQO v0.1 JSON serialization`
+- [ ] Add golden + negative conformance test sets for the compiler.
+  - **Branch**: `test/compiler-conformance`
+  - **Commit**: `test(compiler): implement golden and negative AST conformance suites`
 
 ### C) CLI submit packaging
-
 - [ ] Validate `-f/--file` flow and explicit program override rules.
+  - **Branch**: `feat/cli-submit-flow`
+  - **Commit**: `feat(cli): implement explicit file flow and program overrides`
 - [ ] Ensure SHA-256 packaging is deterministic and tested.
-- [ ] Verify request envelope against mock/fake System API.
-- [ ] Verify clear user-facing failures for validation/API errors.
+  - **Branch**: `feat/cli-deterministic-packaging`
+  - **Commit**: `feat(cli): make source packaging and hashing deterministic`
+- [ ] Verify request envelope against mock/fake System API and ensure clear user-facing failures.
+  - **Branch**: `test/cli-api-integration`
+  - **Commit**: `test(cli): verify request envelopes and error handling via mock API`
 
-### D) CI and release readiness gates
-
-- [ ] Mark conformance jobs as required for merge.
-- [ ] Require explicit review on golden fixture changes.
-- [ ] Keep smoke checks (`submit -> results`) green in CI.
+### D) CI and release readiness gates (RFC 0015)
+- [ ] Mark conformance jobs (parser, compiler, CLI) as required for merge.
+  - **Branch**: `chore/ci-required-gates`
+  - **Commit**: `ci: mark MVP-2 conformance and smoke jobs as required`
+- [ ] Implement tooling for golden fixture updates and require explicit review on changes.
+  - **Branch**: `chore/golden-fixture-tooling`
+  - **Commit**: `chore(ci): add golden fixture update script and review rules`
+- [ ] Keep smoke checks (`submit -> results`) green in CI, including trace/metrics validation.
+  - **Branch**: `test/smoke-observability`
+  - **Commit**: `test(ci): ensure smoke tests validate metrics and trace context`
 - [ ] Run MVP-2 readiness audit before freeze.
+  - **Branch**: `docs/mvp2-audit`
+  - **Commit**: `docs: complete MVP-2 release readiness audit`
 
 ## Exit criteria
 
@@ -54,9 +76,3 @@ Launch MVP-2 with deterministic submit → compile → execute flow on `sim:loca
 - [ ] RFC 0015 moved from `Draft` to `Accepted`.
 - [ ] MVP-2 checklist in `mvp-2-compilation-pipeline.md` fully closed.
 - [ ] Documentation (`reference/`, tutorials, development docs) synchronized with implementation.
-
-## Notes for GitHub issue creation
-
-Use this file as the body for GitHub issue titled:
-
-`MVP-2 tracking: compilation pipeline readiness`
