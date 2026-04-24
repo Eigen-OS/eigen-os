@@ -5,7 +5,7 @@ Internal gRPC service implementing `eigen.internal.v1.DriverManagerService`.
 Implemented in this milestone:
 
 - Service bootstrap and gRPC server.
-- `ListDevices` / `GetDeviceStatus` stub behavior.
+- `ListDevices` / `GetDeviceStatus` behavior backed by the built-in `SimulatorDriver`.
 - `BaseDriver` (`QDriver`) interface.
 - In-memory `DriverRegistry` with device-to-driver lookup.
 
