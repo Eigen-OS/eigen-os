@@ -1,6 +1,6 @@
 # RFC 0001: RFC Process and Conventions
 
-- **Status**: Discussion
+- **Status**: Implemented
 
 - **Authors**: NYankovich
 

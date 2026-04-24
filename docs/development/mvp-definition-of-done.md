@@ -5,94 +5,94 @@
 ---
 
 ## 0) Global DoD (applies to all services)
-- [ ] Uses canonical protobuf/JobSpec (source of truth, no copies).
-- [ ] Logs include `{trace_id, job_id, device_id}` where applicable.
-- [ ] Propagates `traceparent` through outbound calls.
-- [ ] Uses gRPC status codes (no `success=false`) and optional structured error details.
-- [ ] Has unit tests for validation + error mapping.
-- [ ] Has a minimal “smoke” integration test in CI.
+- [x] Uses canonical protobuf/JobSpec (source of truth, no copies).
+- [x] Logs include `{trace_id, job_id, device_id}` where applicable.
+- [x] Propagates `traceparent` through outbound calls.
+- [x] Uses gRPC status codes (no `success=false`) and optional structured error details.
+- [x] Has unit tests for validation + error mapping.
+- [x] Has a minimal “smoke” integration test in CI.
 
 ---
 
 ## 1) System API
 ### Must provide
-- [ ] JobService: SubmitJob / GetJobStatus / GetJobResults / CancelJob / StreamJobUpdates
-- [ ] DeviceService: ListDevices / GetDeviceStatus (ReserveDevice only if kept)
-- [ ] (Optional) CompilationService: CompileCircuit (if kept public)
+- [x] JobService: SubmitJob / GetJobStatus / GetJobResults / CancelJob / StreamJobUpdates
+- [x] DeviceService: ListDevices / GetDeviceStatus (ReserveDevice only if kept)
+- [x] (Optional) CompilationService: CompileCircuit (kept internal for MVP)
 
 ### Must enforce
-- [ ] auth/authz at boundary (even if allow‑all, document it)
-- [ ] request size limits
-- [ ] idempotency strategy for SubmitJob
+- [x] auth/authz at boundary (allow‑all + static token mode documented in service config)
+- [x] request size limits
+- [x] idempotency strategy for SubmitJob
 
 ### Must be testable
-- [ ] e2e: submit → watch → results on simulator
-- [ ] invalid job → INVALID_ARGUMENT + field violations
+- [x] e2e: submit → watch → results on simulator
+- [x] invalid job → INVALID_ARGUMENT + field violations
 
 ---
 
 ## 2) Kernel / QRTX
 ### Must provide
-- [ ] Job lifecycle state machine
-- [ ] Internal gRPC to Compiler + DriverManager
-- [ ] Aggregated device view for DeviceService
+- [x] Job lifecycle state machine
+- [x] Internal gRPC to Compiler + DriverManager
+- [x] Aggregated device view for DeviceService
 
 ### Must enforce
-- [ ] strict stage boundaries
-- [ ] retry boundaries (only UNAVAILABLE/RESOURCE_EXHAUSTED if enabled)
+- [x] strict stage boundaries
+- [x] retry boundaries (only UNAVAILABLE/RESOURCE_EXHAUSTED if enabled)
 
 ### Must be testable
-- [ ] state machine tests (incl. cancel)
-- [ ] integration with simulator driver
+- [x] state machine tests (incl. cancel)
+- [x] integration with simulator driver
 
 ---
 
 ## 3) Compiler
 ### Must provide
-- [ ] AST-only compilation (no exec)
-- [ ] allowlist validation (MVP subset)
-- [ ] deterministic output for same input
+- [x] AST-only compilation (no exec)
+- [x] allowlist validation (MVP subset)
+- [x] deterministic output for same input
 
 ### Must be testable
-- [ ] conformance suite with golden fixtures (`tests/golden/`) and negative fixtures (`tests/negative/`)
-- [ ] conformance suite runs on every PR in CI
-- [ ] golden changes follow explicit documented update process
-- [ ] invalid source→INVALID_ARGUMENT
+- [x] conformance suite with golden fixtures (`tests/golden/`) and negative fixtures (`tests/negative/`)
+- [x] conformance suite runs on every PR in CI
+- [x] golden changes follow explicit documented update process
+- [x] invalid source→INVALID_ARGUMENT
 
 ---
 
 ## 4) Driver Manager
 ### Must provide
-- [ ] DriverManagerService: ListDevices / GetDeviceStatus / ExecuteCircuit
-- [ ] SimulatorDriver as golden driver
+- [x] DriverManagerService: ListDevices / GetDeviceStatus / ExecuteCircuit
+- [x] SimulatorDriver as golden driver
 
 ### Must enforce
-- [ ] error normalization (vendor→canonical)
-- [ ] canonical counts format + bit ordering rule
+- [x] error normalization (vendor→canonical)
+- [x] canonical counts format + bit ordering rule
 
 ### Must be testable
-- [ ] driver compliance tests
-- [ ] error mapping tests
+- [x] driver compliance tests
+- [x] error mapping tests
 
 ---
 
 ## 5) QFS (CircuitFS)
-- [ ] stable path layout per job_id
-- [ ] atomic results write
-- [ ] store/retrieve tests
+- [x] stable path layout per job_id
+- [x] atomic results write
+- [x] store/retrieve tests
 
 ---
 
 ## 6) CLI / SDK
-- [ ] commands: submit/status/results/watch
-- [ ] packaging rule: job.yaml + program.eigen.py + sha256 + entrypoint
-- [ ] friendly error output
-- [ ] e2e against local stack (or mocked API)
+- [x] commands: submit/status/results/watch
+- [x] packaging rule: job.yaml + program.eigen.py + sha256 + entrypoint
+- [x] friendly error output
+- [x] e2e against local stack (or mocked API)
 
 ---
 
 ## 7) Observability
-- [ ] `/metrics` exposed
-- [ ] trace propagation verified end-to-end
-- [ ] smoke tests for metrics and trace propagation
+- [x] `/metrics` exposed
+- [x] trace propagation verified end-to-end
+- [x] smoke tests for metrics and trace propagation
 

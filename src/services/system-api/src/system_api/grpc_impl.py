@@ -7,6 +7,7 @@ import threading
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from hashlib import sha256
 
 import grpc
 from google.protobuf.timestamp_pb2 import Timestamp
@@ -45,6 +46,12 @@ class _JobRecord:
     terminal_state: int
 
 
+@dataclass
+class _IdempotencyRecord:
+    job_id: str
+    request_fingerprint: str
+
+
 class JobService:
     """Implementation of eigen.api.v1.JobService."""
 
@@ -52,8 +59,46 @@ class JobService:
         self._job_pb = job_pb
         self._types_pb = types_pb
         self._jobs: dict[str, _JobRecord] = {}
+        self._idempotency: dict[str, _IdempotencyRecord] = {}
         self._lock = threading.RLock()
 
+    def _request_fingerprint(self, request) -> str:
+        payload = {
+            "name": request.name,
+            "target": request.target,
+            "priority": int(request.priority),
+            "compiler_options": sorted(request.compiler_options.items()),
+            "dependencies": list(request.dependencies),
+            "metadata": sorted(request.metadata.items()),
+            "program": request.WhichOneof("program") or "",
+        }
+        program = request.WhichOneof("program")
+        if program == "eigen_lang":
+            payload["eigen_lang"] = {
+                "entrypoint": request.eigen_lang.entrypoint,
+                "sha256": request.eigen_lang.sha256,
+                "source_sha256": sha256(bytes(request.eigen_lang.source)).hexdigest(),
+            }
+        elif program == "qasm":
+            payload["qasm"] = {
+                "version": request.qasm.version,
+                "source_sha256": sha256(bytes(request.qasm.source)).hexdigest(),
+            }
+        elif program == "aqo_ref":
+            payload["aqo_ref"] = {"qfs_ref": request.aqo_ref.qfs_ref}
+        raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return sha256(raw).hexdigest()
+
+    def _idempotency_key(self, request) -> str | None:
+        key = request.metadata.get("client_request_id", "").strip()
+        if key:
+            return f"client_request_id:{key}"
+        if request.WhichOneof("program") == "eigen_lang":
+            digest = request.eigen_lang.sha256.strip()
+            if digest:
+                return f"eigen_lang.sha256:{digest}:{request.eigen_lang.entrypoint}:{request.target}"
+        return None
+    
     def _mk_update(self, *, job_id: str, state: int, stage: str, progress: float, message: str, event_seq: int):
         return self._types_pb.JobUpdate(
             job_id=job_id,
@@ -189,13 +234,44 @@ class JobService:
         if violations:
             abort_invalid_argument(context, "validation failed", violations)
 
-        job_id = f"job_{uuid.uuid4().hex[:12]}"
-        rc.job_id = job_id
-        now = _ts_now()
+        idem_key = self._idempotency_key(request)
+        request_fingerprint = self._request_fingerprint(request)
 
         with self._lock:
+            if idem_key:
+                previous = self._idempotency.get(idem_key)
+                if previous:
+                    if previous.request_fingerprint != request_fingerprint:
+                        context.abort(
+                            grpc.StatusCode.INVALID_ARGUMENT,
+                            f"idempotency key reuse with different payload: {idem_key}",
+                        )
+                    existing = self._jobs[previous.job_id]
+                    latest = existing.updates[-1]
+                    rc.job_id = existing.job_id
+                    log_request_end("JobService.SubmitJob", rc)
+                    return self._job_pb.SubmitJobResponse(
+                        job_id=existing.job_id,
+                        status=self._types_pb.JobStatus(
+                            job_id=existing.job_id,
+                            state=latest.state,
+                            stage=latest.stage,
+                            progress=latest.progress,
+                            message="accepted (idempotent replay)",
+                            created_at=existing.created_at,
+                            updated_at=latest.timestamp,
+                        ),
+                    )
+
+            job_id = f"job_{uuid.uuid4().hex[:12]}"
+            rc.job_id = job_id
+            now = _ts_now()
             record = self._build_job_record(request, job_id=job_id, created_at=now)
             self._jobs[job_id] = record
+            if idem_key:
+                self._idempotency[idem_key] = _IdempotencyRecord(
+                    job_id=job_id, request_fingerprint=request_fingerprint
+                )
 
         resp = self._job_pb.SubmitJobResponse(
             job_id=job_id,

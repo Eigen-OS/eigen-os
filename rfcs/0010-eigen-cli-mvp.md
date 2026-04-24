@@ -1,6 +1,6 @@
 # RFC 0010: eigen-cli MVP: commands, config, UX contracts
 
-- **Status:** Discussion
+- **Status:** Implemented
 - **Authors:** NYankovich
 - **Created:** 2026-01-08
 - **Target milestone:** Phase 0 (MVP)

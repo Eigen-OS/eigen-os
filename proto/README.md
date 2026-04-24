@@ -5,13 +5,15 @@ These files are the canonical source for generated client/server stubs.
 
 ## Packages
 
-### Public API (`eigen.api.v1`)
+### Public API (`eigen.api.v1`, product version `0.1`)
 - Path: `proto/eigen/api/v1/*.proto`
 - Services: `JobService`, `DeviceService`
 
-### Internal API (`eigen.internal.v1`)
+### Internal API (`eigen.internal.v1`, product version `0.1`)
 - Path: `proto/eigen/internal/v1/*.proto`
 - Services: `KernelGateway`, `DriverManagerService`, `CompilationService`
+
+> Note: `v1` in package/path is a protobuf namespace. MVP contract version is fixed at **`0.1`**.
 
 ## Rust code generation
 

@@ -1,6 +1,6 @@
 # RFC 0002: System architecture boundaries and service graph (MVP)
 
-- **Status:** Discussion
+- **Status:** Implemented
 - **Authors:** NYankovich
 - **Created:** 2026-01-08
 - **Target milestone:** Phase 0 (MVP)

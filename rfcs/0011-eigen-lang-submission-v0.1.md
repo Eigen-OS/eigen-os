@@ -1,6 +1,6 @@
 # RFC 0011: Eigen-Lang submission format v0.1 (user sources → compiler → AQO)
 
-- **Status:** Discussion
+- **Status:** Implemented
 - **Authors:** NYankovich
 - **Created:** 2026-01-08
 - **Target milestone:** Phase 0 (MVP)

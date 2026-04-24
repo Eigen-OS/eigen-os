@@ -1,6 +1,6 @@
 # RFC 0007: QRTX MVP: scheduler, task state machine, execution pipeline
 
-- **Status:** Discussion
+- **Status:** Implemented
 - **Authors:** NYankovich
 - **Created:** 2026-01-08
 - **Target milestone:** Phase 0 (MVP)

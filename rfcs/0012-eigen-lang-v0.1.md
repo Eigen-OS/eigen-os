@@ -1,6 +1,6 @@
 # RFC 0012: Eigen‑Lang v0.1 (MVP) — language scope, semantics, safety, compatibility
 
-- **Status:** Discussion
+- **Status:** Implemented
 - **Authors:** NYankovich
 - **Created:** 2026-01-09
 - **Target milestone:** Phase 0 (MVP)
