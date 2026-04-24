@@ -1,10 +1,10 @@
 # RFC 0013: MVP-2 JobSpec Parser and Submit Contract
 
-- **Status**: Draft
+- **Status**: Accepted
 - **Authors**: Eigen OS maintainers
 - **Created**: 2026-04-24
 - **Target Milestone**: Phase 0 (MVP-2)
-- **Tracking Issue**: (to be created)
+- **Tracking Issue**: #113
 - **Replaces / Related**: RFC 0003, RFC 0004, ADR 0003
 
 ## Summary
