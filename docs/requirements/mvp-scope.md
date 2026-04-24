@@ -4,6 +4,12 @@
 
 Defines the Minimal Viable Product (MVP) scope for Eigen OS Phase 0. The MVP delivers an end‑to‑end quantum workflow execution system capable of running simple VQE‑style hybrid algorithms on a local simulator via a unified command‑line interface.
 
+## Phase status
+
+- **MVP-1 (Core Services Setup):** completed on **2026-04-24**.
+- **MVP-2 (Compilation Pipeline):** in progress on **2026-04-24** with focus on JobSpec parsing, AST-only Eigen-Lang compilation, CLI submit flow, and deterministic conformance tests.
+- Detailed MVP-2 plan: [`../development/mvp-2-compilation-pipeline.md`](../development/mvp-2-compilation-pipeline.md)
+
 ## In Scope (MVP)
 
 ### 1. Core Services
