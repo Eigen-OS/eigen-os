@@ -1,0 +1,11 @@
+{
+  "rpc": "CompileCircuit",
+  "request": {
+    "language": "eigen-lang",
+    "source": "from eigen_lang import hybrid_program\n\ndef broken(:\n    pass\n"
+  },
+  "expected": {
+    "code": "INVALID_ARGUMENT",
+    "fields": ["source"]
+  }
+}

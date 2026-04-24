@@ -1,4 +1,4 @@
-"""Minimal Eigen-Lang -> AQO JSON compiler for MVP RPC scaffolding."""
+"""Minimal Eigen-Lang -> AQO JSON compiler for MVP."""
 
 from __future__ import annotations
 
@@ -34,13 +34,18 @@ def _compiler_limit(name: str, default: int) -> int:
     return max(1, value)
 
 
-def _parse_python_source(source: bytes) -> ast.AST | None:
-    if not source:
-        return None
+def _parse_python_source(source: bytes) -> ast.AST:
     try:
         return ast.parse(source.decode("utf-8"))
     except (UnicodeDecodeError, SyntaxError):
-        return None
+        raise CompilerValidationError(
+            violations=(
+                FieldViolation(
+                    field="source",
+                    description="source must be valid UTF-8 Python syntax",
+                ),
+            )
+        )
 
 
 def _reject_dynamic_control_flow(tree: ast.AST) -> None:
@@ -189,35 +194,23 @@ def _collect_operations(tree: ast.AST, params: dict[str, str]) -> tuple[list[dic
 def compile_eigen_lang(source: bytes, *, source_ref: str | None = None) -> CompilationResult:
     """Compile source bytes into a tiny AQO v0.1 payload.
 
-    This is an MVP stub used to prove RPC contract wiring.
     """
 
     digest = hashlib.sha256(source).hexdigest() if source else ""
     tree = _parse_python_source(source)
-
-    if tree is not None:
-        _enforce_resource_limits(tree)
-        _reject_forbidden_imports(tree)
-        _reject_forbidden_calls(tree)
-        _reject_dynamic_control_flow(tree)
-        params = _collect_params(tree)
-        operations, qubits = _collect_operations(tree, params)
-        has_minimize = any(
-            isinstance(node, ast.Call) and _call_name(node.func) == "minimize" for node in ast.walk(tree)
-        )
-        has_expectation = any(
-            isinstance(node, ast.Call) and _call_name(node.func) == "ExpectationValue"
-            for node in ast.walk(tree)
-        )
-    else:
-        params = {}
-        operations = [
-            {"op": "RY", "q": [0], "params": {"theta": 1.570796}},
-            {"op": "MEASURE", "q": [0], "c": [0]},
-        ]
-        qubits = 1
-        has_minimize = False
-        has_expectation = False
+    _enforce_resource_limits(tree)
+    _reject_forbidden_imports(tree)
+    _reject_forbidden_calls(tree)
+    _reject_dynamic_control_flow(tree)
+    params = _collect_params(tree)
+    operations, qubits = _collect_operations(tree, params)
+    has_minimize = any(
+        isinstance(node, ast.Call) and _call_name(node.func) == "minimize" for node in ast.walk(tree)
+    )
+    has_expectation = any(
+        isinstance(node, ast.Call) and _call_name(node.func) == "ExpectationValue"
+        for node in ast.walk(tree)
+    )
 
     aqo = {
         "version": "0.1",

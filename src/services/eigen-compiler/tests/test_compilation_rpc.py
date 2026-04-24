@@ -36,7 +36,15 @@ def test_compile_circuit_happy_path(grpc_addr: str) -> None:
     stub = comp_pb_grpc.CompilationServiceStub(channel)
 
     resp = stub.CompileCircuit(
-        comp_pb.CompileCircuitRequest(language="eigen-lang", source=b"circuit main {}")
+        comp_pb.CompileCircuitRequest(
+            language="eigen-lang",
+            source=(
+                b"from eigen_lang import hybrid_program\n\n"
+                b"@hybrid_program()\n"
+                b"def main():\n"
+                b"    ry(0, theta=1.0)\n"
+            ),
+        )
     )
 
     assert resp.circuit.format == _enum_value(types_pb, "CIRCUIT_FORMAT_AQO_JSON", "AQO_JSON")
@@ -108,6 +116,23 @@ def test_compile_circuit_enforces_source_size_limit(
     with pytest.raises(grpc.RpcError) as e:
         stub.CompileCircuit(
             comp_pb.CompileCircuitRequest(language="eigen-lang", source=b"from eigen_lang import *")
+        )
+
+    assert e.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+    bad = _extract_bad_request(e.value)
+    assert {v.field for v in bad.field_violations} == {"source"}
+
+
+def test_compile_circuit_rejects_invalid_syntax(grpc_addr: str) -> None:
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = comp_pb_grpc.CompilationServiceStub(channel)
+
+    with pytest.raises(grpc.RpcError) as e:
+        stub.CompileCircuit(
+            comp_pb.CompileCircuitRequest(
+                language="eigen-lang",
+                source=b"from eigen_lang import hybrid_program\n\ndef broken(:\n    pass\n",
+            )
         )
 
     assert e.value.code() == grpc.StatusCode.INVALID_ARGUMENT
