@@ -61,7 +61,7 @@ Configure branch protection so the following CI jobs are **Required**:
 - `Golden fixture review gate`
 - `Protobuf lint + breaking checks`
 
-For fixture updates (`src/services/eigen-compiler/tests/golden/**`, `src/services/system-api/tests/fixtures/jobspec/**`, `src/rust/apps/cli/tests/fixtures/**`):
+For fixture updates (`src/services/eigen-compiler/tests/golden/**`, `src/services/system-api/tests/fixtures/jobspec/**`, `src/services/system-api/tests/fixtures/runtime/**`, `src/rust/apps/cli/tests/fixtures/**`):
 
 1. Run `python3 scripts/ci/update-golden-fixtures.py`.
 2. Commit regenerated fixture files.

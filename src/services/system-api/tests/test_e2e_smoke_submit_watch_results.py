@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import grpc
 import pytest
 
@@ -10,6 +13,10 @@ ensure_generated()
 from eigen.api.v1 import job_service_pb2 as job_pb  # noqa: E402
 from eigen.api.v1 import job_service_pb2_grpc as job_pb_grpc  # noqa: E402
 from eigen.api.v1 import types_pb2 as types_pb  # noqa: E402
+
+GOLDEN_RESULTS_FIXTURE = (
+    Path(__file__).resolve().parent / "fixtures" / "runtime" / "smoke_submit_status_results.golden.json"
+)
 
 
 def _submit_bell_state_job(stub: job_pb_grpc.JobServiceStub) -> str:
@@ -69,4 +76,8 @@ def test_e2e_smoke_submit_watch_results(grpc_addr: str):
     assert all(isinstance(bitstring, str) and bitstring for bitstring in results.counts)
     assert all(isinstance(count, int) and count >= 0 for count in results.counts.values())
     assert len(results.metadata) > 0
-    
+    fixture = json.loads(GOLDEN_RESULTS_FIXTURE.read_text(encoding="utf-8"))
+    assert results.state == fixture["state"]
+    assert dict(results.counts) == fixture["counts"]
+    for key, template in fixture["metadata_templates"].items():
+        assert results.metadata.get(key) == template.format(job_id=job_id)

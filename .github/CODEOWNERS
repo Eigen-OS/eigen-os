@@ -1,6 +1,7 @@
 # MVP-2 golden fixtures require explicit maintainer review.
 /src/services/eigen-compiler/tests/golden/** @NYankovich
 /src/services/system-api/tests/fixtures/jobspec/** @NYankovich
+/src/services/system-api/tests/fixtures/runtime/** @NYankovich
 /src/rust/apps/cli/tests/fixtures/** @NYankovich
 
 # CI conformance policy and fixture tooling.

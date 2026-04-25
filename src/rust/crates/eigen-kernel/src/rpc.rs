@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::net::SocketAddr;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 use serde_json::json;
@@ -280,11 +280,13 @@ async fn run_pipeline(
     });
     trace_ctx.inject(&mut compile_req);
 
+    let compile_started = Instant::now();
     let compile_res = compiler
         .compile_job(compile_req)
         .await
         .map_err(PipelineError::from_compile_status)?
         .into_inner();
+    let compilation_latency_sec = compile_started.elapsed().as_secs_f64();
 
     let circuit_payload = compile_res.circuit.ok_or_else(|| {
         PipelineError::compile("compiler returned empty circuit payload".to_string())
@@ -310,6 +312,7 @@ async fn run_pipeline(
         req.target.clone()
     };
 
+    let execute_started = Instant::now();
     let execute_res = if should_run_vqe_loop(&circuit_payload, &compile_res.metadata) {
         let vqe_res = run_vqe_loop(
             &mut driver,
@@ -339,10 +342,17 @@ async fn run_pipeline(
             .map_err(PipelineError::from_execute_status)?
             .into_inner()
     };
+    let job_execution_duration_sec = execute_started.elapsed().as_secs_f64();
 
-    persist_results(&deps, job_id, &device_id, &execute_res).map_err(|e| {
-        PipelineError::persist(format!("failed to persist final execution results: {e}"))
-    })?;
+    persist_results(
+        &deps,
+        job_id,
+        &device_id,
+        &execute_res,
+        compilation_latency_sec,
+        job_execution_duration_sec,
+    )
+    .map_err(|e| PipelineError::persist(format!("failed to persist final execution results: {e}")))?;
 
     store.set_results_metadata(job_id, results_metadata);
     store.set_counts(job_id, execute_res.counts.clone());
@@ -558,6 +568,8 @@ fn persist_results(
     job_id: &str,
     device_id: &str,
     execute_res: &ExecuteCircuitResponse,
+    compilation_latency_sec: f64,
+    job_execution_duration_sec: f64,
 ) -> Result<(), String> {
     let counts_json = serde_json::to_vec(&json!({
         "version": "0.1",
@@ -573,6 +585,26 @@ fn persist_results(
         "device_id": device_id,
         "execution_time_sec": execute_res.execution_time_sec,
         "backend_metadata": execute_res.metadata,
+        "runtime_metrics": [
+            {
+                "name": "compilation_latency",
+                "value_sec": compilation_latency_sec,
+                "labels": {
+                    "job_id": job_id,
+                    "device_id": device_id,
+                    "unit": "seconds",
+                }
+            },
+            {
+                "name": "job_execution_duration",
+                "value_sec": job_execution_duration_sec,
+                "labels": {
+                    "job_id": job_id,
+                    "device_id": device_id,
+                    "unit": "seconds",
+                }
+            }
+        ],
     }))
     .map_err(|e| e.to_string())?;
 
@@ -814,13 +846,19 @@ mod tests {
     use tempfile::TempDir;
     use tokio::time::{Duration, sleep};
 
-    fn compiler_trace_store() -> &'static Mutex<Vec<String>> {
-        static STORE: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct TraceCapture {
+        traceparent: Option<String>,
+        trace_id: Option<String>,
+    }
+
+    fn compiler_trace_store() -> &'static Mutex<Vec<TraceCapture>> {
+        static STORE: OnceLock<Mutex<Vec<TraceCapture>>> = OnceLock::new();
         STORE.get_or_init(|| Mutex::new(Vec::new()))
     }
 
-    fn driver_trace_store() -> &'static Mutex<Vec<String>> {
-        static STORE: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
+    fn driver_trace_store() -> &'static Mutex<Vec<TraceCapture>> {
+        static STORE: OnceLock<Mutex<Vec<TraceCapture>>> = OnceLock::new();
         STORE.get_or_init(|| Mutex::new(Vec::new()))
     }
 
@@ -840,13 +878,20 @@ mod tests {
             &self,
             request: Request<CompileJobRequest>,
         ) -> Result<Response<CompileJobResponse>, Status> {
-            if let Some(raw) = request
+            let traceparent = request
                 .metadata()
                 .get("traceparent")
                 .and_then(|v| v.to_str().ok())
-            {
-                compiler_trace_store().lock().unwrap().push(raw.to_string());
-            }
+                .map(|v| v.to_string());
+            let trace_id = request
+                .metadata()
+                .get("trace_id")
+                .and_then(|v| v.to_str().ok())
+                .map(|v| v.to_string());
+            compiler_trace_store().lock().unwrap().push(TraceCapture {
+                traceparent,
+                trace_id,
+            });
             let req = request.into_inner();
             if req.language == "bad" {
                 return Err(Status::invalid_argument("bad language"));
@@ -908,13 +953,20 @@ mod tests {
             &self,
             request: Request<ExecuteCircuitRequest>,
         ) -> Result<Response<ExecuteCircuitResponse>, Status> {
-            if let Some(raw) = request
+            let traceparent = request
                 .metadata()
                 .get("traceparent")
                 .and_then(|v| v.to_str().ok())
-            {
-                driver_trace_store().lock().unwrap().push(raw.to_string());
-            }
+                .map(|v| v.to_string());
+            let trace_id = request
+                .metadata()
+                .get("trace_id")
+                .and_then(|v| v.to_str().ok())
+                .map(|v| v.to_string());
+            driver_trace_store().lock().unwrap().push(TraceCapture {
+                traceparent,
+                trace_id,
+            });
             if request.get_ref().device_id == "bad-device" {
                 return Err(Status::unavailable("backend down"));
             }
@@ -1208,10 +1260,30 @@ def vqe_program():
         let metrics_json: serde_json::Value = serde_json::from_slice(&metrics_raw).unwrap();
         assert_eq!(metrics_json["kind"], "vqe_metrics");
         assert_eq!(metrics_json["iterations"].as_array().unwrap().len(), 5);
+
+        let bundle = CircuitFsLocal::new(temp_qfs.path())
+            .load_results_bundle(&job_id)
+            .unwrap();
+        let parquet_payload: serde_json::Value = serde_json::from_slice(&bundle.parquet).unwrap();
+        let runtime_metrics = parquet_payload["metadata"]["runtime_metrics"]
+            .as_array()
+            .unwrap();
+        assert!(runtime_metrics.iter().any(|item| {
+            item["name"] == "job_execution_duration"
+                && item["labels"]["job_id"] == job_id
+                && item["labels"]["device_id"] == "sim:local"
+                && item["labels"]["unit"] == "seconds"
+        }));
+        assert!(runtime_metrics.iter().any(|item| {
+            item["name"] == "compilation_latency"
+                && item["labels"]["job_id"] == job_id
+                && item["labels"]["device_id"] == "sim:local"
+                && item["labels"]["unit"] == "seconds"
+        }));
     }
 
     #[tokio::test]
-    async fn integration_propagates_traceparent_to_compiler_and_driver() {
+    async fn integration_propagates_trace_id_and_traceparent_to_compiler_and_driver() {
         compiler_trace_store().lock().unwrap().clear();
         driver_trace_store().lock().unwrap().clear();
         let temp_qfs = TempDir::new().unwrap();
@@ -1254,8 +1326,11 @@ def vqe_program():
             metadata: HashMap::new(),
         });
         let traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+        let trace_id = "4bf92f3577b34da6a3ce929d0e0e4736";
         req.metadata_mut()
             .insert("traceparent", traceparent.parse().unwrap());
+        req.metadata_mut()
+            .insert("trace_id", trace_id.parse().unwrap());
 
         let job_id = svc.enqueue_job(req).await.unwrap().into_inner().job_id;
         for _ in 0..40 {
@@ -1272,19 +1347,13 @@ def vqe_program():
             sleep(Duration::from_millis(30)).await;
         }
 
-        assert!(
-            compiler_trace_store()
-                .lock()
-                .unwrap()
-                .iter()
-                .any(|entry| entry == traceparent)
-        );
-        assert!(
-            driver_trace_store()
-                .lock()
-                .unwrap()
-                .iter()
-                .any(|entry| entry == traceparent)
-        );
+         assert!(compiler_trace_store().lock().unwrap().iter().any(|entry| {
+            entry.traceparent.as_deref() == Some(traceparent)
+                && entry.trace_id.as_deref() == Some(trace_id)
+        }));
+        assert!(driver_trace_store().lock().unwrap().iter().any(|entry| {
+            entry.traceparent.as_deref() == Some(traceparent)
+                && entry.trace_id.as_deref() == Some(trace_id)
+        }));
     }
 }
