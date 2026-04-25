@@ -9,7 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use parking_lot::RwLock;
 use uuid::Uuid;
 
-use qrtx::state_machine::{transition, JobEvent, JobState, TransitionError};
+use qrtx::state_machine::{JobEvent, JobState, TransitionError, transition}
 
 /// A stored job record for the MVP state machine.
 #[derive(Debug, Clone)]
@@ -65,15 +65,25 @@ impl JobStore {
 
     pub fn apply_event(&self, job_id: &str, event: JobEvent) -> Result<JobRecord, TransitionError> {
     let mut guard = self.inner.write();
-    let rec = guard.get_mut(job_id).ok_or(TransitionError::Invalid {
-        from: JobState::Pending,
-        event,
-    })?;
+        let rec = guard.get_mut(job_id).ok_or(TransitionError::Invalid {
+            from: JobState::Pending,
+            event,
+        })?;
 
-    let next = transition(rec.state, event)?;
-    rec.state = next;
-    rec.updated_at_unix_ms = unix_ms();
-    Ok(rec.clone())
+        if is_terminal(rec.state) {
+            if terminal_state_for_event(event) == Some(rec.state) {
+                return Ok(rec.clone());
+            }
+            return Err(TransitionError::Invalid {
+                from: rec.state,
+                event,
+            });
+        }
+
+        let next = transition(rec.state, event)?;
+        rec.state = next;
+        rec.updated_at_unix_ms = unix_ms();
+        Ok(rec.clone())
     }
 
     pub fn set_error(
@@ -112,9 +122,76 @@ impl JobStore {
     }
 }
 
+fn is_terminal(state: JobState) -> bool {
+    matches!(
+        state,
+        JobState::Done | JobState::Error | JobState::Cancelled | JobState::Timeout
+    )
+}
+
+fn terminal_state_for_event(event: JobEvent) -> Option<JobState> {
+    match event {
+        JobEvent::Complete => Some(JobState::Done),
+        JobEvent::Fail => Some(JobState::Error),
+        JobEvent::Cancel => Some(JobState::Cancelled),
+        JobEvent::TimeOut => Some(JobState::Timeout),
+        _ => None,
+    }
+}
+
 fn unix_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as i64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terminal_state_rejects_non_matching_events() {
+        let store = JobStore::default();
+        let record = store.create_job("test".to_string());
+
+        store
+            .apply_event(&record.job_id, JobEvent::StartCompiling)
+            .unwrap();
+        store.apply_event(&record.job_id, JobEvent::Fail).unwrap();
+
+        let err = store
+            .apply_event(&record.job_id, JobEvent::Cancel)
+            .unwrap_err();
+        assert_eq!(
+            err,
+            TransitionError::Invalid {
+                from: JobState::Error,
+                event: JobEvent::Cancel,
+            }
+        );
+    }
+
+    #[test]
+    fn re_terminalization_is_idempotent() {
+        let store = JobStore::default();
+        let record = store.create_job("test".to_string());
+
+        store
+            .apply_event(&record.job_id, JobEvent::StartCompiling)
+            .unwrap();
+        store
+            .apply_event(&record.job_id, JobEvent::StartRunning)
+            .unwrap();
+        let done_once = store
+            .apply_event(&record.job_id, JobEvent::Complete)
+            .unwrap();
+        let done_twice = store
+            .apply_event(&record.job_id, JobEvent::Complete)
+            .unwrap();
+
+        assert_eq!(done_once.state, JobState::Done);
+        assert_eq!(done_twice.state, JobState::Done);
+        assert_eq!(done_once.updated_at_unix_ms, done_twice.updated_at_unix_ms);
+    }
 }

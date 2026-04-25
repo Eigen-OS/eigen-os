@@ -6,45 +6,24 @@
 
 use thiserror::Error;
 
-/// Canonical MVP job lifecycle states.
+/// Canonical MVP-3 job lifecycle states.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JobState {
     Pending,
-    Validating,
     Compiling,
-    Queued,
-    Allocating,
-    Executing,
-    Completing,
-    Completed,
-    Failed,
+    Running,
+    Done,
+    Error,
     Cancelled,
     Timeout,
-}
-
-/// Optional MVP execution sub-state while [`JobState::Executing`] is active.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ExecutingSubState {
-    QuantumInitializing,
-    QuantumRunning,
-    ClassicalRunning,
-    Measuring,
-    PostProcessing,
 }
 
 /// Events that can cause a state transition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JobEvent {
-    StartValidation,
-    FinishValidation,
     StartCompiling,
-    FinishCompiling,
-    StartAllocating,
-    FinishAllocating,
-    StartExecuting,
-    FinishExecuting,
-    StartCompleting,
-    FinishCompleting,
+    StartRunning,
+    Complete,
     Fail,
     Cancel,
     TimeOut,
@@ -65,54 +44,17 @@ pub fn transition(from: JobState, event: JobEvent) -> Result<JobState, Transitio
     use JobState as S;
 
     let next = match (from, event) {
-        (S::Pending, E::StartValidation) => S::Validating,
-        (S::Validating, E::FinishValidation) => S::Compiling,
-        (S::Compiling, E::FinishCompiling) => S::Queued,
-        (S::Queued, E::StartAllocating) => S::Allocating,
-        (S::Allocating, E::FinishAllocating) => S::Executing,
-        (S::Executing, E::FinishExecuting) => S::Completing,
-        (S::Completing, E::FinishCompleting) => S::Completed,
-
-        // Optional explicit start events for stage boundaries.
-        (S::Compiling, E::StartCompiling) => S::Compiling,
-        (S::Allocating, E::StartAllocating) => S::Allocating,
-        (S::Executing, E::StartExecuting) => S::Executing,
-        (S::Completing, E::StartCompleting) => S::Completing,
+        (S::Pending, E::StartCompiling) => S::Compiling,
+        (S::Compiling, E::StartRunning) => S::Running,
+        (S::Running, E::Complete) => S::Done,
 
         // Cancellation/failure/timeout are allowed from non-terminal states.
-        (
-            S::Pending
-            | S::Validating
-            | S::Compiling
-            | S::Queued
-            | S::Allocating
-            | S::Executing
-            | S::Completing,
-            E::Cancel,
-        ) => S::Cancelled,
-        (
-            S::Pending
-            | S::Validating
-            | S::Compiling
-            | S::Queued
-            | S::Allocating
-            | S::Executing
-            | S::Completing,
-            E::Fail,
-        ) => S::Failed,
-        (
-            S::Pending
-            | S::Validating
-            | S::Compiling
-            | S::Queued
-            | S::Allocating
-            | S::Executing
-            | S::Completing,
-            E::TimeOut,
-        ) => S::Timeout,
+        (S::Pending | S::Compiling | S::Running, E::Cancel) => S::Cancelled,
+        (S::Pending | S::Compiling | S::Running, E::Fail) => S::Error,
+        (S::Pending | S::Compiling | S::Running, E::TimeOut) => S::Timeout,
 
         // Terminal states do not accept transitions.
-        (S::Completed | S::Failed | S::Cancelled | S::Timeout, _) => {
+        (S::Done | S::Error | S::Cancelled | S::Timeout, _) => {
             return Err(TransitionError::Invalid { from, event });
         }
 
@@ -132,53 +74,38 @@ mod tests {
     #[test]
     fn happy_path_transitions_follow_mvp_pipeline() {
         let s0 = JobState::Pending;
-        let s1 = transition(s0, JobEvent::StartValidation).unwrap();
-        let s2 = transition(s1, JobEvent::FinishValidation).unwrap();
-        let s3 = transition(s2, JobEvent::FinishCompiling).unwrap();
-        let s4 = transition(s3, JobEvent::StartAllocating).unwrap();
-        let s5 = transition(s4, JobEvent::FinishAllocating).unwrap();
-        let s6 = transition(s5, JobEvent::FinishExecuting).unwrap();
-        let s7 = transition(s6, JobEvent::FinishCompleting).unwrap();
-        assert_eq!(s7, JobState::Completed);
+        let s1 = transition(s0, JobEvent::StartCompiling).unwrap();
+        let s2 = transition(s1, JobEvent::StartRunning).unwrap();
+        let s3 = transition(s2, JobEvent::Complete).unwrap();
+        assert_eq!(s3, JobState::Done);
     }
 
     #[test]
     fn cancellation_failure_timeout_are_allowed_from_non_terminal_states() {
-        let non_terminal = [
-            JobState::Pending,
-            JobState::Compiling,
-            JobState::Queued,
-            JobState::Allocating,
-            JobState::Executing,
-            JobState::Completing,
-        ];
+        let non_terminal = [JobState::Pending, JobState::Compiling, JobState::Running];
 
         for s in non_terminal {
-            assert_eq!(transition(s, JobEvent::Cancel).unwrap(), JobState::Cancelled);
+            assert_eq!(
+                transition(s, JobEvent::Cancel).unwrap(),
+                JobState::Cancelled
+            );
         }
     }
 
     #[test]
     fn terminal_states_reject_all_events() {
         let events = [
-            JobEvent::StartValidation,
-            JobEvent::FinishValidation,
             JobEvent::StartCompiling,
-            JobEvent::FinishCompiling,
-            JobEvent::StartAllocating,
-            JobEvent::FinishAllocating,
-            JobEvent::StartExecuting,
-            JobEvent::FinishExecuting,
-            JobEvent::StartCompleting,
-            JobEvent::FinishCompleting,
+            JobEvent::StartRunning,
+            JobEvent::Complete,
             JobEvent::Fail,
             JobEvent::Cancel,
             JobEvent::TimeOut,
         ];
 
         for s in [
-            JobState::Completed,
-            JobState::Failed,
+            JobState::Done,
+            JobState::Error,
             JobState::Cancelled,
             JobState::Timeout,
         ] {
