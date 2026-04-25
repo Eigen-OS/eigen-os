@@ -29,6 +29,25 @@ test -f examples/basic/vqe_cycle/program.eigen.py
 
 ## Instructions
 
+### 0) `eigen: command not found`
+
+**Symptoms**
+- `eigen: command not found`
+
+**What to do**
+
+From repository root:
+
+```bash
+./scripts/install-eigen-cli.sh
+eigen --help
+```
+
+The installer puts `eigen` into your active virtualenv (`$VIRTUAL_ENV/bin`) when available,
+or `~/.local/bin` otherwise.
+
+---
+
 ### 1) `cargo run -p cli ...` does not run
 
 **Symptoms**

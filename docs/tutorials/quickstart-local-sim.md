@@ -33,48 +33,56 @@ cargo --version
 cargo run -p cli --manifest-path src/rust/Cargo.toml -- --help
 ```
 
-2. Go to the example directory:
+2. (Recommended) install `eigen` into your active shell environment:
+
+```bash
+./scripts/install-eigen-cli.sh
+```
+
+If you prefer no installation, use `cargo run -p cli --manifest-path src/rust/Cargo.toml -- ...` in every step below.
+
+3. Go to the example directory:
 
 ```bash
 cd examples/basic/vqe_cycle
 ```
 
-3. Submit a job:
+4. Submit a job:
 
 ```bash
-cargo run -p cli --manifest-path ../../../src/rust/Cargo.toml -- submit -f job.yaml
+eigen submit -f job.yaml
 ```
 
 Copy the printed `job_id` (example format: `job-xxxxxxxxxxxx`).
 
-4. Check current status (optional but recommended):
+5. Check current status (optional but recommended):
 
 ```bash
-cargo run -p cli --manifest-path ../../../src/rust/Cargo.toml -- status <job_id>
+eigen status <job_id>
 ```
 
-5. Watch progress:
+6. Watch progress:
 
 ```bash
-cargo run -p cli --manifest-path ../../../src/rust/Cargo.toml -- watch <job_id>
+eigen watch <job_id>
 ```
 
 For a happy path demo, you can also force a completed flow using a known suffix:
 
 ```bash
-cargo run -p cli --manifest-path ../../../src/rust/Cargo.toml -- watch job-demo-done
+eigen watch job-demo-done
 ```
 
-6. Read final results:
+7. Read final results:
 
 ```bash
-cargo run -p cli --manifest-path ../../../src/rust/Cargo.toml -- results <job_id>
+eigen results <job_id>
 ```
 
 If your generated `job_id` is not done yet, run:
 
 ```bash
-cargo run -p cli --manifest-path ../../../src/rust/Cargo.toml -- results job-demo-done
+eigen results job-demo-done
 ```
 
 ## Minimal expected output
