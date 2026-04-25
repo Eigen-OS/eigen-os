@@ -4,7 +4,7 @@
 - **Created**: 2026-04-24
 - **Owner**: Core maintainers
 - **Related RFCs**: [RFC 0013](../../rfcs/0013-mvp2-jobspec-parser-submit-contract.md), [RFC 0014](../../rfcs/0014-mvp2-eigen-lang-ast-safety-deterministic-aqo.md), [RFC 0015](../../rfcs/0015-mvp2-conformance-and-ci-gates.md)
-- **Related ADRs**: [ADR 0003](../adr/0003-mvp2-jobspec-parser-contract.md), [ADR 0004](../adr/0004-mvp2-eigen-lang-ast-safety.md), [ADR 0005](../adr/0005-mvp2-conformance-and-ci-gates.md), [ADR 0006](../adr/0006-mvp2-release-closure-and-baseline-freeze.md)
+- **Related ADRs**: [ADR 0007 — MVP-3 release readiness, runtime contracts, and security closure](../adr/0007-mvp3-release-readiness-runtime-contracts-and-security-closure.md)
 
 ## Goal
 

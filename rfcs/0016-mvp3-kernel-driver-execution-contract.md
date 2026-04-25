@@ -1,8 +1,9 @@
 # RFC 0016: MVP-3 Kernel Runtime and Driver Execution Contract
 
-- **Status**: Draft
+- **Status**: Accepted
 - **Authors**: Eigen OS maintainers
 - **Created**: 2026-04-25
+- **Accepted on**: 2026-04-25
 - **Target Milestone**: Phase 0 (MVP-3)
 - **Tracking Issue**: docs/development/mvp-3-tracking-issue.md
 - **Replaces / Related**: RFC 0006, RFC 0015, docs/development/mvp-3-execution-and-results.md
@@ -102,7 +103,8 @@ Kernel invokes driver-manager only after successful compile artifact resolution.
 - **Terminal state mutation for retries**: rejected (breaks deterministic API semantics).
 - **Driver-managed state transitions**: rejected (kernel must remain lifecycle authority).
 
-## Open Questions
+## Resolution Notes
 
-- Should timeout terminalization be controlled solely by kernel or shared with API layer policy?
-- Do we need a dedicated internal status code for simulator deterministic mismatch errors?
+- Timeout terminalization is kernel-owned for MVP-3, with API layer exposing the terminal state without policy overrides.
+- Simulator deterministic mismatch errors map to canonical `INTERNAL` with structured diagnostics in runtime metadata; no extra MVP-3 internal code is introduced.
+

@@ -1,8 +1,9 @@
 # RFC 0017: MVP-3 Results Persistence, Retrieval, and CLI Runtime UX
 
-- **Status**: Draft
+- **Status**: Accepted
 - **Authors**: Eigen OS maintainers
 - **Created**: 2026-04-25
+- **Accepted on**: 2026-04-25
 - **Target Milestone**: Phase 0 (MVP-3)
 - **Tracking Issue**: docs/development/mvp-3-tracking-issue.md
 - **Replaces / Related**: RFC 0010, RFC 0011, docs/development/mvp-3-execution-and-results.md
@@ -102,7 +103,7 @@ Result payload invariants:
 - **Return partial results in RUNNING**: rejected for MVP consistency.
 - **CLI auto-retry in `results` by default**: rejected; explicit `watch` command is clearer.
 
-## Open Questions
+## Resolution Notes
 
-- Should `GetJobResults` on failed jobs return structured error payload in-band or rely solely on status + details?
-- Do we freeze a human-readable table format in CLI output for MVP-3, or only semantic fields?
+- `GetJobResults` on failed terminal jobs returns structured error payload fields (`error_code`, `error_summary`, `error_details_ref`) together with terminal state.
+- CLI output formatting remains implementation-flexible, but semantic fields and exit-code behavior are frozen for MVP-3.
