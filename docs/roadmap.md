@@ -6,8 +6,9 @@ This roadmap is aligned with the current MVP definition and tracks the minimum m
 - ✅ **MVP-2 (Compilation Pipeline)** completed: JobSpec parser/validator, Eigen-Lang AST→AQO compiler hardening, CLI `eigen submit`, and conformance suites.
 - Detailed MVP-2 execution plan: [`development/mvp-2-compilation-pipeline.md`](development/mvp-2-compilation-pipeline.md)
 - MVP-3 execution/runtime plan: [`development/mvp-3-execution-and-results.md`](development/mvp-3-execution-and-results.md)
-- MVP-3 RFC package (draft): [`../rfcs/0016-mvp3-kernel-driver-execution-contract.md`](../rfcs/0016-mvp3-kernel-driver-execution-contract.md), [`../rfcs/0017-mvp3-results-retrieval-and-cli-runtime-ux.md`](../rfcs/0017-mvp3-results-retrieval-and-cli-runtime-ux.md), [`../rfcs/0018-mvp3-runtime-observability-and-release-gates.md`](../rfcs/0018-mvp3-runtime-observability-and-release-gates.md)
+- MVP-3 RFC package (accepted): [`../rfcs/0016-mvp3-kernel-driver-execution-contract.md`](../rfcs/0016-mvp3-kernel-driver-execution-contract.md), [`../rfcs/0017-mvp3-results-retrieval-and-cli-runtime-ux.md`](../rfcs/0017-mvp3-results-retrieval-and-cli-runtime-ux.md), [`../rfcs/0018-mvp3-runtime-observability-and-release-gates.md`](../rfcs/0018-mvp3-runtime-observability-and-release-gates.md)
 - MVP-3 tracking issue: [`development/mvp-3-tracking-issue.md`](development/mvp-3-tracking-issue.md)
+- MVP-3 ADR package: [`adr/0007-mvp3-release-readiness-runtime-contracts-and-security-closure.md`](adr/0007-mvp3-release-readiness-runtime-contracts-and-security-closure.md)
 - MVP-2 RFC package (implemented): [`../rfcs/0013-mvp2-jobspec-parser-submit-contract.md`](../rfcs/0013-mvp2-jobspec-parser-submit-contract.md), [`../rfcs/0014-mvp2-eigen-lang-ast-safety-deterministic-aqo.md`](../rfcs/0014-mvp2-eigen-lang-ast-safety-deterministic-aqo.md), [`../rfcs/0015-mvp2-conformance-and-ci-gates.md`](../rfcs/0015-mvp2-conformance-and-ci-gates.md)
 
 ## Milestone 1 — API and contract baseline

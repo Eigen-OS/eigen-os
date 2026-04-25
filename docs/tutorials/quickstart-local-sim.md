@@ -2,7 +2,7 @@
 
 ## Goal
 
-Run a local end-to-end flow (`submit -> watch -> results`) with a minimal 2-qubit VQE example.
+Run a local end-to-end flow (`submit -> status -> watch -> results`) with a minimal 2-qubit VQE example.
 
 Reference example: `examples/basic/vqe_cycle/`.
 
@@ -47,7 +47,13 @@ cargo run -p cli --manifest-path ../../../src/rust/Cargo.toml -- submit -f job.y
 
 Copy the printed `job_id` (example format: `job-xxxxxxxxxxxx`).
 
-4. Watch progress:
+4. Check current status (optional but recommended):
+
+```bash
+cargo run -p cli --manifest-path ../../../src/rust/Cargo.toml -- status <job_id>
+```
+
+5. Watch progress:
 
 ```bash
 cargo run -p cli --manifest-path ../../../src/rust/Cargo.toml -- watch <job_id>
@@ -59,7 +65,7 @@ For a happy path demo, you can also force a completed flow using a known suffix:
 cargo run -p cli --manifest-path ../../../src/rust/Cargo.toml -- watch job-demo-done
 ```
 
-5. Read final results:
+6. Read final results:
 
 ```bash
 cargo run -p cli --manifest-path ../../../src/rust/Cargo.toml -- results <job_id>
@@ -76,8 +82,9 @@ cargo run -p cli --manifest-path ../../../src/rust/Cargo.toml -- results job-dem
 A successful flow includes:
 
 - `submit`: non-empty `job_id` plus hints for `status/watch/results`;
-- `watch`: sequence of updates ending in `state=DONE`;
-- `results`: `state: DONE`, `counts` map, and `metadata` map.
+- `status`: current lifecycle state snapshot (for example `PENDING`, `RUNNING`, or terminal state);
+- `watch`: sequence of updates ending in terminal state;
+- `results`: success payload for `DONE`, and actionable diagnostics/non-zero exit for failed terminals.
 
 Example qualitative sanity checks for this VQE sample:
 

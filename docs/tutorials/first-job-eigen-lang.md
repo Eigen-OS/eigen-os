@@ -2,7 +2,7 @@
 
 ## Goal
 
-Run a minimal submit → watch → results cycle using the canonical MVP-2 package:
+Run a minimal submit → status → watch → results cycle using the MVP-3 runtime CLI contract:
 
 - `job.yaml`
 - `program.eigen.py`
@@ -37,11 +37,23 @@ eigen submit -f job.yaml
 eigen watch <job_id>
 ```
 
-5. Fetch final output.
+5. Check one-shot status at any time.
+
+```bash
+eigen status <job_id>
+```
+
+6. Fetch final output.
 
 ```bash
 eigen results <job_id>
 ```
+
+## CLI runtime behavior (MVP-3)
+
+- `eigen status <job_id>` returns current lifecycle state and exits `0` for valid requests.
+- `eigen watch <job_id>` streams transitions and exits on terminal state.
+- `eigen results <job_id>` exits `0` for `DONE`, non-zero for `ERROR|CANCELLED|TIMEOUT`.
 
 ## Common validation errors
 

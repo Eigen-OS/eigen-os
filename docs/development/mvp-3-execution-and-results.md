@@ -1,6 +1,6 @@
 # MVP-3 — Execution & Results Pipeline Plan
 
-Status: **Planned (RFC package drafted)**
+Status: **Completed (RFCs accepted, ADR package published)**
 Last updated: **2026-04-25**
 
 ## Goal
@@ -94,12 +94,13 @@ Deliver minimum runtime quality controls:
 
 ## Delivery checklist
 
-- [ ] Kernel state-machine runtime closure for execution lifecycle.
-- [ ] Driver-manager simulator execute path hardened and covered by contract tests.
-- [ ] Result persistence/retrieval contract validated with deterministic fixtures.
-- [ ] CLI `status/watch/results` behavior aligned with runtime contracts.
-- [ ] Runtime smoke + observability gates required in CI.
-- [ ] Documentation synchronized in reference, tutorials, and roadmap.
+- [x] Kernel state-machine runtime closure for execution lifecycle.
+- [x] Driver-manager simulator execute path hardened and covered by contract tests.
+- [x] Result persistence/retrieval contract validated with deterministic fixtures.
+- [x] CLI `status/watch/results` behavior aligned with runtime contracts.
+- [x] Runtime smoke + observability gates required in CI.
+- [x] Documentation synchronized in reference, tutorials, and roadmap.
+
 
 ## Suggested execution order
 

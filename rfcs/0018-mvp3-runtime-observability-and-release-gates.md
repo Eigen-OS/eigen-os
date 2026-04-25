@@ -1,8 +1,9 @@
 # RFC 0018: MVP-3 Runtime Observability and Release Gates
 
-- **Status**: Draft
+- **Status**: Accepted
 - **Authors**: Eigen OS maintainers
 - **Created**: 2026-04-25
+- **Accepted on**: 2026-04-25
 - **Target Milestone**: Phase 0 (MVP-3)
 - **Tracking Issue**: docs/development/mvp-3-tracking-issue.md
 - **Replaces / Related**: RFC 0008, RFC 0015, docs/development/mvp-3-execution-and-results.md
@@ -102,7 +103,7 @@ Metrics minimum set:
 - **Non-blocking runtime observability checks**: rejected for MVP-3 risk profile.
 - **Manual release verification only**: rejected; not auditable enough for contract freeze.
 
-## Open Questions
+## Resolution Notes
 
-- Which runtime observability gates should remain required after MVP-3 release?
-- Do we split failure-path smoke into deterministic categories (validation/runtime/backend) for clearer ownership?
+- Runtime smoke (success + failure), trace propagation checks, and telemetry field assertions remain required post-MVP-3 unless superseded by a newer ADR.
+- Failure-path smoke is split into deterministic validation/runtime/backend fixtures to preserve ownership and triage clarity.
