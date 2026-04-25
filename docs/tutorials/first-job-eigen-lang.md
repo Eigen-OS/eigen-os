@@ -17,7 +17,13 @@ Example directory: `examples/basic/vqe_cycle/`.
 cd examples/basic/vqe_cycle
 ```
 
-2. Check `job.yaml`:
+2. (Recommended) install local CLI launcher once:
+
+```bash
+../../../scripts/install-eigen-cli.sh
+```
+
+3. Check `job.yaml`:
 
 - `apiVersion: eigen.os/v0.1`
 - `kind: QuantumJob`
@@ -25,25 +31,25 @@ cd examples/basic/vqe_cycle
 - `spec.target`
 - source via `spec.program_path` (or omit it to use default `program.eigen.py`)
 
-3. Submit a job.
+4. Submit a job.
 
 ```bash
 eigen submit -f job.yaml
 ```
 
-4. Track status updates.
+5. Track status updates.
 
 ```bash
 eigen watch <job_id>
 ```
 
-5. Check one-shot status at any time.
+6. Check one-shot status at any time.
 
 ```bash
 eigen status <job_id>
 ```
 
-6. Fetch final output.
+7. Fetch final output.
 
 ```bash
 eigen results <job_id>
