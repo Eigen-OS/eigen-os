@@ -1,9 +1,9 @@
 //! Internal gRPC server: KernelGateway.
 
 use std::collections::HashMap;
+use std::fmt;
 use std::net::SocketAddr;
 use std::time::{SystemTime, UNIX_EPOCH};
-use std::fmt;
 
 use serde_json::Value;
 use serde_json::json;
@@ -13,7 +13,9 @@ use tracing::Instrument;
 use crate::job_store::{JobRecord, JobStore};
 use crate::proto::compilation_service_client::CompilationServiceClient;
 use crate::proto::driver_manager_service_client::DriverManagerServiceClient;
-use crate::proto::kernel_gateway_service_server::{KernelGatewayService, KernelGatewayServiceServer};
+use crate::proto::kernel_gateway_service_server::{
+    KernelGatewayService, KernelGatewayServiceServer,
+};
 use crate::proto::{
     CalibrateDeviceRequest, CalibrateDeviceResponse, CancelJobRequest, CancelJobResponse,
     EnqueueJobRequest, EnqueueJobResponse, GetJobResultsRequest, GetJobResultsResponse,
@@ -139,45 +141,40 @@ fn parse_trace_id(traceparent: Option<&str>) -> Option<String> {
 impl KernelGatewayService for KernelGatewaySvc {
     async fn enqueue_job(
     &self,
-    request: Request<EnqueueJobRequest>,
-) -> Result<Response<EnqueueJobResponse>, Status> {
-    let trace_ctx = TraceContext::from_request_md(request.metadata());
-    let req = request.into_inner();
+        request: Request<EnqueueJobRequest>,
+    ) -> Result<Response<EnqueueJobResponse>, Status> {
+        let trace_ctx = TraceContext::from_request_md(request.metadata());
+        let req = request.into_inner();
 
     if req.name.trim().is_empty() {
-        return Err(Status::invalid_argument("name is required"));
-    }
+            return Err(Status::invalid_argument("name is required"));
 
     let record = self.store.create_job(req.name.clone());
-    let job_id = record.job_id.clone();
-    let job_id_for_task = job_id.clone();
+        let job_id = record.job_id.clone();
+        let job_id_for_task = job_id.clone();
 
-    let store = self.store.clone_handle();
-    let deps = self.deps.clone();
-    tokio::spawn(async move {
-    let span = tracing::info_span!("job_pipeline", job_id = %job_id_for_task);
-    async move {
-        if let Err(err) = run_pipeline(
-            store.clone_handle(),
-            deps,
-            &job_id_for_task,
-            req,
-            trace_ctx,
-        ).await {
-            tracing::error!(job_id = %job_id_for_task, error = %err, "job pipeline failed");
-            fail_job(&store, &job_id_for_task, err).await;
-        }
+        let store = self.store.clone_handle();
+        let deps = self.deps.clone();
+        tokio::spawn(async move {
+            let span = tracing::info_span!("job_pipeline", job_id = %job_id_for_task);
+            async move {
+                if let Err(err) =
+                    run_pipeline(store.clone_handle(), deps, &job_id_for_task, req, trace_ctx).await
+                {
+                    tracing::error!(job_id = %job_id_for_task, error = %err, "job pipeline failed");
+                    fail_job(&store, &job_id_for_task, err).await;
+                }
+            }
+            .instrument(span)
+            .await;
+        });
+
+        Ok(Response::new(EnqueueJobResponse {
+            job_id,
+            state: TaskState::Pending as i32,
+            created_at: Some(ts_now()),
+        }))
     }
-    .instrument(span)
-    .await;
-});
-
-    Ok(Response::new(EnqueueJobResponse {
-        job_id,
-        state: TaskState::Pending as i32,
-        created_at: Some(ts_now()),
-    }))
-}
 
     async fn get_job_status(
         &self,
@@ -210,8 +207,8 @@ impl KernelGatewayService for KernelGatewaySvc {
             .ok_or_else(|| Status::not_found("job not found"))?;
 
         let accepted = match rec.state {
-            JobState::Completed | JobState::Failed | JobState::Cancelled | JobState::Timeout => false,
-    _           => self.store.apply_event(&job_id, JobEvent::Cancel).is_ok(),
+            JobState::Done | JobState::Error | JobState::Cancelled | JobState::Timeout => false,
+            _ => self.store.apply_event(&job_id, JobEvent::Cancel).is_ok(),
         };
 
         Ok(Response::new(CancelJobResponse { accepted }))
@@ -239,7 +236,7 @@ impl KernelGatewayService for KernelGatewaySvc {
             error_code: rec.error_code.unwrap_or_default(),
             error_summary: rec.error_summary.unwrap_or_default(),
             error_details_ref: rec.error_details_ref.unwrap_or_default(),
-            completed_at: if rec.state == JobState::Completed {
+            completed_at: if rec.state == JobState::Done {
                 Some(ts_from_unix_ms(rec.updated_at_unix_ms))
             } else {
                 None
@@ -259,13 +256,6 @@ async fn run_pipeline(
         HashMap::from([("results_ref".to_string(), format!("{job_id}/results"))]);
 
     store
-        .apply_event(job_id, JobEvent::StartValidation)
-        .map_err(|e| PipelineError::internal(format!("state transition failed: {e}")))?;
-    store
-        .apply_event(job_id, JobEvent::FinishValidation)
-        .map_err(|e| PipelineError::internal(format!("state transition failed: {e}")))?;
-
-    store
         .apply_event(job_id, JobEvent::StartCompiling)
         .map_err(|e| PipelineError::internal(format!("state transition failed: {e}")))?;
 
@@ -280,7 +270,9 @@ async fn run_pipeline(
     let mut compile_req = Request::new(CompileJobRequest {
         job_id: job_id.to_string(),
         language: language_for(&req),
-        input: Some(crate::proto::compile_job_request::Input::Source(req.program)),
+        input: Some(crate::proto::compile_job_request::Input::Source(
+            req.program,
+        )),
         options: req.compiler_options,
     });
     trace_ctx.inject(&mut compile_req);
@@ -297,17 +289,12 @@ async fn run_pipeline(
 
     deps.qfs
         .store_compiled_artifacts(job_id, &circuit_payload.data, None, "remote")
-        .map_err(|e| PipelineError::persist(format!("failed to persist compiled artifacts: {e}")))?;
+        .map_err(|e| {
+            PipelineError::persist(format!("failed to persist compiled artifacts: {e}"))
+        })?;
 
     store
-        .apply_event(job_id, JobEvent::FinishCompiling)
-        .map_err(|e| PipelineError::internal(format!("state transition failed: {e}")))?;
-
-    store
-        .apply_event(job_id, JobEvent::StartAllocating)
-        .map_err(|e| PipelineError::internal(format!("state transition failed: {e}")))?;
-    store
-        .apply_event(job_id, JobEvent::FinishAllocating)
+        .apply_event(job_id, JobEvent::StartRunning)
         .map_err(|e| PipelineError::internal(format!("state transition failed: {e}")))?;
 
     let mut driver = DriverManagerServiceClient::connect(deps.driver_endpoint.clone())
@@ -358,10 +345,7 @@ async fn run_pipeline(
     store.set_counts(job_id, execute_res.counts.clone());
 
     store
-        .apply_event(job_id, JobEvent::FinishExecuting)
-        .map_err(|e| PipelineError::internal(format!("state transition failed: {e}")))?;
-    store
-        .apply_event(job_id, JobEvent::FinishCompleting)
+        .apply_event(job_id, JobEvent::Complete)
         .map_err(|e| PipelineError::internal(format!("state transition failed: {e}")))?;
 
     Ok(())
@@ -399,11 +383,11 @@ async fn run_vqe_loop(
 
         let mut execute_req = Request::new(ExecuteCircuitRequest {
                 job_id: job_id.to_string(),
-                device_id: device_id.to_string(),
-                payload: Some(circuit_payload.clone()),
-                shots,
-                options,
-            });
+            device_id: device_id.to_string(),
+            payload: Some(circuit_payload.clone()),
+            shots,
+            options,
+        });
         trace_ctx.inject(&mut execute_req);
         let execute_res = driver
             .execute_circuit(execute_req)
@@ -615,7 +599,7 @@ async fn fail_job(store: &JobStore, job_id: &str, err: PipelineError) {
 
     store.set_error(
         job_id,
-        err.code.to_string(),
+        canonical_grpc_code(err.code).to_string(),
         err.summary.clone(),
         Some("results/error.json".to_string()),
     );
@@ -625,7 +609,7 @@ async fn fail_job(store: &JobStore, job_id: &str, err: PipelineError) {
             .unwrap_or_else(|_| qfs::DEFAULT_CIRCUIT_FS_ROOT.to_string()),
     );
     let details = serde_json::to_vec_pretty(&json!({
-        "error_code": err.code,
+        "error_code": canonical_grpc_code(err.code),
         "error_summary": err.summary,
         "details": err.details,
     }))
@@ -635,7 +619,7 @@ async fn fail_job(store: &JobStore, job_id: &str, err: PipelineError) {
 
 #[derive(Debug)]
 struct PipelineError {
-    code: &'static str,
+    code: Code,
     summary: String,
     details: String,
 }
@@ -643,7 +627,7 @@ struct PipelineError {
 impl PipelineError {
     fn compile(details: String) -> Self {
         Self {
-            code: "EIGEN_COMPILE_ERROR",
+            code: Code::Internal,
             summary: "Compilation failed".to_string(),
             details,
         }
@@ -651,7 +635,7 @@ impl PipelineError {
 
     fn execute(details: String) -> Self {
         Self {
-            code: "EIGEN_EXECUTE_ERROR",
+            code: Code::Internal,
             summary: "Execution failed".to_string(),
             details,
         }
@@ -659,7 +643,7 @@ impl PipelineError {
 
     fn persist(details: String) -> Self {
         Self {
-            code: "EIGEN_PERSIST_ERROR",
+            code: Code::Internal,
             summary: "Persisting artifacts failed".to_string(),
             details,
         }
@@ -667,7 +651,7 @@ impl PipelineError {
 
     fn internal(details: String) -> Self {
         Self {
-            code: "EIGEN_INTERNAL_ERROR",
+            code: Code::Internal,
             summary: "Kernel internal error".to_string(),
             details,
         }
@@ -690,25 +674,72 @@ fn map_status(status: Status, stage: &str) -> PipelineError {
     );
     match status.code() {
         Code::InvalidArgument => PipelineError {
-            code: "EIGEN_INVALID_ARGUMENT",
+            code: Code::InvalidArgument,
             summary: "Request validation failed".to_string(),
             details,
         },
+        Code::ResourceExhausted => PipelineError {
+            code: Code::ResourceExhausted,
+            summary: "Backend resource exhausted".to_string(),
+            details,
+        },
+        Code::DeadlineExceeded => PipelineError {
+            code: Code::DeadlineExceeded,
+            summary: "Backend call timed out".to_string(),
+            details,
+        },
+        Code::Cancelled => PipelineError {
+            code: Code::Cancelled,
+            summary: "Backend call cancelled".to_string(),
+            details,
+        },
+        Code::NotFound => PipelineError {
+            code: Code::NotFound,
+            summary: "Requested resource was not found".to_string(),
+            details,
+        },
+        Code::PermissionDenied => PipelineError {
+            code: Code::PermissionDenied,
+            summary: "Permission denied by backend".to_string(),
+            details,
+        },
         Code::Unavailable => PipelineError {
-            code: "EIGEN_BACKEND_UNAVAILABLE",
+            code: Code::Unavailable,
             summary: "Backend unavailable".to_string(),
             details,
         },
         Code::Unimplemented => PipelineError {
-            code: "EIGEN_UNSUPPORTED_TARGET",
+            code: Code::Unimplemented,
             summary: "Unsupported target or format".to_string(),
             details,
         },
         _ => PipelineError {
-            code: "EIGEN_INTERNAL_ERROR",
+            code: Code::Internal,
             summary: "Kernel internal error".to_string(),
             details,
         },
+    }
+}
+
+fn canonical_grpc_code(code: Code) -> &'static str {
+    match code {
+        Code::Ok => "OK",
+        Code::Cancelled => "CANCELLED",
+        Code::Unknown => "UNKNOWN",
+        Code::InvalidArgument => "INVALID_ARGUMENT",
+        Code::DeadlineExceeded => "DEADLINE_EXCEEDED",
+        Code::NotFound => "NOT_FOUND",
+        Code::AlreadyExists => "ALREADY_EXISTS",
+        Code::PermissionDenied => "PERMISSION_DENIED",
+        Code::ResourceExhausted => "RESOURCE_EXHAUSTED",
+        Code::FailedPrecondition => "FAILED_PRECONDITION",
+        Code::Aborted => "ABORTED",
+        Code::OutOfRange => "OUT_OF_RANGE",
+        Code::Unimplemented => "UNIMPLEMENTED",
+        Code::Internal => "INTERNAL",
+        Code::Unavailable => "UNAVAILABLE",
+        Code::DataLoss => "DATA_LOSS",
+        Code::Unauthenticated => "UNAUTHENTICATED",
     }
 }
 
@@ -729,28 +760,19 @@ fn status_from_record(rec: &JobRecord) -> GetJobStatusResponse {
 fn progress_for(state: JobState) -> f32 {
     match state {
         JobState::Pending => 0.0,
-        JobState::Validating => 0.1,
         JobState::Compiling => 0.25,
-        JobState::Queued => 0.35,
-        JobState::Allocating => 0.5,
-        JobState::Executing => 0.75,
-        JobState::Completing => 0.9,
-        JobState::Completed => 1.0,
-        JobState::Failed | JobState::Cancelled | JobState::Timeout => 1.0,
+        JobState::Running => 0.75,
+        JobState::Done | JobState::Error | JobState::Cancelled | JobState::Timeout => 1.0,
     }
 }
 
 fn to_proto_state(state: JobState) -> TaskState {
     match state {
         JobState::Pending => TaskState::Pending,
-        JobState::Validating => TaskState::Pending,
         JobState::Compiling => TaskState::Compiling,
-        JobState::Queued => TaskState::Queued,
-        JobState::Allocating => TaskState::Queued,
-        JobState::Executing => TaskState::Running,
-        JobState::Completing => TaskState::Running,
-        JobState::Completed => TaskState::Done,
-        JobState::Failed => TaskState::Error,
+        JobState::Running => TaskState::Running,
+        JobState::Done => TaskState::Done,
+        JobState::Error => TaskState::Error,
         JobState::Cancelled => TaskState::Cancelled,
         JobState::Timeout => TaskState::Error,
     }
@@ -808,7 +830,11 @@ mod tests {
             &self,
             request: Request<CompileJobRequest>,
         ) -> Result<Response<CompileJobResponse>, Status> {
-            if let Some(raw) = request.metadata().get("traceparent").and_then(|v| v.to_str().ok()) {
+            if let Some(raw) = request
+                .metadata()
+                .get("traceparent")
+                .and_then(|v| v.to_str().ok())
+            {
                 compiler_trace_store().lock().unwrap().push(raw.to_string());
             }
             let req = request.into_inner();
@@ -816,10 +842,12 @@ mod tests {
                 return Err(Status::invalid_argument("bad language"));
             }
             let mut metadata = HashMap::new();
-            if let Some(crate::proto::compile_job_request::Input::Source(ref source_bytes)) = req.input {
+            if let Some(crate::proto::compile_job_request::Input::Source(ref source_bytes)) =
+                req.input
+            {
                 let program_text = String::from_utf8_lossy(source_bytes);
                 if program_text.contains("minimize") {
-                metadata.insert("hybrid_plan_marker".to_string(), "minimize".to_string());
+                    metadata.insert("hybrid_plan_marker".to_string(), "minimize".to_string());
                 }
             }
             Ok(Response::new(CompileJobResponse {
@@ -870,7 +898,11 @@ mod tests {
             &self,
             request: Request<ExecuteCircuitRequest>,
         ) -> Result<Response<ExecuteCircuitResponse>, Status> {
-            if let Some(raw) = request.metadata().get("traceparent").and_then(|v| v.to_str().ok()) {
+            if let Some(raw) = request
+                .metadata()
+                .get("traceparent")
+                .and_then(|v| v.to_str().ok())
+            {
                 driver_trace_store().lock().unwrap().push(raw.to_string());
             }
             if request.get_ref().device_id == "bad-device" {
@@ -1055,7 +1087,7 @@ mod tests {
                 .unwrap()
                 .into_inner();
             if status.state == TaskState::Error as i32 {
-                assert_eq!(status.error_code, "EIGEN_INVALID_ARGUMENT");
+                assert_eq!(status.error_code, "INVALID_ARGUMENT");
                 assert_eq!(status.error_details_ref, "results/error.json");
                 return;
             }
@@ -1246,5 +1278,4 @@ def vqe_program():
                 .any(|entry| entry == traceparent)
         );
     }
-
 }
