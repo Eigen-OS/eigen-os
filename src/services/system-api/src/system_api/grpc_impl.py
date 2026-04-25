@@ -8,9 +8,12 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
+from io import BytesIO
 
 import grpc
 from google.protobuf.timestamp_pb2 import Timestamp
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 from .errors import abort_invalid_argument
 from .observability import log_request_end, log_request_start, new_request_context
@@ -36,6 +39,32 @@ def _ts_now() -> Timestamp:
     return ts
 
 
+def _serialize_results_parquet(
+    *,
+    job_id: str,
+    counts: dict[str, int],
+    metadata: dict[str, str],
+) -> bytes:
+    """Serialize deterministic result rows into Apache Parquet bytes."""
+    ordered_counts = sorted(counts.items(), key=lambda kv: kv[0])
+    ordered_metadata = json.dumps(
+        {k: metadata[k] for k in sorted(metadata)},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    table = pa.table(
+        {
+            "job_id": [job_id for _ in ordered_counts],
+            "bitstring": [k for k, _ in ordered_counts],
+            "count": [int(v) for _, v in ordered_counts],
+            "metadata_json": [ordered_metadata for _ in ordered_counts],
+        }
+    )
+    out = BytesIO()
+    pq.write_table(table, out, compression="zstd")
+    return out.getvalue()
+
+
 @dataclass
 class _JobRecord:
     job_id: str
@@ -43,7 +72,10 @@ class _JobRecord:
     updates: list
     counts: dict[str, int]
     results_metadata: dict[str, str]
+    results_parquet: bytes
     terminal_state: int
+    current_update_idx: int
+    completed_at: Timestamp | None
 
 
 @dataclass
@@ -209,19 +241,30 @@ class JobService:
         results_metadata = {
             "backend": request.target or "sim:local",
             "qfs_compiled_aqo": f"qfs://jobs/{job_id}/compiled/circuit.aqo.json",
-            "qfs_results_counts": f"qfs://jobs/{job_id}/results/counts.json",
+            "qfs_results_parquet": f"qfs://jobs/{job_id}/results.parquet",
             "qfs_metrics": f"qfs://jobs/{job_id}/results/metrics.json",
         }
         if objective_history:
             results_metadata["objective_history"] = json.dumps(objective_history)
+            results_metadata["qfs_results_stream_prefix"] = f"qfs://jobs/{job_id}/results/parts/"
+
+        counts = {"00": 512, "11": 512}
+        results_parquet = _serialize_results_parquet(
+            job_id=job_id,
+            counts=counts,
+            metadata=results_metadata,
+        )
 
         return _JobRecord(
             job_id=job_id,
             created_at=created_at,
             updates=updates,
-            counts={"00": 512, "11": 512},
+            counts=counts,
             results_metadata=results_metadata,
+            results_parquet=results_parquet,
             terminal_state=self._types_pb.JOB_STATE_DONE,
+            current_update_idx=0,
+            completed_at=None,
         )
 
     def SubmitJob(self, request, context: grpc.ServicerContext):
@@ -247,7 +290,7 @@ class JobService:
                             f"idempotency key reuse with different payload: {idem_key}",
                         )
                     existing = self._jobs[previous.job_id]
-                    latest = existing.updates[-1]
+                    latest = existing.updates[existing.current_update_idx]
                     rc.job_id = existing.job_id
                     log_request_end("JobService.SubmitJob", rc)
                     return self._job_pb.SubmitJobResponse(
@@ -306,6 +349,15 @@ class JobService:
         if record is None:
             context.abort(grpc.StatusCode.NOT_FOUND, f"job_id not found: {request.job_id}")
         latest = record.updates[-1]
+        with self._lock:
+            if record.current_update_idx < len(record.updates) - 1:
+                record.current_update_idx += 1
+                if (
+                    record.updates[record.current_update_idx].state == self._types_pb.JOB_STATE_DONE
+                    and record.completed_at is None
+                ):
+                    record.completed_at = _ts_now()
+            latest = record.updates[record.current_update_idx]
         created_at = record.created_at
 
         resp = self._job_pb.GetJobStatusResponse(
@@ -381,6 +433,12 @@ class JobService:
                 continue
             yield self._job_pb.StreamJobUpdatesResponse(update=update)
 
+        with self._lock:
+            if record.current_update_idx < len(record.updates) - 1:
+                record.current_update_idx = len(record.updates) - 1
+            if record.updates[record.current_update_idx].state == self._types_pb.JOB_STATE_DONE and record.completed_at is None:
+                record.completed_at = _ts_now()
+
         log_request_end("JobService.StreamJobUpdates", rc)
 
     def GetJobResults(self, request, context: grpc.ServicerContext):
@@ -399,12 +457,26 @@ class JobService:
 
         if record is None:
             context.abort(grpc.StatusCode.NOT_FOUND, f"job_id not found: {request.job_id}")
+        current_state = record.updates[record.current_update_idx].state
+        if current_state in {
+            self._types_pb.JOB_STATE_PENDING,
+            self._types_pb.JOB_STATE_COMPILING,
+            self._types_pb.JOB_STATE_RUNNING,
+        }:
+            context.abort(
+                grpc.StatusCode.FAILED_PRECONDITION,
+                f"results are not ready yet for job_id={request.job_id}; current_state={self._types_pb.JobState.Name(current_state)}",
+            )
+
         resp = self._job_pb.GetJobResultsResponse(
             job_id=request.job_id,
-            state=record.terminal_state,
+            state=current_state,
             counts=record.counts,
-            metadata=record.results_metadata,
-            completed_at=_ts_now(),
+            metadata={
+                **record.results_metadata,
+                "qfs_results_parquet_bytes": str(len(record.results_parquet)),
+            },
+            completed_at=record.completed_at or _ts_now(),
         )
 
         log_request_end("JobService.GetJobResults", rc)

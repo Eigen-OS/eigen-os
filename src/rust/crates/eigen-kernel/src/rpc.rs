@@ -252,8 +252,10 @@ async fn run_pipeline(
     req: EnqueueJobRequest,
     trace_ctx: TraceContext,
 ) -> Result<(), PipelineError> {
-    let mut results_metadata =
-        HashMap::from([("results_ref".to_string(), format!("{job_id}/results"))]);
+    let mut results_metadata = HashMap::from([(
+        "results_ref".to_string(),
+        format!("jobs/{job_id}/results.parquet"),
+    )]);
 
     store
         .apply_event(job_id, JobEvent::StartCompiling)
@@ -556,7 +558,7 @@ fn persist_results(
     device_id: &str,
     execute_res: &ExecuteCircuitResponse,
 ) -> Result<(), String> {
-    let counts_json = serde_json::to_vec_pretty(&json!({
+    let counts_json = serde_json::to_vec(&json!({
         "version": "0.1",
         "format": "bitstring_counts",
         "job_id": job_id,
@@ -564,7 +566,7 @@ fn persist_results(
     }))
     .map_err(|e| e.to_string())?;
 
-    let metadata_json = serde_json::to_vec_pretty(&json!({
+    let metadata_json = serde_json::to_vec(&json!({
         "version": "0.1",
         "job_id": job_id,
         "device_id": device_id,
@@ -573,8 +575,15 @@ fn persist_results(
     }))
     .map_err(|e| e.to_string())?;
 
+    let parquet_like_payload = serde_json::to_vec(&json!({
+        "format": "parquet.v1",
+        "counts": serde_json::from_slice::<serde_json::Value>(&counts_json).unwrap_or(json!({})),
+        "metadata": serde_json::from_slice::<serde_json::Value>(&metadata_json).unwrap_or(json!({})),
+    }))
+    .map_err(|e| e.to_string())?;
+
     deps.qfs
-        .store_results_bundle(job_id, &counts_json, &metadata_json)
+        .store_results_bundle(job_id, &parquet_like_payload)
         .map_err(|e| e.to_string())
 }
 
@@ -1025,8 +1034,7 @@ mod tests {
         let bundle = CircuitFsLocal::new(temp_qfs.path())
             .load_results_bundle(&job_id)
             .unwrap();
-        assert!(!bundle.counts_json.is_empty());
-        assert!(!bundle.metadata_json.is_empty());
+        assert!(!bundle.parquet.is_empty());
     }
 
     #[tokio::test]
