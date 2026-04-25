@@ -14,6 +14,7 @@ import grpc
 from .base_driver import DeviceStatusInfo
 
 _SUPPORTED_OPS = {"RX", "RY", "RZ", "CX", "MEASURE"}
+_MAX_QUBITS = 16
 
 
 class DriverExecutionError(Exception):
@@ -45,8 +46,8 @@ class SimulatorDriver:
     def get_devices(self) -> list[object]:
         return [
             self._types_pb.DeviceInfo(
-                device_id="sim:golden",
-                name="Golden AQO simulator",
+                device_id="sim:local",
+                name="Local AQO simulator",
                 backend_type="simulator",
                 status=self._types_pb.ONLINE,
                 queue_depth=0,
@@ -127,15 +128,31 @@ class SimulatorDriver:
 
         if not isinstance(payload, dict):
             raise DriverExecutionError(grpc.StatusCode.INVALID_ARGUMENT, "aqo payload must be an object")
+        
+        operations = payload.get("operations")
+        if not isinstance(operations, list):
+            raise DriverExecutionError(grpc.StatusCode.INVALID_ARGUMENT, "aqo.operations must be a list")
+        self._validate_supported_ops(operations)
         return payload
 
     def _parse_qubits(self, payload: dict) -> int:
         qubits = payload.get("qubits")
         if not isinstance(qubits, int) or qubits <= 0:
             raise DriverExecutionError(grpc.StatusCode.INVALID_ARGUMENT, "aqo.qubits must be a positive int")
-        if qubits > 16:
-            raise DriverExecutionError(grpc.StatusCode.RESOURCE_EXHAUSTED, "simulator supports up to 16 qubits")
+        if qubits > _MAX_QUBITS:
+            raise DriverExecutionError(
+                grpc.StatusCode.RESOURCE_EXHAUSTED,
+                f"Simulator Out of Memory: requested {qubits} qubits exceeds limit {_MAX_QUBITS}",
+            )
         return qubits
+
+    def _validate_supported_ops(self, operations: list[dict]) -> None:
+        for idx, raw_op in enumerate(operations):
+            if not isinstance(raw_op, dict):
+                raise DriverExecutionError(grpc.StatusCode.INVALID_ARGUMENT, f"operation[{idx}] must be object")
+            op = str(raw_op.get("op", "")).upper()
+            if op not in _SUPPORTED_OPS:
+                raise DriverExecutionError(grpc.StatusCode.UNIMPLEMENTED, f"Unsupported Op: {op} at operation[{idx}]")
 
     def _run_operations(self, state: list[complex], qubits: int, operations: list[dict]) -> list[_MeasureMap]:
         measures: list[_MeasureMap] = []
@@ -145,7 +162,7 @@ class SimulatorDriver:
 
             op = str(raw_op.get("op", "")).upper()
             if op not in _SUPPORTED_OPS:
-                raise DriverExecutionError(grpc.StatusCode.INVALID_ARGUMENT, f"unsupported op: {op}")
+                raise DriverExecutionError(grpc.StatusCode.UNIMPLEMENTED, f"Unsupported Op: {op} at operation[{idx}]")
 
             q = raw_op.get("q")
             if not isinstance(q, list) or not all(isinstance(v, int) for v in q):
@@ -264,3 +281,4 @@ class SimulatorDriver:
             if (idx & control_mask) and not (idx & target_mask):
                 swap_idx = idx | target_mask
                 state[idx], state[swap_idx] = state[swap_idx], state[idx]
+                
