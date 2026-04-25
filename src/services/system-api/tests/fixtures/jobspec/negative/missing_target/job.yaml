@@ -1,8 +1,0 @@
-apiVersion: eigen.os/v0.1
-kind: QuantumJob
-metadata:
-  name: missing-target
-spec:
-  program: |
-    def main():
-      return 0

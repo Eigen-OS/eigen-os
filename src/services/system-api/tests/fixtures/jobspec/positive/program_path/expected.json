@@ -1,1 +1,0 @@
-{"compiler_options":{},"dependencies":[],"entrypoint":"run","metadata":{"jobspec_yaml":"apiVersion: eigen.os/v0.1\nkind: QuantumJob\nmetadata:\n  name: file-backed\nspec:\n  program_path: program.eigen.py\n  entrypoint: run\n  target: sim:local"},"name":"file-backed","priority":50,"target":"sim:local"}

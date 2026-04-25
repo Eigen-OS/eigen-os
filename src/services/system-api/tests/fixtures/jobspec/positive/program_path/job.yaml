@@ -1,8 +1,0 @@
-apiVersion: eigen.os/v0.1
-kind: QuantumJob
-metadata:
-  name: file-backed
-spec:
-  program_path: program.eigen.py
-  entrypoint: run
-  target: sim:local

@@ -1,7 +1,0 @@
-apiVersion: eigen.os/v0.1
-kind: QuantumJob
-metadata:
-  name: bad-path
-spec:
-  program_path: ../secrets/program.eigen.py
-  target: sim:local
