@@ -146,7 +146,7 @@ jobs:
         run: pytest tests/test_observability_smoke.py
 
       - name: Run trace propagation integration test
-        run: cargo test -p eigen-kernel integration_propagates_traceparent_to_compiler_and_driver
+        run: cargo test -p eigen-kernel integration_propagates_trace_id_and_traceparent_to_compiler_and_driver
 
       - name: Run metrics persistence integration test
         run: cargo test -p eigen-kernel integration_vqe_loop_persists_metrics_and_results_metadata
@@ -164,6 +164,7 @@ jobs:
             golden:
               - 'src/services/eigen-compiler/tests/golden/**'
               - 'src/services/system-api/tests/fixtures/jobspec/**'
+              - 'src/services/system-api/tests/fixtures/runtime/**'
               - 'src/rust/apps/cli/tests/fixtures/**'
 
       - name: Require maintainer approval label for fixture updates
