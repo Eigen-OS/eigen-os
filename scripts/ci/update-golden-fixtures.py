@@ -10,6 +10,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SYSTEM_API_ROOT = REPO_ROOT / "src" / "services" / "system-api"
 COMPILER_ROOT = REPO_ROOT / "src" / "services" / "eigen-compiler"
 CLI_FIXTURES_ROOT = REPO_ROOT / "src" / "rust" / "apps" / "cli" / "tests" / "fixtures"
+RUNTIME_FIXTURES_ROOT = REPO_ROOT / "src" / "services" / "system-api" / "tests" / "fixtures" / "runtime"
 
 
 def _canonical_json(value: object) -> str:
@@ -78,6 +79,11 @@ def main() -> int:
 
     cli_fixtures = sorted(CLI_FIXTURES_ROOT.glob("*.yaml"))
     print(f"[info] Verified CLI fixture set exists ({len(cli_fixtures)} files): {CLI_FIXTURES_ROOT.relative_to(REPO_ROOT)}")
+    runtime_fixtures = sorted(RUNTIME_FIXTURES_ROOT.glob("*.json"))
+    if not runtime_fixtures:
+        print(f"[error] Runtime golden fixture set is empty: {RUNTIME_FIXTURES_ROOT.relative_to(REPO_ROOT)}")
+        return 1
+    print(f"[info] Verified runtime fixture set exists ({len(runtime_fixtures)} files): {RUNTIME_FIXTURES_ROOT.relative_to(REPO_ROOT)}")
 
     if args.check and changed:
         print("[error] Golden fixtures are out of date. Run scripts/ci/update-golden-fixtures.py and commit the changes.")
