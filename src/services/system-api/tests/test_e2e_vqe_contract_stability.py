@@ -65,5 +65,7 @@ def test_e2e_vqe_contract_stability(grpc_addr: str):
 
     # Contract checks for QFS artifact pointers.
     assert results.metadata["qfs_compiled_aqo"].endswith("/compiled/circuit.aqo.json")
-    assert results.metadata["qfs_results_counts"].endswith("/results/counts.json")
+    assert results.metadata["qfs_results_parquet"].endswith("/results.parquet")
     assert results.metadata["qfs_metrics"].endswith("/results/metrics.json")
+    assert "qfs_results_stream_prefix" in results.metadata
+    

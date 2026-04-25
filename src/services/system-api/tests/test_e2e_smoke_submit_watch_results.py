@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import grpc
+import pytest
 
 from system_api.proto_gen import ensure_generated
 
@@ -31,6 +32,10 @@ def test_e2e_smoke_submit_watch_results(grpc_addr: str):
     stub = job_pb_grpc.JobServiceStub(channel)
 
     job_id = _submit_bell_state_job(stub)
+
+    with pytest.raises(grpc.RpcError) as err:
+        stub.GetJobResults(job_pb.GetJobResultsRequest(job_id=job_id))
+    assert err.value.code() == grpc.StatusCode.FAILED_PRECONDITION
 
     # submit -> watch
     stream = stub.StreamJobUpdates(job_pb.StreamJobUpdatesRequest(job_id=job_id))
@@ -64,3 +69,4 @@ def test_e2e_smoke_submit_watch_results(grpc_addr: str):
     assert all(isinstance(bitstring, str) and bitstring for bitstring in results.counts)
     assert all(isinstance(count, int) and count >= 0 for count in results.counts.values())
     assert len(results.metadata) > 0
+    
