@@ -54,7 +54,7 @@ def _execute(
     return stub.ExecuteCircuit(
         drv_pb.ExecuteCircuitRequest(
             job_id="job-1",
-            device_id="sim:golden",
+            device_id="sim:local",
             payload=types_pb.CircuitPayload(format=_enum_value(types_pb, "CIRCUIT_FORMAT_AQO_JSON", "AQO_JSON"), data=payload),
             shots=shots,
             options=options or {},
@@ -69,16 +69,16 @@ def test_list_devices_returns_simulator_device(grpc_addr: str) -> None:
     resp = stub.ListDevices(drv_pb.ListDevicesRequest())
 
     assert len(resp.devices) == 1
-    assert resp.devices[0].device_id == "sim:golden"
+    assert resp.devices[0].device_id == "sim:local"
 
 
 def test_get_device_status_returns_simulator_status(grpc_addr: str) -> None:
     channel = grpc.insecure_channel(grpc_addr)
     stub = drv_pb_grpc.DriverManagerServiceStub(channel)
 
-    resp = stub.GetDeviceStatus(drv_pb.DeviceStatusRequest(device_id="sim:golden"))
+    resp = stub.GetDeviceStatus(drv_pb.DeviceStatusRequest(device_id="sim:local"))
 
-    assert resp.device_id == "sim:golden"
+    assert resp.device_id == "sim:local"
     assert resp.metadata["driver"] == "simulator"
 
 
@@ -122,7 +122,7 @@ def test_execute_circuit_rejects_unsupported_format(grpc_addr: str) -> None:
         stub.ExecuteCircuit(
             drv_pb.ExecuteCircuitRequest(
                 job_id="job-1",
-                device_id="sim:golden",
+                device_id="sim:local",
                 payload=types_pb.CircuitPayload(
                     format=_enum_value(types_pb, "CIRCUIT_FORMAT_QASM3_TEXT", "QASM3_TEXT"),
                     data=b"OPENQASM 3;",
@@ -156,3 +156,69 @@ def test_execute_circuit_simulated_resource_exhausted(grpc_addr: str) -> None:
         )
 
     assert err.value.code() == grpc.StatusCode.RESOURCE_EXHAUSTED
+
+
+@pytest.mark.parametrize(
+    ("operations", "qubits", "shots", "seed"),
+    [
+        ([{"op": "MEASURE", "q": [0], "c": [0]}], 1, 32, "1"),
+        (
+            [
+                {"op": "RY", "q": [0], "params": {"theta": 1.5707963267948966}},
+                {"op": "MEASURE", "q": [0], "c": [0]},
+            ],
+            1,
+            64,
+            "13",
+        ),
+        (
+            [
+                {"op": "RX", "q": [0], "params": {"theta": 3.141592653589793}},
+                {"op": "CX", "q": [0, 1]},
+                {"op": "MEASURE", "q": [0, 1], "c": [0, 1]},
+            ],
+            2,
+            64,
+            "21",
+        ),
+    ],
+)
+def test_execute_circuit_is_deterministic_for_contract_fixtures(
+    grpc_addr: str,
+    operations: list[dict],
+    qubits: int,
+    shots: int,
+    seed: str,
+) -> None:
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = drv_pb_grpc.DriverManagerServiceStub(channel)
+    payload = _aqo(operations=operations, qubits=qubits)
+
+    first = _execute(stub, payload=payload, shots=shots, options={"seed": seed})
+    second = _execute(stub, payload=payload, shots=shots, options={"seed": seed})
+
+    assert dict(first.counts) == dict(second.counts)
+    assert first.metadata["qubits"] == str(qubits)
+    assert first.metadata["shots"] == str(shots)
+
+
+def test_execute_circuit_reports_unsupported_op_exhaustively(grpc_addr: str) -> None:
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = drv_pb_grpc.DriverManagerServiceStub(channel)
+
+    with pytest.raises(grpc.RpcError) as err:
+        _execute(stub, payload=_aqo([{"op": "H", "q": [0]}], qubits=1))
+
+    assert err.value.code() == grpc.StatusCode.UNIMPLEMENTED
+    assert "Unsupported Op: H at operation[0]" in err.value.details()
+
+
+def test_execute_circuit_reports_simulator_out_of_memory(grpc_addr: str) -> None:
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = drv_pb_grpc.DriverManagerServiceStub(channel)
+
+    with pytest.raises(grpc.RpcError) as err:
+        _execute(stub, payload=_aqo([{"op": "MEASURE", "q": [0], "c": [0]}], qubits=17))
+
+    assert err.value.code() == grpc.StatusCode.RESOURCE_EXHAUSTED
+    assert "Simulator Out of Memory" in err.value.details()
