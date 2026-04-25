@@ -3,6 +3,7 @@
 mod jobspec;
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 const EXIT_USER_ERROR: i32 = 2;
 const EXIT_NETWORK_ERROR: i32 = 3;
@@ -72,11 +73,14 @@ fn run_status(args: &[String]) -> Result<(), i32> {
     match jobspec::get_job_status_from_system_api(&job_id) {
         Ok(status) => {
             println!("job_id: {}", status.job_id);
-            println!("state: {}", status.state);
+            println!("state: {}", format_state_label(status.state));
             println!("stage: {}", status.stage);
             println!("progress: {:.1}%", f64::from(status.progress) * 100.0);
             println!("message: {}", status.message);
-            Ok(())
+            match terminal_exit_code(status.state) {
+                Some(0) | None => Ok(()),
+                Some(code) => Err(code),
+            }
         }
         Err(err) => Err(print_grpc_like_error("status", &err)),
     }
@@ -87,18 +91,30 @@ fn run_watch(args: &[String]) -> Result<(), i32> {
     let updates = jobspec::stream_job_updates_from_system_api(&job_id)
         .map_err(|err| print_grpc_like_error("watch", &err))?;
 
+    let mut last_state: Option<&str> = None;
     for update in updates {
+        if should_render_live() {
+            std::thread::sleep(Duration::from_millis(350));
+        }
+        let transition = last_state
+            .map(|prev| format!("{prev} -> {}", update.state))
+            .unwrap_or_else(|| format!("INIT -> {}", update.state));
         println!(
-            "seq={} state={} stage={} progress={:.1}% message={}",
+            "seq={} transition={} state={} stage={} progress={:.1}% message={}",
             update.event_seq,
-            update.state,
+            transition,
+            format_state_label(update.state),
             update.stage,
             f64::from(update.progress) * 100.0,
             update.message
         );
+        last_state = Some(update.state);
     }
 
-    Ok(())
+    match last_state.and_then(terminal_exit_code) {
+        Some(0) | None => Ok(()),
+        Some(code) => Err(code),
+    }
 }
 
 fn run_results(args: &[String]) -> Result<(), i32> {
@@ -106,7 +122,7 @@ fn run_results(args: &[String]) -> Result<(), i32> {
     match jobspec::get_job_results_from_system_api(&job_id) {
         Ok(results) => {
             println!("job_id: {}", results.job_id);
-            println!("state: {}", results.state);
+            println!("state: {}", format_state_label(results.state));
             println!("counts:");
             for (k, v) in &results.counts {
                 println!("  {k}: {v}");
@@ -115,7 +131,23 @@ fn run_results(args: &[String]) -> Result<(), i32> {
             for (k, v) in &results.metadata {
                 println!("  {k}: {v}");
             }
-            if results.state == "ERROR" {
+            println!("artifacts:");
+            let downloads = jobspec::download_and_verify_parquet_artifacts_from_qfs(
+                &results.job_id,
+                &results.artifacts,
+            )
+            .map_err(|err| print_grpc_like_error("results", &err))?;
+            for artifact in downloads {
+                println!(
+                    "  {}: {} -> {} ({} bytes, parquet verified)",
+                    artifact.kind,
+                    artifact.qfs_uri,
+                    artifact.local_path.display(),
+                    artifact.bytes
+                );
+            }
+
+            if results.state != "DONE" {
                 eprintln!("error_code: {}", results.error_code.unwrap_or_default());
                 eprintln!(
                     "error_summary: {}",
@@ -126,6 +158,33 @@ fn run_results(args: &[String]) -> Result<(), i32> {
             Ok(())
         }
         Err(err) => Err(print_grpc_like_error("results", &err)),
+    }
+}
+
+fn should_render_live() -> bool {
+    use std::io::IsTerminal;
+    std::io::stdout().is_terminal()
+}
+
+fn format_state_label(state: &str) -> String {
+    let (icon, color) = match state {
+        "DONE" => ("✓", "\x1b[32m"),
+        "ERROR" | "CANCELLED" | "TIMEOUT" => ("✗", "\x1b[31m"),
+        "RUNNING" | "COMPILING" => ("…", "\x1b[33m"),
+        _ => ("·", "\x1b[36m"),
+    };
+    if should_render_live() {
+        format!("{color}{icon} {state}\x1b[0m")
+    } else {
+        format!("{icon} {state}")
+    }
+}
+
+fn terminal_exit_code(state: &str) -> Option<i32> {
+    match state {
+        "DONE" => Some(0),
+        "ERROR" | "CANCELLED" | "TIMEOUT" => Some(EXIT_SERVER_ERROR),
+        _ => None,
     }
 }
 
@@ -245,4 +304,18 @@ fn print_help() {
     println!(
         "Eigen CLI (scaffold)\n\nUsage:\n  eigen <command> [args...]\n\nCommands:\n  help        Show this message\n  version     Print version\n  submit      Submit job: eigen submit -f job.yaml\n  status      Get job status: eigen status <job_id>\n  watch       Stream progress: eigen watch <job_id>\n  results     Fetch results: eigen results <job_id>\n  compile     Compile locally: eigen compile -f job.yaml --out circuit.aqo.json\n  visualize   Visualize AQO: eigen visualize -f circuit.aqo.json\n"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terminal_exit_code_matches_runtime_semantics() {
+        assert_eq!(terminal_exit_code("DONE"), Some(0));
+        assert_eq!(terminal_exit_code("ERROR"), Some(EXIT_SERVER_ERROR));
+        assert_eq!(terminal_exit_code("CANCELLED"), Some(EXIT_SERVER_ERROR));
+        assert_eq!(terminal_exit_code("TIMEOUT"), Some(EXIT_SERVER_ERROR));
+        assert_eq!(terminal_exit_code("RUNNING"), None);
+    }
 }

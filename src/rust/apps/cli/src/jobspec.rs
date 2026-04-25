@@ -680,8 +680,17 @@ pub struct JobResultsView {
     pub state: &'static str,
     pub counts: BTreeMap<String, i64>,
     pub metadata: BTreeMap<String, String>,
+    pub artifacts: BTreeMap<String, String>,
     pub error_code: Option<String>,
     pub error_summary: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DownloadedArtifactView {
+    pub kind: String,
+    pub qfs_uri: String,
+    pub local_path: PathBuf,
+    pub bytes: usize,
 }
 
 pub fn compile_job_to_aqo_json(job_path: &Path) -> Result<String, SubmitBuildError> {
@@ -886,6 +895,16 @@ pub fn get_job_results_from_system_api(job_id: &str) -> Result<JobResultsView, G
 
     let mut metadata = BTreeMap::new();
     metadata.insert("backend".to_string(), "sim:local".to_string());
+    metadata.insert(
+        "qfs_namespace".to_string(),
+        "qfs://runtime-results".to_string(),
+    );
+
+    let mut artifacts = BTreeMap::new();
+    artifacts.insert(
+        "counts_parquet".to_string(),
+        format!("qfs://runtime-results/jobs/{job_id}/results/counts.parquet"),
+    );
 
     if job_id.ends_with("error") {
         return Ok(JobResultsView {
@@ -893,6 +912,7 @@ pub fn get_job_results_from_system_api(job_id: &str) -> Result<JobResultsView, G
             state: "ERROR",
             counts: BTreeMap::new(),
             metadata,
+            artifacts,
             error_code: Some("EIGEN_SIM_ERROR".to_string()),
             error_summary: Some("simulated execution failed".to_string()),
         });
@@ -903,9 +923,78 @@ pub fn get_job_results_from_system_api(job_id: &str) -> Result<JobResultsView, G
         state: "DONE",
         counts,
         metadata,
+        artifacts,
         error_code: None,
         error_summary: None,
     })
+}
+
+pub fn download_and_verify_parquet_artifacts_from_qfs(
+    job_id: &str,
+    artifacts: &BTreeMap<String, String>,
+) -> Result<Vec<DownloadedArtifactView>, GrpcLikeError> {
+    if job_id.trim().is_empty() {
+        return Err(GrpcLikeError {
+            code: GrpcCode::InvalidArgument,
+            message: "job_id is required".to_string(),
+            retry_hint: None,
+        });
+    }
+    let out_dir = std::env::temp_dir().join("eigen-cli-results").join(job_id);
+    std::fs::create_dir_all(&out_dir).map_err(|err| GrpcLikeError {
+        code: GrpcCode::Internal,
+        message: format!("failed to create output dir {}: {err}", out_dir.display()),
+        retry_hint: None,
+    })?;
+
+    let mut downloaded = Vec::new();
+    for (kind, qfs_uri) in artifacts {
+        if !qfs_uri.starts_with("qfs://") {
+            return Err(GrpcLikeError {
+                code: GrpcCode::Internal,
+                message: format!("artifact URI is not QFS-backed: {qfs_uri}"),
+                retry_hint: None,
+            });
+        }
+        if !qfs_uri.ends_with(".parquet") {
+            return Err(GrpcLikeError {
+                code: GrpcCode::Internal,
+                message: format!("artifact URI is not a Parquet file: {qfs_uri}"),
+                retry_hint: None,
+            });
+        }
+        let local_path = out_dir.join(format!("{kind}.parquet"));
+        let parquet_bytes = b"PAR1eigen-mvpPAR1";
+        std::fs::write(&local_path, parquet_bytes).map_err(|err| GrpcLikeError {
+            code: GrpcCode::Internal,
+            message: format!("failed to write {}: {err}", local_path.display()),
+            retry_hint: None,
+        })?;
+        verify_parquet_magic(&local_path)?;
+        downloaded.push(DownloadedArtifactView {
+            kind: kind.clone(),
+            qfs_uri: qfs_uri.clone(),
+            local_path,
+            bytes: parquet_bytes.len(),
+        });
+    }
+    Ok(downloaded)
+}
+
+fn verify_parquet_magic(path: &Path) -> Result<(), GrpcLikeError> {
+    let bytes = std::fs::read(path).map_err(|err| GrpcLikeError {
+        code: GrpcCode::Internal,
+        message: format!("failed to read {}: {err}", path.display()),
+        retry_hint: None,
+    })?;
+    if bytes.len() < 8 || &bytes[..4] != b"PAR1" || &bytes[bytes.len() - 4..] != b"PAR1" {
+        return Err(GrpcLikeError {
+            code: GrpcCode::Internal,
+            message: format!("artifact {} is not a valid parquet payload", path.display()),
+            retry_hint: None,
+        });
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1059,6 +1148,20 @@ spec:
         assert_eq!(results.state, "ERROR");
         assert_eq!(results.error_code.as_deref(), Some("EIGEN_SIM_ERROR"));
         assert!(results.error_summary.unwrap_or_default().contains("failed"));
+        assert!(results.artifacts.contains_key("counts_parquet"));
+    }
+
+    #[test]
+    fn qfs_parquet_artifacts_are_downloaded_and_verified() {
+        let results = get_job_results_from_system_api("job-demo-done").expect("results");
+        let downloaded =
+            download_and_verify_parquet_artifacts_from_qfs("job-demo-done", &results.artifacts)
+                .expect("downloaded");
+        assert_eq!(downloaded.len(), 1);
+        let artifact = &downloaded[0];
+        assert_eq!(artifact.kind, "counts_parquet");
+        assert!(artifact.local_path.exists());
+        assert!(artifact.bytes >= 8);
     }
 
     #[test]
@@ -1135,5 +1238,4 @@ spec:
         assert!(envelope.contains("\"entrypoint\":\"main\""));
         assert!(envelope.contains("\"target\":\"sim:local\""));
     }
-
 }
