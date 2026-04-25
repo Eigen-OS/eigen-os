@@ -83,6 +83,7 @@ git fetch origin main:main
 
 - MVP-2 RFC package (implemented): [`../../rfcs/0013-mvp2-jobspec-parser-submit-contract.md`](../../rfcs/0013-mvp2-jobspec-parser-submit-contract.md), [`../../rfcs/0014-mvp2-eigen-lang-ast-safety-deterministic-aqo.md`](../../rfcs/0014-mvp2-eigen-lang-ast-safety-deterministic-aqo.md), [`../../rfcs/0015-mvp2-conformance-and-ci-gates.md`](../../rfcs/0015-mvp2-conformance-and-ci-gates.md)
 - MVP-2 tracking closure: [`mvp-2-tracking-issue.md`](mvp-2-tracking-issue.md)
+- MVP-3 execution/runtime draft: [`mvp-3-execution-and-results.md`](mvp-3-execution-and-results.md)
 - ADR decisions for MVP baseline and MVP-2: [`../adr/README.md`](../adr/README.md)
 
 ## Related files
