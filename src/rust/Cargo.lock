@@ -125,6 +125,7 @@ dependencies = [
  "resource-manager",
  "security-module",
  "serde_json",
+ "tempfile",
  "tokio",
  "tonic",
  "tonic-prost",

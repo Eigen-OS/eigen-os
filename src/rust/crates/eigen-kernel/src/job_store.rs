@@ -9,7 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use parking_lot::RwLock;
 use uuid::Uuid;
 
-use qrtx::state_machine::{JobEvent, JobState, TransitionError, transition}
+use qrtx::state_machine::{JobEvent, JobState, TransitionError, transition};
 
 /// A stored job record for the MVP state machine.
 #[derive(Debug, Clone)]
@@ -64,7 +64,7 @@ impl JobStore {
     }
 
     pub fn apply_event(&self, job_id: &str, event: JobEvent) -> Result<JobRecord, TransitionError> {
-    let mut guard = self.inner.write();
+        let mut guard = self.inner.write();
         let rec = guard.get_mut(job_id).ok_or(TransitionError::Invalid {
             from: JobState::Pending,
             event,
