@@ -21,6 +21,7 @@ Contract-level compatibility is treated as stable only after:
 Current delivery focus:
 - ✅ MVP-1 (Core Services Setup) complete as of **2026-04-24**.
 - ✅ MVP-2 (Compilation Pipeline) complete as of **2026-04-24**; see [`docs/development/mvp-2-compilation-pipeline.md`](docs/development/mvp-2-compilation-pipeline.md).
+- ✅ MVP-3 (Runtime Execution & Results) complete as of **2026-04-25**; see [`docs/development/mvp-3-execution-and-results.md`](docs/development/mvp-3-execution-and-results.md) and [`docs/development/mvp-3-tracking-issue.md`](docs/development/mvp-3-tracking-issue.md).
 
 ### API version policy (MVP freeze)
 
