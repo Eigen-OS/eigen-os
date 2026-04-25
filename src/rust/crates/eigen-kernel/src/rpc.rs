@@ -140,16 +140,17 @@ fn parse_trace_id(traceparent: Option<&str>) -> Option<String> {
 #[tonic::async_trait]
 impl KernelGatewayService for KernelGatewaySvc {
     async fn enqueue_job(
-    &self,
+        &self,
         request: Request<EnqueueJobRequest>,
     ) -> Result<Response<EnqueueJobResponse>, Status> {
         let trace_ctx = TraceContext::from_request_md(request.metadata());
         let req = request.into_inner();
 
-    if req.name.trim().is_empty() {
+        if req.name.trim().is_empty() {
             return Err(Status::invalid_argument("name is required"));
+        }
 
-    let record = self.store.create_job(req.name.clone());
+        let record = self.store.create_job(req.name.clone());
         let job_id = record.job_id.clone();
         let job_id_for_task = job_id.clone();
 
@@ -384,7 +385,7 @@ async fn run_vqe_loop(
         options.insert("vqe.iteration".to_string(), iter.to_string());
 
         let mut execute_req = Request::new(ExecuteCircuitRequest {
-                job_id: job_id.to_string(),
+            job_id: job_id.to_string(),
             device_id: device_id.to_string(),
             payload: Some(circuit_payload.clone()),
             shots,
