@@ -3,8 +3,8 @@ use std::hash::{Hash, Hasher};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
-use serde::{Serialize, Deserialize};
 
 /// Default filesystem root for CircuitFS (QFS-L3).
 ///
@@ -21,10 +21,8 @@ pub struct SourceBundle {
 /// Represents the “results bundle” artifacts stored in QFS.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResultsBundle {
-    /// Normalized measurement counts.
-    pub counts_json: Vec<u8>,
-    /// Execution metadata.
-    pub metadata_json: Vec<u8>,
+    /// Apache Parquet payload stored at `/jobs/{job_id}/results.parquet`.
+    pub parquet: Vec<u8>,
 }
 
 /// Represents compilation outputs stored under `compiled/`.
@@ -172,14 +170,9 @@ impl CircuitFsLocal {
         Ok(self.compiled_dir(job_id)?.join("metadata.json"))
     }
 
-    /// `/circuit_fs/{job_id}/results/counts.json`
-    pub fn counts_json_path(&self, job_id: &str) -> Result<PathBuf, CircuitFsError> {
-        Ok(self.results_dir(job_id)?.join("counts.json"))
-    }
-
-    /// `/circuit_fs/{job_id}/results/metadata.json`
-    pub fn metadata_json_path(&self, job_id: &str) -> Result<PathBuf, CircuitFsError> {
-        Ok(self.results_dir(job_id)?.join("metadata.json"))
+    /// `/circuit_fs/{job_id}/results.parquet`
+    pub fn results_parquet_path(&self, job_id: &str) -> Result<PathBuf, CircuitFsError> {
+        Ok(self.job_root(job_id)?.join("results.parquet"))
     }
 
     /// `/circuit_fs/{job_id}/results/error.json`
@@ -305,31 +298,25 @@ impl CircuitFsLocal {
         })
     }
 
-    /// Stores results bundle under `results/`.
+    /// Stores canonical results artifact under `results.parquet`.
     pub fn store_results_bundle(
         &self,
         job_id: &str,
-        counts_json: &[u8],
-        metadata_json: &[u8],
+        parquet_payload: &[u8],
     ) -> Result<(), CircuitFsError> {
         self.ensure_job_layout(job_id)?;
 
-        // The results files are hot-read by APIs, so we always use atomic writes.
-        atomic_write_bytes(&self.counts_json_path(job_id)?, counts_json)?;
-        atomic_write_bytes(&self.metadata_json_path(job_id)?, metadata_json)?;
+        // The results artifact is hot-read by APIs, so we always use atomic writes.
+        atomic_write_bytes(&self.results_parquet_path(job_id)?, parquet_payload)?;
 
         Ok(())
     }
 
-    /// Loads `results/counts.json` + `results/metadata.json`.
+    /// Loads `results.parquet`.
     pub fn load_results_bundle(&self, job_id: &str) -> Result<ResultsBundle, CircuitFsError> {
-        let counts_json = read_bytes_not_found(&self.counts_json_path(job_id)?)?;
-        let metadata_json = read_bytes_not_found(&self.metadata_json_path(job_id)?)?;
+        let parquet = read_bytes_not_found(&self.results_parquet_path(job_id)?)?;
 
-        Ok(ResultsBundle {
-            counts_json,
-            metadata_json,
-        })
+        Ok(ResultsBundle { parquet })
     }
 
     /// Stores structured error details in `results/error.json`.
@@ -498,12 +485,8 @@ mod tests {
             root.join("input").join("metadata.json")
         );
         assert_eq!(
-            fs.counts_json_path(job_id).unwrap(),
-            root.join("results").join("counts.json")
-        );
-        assert_eq!(
-            fs.metadata_json_path(job_id).unwrap(),
-            root.join("results").join("metadata.json")
+            fs.results_parquet_path(job_id).unwrap(),
+            root.join("results.parquet")
         );
         assert_eq!(
             fs.error_json_path(job_id).unwrap(),
@@ -518,10 +501,10 @@ mod tests {
         let job_id = "job-1";
 
         fs.ensure_job_layout(job_id).unwrap();
-        let p = fs.counts_json_path(job_id).unwrap();
+        let p = fs.results_parquet_path(job_id).unwrap();
 
         fs::write(&p, b"old").unwrap();
-        fs.store_results_bundle(job_id, b"new", b"meta").unwrap();
+        fs.store_results_bundle(job_id, b"new").unwrap();
 
         assert_eq!(fs::read(&p).unwrap(), b"new");
     }
@@ -535,8 +518,7 @@ mod tests {
             .unwrap();
         fs.store_compiled_aqo_json(job_id, br#"{"version":"0.1"}"#)
             .unwrap();
-        fs.store_results_bundle(job_id, br#"{"counts":{}}"#, br#"{"meta":true}"#)
-            .unwrap();
+        fs.store_results_bundle(job_id, b"PAR1....").unwrap();
         fs.store_error_details_json(job_id, br#"{"error":"boom"}"#)
             .unwrap();
 
@@ -548,8 +530,7 @@ mod tests {
         assert_eq!(aqo, br#"{"version":"0.1"}"#);
 
         let res = fs.load_results_bundle(job_id).unwrap();
-        assert_eq!(res.counts_json, br#"{"counts":{}}"#);
-        assert_eq!(res.metadata_json, br#"{"meta":true}"#);
+        assert_eq!(res.parquet, b"PAR1....");
 
         let err = fs.load_error_details_json(job_id).unwrap();
         assert_eq!(err, br#"{"error":"boom"}"#);

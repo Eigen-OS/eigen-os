@@ -14,6 +14,7 @@ dependencies = [
   "googleapis-common-protos>=1.72",
   "protobuf>=6.33",
   "PyYAML>=6.0",
+  "pyarrow>=17.0",
 ]
 
 [project.optional-dependencies]
