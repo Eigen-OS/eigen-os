@@ -1,13 +1,13 @@
 This roadmap is aligned with the current MVP definition and tracks the minimum milestones required for an end-to-end release.
 
-## Current delivery focus (as of 2026-04-24)
+## Current delivery focus (as of 2026-04-25)
 
 - ✅ **MVP-1 (Core Services Setup)** completed: repository skeleton, public contracts, service stubs, QRTX/Driver Manager/QFS scaffolding, and CI baseline.
 - ✅ **MVP-2 (Compilation Pipeline)** completed: JobSpec parser/validator, Eigen-Lang AST→AQO compiler hardening, CLI `eigen submit`, and conformance suites.
 - Detailed MVP-2 execution plan: [`development/mvp-2-compilation-pipeline.md`](development/mvp-2-compilation-pipeline.md)
-- MVP-3 execution/runtime plan: [`development/mvp-3-execution-and-results.md`](development/mvp-3-execution-and-results.md)
+- ✅ MVP-3 (Execution & Results Pipeline) completed; closure record: [`development/mvp-3-execution-and-results.md`](development/mvp-3-execution-and-results.md)
 - MVP-3 RFC package (accepted): [`../rfcs/0016-mvp3-kernel-driver-execution-contract.md`](../rfcs/0016-mvp3-kernel-driver-execution-contract.md), [`../rfcs/0017-mvp3-results-retrieval-and-cli-runtime-ux.md`](../rfcs/0017-mvp3-results-retrieval-and-cli-runtime-ux.md), [`../rfcs/0018-mvp3-runtime-observability-and-release-gates.md`](../rfcs/0018-mvp3-runtime-observability-and-release-gates.md)
-- MVP-3 tracking issue: [`development/mvp-3-tracking-issue.md`](development/mvp-3-tracking-issue.md)
+- MVP-3 tracking issue (closed): [`development/mvp-3-tracking-issue.md`](development/mvp-3-tracking-issue.md)
 - MVP-3 ADR package: [`adr/0007-mvp3-release-readiness-runtime-contracts-and-security-closure.md`](adr/0007-mvp3-release-readiness-runtime-contracts-and-security-closure.md)
 - MVP-2 RFC package (implemented): [`../rfcs/0013-mvp2-jobspec-parser-submit-contract.md`](../rfcs/0013-mvp2-jobspec-parser-submit-contract.md), [`../rfcs/0014-mvp2-eigen-lang-ast-safety-deterministic-aqo.md`](../rfcs/0014-mvp2-eigen-lang-ast-safety-deterministic-aqo.md), [`../rfcs/0015-mvp2-conformance-and-ci-gates.md`](../rfcs/0015-mvp2-conformance-and-ci-gates.md)
 
@@ -24,23 +24,23 @@ This roadmap is aligned with the current MVP definition and tracks the minimum m
 - Add a fixture-driven JobSpec→`SubmitJobRequest` parser/validator gate.
 - Enforce conformance tests for Eigen-Lang→AQO and CLI submit request packaging.
 
-## Milestone 3 — CLI and developer workflow
+## Milestone 3 — CLI and developer workflow (completed)
 
-- Finalize CLI MVP commands (`submit`, `status`, `results`, `watch`).
-- Document packaging and reproducible local execution flow.
-- Keep examples and quickstarts synchronized with current contracts.
+- ✅ Finalized CLI MVP commands (`submit`, `status`, `results`, `watch`).
+- ✅ Documented packaging and reproducible local execution flow.
+- ✅ Kept examples and quickstarts synchronized with current contracts.
 
-## Milestone 4 — Quality and observability gates
+## Milestone 4 — Quality and observability gates (completed)
 
-- Enforce unit + smoke integration coverage for core services.
-- Verify metrics exposure and trace propagation across service boundaries.
-- Validate error handling and conformance fixtures in CI.
+- ✅ Enforced unit + smoke integration coverage for core services.
+- ✅ Verified metrics exposure and trace propagation across service boundaries.
+- ✅ Validated error handling and conformance fixtures in CI.
 
-## Milestone 5 — MVP release readiness
+## Milestone 5 — MVP release readiness (completed)
 
-- Complete MVP Definition of Done checklist for all in-scope services.
-- Confirm docs and governance artifacts are up to date.
-- Tag MVP release and start post-MVP planning for hardware drivers and advanced scheduling.
+- ✅ Completed MVP Definition of Done checklist for all in-scope services.
+- ✅ Confirmed docs and governance artifacts are up to date.
+- ✅ MVP baseline is frozen after MVP-3 closure (2026-04-25); post-MVP planning is now active.
 
 ## Out of scope for MVP (tracked after release)
 
