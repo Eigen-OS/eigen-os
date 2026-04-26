@@ -82,6 +82,7 @@ git fetch origin main:main
 ## Post-MVP planning
 
 - Post-MVP open-source roadmap: [`post-mvp-open-source-roadmap.md`](post-mvp-open-source-roadmap.md)
+- Phase 1 runtime plan: [`phase-1-production-runtime.md`](phase-1-production-runtime.md)
 - Architecture decisions: [`../adr/README.md`](../adr/README.md)
 - RFC package: [`../../rfcs/`](../../rfcs/)
 
