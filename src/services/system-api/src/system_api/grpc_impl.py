@@ -423,8 +423,20 @@ class JobService:
             "qfs_compiled_aqo": f"qfs://jobs/{job_id}/compiled/circuit.aqo.json",
             "qfs_results_parquet": f"qfs://jobs/{job_id}/results.parquet",
             "qfs_metrics": f"qfs://jobs/{job_id}/results/metrics.json",
+            "qfs_results_stream_prefix": f"qfs://jobs/{job_id}/results/streams/",
         }
         
+        max_iters = 0
+        if metadata.get("max_iters", "").strip():
+            try:
+                max_iters = max(int(metadata["max_iters"]), 0)
+            except ValueError:
+                max_iters = 0
+        if max_iters > 0:
+            simulated_history_len = max(2, max_iters)
+            objective_history = [round(-1.0 + (0.08 * idx), 6) for idx in range(simulated_history_len)]
+            results_metadata["objective_history"] = json.dumps(objective_history)
+
         counts = {} if should_fail else {"00": 512, "11": 512}
         
         if should_fail:
@@ -443,20 +455,28 @@ class JobService:
             except ValueError:
                 timeout_at = None
 
+        updates = [
+            self._mk_update(
+                job_id=job_id,
+                state=self._types_pb.JOB_STATE_PENDING,
+                stage="PENDING",
+                progress=0.0,
+                message="pending",
+                event_seq=1,
+            )
+        ]
+        if max_iters > 0:
+            updates = self._mk_vqe_updates(
+                job_id=job_id,
+                trace_id=metadata.get("trace_id", "").strip() or None,
+                max_iters=max_iters,
+            )
+
         record = _JobRecord(
             job_id=job_id,
             created_at=created_at,
             created_at_dt=created_at_dt,
-            updates=[
-                self._mk_update(
-                    job_id=job_id,
-                    state=self._types_pb.JOB_STATE_PENDING,
-                    stage="PENDING",
-                    progress=0.0,
-                    message="pending",
-                    event_seq=1,
-                )
-            ],
+            updates=updates,
             counts=counts,
             results_metadata=results_metadata,
             results_parquet=None,
@@ -646,8 +666,6 @@ class JobService:
 
         with self._lock:
             record = self._jobs.get(request.job_id)
-            if record is not None:
-                self._advance_job(record)
 
         if record is None:
             context.abort(grpc.StatusCode.NOT_FOUND, f"job_id not found: {request.job_id}")
