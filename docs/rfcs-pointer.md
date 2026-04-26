@@ -17,6 +17,10 @@
 - [RFC 0014 — MVP-2 Eigen-Lang AST Safety and Deterministic AQO](../rfcs/0014-mvp2-eigen-lang-ast-safety-deterministic-aqo.md)
 - [RFC 0015 — MVP-2 Conformance Fixtures and CI Gates](../rfcs/0015-mvp2-conformance-and-ci-gates.md)
 
+## Phase 1 RFC set (draft)
+
+- [RFC 0019 — Phase 1 Production Runtime Plan](../rfcs/0019-phase1-production-runtime-plan.md)
+
 ## MVP-3 RFC set (accepted)
 
 - [RFC 0016 — MVP-3 Kernel Runtime and Driver Execution Contract](../rfcs/0016-mvp3-kernel-driver-execution-contract.md)
