@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::net::SocketAddr;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 use serde_json::json;
@@ -311,6 +311,9 @@ async fn run_pipeline(
     } else {
         req.target.clone()
     };
+    let retry_policy = RetryPolicy::from_metadata(&req.metadata);
+    let retry_idempotent = is_execute_retry_idempotent(job_id, &req.metadata);
+    let mut retry_metrics = RetryMetrics::default();
 
     let execute_started = Instant::now();
     let execute_res = if should_run_vqe_loop(&circuit_payload, &compile_res.metadata) {
@@ -322,25 +325,32 @@ async fn run_pipeline(
             &circuit_payload,
             &req.metadata,
             &trace_ctx,
+            &retry_policy,
+            retry_idempotent,
+            &mut retry_metrics,
         )
         .await?;
         results_metadata.extend(vqe_res.results_metadata);
         vqe_res.last_execution
     } else {
-        let mut execute_req = Request::new(ExecuteCircuitRequest {
-            job_id: job_id.to_string(),
-            device_id: device_id.clone(),
-            payload: Some(circuit_payload),
-            shots: parse_shots(&req.metadata),
-            options: req.metadata,
-        });
-        trace_ctx.inject(&mut execute_req);
-
-        driver
-            .execute_circuit(execute_req)
-            .await
-            .map_err(PipelineError::from_execute_status)?
-            .into_inner()
+        execute_with_retry(
+            &mut driver,
+            || {
+                let mut execute_req = Request::new(ExecuteCircuitRequest {
+                    job_id: job_id.to_string(),
+                    device_id: device_id.clone(),
+                    payload: Some(circuit_payload.clone()),
+                    shots: parse_shots(&req.metadata),
+                    options: req.metadata.clone(),
+                });
+                trace_ctx.inject(&mut execute_req);
+                execute_req
+            },
+            &retry_policy,
+            retry_idempotent,
+            &mut retry_metrics,
+        )
+        .await?
     };
     let job_execution_duration_sec = execute_started.elapsed().as_secs_f64();
 
@@ -351,8 +361,11 @@ async fn run_pipeline(
         &execute_res,
         compilation_latency_sec,
         job_execution_duration_sec,
+        &retry_metrics,
     )
-    .map_err(|e| PipelineError::persist(format!("failed to persist final execution results: {e}")))?;
+    .map_err(|e| {
+        PipelineError::persist(format!("failed to persist final execution results: {e}"))
+    })?;
 
     store.set_results_metadata(job_id, results_metadata);
     store.set_counts(job_id, execute_res.counts.clone());
@@ -377,6 +390,9 @@ async fn run_vqe_loop(
     circuit_payload: &CircuitPayload,
     job_metadata: &HashMap<String, String>,
     trace_ctx: &TraceContext,
+    retry_policy: &RetryPolicy,
+    retry_idempotent: bool,
+    retry_metrics: &mut RetryMetrics,
 ) -> Result<VqeLoopOutcome, PipelineError> {
     let mut params = initial_params(circuit_payload);
     let max_iters = parse_positive_usize(job_metadata, "max_iters").unwrap_or(10);
@@ -394,19 +410,24 @@ async fn run_vqe_loop(
         options.insert("vqe.params".to_string(), serialize_params(&params));
         options.insert("vqe.iteration".to_string(), iter.to_string());
 
-        let mut execute_req = Request::new(ExecuteCircuitRequest {
-            job_id: job_id.to_string(),
-            device_id: device_id.to_string(),
-            payload: Some(circuit_payload.clone()),
-            shots,
-            options,
-        });
-        trace_ctx.inject(&mut execute_req);
-        let execute_res = driver
-            .execute_circuit(execute_req)
-            .await
-            .map_err(PipelineError::from_execute_status)?
-            .into_inner();
+        let execute_res = execute_with_retry(
+            driver,
+            || {
+                let mut execute_req = Request::new(ExecuteCircuitRequest {
+                    job_id: job_id.to_string(),
+                    device_id: device_id.to_string(),
+                    payload: Some(circuit_payload.clone()),
+                    shots,
+                    options: options.clone(),
+                });
+                trace_ctx.inject(&mut execute_req);
+                execute_req
+            },
+            retry_policy,
+            retry_idempotent,
+            retry_metrics,
+        )
+        .await?;
 
         let objective = objective_from_counts(&execute_res.counts, &zero_state);
         if objective < best_objective {
@@ -563,6 +584,133 @@ fn parse_positive_f64(metadata: &HashMap<String, String>, key: &str) -> Option<f
         .filter(|v| *v > 0.0)
 }
 
+#[derive(Debug, Clone)]
+struct RetryPolicy {
+    max_attempts: u32,
+    max_elapsed: Duration,
+    base_delay: Duration,
+    max_delay: Duration,
+    jitter: Duration,
+}
+
+impl Default for RetryPolicy {
+    fn default() -> Self {
+        Self {
+            max_attempts: 3,
+            max_elapsed: Duration::from_secs(5),
+            base_delay: Duration::from_millis(50),
+            max_delay: Duration::from_secs(1),
+            jitter: Duration::from_millis(25),
+        }
+    }
+}
+
+impl RetryPolicy {
+    fn from_metadata(metadata: &HashMap<String, String>) -> Self {
+        let mut policy = Self::default();
+        if let Some(v) = parse_positive_usize(metadata, "retry.max_attempts") {
+            policy.max_attempts = v.min(u32::MAX as usize) as u32;
+        }
+        if let Some(v) = parse_positive_usize(metadata, "retry.max_elapsed_ms") {
+            policy.max_elapsed = Duration::from_millis(v as u64);
+        }
+        if let Some(v) = parse_positive_usize(metadata, "retry.base_delay_ms") {
+            policy.base_delay = Duration::from_millis(v as u64);
+        }
+        if let Some(v) = parse_positive_usize(metadata, "retry.max_delay_ms") {
+            policy.max_delay = Duration::from_millis(v as u64);
+        }
+        if let Some(v) = parse_positive_usize(metadata, "retry.jitter_ms") {
+            policy.jitter = Duration::from_millis(v as u64);
+        }
+        if policy.max_attempts == 0 {
+            policy.max_attempts = 1;
+        }
+        policy
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+struct RetryMetrics {
+    attempts: u32,
+    retries: u32,
+    successes_after_retry: u32,
+}
+
+fn is_retryable_code(code: Code) -> bool {
+    matches!(
+        code,
+        Code::Unavailable | Code::DeadlineExceeded | Code::ResourceExhausted | Code::Aborted
+    )
+}
+
+fn is_execute_retry_idempotent(job_id: &str, metadata: &HashMap<String, String>) -> bool {
+    !job_id.trim().is_empty()
+        && (metadata.contains_key("client_request_id")
+            || metadata.contains_key("vqe.iteration")
+            || !metadata.contains_key("non_idempotent"))
+}
+
+fn backoff_delay(policy: &RetryPolicy, attempt: u32) -> Duration {
+    let exp = 1u32
+        .checked_shl(attempt.saturating_sub(1))
+        .unwrap_or(u32::MAX);
+    let base_ms = policy.base_delay.as_millis().saturating_mul(exp as u128);
+    let capped_ms = base_ms.min(policy.max_delay.as_millis()) as u64;
+    let jitter_ms = if policy.jitter.is_zero() {
+        0
+    } else {
+        pseudo_random_u64() % (policy.jitter.as_millis() as u64 + 1)
+    };
+    Duration::from_millis(capped_ms.saturating_add(jitter_ms))
+}
+
+fn pseudo_random_u64() -> u64 {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as u64;
+    nanos ^ nanos.rotate_left(13) ^ 0x9E37_79B9_7F4A_7C15
+}
+
+async fn execute_with_retry<F>(
+    driver: &mut DriverManagerServiceClient<tonic::transport::Channel>,
+    build_request: F,
+    policy: &RetryPolicy,
+    retry_idempotent: bool,
+    metrics: &mut RetryMetrics,
+) -> Result<ExecuteCircuitResponse, PipelineError>
+where
+    F: Fn() -> Request<ExecuteCircuitRequest>,
+{
+    let started = Instant::now();
+    let mut attempt = 0u32;
+    loop {
+        attempt += 1;
+        metrics.attempts += 1;
+        match driver.execute_circuit(build_request()).await {
+            Ok(resp) => {
+                if attempt > 1 {
+                    metrics.successes_after_retry += 1;
+                }
+                return Ok(resp.into_inner());
+            }
+            Err(status) => {
+                let retryable = retry_idempotent && is_retryable_code(status.code());
+                let out_of_attempts = attempt >= policy.max_attempts;
+                let elapsed = started.elapsed();
+                let delay = backoff_delay(policy, attempt);
+                let out_of_time = elapsed.saturating_add(delay) > policy.max_elapsed;
+                if !retryable || out_of_attempts || out_of_time {
+                    return Err(PipelineError::from_execute_status(status));
+                }
+                metrics.retries += 1;
+                tokio::time::sleep(delay).await;
+            }
+        }
+    }
+}
+
 fn persist_results(
     deps: &PipelineDeps,
     job_id: &str,
@@ -570,6 +718,7 @@ fn persist_results(
     execute_res: &ExecuteCircuitResponse,
     compilation_latency_sec: f64,
     job_execution_duration_sec: f64,
+    retry_metrics: &RetryMetrics,
 ) -> Result<(), String> {
     let counts_json = serde_json::to_vec(&json!({
         "version": "0.1",
@@ -602,6 +751,33 @@ fn persist_results(
                     "job_id": job_id,
                     "device_id": device_id,
                     "unit": "seconds",
+                }
+            },
+            {
+                "name": "retry_attempts_total",
+                "value": retry_metrics.attempts,
+                "labels": {
+                    "job_id": job_id,
+                    "device_id": device_id,
+                    "kind": "execute_circuit",
+                }
+            },
+            {
+                "name": "retry_retries_total",
+                "value": retry_metrics.retries,
+                "labels": {
+                    "job_id": job_id,
+                    "device_id": device_id,
+                    "kind": "execute_circuit",
+                }
+            },
+            {
+                "name": "retry_success_after_retry_total",
+                "value": retry_metrics.successes_after_retry,
+                "labels": {
+                    "job_id": job_id,
+                    "device_id": device_id,
+                    "kind": "execute_circuit",
                 }
             }
         ],
@@ -842,6 +1018,7 @@ mod tests {
     use super::*;
     use crate::proto::compilation_service_server::CompilationServiceServer;
     use crate::proto::driver_manager_service_server::DriverManagerServiceServer;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Mutex, OnceLock};
     use tempfile::TempDir;
     use tokio::time::{Duration, sleep};
@@ -860,6 +1037,11 @@ mod tests {
     fn driver_trace_store() -> &'static Mutex<Vec<TraceCapture>> {
         static STORE: OnceLock<Mutex<Vec<TraceCapture>>> = OnceLock::new();
         STORE.get_or_init(|| Mutex::new(Vec::new()))
+    }
+
+    fn driver_attempt_counter() -> &'static AtomicUsize {
+        static COUNTER: OnceLock<AtomicUsize> = OnceLock::new();
+        COUNTER.get_or_init(|| AtomicUsize::new(0))
     }
 
     #[derive(Default)]
@@ -953,6 +1135,7 @@ mod tests {
             &self,
             request: Request<ExecuteCircuitRequest>,
         ) -> Result<Response<ExecuteCircuitResponse>, Status> {
+            driver_attempt_counter().fetch_add(1, Ordering::SeqCst);
             let traceparent = request
                 .metadata()
                 .get("traceparent")
@@ -969,6 +1152,28 @@ mod tests {
             });
             if request.get_ref().device_id == "bad-device" {
                 return Err(Status::unavailable("backend down"));
+            }
+            if let Some(failures) = request
+                .get_ref()
+                .options
+                .get("retry.failures_before_success")
+            {
+                let fail_n = failures.parse::<usize>().unwrap_or(0);
+                let current = driver_attempt_counter().load(Ordering::SeqCst);
+                if current <= fail_n {
+                    let code = match request
+                        .get_ref()
+                        .options
+                        .get("retry.error_code")
+                        .map(|s| s.as_str())
+                    {
+                        Some("deadline_exceeded") => Code::DeadlineExceeded,
+                        Some("resource_exhausted") => Code::ResourceExhausted,
+                        Some("invalid_argument") => Code::InvalidArgument,
+                        _ => Code::Unavailable,
+                    };
+                    return Err(Status::new(code, "simulated transient"));
+                }
             }
             if let Some(params) = request.get_ref().options.get("vqe.params") {
                 let score = params
@@ -1003,6 +1208,7 @@ mod tests {
 
     #[tokio::test]
     async fn integration_submit_to_done_and_results_written() {
+        driver_attempt_counter().store(0, Ordering::SeqCst);
         let temp_qfs = TempDir::new().unwrap();
         let compiler_addr: SocketAddr = "127.0.0.1:50171".parse().unwrap();
         let driver_addr: SocketAddr = "127.0.0.1:50172".parse().unwrap();
@@ -1092,6 +1298,7 @@ mod tests {
 
     #[tokio::test]
     async fn compile_error_maps_to_error_state() {
+        driver_attempt_counter().store(0, Ordering::SeqCst);
         let temp_qfs = TempDir::new().unwrap();
         let compiler_addr: SocketAddr = "127.0.0.1:50173".parse().unwrap();
         let driver_addr: SocketAddr = "127.0.0.1:50174".parse().unwrap();
@@ -1160,6 +1367,7 @@ mod tests {
 
     #[tokio::test]
     async fn integration_vqe_loop_persists_metrics_and_results_metadata() {
+        driver_attempt_counter().store(0, Ordering::SeqCst);
         let temp_qfs = TempDir::new().unwrap();
         let compiler_addr: SocketAddr = "127.0.0.1:50175".parse().unwrap();
         let driver_addr: SocketAddr = "127.0.0.1:50176".parse().unwrap();
@@ -1284,6 +1492,7 @@ def vqe_program():
 
     #[tokio::test]
     async fn integration_propagates_trace_id_and_traceparent_to_compiler_and_driver() {
+        driver_attempt_counter().store(0, Ordering::SeqCst);
         compiler_trace_store().lock().unwrap().clear();
         driver_trace_store().lock().unwrap().clear();
         let temp_qfs = TempDir::new().unwrap();
@@ -1355,5 +1564,102 @@ def vqe_program():
             entry.traceparent.as_deref() == Some(traceparent)
                 && entry.trace_id.as_deref() == Some(trace_id)
         }));
+    }
+
+     #[test]
+    fn retryable_error_matrix_is_classified_correctly() {
+        assert!(is_retryable_code(Code::Unavailable));
+        assert!(is_retryable_code(Code::DeadlineExceeded));
+        assert!(is_retryable_code(Code::ResourceExhausted));
+        assert!(is_retryable_code(Code::Aborted));
+        assert!(!is_retryable_code(Code::InvalidArgument));
+        assert!(!is_retryable_code(Code::PermissionDenied));
+        assert!(!is_retryable_code(Code::Unimplemented));
+    }
+
+    #[tokio::test]
+    async fn integration_retries_transient_failures_and_exposes_retry_metrics() {
+        driver_attempt_counter().store(0, Ordering::SeqCst);
+        let temp_qfs = TempDir::new().unwrap();
+        let compiler_addr: SocketAddr = "127.0.0.1:50179".parse().unwrap();
+        let driver_addr: SocketAddr = "127.0.0.1:50180".parse().unwrap();
+
+        tokio::spawn(async move {
+            tonic::transport::Server::builder()
+                .add_service(CompilationServiceServer::new(MockCompiler))
+                .serve(compiler_addr)
+                .await
+                .unwrap();
+        });
+        tokio::spawn(async move {
+            tonic::transport::Server::builder()
+                .add_service(DriverManagerServiceServer::new(MockDriver))
+                .serve(driver_addr)
+                .await
+                .unwrap();
+        });
+        sleep(Duration::from_millis(80)).await;
+
+        let svc = KernelGatewaySvc {
+            store: JobStore::default(),
+            deps: PipelineDeps {
+                compiler_endpoint: "http://127.0.0.1:50179".to_string(),
+                driver_endpoint: "http://127.0.0.1:50180".to_string(),
+                default_device_id: "sim:local".to_string(),
+                qfs: CircuitFsLocal::new(temp_qfs.path()),
+            },
+        };
+
+        let mut metadata = HashMap::new();
+        metadata.insert("retry.failures_before_success".to_string(), "2".to_string());
+        metadata.insert("retry.error_code".to_string(), "unavailable".to_string());
+        metadata.insert("retry.max_attempts".to_string(), "4".to_string());
+        metadata.insert("retry.max_elapsed_ms".to_string(), "2500".to_string());
+        metadata.insert("retry.base_delay_ms".to_string(), "5".to_string());
+        metadata.insert("retry.jitter_ms".to_string(), "0".to_string());
+
+        let job_id = svc
+            .enqueue_job(Request::new(EnqueueJobRequest {
+                name: "retry-job".to_string(),
+                program: b"x".to_vec(),
+                program_format: "eigen-lang".to_string(),
+                target: "sim:local".to_string(),
+                priority: 1,
+                compiler_options: HashMap::new(),
+                metadata,
+            }))
+            .await
+            .unwrap()
+            .into_inner()
+            .job_id;
+        for _ in 0..50 {
+            let status = svc
+                .get_job_status(Request::new(GetJobStatusRequest {
+                    job_id: job_id.clone(),
+                }))
+                .await
+                .unwrap()
+                .into_inner();
+            if status.state == TaskState::Done as i32 {
+                break;
+            }
+            sleep(Duration::from_millis(20)).await;
+        }
+
+        let bundle = CircuitFsLocal::new(temp_qfs.path())
+            .load_results_bundle(&job_id)
+            .unwrap();
+        let payload: serde_json::Value = serde_json::from_slice(&bundle.parquet).unwrap();
+        let runtime_metrics = payload["metadata"]["runtime_metrics"].as_array().unwrap();
+        assert!(
+            runtime_metrics
+                .iter()
+                .any(|m| { m["name"] == "retry_attempts_total" && m["value"] == 3 })
+        );
+        assert!(
+            runtime_metrics
+                .iter()
+                .any(|m| { m["name"] == "retry_success_after_retry_total" && m["value"] == 1 })
+        );
     }
 }
