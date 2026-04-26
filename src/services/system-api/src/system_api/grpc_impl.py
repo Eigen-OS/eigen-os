@@ -88,6 +88,7 @@ class _JobRecord:
     finalized: bool
     temp_refs: list[str]
     trace_id: str | None
+    max_iters: int
 
 
 @dataclass
@@ -197,16 +198,16 @@ class JobService:
                 stage="COMPLETED",
                 progress=1.0,
                 message="completed",
-                event_seq=4,
+                event_seq=5,
             ),
         ]
     
-    def _mk_error_updates(self, *, job_id: str, summary: str) -> list:
+    def _mk_error_updates(self, *, job_id: str, summary: str, trace_id: str | None) -> list:
         return [
             self._mk_update(
                 job_id=job_id,
                 state=self._types_pb.JOB_STATE_PENDING,
-                stage="PENDING",
+                stage="QUEUED",
                 progress=0.0,
                 message=self._msg_with_trace("queued", trace_id),
                 event_seq=1,
@@ -233,7 +234,7 @@ class JobService:
                 stage="RUNNING",
                 progress=0.6,
                 message="dispatching_to_backend",
-                event_seq=3,
+                event_seq=4,
             ),
             self._mk_update(
                 job_id=job_id,
@@ -241,7 +242,7 @@ class JobService:
                 stage="ERROR",
                 progress=1.0,
                 message=summary,
-                event_seq=4,
+                event_seq=5,
             ),
         ]
 
@@ -250,7 +251,7 @@ class JobService:
             self._mk_update(
                 job_id=job_id,
                 state=self._types_pb.JOB_STATE_PENDING,
-                stage="PENDING",
+                stage="QUEUED",
                 progress=0.0,
                 message="pending",
                 event_seq=1,
@@ -258,16 +259,24 @@ class JobService:
             self._mk_update(
                 job_id=job_id,
                 state=self._types_pb.JOB_STATE_COMPILING,
-                stage="COMPILING",
+                stage="COMPILED",
                 progress=0.2,
                 message="compiling",
                 event_seq=2,
+            ),
+            self._mk_update(
+                job_id=job_id,
+                state=self._types_pb.JOB_STATE_RUNNING,
+                stage="DISPATCHED",
+                progress=0.35,
+                message=self._msg_with_trace("dispatched", trace_id),
+                event_seq=3,
             ),
         ]
 
         simulated_iters = max(2, min(max_iters, 3))
         for idx in range(1, simulated_iters + 1):
-            progress = min(0.25 + (0.55 * idx / simulated_iters), 0.9)
+            progress = min(0.4 + (0.45 * idx / simulated_iters), 0.9)
             updates.append(
                 self._mk_update(
                     job_id=job_id,
@@ -286,7 +295,7 @@ class JobService:
                 stage="COMPLETED",
                 progress=1.0,
                 message=self._msg_with_trace("completed", trace_id),
-                event_seq=5,
+                event_seq=len(updates) + 1,
             )
         )
         return updates
@@ -379,6 +388,23 @@ class JobService:
         if record.updates[-1].state in {getattr(self._types_pb, name) for name in TERMINAL_JOB_STATES}:
             self._finalize_terminal_state(record)
             return
+        if len(record.updates) == 1 and record.run_duration_sec <= 0:
+            if record.max_iters > 0:
+                record.updates = self._mk_vqe_updates(
+                    job_id=record.job_id,
+                    trace_id=record.trace_id,
+                    max_iters=record.max_iters,
+                )
+            elif record.should_fail:
+                record.updates = self._mk_error_updates(
+                    job_id=record.job_id,
+                    summary=record.error_summary,
+                    trace_id=record.trace_id,
+                )
+            else:
+                record.updates = self._mk_default_updates(record.job_id, record.trace_id)
+            self._finalize_terminal_state(record)
+            return
 
         now_dt = datetime.now(timezone.utc)
         elapsed = max((now_dt - record.created_at_dt).total_seconds(), 0.0)
@@ -442,7 +468,7 @@ class JobService:
                     state=self._types_pb.JOB_STATE_DONE,
                     stage="COMPLETED",
                     progress=1.0,
-                    message=self._msg_with_trace("completed", trace_id),
+                    message="completed",
                 )
 
         if record.updates[-1].state in {getattr(self._types_pb, name) for name in TERMINAL_JOB_STATES}:
@@ -523,14 +549,6 @@ class JobService:
                 event_seq=1,
             )
         ]
-        if run_duration_sec <= 0 and max_iters <= 0:
-            updates = self._mk_default_updates(job_id, trace_id)
-        if max_iters > 0:
-            updates = self._mk_vqe_updates(
-                job_id=job_id,
-                trace_id=trace_id,
-                max_iters=max_iters,
-            )
 
         record = _JobRecord(
             job_id=job_id,
@@ -552,6 +570,7 @@ class JobService:
             finalized=False,
             temp_refs=[],
             trace_id=trace_id,
+            max_iters=max_iters,
         )
         self._provision_temporary_artifacts(record)
         self._store_timeline(record)
