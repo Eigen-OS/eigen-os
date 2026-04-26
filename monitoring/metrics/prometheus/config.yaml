@@ -1,0 +1,12 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - stage-slo-alerts.yaml
+
+scrape_configs:
+  - job_name: eigen-kernel-stage-metrics
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["127.0.0.1:9091"]

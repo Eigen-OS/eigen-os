@@ -1,0 +1,78 @@
+{
+  "title": "Eigen Runtime — Stage Latency & SLO",
+  "uid": "eigen-stage-slo",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "stage",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "query": "label_values(eigen_stage_latency_seconds, stage)",
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": ["$__all"] }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Stage Latency P50/P95/P99",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "eigen_stage_latency_seconds{quantile=\"0.50\",stage=~\"$stage\"}", "legendFormat": "{{stage}} p50" },
+        { "expr": "eigen_stage_latency_seconds{quantile=\"0.95\",stage=~\"$stage\"}", "legendFormat": "{{stage}} p95" },
+        { "expr": "eigen_stage_latency_seconds{quantile=\"0.99\",stage=~\"$stage\"}", "legendFormat": "{{stage}} p99" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "s", "thresholds": { "mode": "absolute", "steps": [ { "color": "green" }, { "color": "orange", "value": 2 }, { "color": "red", "value": 8 } ] } },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Stage Error Rate",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 10 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "eigen_stage_error_rate{stage=~\"$stage\"}", "legendFormat": "{{stage}}" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "percentunit", "min": 0, "max": 0.05 },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Stage Error Count",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 10 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "increase(eigen_stage_errors_total{stage=~\"$stage\"}[5m])", "legendFormat": "{{stage}} / 5m" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] }
+    },
+    {
+      "type": "stat",
+      "title": "Active SLO Violations",
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 18 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "eigen_stage_slo_violations_total", "legendFormat": "violations" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green" }, { "color": "red", "value": 1 } ] }
+        },
+        "overrides": []
+      }
+    }
+  ]
+}
