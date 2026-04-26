@@ -7,6 +7,7 @@ from typing import Iterator
 import pytest
 
 from system_api.grpc_server import serve
+from system_api.qfs_store import QFS_STORE
 
 
 def _free_port() -> int:
@@ -28,3 +29,10 @@ def grpc_addr() -> Iterator[str]:
     yield addr
 
     server.stop(grace=None)
+
+
+@pytest.fixture(autouse=True)
+def _clean_qfs_store() -> Iterator[None]:
+    QFS_STORE.clear()
+    yield
+    QFS_STORE.clear()
