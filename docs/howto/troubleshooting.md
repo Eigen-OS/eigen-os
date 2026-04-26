@@ -141,6 +141,38 @@ Only after the status becomes `DONE` run `results` again.
 2. Verify that `program.eigen.py` contains exactly one `@hybrid_program`.
 3. Restart the `submit -> watch -> results` flow with a new`job_id`.
 
+---
+
+### 6) Diagnose lifecycle delays with per-job timeline (Observability v2)
+
+Each job now exposes a full event timeline with timestamps:
+
+- `QUEUED`
+- `COMPILED`
+- `DISPATCHED`
+- `RUNNING`
+- `COMPLETED` (or terminal error/cancel/timeout)
+
+Use `watch` to inspect the ordered event stream:
+
+```bash
+cargo run -p cli --manifest-path src/rust/Cargo.toml -- watch <job_id>
+```
+
+Troubleshooting patterns:
+
+1. **Stuck before `COMPILED`**  
+   Likely compiler queue/saturation or validation retries.
+2. **Long gap between `DISPATCHED` and `RUNNING`**  
+   Backend/device scheduling delay.
+3. **Terminal error after `RUNNING`**  
+   Backend runtime failure; inspect `error_code` + `error_summary`.
+
+Correlate logs/metrics/traces with the same `trace_id`:
+
+- timeline events include `trace_id` in event messages,
+- results metadata contains `trace_id`, `trace_ref`, and `qfs_job_timeline`.
+
 ## Verification
 
 Minimal E2E smoke test (copy/paste):

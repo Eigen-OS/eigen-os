@@ -32,7 +32,8 @@ def test_stream_job_updates_seq_and_resume(grpc_addr: str):
 
     seqs = [u.event_seq for u in updates]
     assert seqs == sorted(seqs)
-    assert seqs == [1, 2, 3, 4]
+    assert seqs == [1, 2, 3, 4, 5]
+    assert [u.stage for u in updates] == ["QUEUED", "COMPILED", "DISPATCHED", "RUNNING", "COMPLETED"]
     assert updates[-1].state == types_pb.JOB_STATE_DONE
 
     resumed_stream = list(
@@ -43,5 +44,5 @@ def test_stream_job_updates_seq_and_resume(grpc_addr: str):
     resumed_updates = [item.update for item in resumed_stream]
 
     resumed_seqs = [u.event_seq for u in resumed_updates]
-    assert resumed_seqs == [2, 3, 4]
+    assert resumed_seqs == [2, 3, 4, 5]
     assert resumed_updates[-1].state == types_pb.JOB_STATE_DONE
