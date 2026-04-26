@@ -49,7 +49,7 @@ Without a standardized artifact layout:
 
 - All paths are case‑sensitive
 
-### MVP Artifact Layout
+### MVP Artifact Layout (with durable result versioning)
 ```text
 /circuit_fs/{job_id}/
 ├── input/
@@ -63,10 +63,10 @@ Without a standardized artifact layout:
 │   ├── circuit.qasm               # Optional: QASM3 representation
 │   └── metadata.json              # Compiled artifact hashes + compiler version
 ├── results/
-│   ├── counts.json                # Normalized measurement counts
-│   ├── metadata.json              # Execution metadata
-│   ├── raw_backend_response.json  # Optional: raw backend output
+│   ├── result.json                # Versioned result envelope (artifact_version + producer_version)
+│   ├── manifest.json              # Durable artifact manifest (hashes + producer versioning)
 │   └── error.json                 # Optional: structured job error details (MVP helper)
+├── results.parquet                # Canonical result payload consumed by APIs
 ├── logs/
 │   ├── kernel.log                 # Kernel pipeline logs
 │   ├── compiler.log               # Compilation logs
@@ -148,7 +148,38 @@ Compilation artifact metadata generated at compile stage:
 }
 ```
 
-### 7. `results/counts.json`
+### 7. `results/result.json`
+
+Versioned result envelope:
+```json
+{
+  "artifact_version": "1.0.0",
+  "producer_version": "0.1.0",
+  "job_id": "550e8400-e29b-41d4-a716-446655440000",
+  "result_ref": "results.parquet",
+  "manifest_ref": "results/manifest.json"
+}
+```
+
+### 8. `results/manifest.json`
+
+Durable manifest with checksums and producer versioning:
+```json
+{
+  "artifact_version": "1.0.0",
+  "producer_version": "0.1.0",
+  "schema_version": "result_manifest.v1",
+  "artifacts": [
+    {
+      "path": "results.parquet",
+      "content_hash": "ab12cd34...",
+      "size_bytes": 1024
+    }
+  ]
+}
+```
+
+### 9. `results.parquet`
 
 Normalized measurement counts in standard format:
 ```json
@@ -168,30 +199,6 @@ Normalized measurement counts in standard format:
 ```
 
 **Bitstring ordering**: Most‑significant qubit first (q[0] is leftmost bit).
-
-### 8. `results/metadata.json`
-
-Execution metadata:
-```json
-{
-  "version": "0.1",
-  "job_id": "550e8400-e29b-41d4-a716-446655440000",
-  "device_id": "sim:local",
-  "execution_time_sec": 12.345,
-  "shots": 1024,
-  "backend_info": {
-    "name": "eigen_simulator",
-    "version": "0.1.0"
-  },
-  "timestamps": {
-    "submitted": "2026-01-10T10:00:00Z",
-    "started": "2026-01-10T10:01:00Z",
-    "completed": "2026-01-10T10:13:45Z"
-  }
-}
-```
-
-### 9. meta.json
 
 Job manifest and integrity information:
 ```json
@@ -230,13 +237,21 @@ Job manifest and integrity information:
 Validation   → Reads: input/job.yaml, input/program.eigen.py
 Compilation  → Writes: compiled/circuit.aqo.json, compiled/circuit.qasm, compiled/metadata.json
 Execution    → Reads: compiled/circuit.aqo.json
-              Writes: results/counts.json, results/metadata.json
+              Writes: results.parquet, results/result.json, results/manifest.json
 Completion   → Writes: meta.json, logs/*.log
 ```
 
 ### 2. System‑API Serving
 
-- `GetJobResults` → Returns `results/counts.json` + `results/metadata.json`
+- `GetJobResults` → Returns counts/metadata from `results.parquet` and exposes
+  metadata refs to `results/result.json` and `results/manifest.json`
+
+## Compatibility & Migration
+
+- Legacy jobs with only `results.parquet` remain readable.
+- Reader fallback synthesizes envelope/manifest defaults for legacy artifacts.
+- For breaking envelope changes, bump `artifact_version` MAJOR and provide migration notes.
+- Current policy guarantees read compatibility for at least two previous MINOR versions.
 
 - Future debugging endpoints → Serve any artifact by path
 

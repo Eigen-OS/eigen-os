@@ -23,6 +23,10 @@ pub struct SourceBundle {
 pub struct ResultsBundle {
     /// Apache Parquet payload stored at `/jobs/{job_id}/results.parquet`.
     pub parquet: Vec<u8>,
+    /// Versioned envelope describing the durable result artifact contract.
+    pub envelope: ResultEnvelope,
+    /// Integrity manifest for the durable result artifacts.
+    pub manifest: ResultManifest,
 }
 
 /// Represents compilation outputs stored under `compiled/`.
@@ -50,6 +54,33 @@ pub struct CompiledMetadata {
     pub compiler_version: String,
     pub aqo_hash: String,
     pub qasm_hash: Option<String>,
+}
+
+/// Versioned result envelope persisted under `results/result.json`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResultEnvelope {
+    pub artifact_version: String,
+    pub producer_version: String,
+    pub job_id: String,
+    pub result_ref: String,
+    pub manifest_ref: String,
+}
+
+/// Durable artifact manifest for runtime outputs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResultManifest {
+    pub artifact_version: String,
+    pub producer_version: String,
+    pub schema_version: String,
+    pub artifacts: Vec<ResultArtifactDescriptor>,
+}
+
+/// Single artifact record within `results/manifest.json`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResultArtifactDescriptor {
+    pub path: String,
+    pub content_hash: String,
+    pub size_bytes: u64,
 }
 
 /// Error details artifact (for async job failures).
@@ -182,6 +213,16 @@ impl CircuitFsLocal {
         Ok(self.results_dir(job_id)?.join("error.json"))
     }
 
+    /// `/circuit_fs/{job_id}/results/result.json`
+    pub fn result_envelope_path(&self, job_id: &str) -> Result<PathBuf, CircuitFsError> {
+        Ok(self.results_dir(job_id)?.join("result.json"))
+    }
+
+    /// `/circuit_fs/{job_id}/results/manifest.json`
+    pub fn result_manifest_path(&self, job_id: &str) -> Result<PathBuf, CircuitFsError> {
+        Ok(self.results_dir(job_id)?.join("manifest.json"))
+    }
+
     // ----------------------------
     // Directory initialization
     // ----------------------------
@@ -303,11 +344,45 @@ impl CircuitFsLocal {
         &self,
         job_id: &str,
         parquet_payload: &[u8],
+        producer_version: &str,
     ) -> Result<(), CircuitFsError> {
         self.ensure_job_layout(job_id)?;
 
         // The results artifact is hot-read by APIs, so we always use atomic writes.
         atomic_write_bytes(&self.results_parquet_path(job_id)?, parquet_payload)?;
+        let results_path = self.results_parquet_path(job_id)?;
+        atomic_write_bytes(&results_path, parquet_payload)?;
+
+        let result_rel_path = "results.parquet".to_string();
+        let manifest_rel_path = "results/manifest.json".to_string();
+        let envelope = ResultEnvelope {
+            artifact_version: "1.0.0".to_string(),
+            producer_version: producer_version.to_string(),
+            job_id: job_id.to_string(),
+            result_ref: result_rel_path.clone(),
+            manifest_ref: manifest_rel_path.clone(),
+        };
+        let envelope_bytes = serde_json::to_vec_pretty(&envelope).map_err(to_io_error)?;
+        let manifest = ResultManifest {
+            artifact_version: envelope.artifact_version.clone(),
+            producer_version: producer_version.to_string(),
+            schema_version: "result_manifest.v1".to_string(),
+            artifacts: vec![
+                ResultArtifactDescriptor {
+                    path: result_rel_path,
+                    content_hash: content_hash_hex(parquet_payload),
+                    size_bytes: parquet_payload.len() as u64,
+                },
+                ResultArtifactDescriptor {
+                    path: "results/result.json".to_string(),
+                    content_hash: content_hash_hex(&envelope_bytes),
+                    size_bytes: envelope_bytes.len() as u64,
+                },
+            ],
+        };
+        let manifest_bytes = serde_json::to_vec_pretty(&manifest).map_err(to_io_error)?;
+        atomic_write_bytes(&self.result_manifest_path(job_id)?, &manifest_bytes)?;
+        atomic_write_bytes(&self.result_envelope_path(job_id)?, &envelope_bytes)?;
 
         Ok(())
     }
@@ -315,8 +390,35 @@ impl CircuitFsLocal {
     /// Loads `results.parquet`.
     pub fn load_results_bundle(&self, job_id: &str) -> Result<ResultsBundle, CircuitFsError> {
         let parquet = read_bytes_not_found(&self.results_parquet_path(job_id)?)?;
+        let envelope = match read_optional_bytes(&self.result_envelope_path(job_id)?)? {
+            Some(bytes) => serde_json::from_slice(&bytes).map_err(to_io_error)?,
+            None => ResultEnvelope {
+                artifact_version: "0.1.0".to_string(),
+                producer_version: "unknown".to_string(),
+                job_id: job_id.to_string(),
+                result_ref: "results.parquet".to_string(),
+                manifest_ref: "".to_string(),
+            },
+        };
+        let manifest = match read_optional_bytes(&self.result_manifest_path(job_id)?)? {
+            Some(bytes) => serde_json::from_slice(&bytes).map_err(to_io_error)?,
+            None => ResultManifest {
+                artifact_version: envelope.artifact_version.clone(),
+                producer_version: envelope.producer_version.clone(),
+                schema_version: "result_manifest.v0".to_string(),
+                artifacts: vec![ResultArtifactDescriptor {
+                    path: "results.parquet".to_string(),
+                    content_hash: content_hash_hex(&parquet),
+                    size_bytes: parquet.len() as u64,
+                }],
+            },
+        };
 
-        Ok(ResultsBundle { parquet })
+        Ok(ResultsBundle {
+            parquet,
+            envelope,
+            manifest,
+        })
     }
 
     /// Stores structured error details in `results/error.json`.
@@ -504,7 +606,8 @@ mod tests {
         let p = fs.results_parquet_path(job_id).unwrap();
 
         fs::write(&p, b"old").unwrap();
-        fs.store_results_bundle(job_id, b"new").unwrap();
+        fs.store_results_bundle(job_id, b"new", "eigen-kernel@0.1.0")
+            .unwrap();
 
         assert_eq!(fs::read(&p).unwrap(), b"new");
     }
@@ -518,7 +621,8 @@ mod tests {
             .unwrap();
         fs.store_compiled_aqo_json(job_id, br#"{"version":"0.1"}"#)
             .unwrap();
-        fs.store_results_bundle(job_id, b"PAR1....").unwrap();
+        fs.store_results_bundle(job_id, b"PAR1....", "eigen-kernel@0.1.0")
+            .unwrap();
         fs.store_error_details_json(job_id, br#"{"error":"boom"}"#)
             .unwrap();
 
@@ -531,6 +635,10 @@ mod tests {
 
         let res = fs.load_results_bundle(job_id).unwrap();
         assert_eq!(res.parquet, b"PAR1....");
+        assert_eq!(res.envelope.artifact_version, "1.0.0");
+        assert_eq!(res.envelope.producer_version, "eigen-kernel@0.1.0");
+        assert_eq!(res.manifest.schema_version, "result_manifest.v1");
+        assert_eq!(res.manifest.artifacts.len(), 2);
 
         let err = fs.load_error_details_json(job_id).unwrap();
         assert_eq!(err, br#"{"error":"boom"}"#);
@@ -585,5 +693,21 @@ mod tests {
             CircuitFsError::InvalidJobId { .. } => {}
             other => panic!("unexpected error: {other:?}"),
         }
+    }
+
+    #[test]
+    fn load_results_bundle_supports_legacy_without_envelope_or_manifest() {
+        let (_dir, fs) = tmp_fs();
+        let job_id = "job-legacy-results";
+
+        fs.ensure_job_layout(job_id).unwrap();
+        fs::write(fs.results_parquet_path(job_id).unwrap(), b"legacy").unwrap();
+
+        let bundle = fs.load_results_bundle(job_id).unwrap();
+        assert_eq!(bundle.parquet, b"legacy");
+        assert_eq!(bundle.envelope.artifact_version, "0.1.0");
+        assert_eq!(bundle.envelope.producer_version, "unknown");
+        assert_eq!(bundle.manifest.schema_version, "result_manifest.v0");
+        assert_eq!(bundle.manifest.artifacts.len(), 1);
     }
 }
