@@ -11,6 +11,7 @@ mod local_circuit_fs;
 
 pub use local_circuit_fs::{
     CircuitFsError, CircuitFsLocal, CompiledArtifacts, CompiledMetadata, ErrorDetails,
-    ResultsBundle, SourceBundle, SourceMetadata, DEFAULT_CIRCUIT_FS_ROOT,
+    ResultArtifactDescriptor, ResultEnvelope, ResultManifest, ResultsBundle, SourceBundle,
+    SourceMetadata, DEFAULT_CIRCUIT_FS_ROOT,
 };
 

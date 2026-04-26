@@ -354,7 +354,7 @@ async fn run_pipeline(
     };
     let job_execution_duration_sec = execute_started.elapsed().as_secs_f64();
 
-    persist_results(
+    let persisted_metadata = persist_results(
         &deps,
         job_id,
         &device_id,
@@ -366,6 +366,7 @@ async fn run_pipeline(
     .map_err(|e| {
         PipelineError::persist(format!("failed to persist final execution results: {e}"))
     })?;
+    results_metadata.extend(persisted_metadata);
 
     store.set_results_metadata(job_id, results_metadata);
     store.set_counts(job_id, execute_res.counts.clone());
@@ -719,7 +720,7 @@ fn persist_results(
     compilation_latency_sec: f64,
     job_execution_duration_sec: f64,
     retry_metrics: &RetryMetrics,
-) -> Result<(), String> {
+) -> Result<HashMap<String, String>, String> {
     let counts_json = serde_json::to_vec(&json!({
         "version": "0.1",
         "format": "bitstring_counts",
@@ -791,9 +792,23 @@ fn persist_results(
     }))
     .map_err(|e| e.to_string())?;
 
+    let producer_version = env!("CARGO_PKG_VERSION");
     deps.qfs
-        .store_results_bundle(job_id, &parquet_like_payload)
-        .map_err(|e| e.to_string())
+        .store_results_bundle(job_id, &parquet_like_payload, producer_version)
+        .map_err(|e| e.to_string())?;
+
+    Ok(HashMap::from([
+        ("artifact_version".to_string(), "1.0.0".to_string()),
+        ("producer_version".to_string(), producer_version.to_string()),
+        (
+            "result_envelope_ref".to_string(),
+            format!("jobs/{job_id}/results/result.json"),
+        ),
+        (
+            "result_manifest_ref".to_string(),
+            format!("jobs/{job_id}/results/manifest.json"),
+        ),
+    ]))
 }
 
 fn parse_shots(metadata: &HashMap<String, String>) -> i32 {
@@ -1459,6 +1474,19 @@ def vqe_program():
         );
         assert!(results.metadata.contains_key("vqe.final_params"));
         assert!(results.metadata.contains_key("vqe.best_objective"));
+        assert_eq!(
+            results.metadata.get("artifact_version"),
+            Some(&"1.0.0".to_string())
+        );
+        assert!(results.metadata.contains_key("producer_version"));
+        assert_eq!(
+            results.metadata.get("result_envelope_ref"),
+            Some(&format!("jobs/{job_id}/results/result.json"))
+        );
+        assert_eq!(
+            results.metadata.get("result_manifest_ref"),
+            Some(&format!("jobs/{job_id}/results/manifest.json"))
+        );
         assert!(results.counts.contains_key("00"));
 
         let metrics_path = CircuitFsLocal::new(temp_qfs.path())
@@ -1473,6 +1501,10 @@ def vqe_program():
             .load_results_bundle(&job_id)
             .unwrap();
         let parquet_payload: serde_json::Value = serde_json::from_slice(&bundle.parquet).unwrap();
+        assert_eq!(bundle.envelope.artifact_version, "1.0.0");
+        assert_eq!(bundle.envelope.job_id, job_id);
+        assert_eq!(bundle.manifest.schema_version, "result_manifest.v1");
+        assert_eq!(bundle.manifest.artifacts.len(), 2);
         let runtime_metrics = parquet_payload["metadata"]["runtime_metrics"]
             .as_array()
             .unwrap();
@@ -1556,7 +1588,7 @@ def vqe_program():
             sleep(Duration::from_millis(30)).await;
         }
 
-         assert!(compiler_trace_store().lock().unwrap().iter().any(|entry| {
+        assert!(compiler_trace_store().lock().unwrap().iter().any(|entry| {
             entry.traceparent.as_deref() == Some(traceparent)
                 && entry.trace_id.as_deref() == Some(trace_id)
         }));
@@ -1566,7 +1598,7 @@ def vqe_program():
         }));
     }
 
-     #[test]
+    #[test]
     fn retryable_error_matrix_is_classified_correctly() {
         assert!(is_retryable_code(Code::Unavailable));
         assert!(is_retryable_code(Code::DeadlineExceeded));
