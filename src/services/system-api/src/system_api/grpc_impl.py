@@ -434,7 +434,7 @@ class JobService:
                 max_iters = 0
         if max_iters > 0:
             simulated_history_len = max(2, max_iters)
-            objective_history = [round(-1.0 + (0.08 * idx), 6) for idx in range(simulated_history_len)]
+            objective_history = [round(-1.0 - (0.08 * idx), 6) for idx in range(simulated_history_len)]
             results_metadata["objective_history"] = json.dumps(objective_history)
 
         counts = {} if should_fail else {"00": 512, "11": 512}
