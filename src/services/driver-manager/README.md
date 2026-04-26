@@ -5,13 +5,34 @@ Internal gRPC service implementing `eigen.internal.v1.DriverManagerService`.
 Implemented in this milestone:
 
 - Service bootstrap and gRPC server.
-- `ListDevices` / `GetDeviceStatus` behavior backed by the built-in `SimulatorDriver`.
-- `BaseDriver` (`QDriver`) interface.
+- `ListDevices` / `GetDeviceStatus` behavior backed by registered drivers.
+- `BaseDriver` (`QDriver`) interface with capability handshake and healthcheck.
 - In-memory `DriverRegistry` with device-to-driver lookup.
+- Qiskit Runtime driver skeleton with auth resolution (`token`, `token_env`, `token_secret_ref`).
+- HTTP endpoints: `/metrics` and `/healthz`.
 
 ## Run
 
 ```bash
+python -m driver_manager.main
+```
+
+## Local runbook: enable Qiskit Runtime skeleton
+
+```bash
+export DRIVER_MANAGER_QISKIT_RUNTIME_ENABLED=true
+export DRIVER_MANAGER_QISKIT_RUNTIME_TOKEN_ENV=IBM_RUNTIME_TOKEN
+export IBM_RUNTIME_TOKEN='<your-token>'
+python -m driver_manager.main
+curl -s localhost:9092/healthz
+```
+
+Secret-ref mode (useful for local secret sync):
+
+```bash
+export DRIVER_MANAGER_QISKIT_RUNTIME_ENABLED=true
+export DRIVER_MANAGER_QISKIT_RUNTIME_TOKEN_SECRET_REF='ibm/runtime/token'
+export DRIVER_MANAGER_SECRETS_JSON='{"ibm/runtime/token":"<your-token>"}'
 python -m driver_manager.main
 ```
 
