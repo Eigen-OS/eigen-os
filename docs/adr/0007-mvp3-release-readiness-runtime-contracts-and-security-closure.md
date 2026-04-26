@@ -39,10 +39,8 @@ To ship MVP-3, we must formally accept the runtime RFC package, synchronize oper
   - `rfcs/0017-mvp3-results-retrieval-and-cli-runtime-ux.md`
   - `rfcs/0018-mvp3-runtime-observability-and-release-gates.md`
 - Tracking closure:
-  - `docs/development/mvp-3-tracking-issue.md`
   - `docs/development/mvp-3-execution-and-results.md`
 - Security audit:
-  - `docs/development/mvp-3-kernel-driver-security-audit-2026-04-25.md`
 
 ## Rollout / governance
 

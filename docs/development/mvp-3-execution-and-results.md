@@ -113,10 +113,8 @@ Deliver minimum runtime quality controls:
 ## Related documents
 
 - MVP roadmap: [`../roadmap.md`](../roadmap.md)
-- MVP-3 tracking issue: [`mvp-3-tracking-issue.md`](mvp-3-tracking-issue.md)
+- Post-MVP roadmap: [`post-mvp-open-source-roadmap.md`](post-mvp-open-source-roadmap.md)
 - MVP-3 RFC package: [`../../rfcs/0016-mvp3-kernel-driver-execution-contract.md`](../../rfcs/0016-mvp3-kernel-driver-execution-contract.md), [`../../rfcs/0017-mvp3-results-retrieval-and-cli-runtime-ux.md`](../../rfcs/0017-mvp3-results-retrieval-and-cli-runtime-ux.md), [`../../rfcs/0018-mvp3-runtime-observability-and-release-gates.md`](../../rfcs/0018-mvp3-runtime-observability-and-release-gates.md)
 - MVP scope: [`../requirements/mvp-scope.md`](../requirements/mvp-scope.md)
-- MVP DoD: [`mvp-definition-of-done.md`](mvp-definition-of-done.md)
-- Contract freeze checklist: [`mvp-contract-freeze-checklist.md`](mvp-contract-freeze-checklist.md)
 - Public gRPC reference: [`../reference/api/grpc-public.md`](../reference/api/grpc-public.md)
 - Internal gRPC reference: [`../reference/api/grpc-internal.md`](../reference/api/grpc-internal.md)

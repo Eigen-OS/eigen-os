@@ -30,7 +30,6 @@ MVP-2 scope is completed across parser contracts, AST-safe compilation, determin
 
 ## Related
 
-- MVP-2 tracking: `docs/development/mvp-2-tracking-issue.md`
 - MVP-2 plan: `docs/development/mvp-2-compilation-pipeline.md`
 - ADR 0003: `docs/adr/0003-mvp2-jobspec-parser-contract.md`
 - ADR 0004: `docs/adr/0004-mvp2-eigen-lang-ast-safety.md`
