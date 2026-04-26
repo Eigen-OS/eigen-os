@@ -56,6 +56,8 @@ Why this path is strong:
 
 Goal: make Eigen-OS suitable for real-world usage and hardware-connected execution.
 
+Implementation plan: [`phase-1-production-runtime.md`](phase-1-production-runtime.md) and RFC [`../../rfcs/0019-phase1-production-runtime-plan.md`](../../rfcs/0019-phase1-production-runtime-plan.md).
+
 Key workstreams:
 
 1. **Hardware drivers**

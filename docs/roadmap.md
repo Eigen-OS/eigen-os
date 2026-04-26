@@ -8,6 +8,8 @@ This roadmap is aligned with the current MVP definition and tracks the minimum m
 - ✅ MVP-3 (Execution & Results Pipeline) completed; closure record: [`development/mvp-3-execution-and-results.md`](development/mvp-3-execution-and-results.md)
 - MVP-3 RFC package (accepted): [`../rfcs/0016-mvp3-kernel-driver-execution-contract.md`](../rfcs/0016-mvp3-kernel-driver-execution-contract.md), [`../rfcs/0017-mvp3-results-retrieval-and-cli-runtime-ux.md`](../rfcs/0017-mvp3-results-retrieval-and-cli-runtime-ux.md), [`../rfcs/0018-mvp3-runtime-observability-and-release-gates.md`](../rfcs/0018-mvp3-runtime-observability-and-release-gates.md)
 - Post-MVP open-source roadmap: [`development/post-mvp-open-source-roadmap.md`](development/post-mvp-open-source-roadmap.md)
+- Phase 1 delivery plan: [`development/phase-1-production-runtime.md`](development/phase-1-production-runtime.md)
+- Phase 1 RFC (draft): [`../rfcs/0019-phase1-production-runtime-plan.md`](../rfcs/0019-phase1-production-runtime-plan.md)
 - MVP-3 ADR package: [`adr/0007-mvp3-release-readiness-runtime-contracts-and-security-closure.md`](adr/0007-mvp3-release-readiness-runtime-contracts-and-security-closure.md)
 - MVP-2 RFC package (implemented): [`../rfcs/0013-mvp2-jobspec-parser-submit-contract.md`](../rfcs/0013-mvp2-jobspec-parser-submit-contract.md), [`../rfcs/0014-mvp2-eigen-lang-ast-safety-deterministic-aqo.md`](../rfcs/0014-mvp2-eigen-lang-ast-safety-deterministic-aqo.md), [`../rfcs/0015-mvp2-conformance-and-ci-gates.md`](../rfcs/0015-mvp2-conformance-and-ci-gates.md)
 
@@ -49,3 +51,10 @@ This roadmap is aligned with the current MVP definition and tracks the minimum m
 - Web dashboard
 - Multi-node high availability
 - Advanced optimization passes
+
+## Milestone 6 — Phase 1 production runtime (in progress)
+
+- 🚧 External provider driver integration baseline (IBM/Qiskit Runtime path).
+- 🚧 Timeout, cancellation, and retry policy hardening in runtime state machine.
+- 🚧 Object-storage-compatible artifact persistence and retrieval semantics.
+- 🚧 Observability v2 rollout with stage latency and timeline visibility.
