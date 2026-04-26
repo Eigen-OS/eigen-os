@@ -22,6 +22,23 @@ class DeviceStatusInfo:
     metadata: dict[str, str] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class DriverCapabilities:
+    """Handshake payload describing supported driver capabilities."""
+
+    driver_api_version: str
+    features: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class DriverHealth:
+    """Health payload for readiness probes."""
+
+    ready: bool
+    reason: str = ""
+    details: dict[str, str] = field(default_factory=dict)
+
+
 class BaseDriver(Protocol):
     """MVP base interface for quantum drivers/plugins."""
 
@@ -30,6 +47,12 @@ class BaseDriver(Protocol):
     def initialize(self, config: dict[str, str]) -> None:
         """Initialize driver resources."""
 
+    def capability_handshake(self) -> DriverCapabilities:
+        """Report stable capability metadata for this driver."""
+
+    def healthcheck(self) -> DriverHealth:
+        """Return current driver readiness state."""
+        
     def get_devices(self) -> list[object]:
         """Return `DeviceInfo` protobuf messages supported by this driver."""
 

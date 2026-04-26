@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from driver_manager.registry import DriverRegistry
+from driver_manager.base_driver import DriverCapabilities, DriverHealth
 
 
 @dataclass(frozen=True)
@@ -15,6 +15,15 @@ class _Device:
 class _Driver:
     def __init__(self, devices: list[str]):
         self._devices = devices
+    
+    def initialize(self, config: dict[str, str]) -> None:
+        _ = config
+
+    def capability_handshake(self) -> DriverCapabilities:
+        return DriverCapabilities(driver_api_version="1.0", features={"test": "true"})
+
+    def healthcheck(self) -> DriverHealth:
+        return DriverHealth(ready=True)
 
     def get_devices(self) -> list[_Device]:
         return [_Device(device_id=d) for d in self._devices]
@@ -47,3 +56,15 @@ def test_duplicate_device_id_rejected() -> None:
 
     with pytest.raises(ValueError, match="already owned"):
         registry.add_driver("d2", _Driver(devices=["sim:shared"]))
+
+
+def test_health_and_capabilities_snapshots() -> None:
+    registry = DriverRegistry()
+    registry.add_driver("d1", _Driver(devices=["sim:1"]))
+
+    health = registry.health_snapshot()
+    caps = registry.capability_snapshot()
+
+    assert health["d1"].ready is True
+    assert caps["d1"].driver_api_version == "1.0"
+    

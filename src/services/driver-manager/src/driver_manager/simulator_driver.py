@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 import grpc
 
-from .base_driver import DeviceStatusInfo
+from .base_driver import DeviceStatusInfo, DriverCapabilities, DriverHealth
 
 _SUPPORTED_OPS = {"RX", "RY", "RZ", "CX", "MEASURE"}
 _MAX_QUBITS = 16
@@ -42,6 +42,18 @@ class SimulatorDriver:
 
     def initialize(self, config: dict[str, str]) -> None:
         _ = config
+
+    def capability_handshake(self) -> DriverCapabilities:
+        return DriverCapabilities(
+            driver_api_version="1.0",
+            features={
+                "execution": "aqo_json",
+                "backend_type": "simulator",
+            },
+        )
+
+    def healthcheck(self) -> DriverHealth:
+        return DriverHealth(ready=True, details={"driver": self.name})
 
     def get_devices(self) -> list[object]:
         return [
