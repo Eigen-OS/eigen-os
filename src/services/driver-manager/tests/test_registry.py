@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import pytest
 
 from driver_manager.base_driver import DriverCapabilities, DriverHealth
+from driver_manager.registry import DriverRegistry
 
 
 @dataclass(frozen=True)
