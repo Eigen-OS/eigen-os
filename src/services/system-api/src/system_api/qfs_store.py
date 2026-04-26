@@ -27,5 +27,15 @@ class InMemoryQFSStore:
         with self._lock:
             self._data.clear()
 
+    def delete_bytes(self, qfs_ref: str) -> None:
+        with self._lock:
+            self._data.pop(qfs_ref, None)
+
+    def delete_prefix(self, prefix: str) -> None:
+        with self._lock:
+            keys = [key for key in self._data if key.startswith(prefix)]
+            for key in keys:
+                del self._data[key]
+
 
 QFS_STORE = InMemoryQFSStore()

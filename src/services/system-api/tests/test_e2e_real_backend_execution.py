@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 
 import grpc
 
@@ -74,3 +75,51 @@ def test_e2e_real_backend_error_is_mapped_to_standard_runtime_error(grpc_addr: s
     details = json.loads(payload.decode("utf-8"))
     assert details["error_code"] == "RUNTIME_BACKEND_UNAVAILABLE"
     assert details["job_id"] == job_id
+
+
+def test_cancel_transitions_to_terminal_state_and_cleans_temp_artifacts(grpc_addr: str):
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = job_pb_grpc.JobServiceStub(channel)
+    job_id = _submit(
+        stub,
+        target="emu:real-hifi",
+        metadata={"simulate_runtime_sec": "5"},
+    )
+
+    cancel = stub.CancelJob(job_pb.CancelJobRequest(job_id=job_id))
+    assert cancel.accepted is True
+
+    status = stub.GetJobStatus(job_pb.GetJobStatusRequest(job_id=job_id)).status
+    assert status.state == types_pb.JOB_STATE_CANCELLED
+    assert "cancelled" in status.message
+
+    results = stub.GetJobResults(job_pb.GetJobResultsRequest(job_id=job_id))
+    assert results.state == types_pb.JOB_STATE_CANCELLED
+    assert dict(results.counts) == {}
+    assert QFS_STORE.get_bytes(f"qfs://jobs/{job_id}/tmp/request.json") is None
+
+
+def test_timeout_transitions_to_terminal_state_without_hanging(grpc_addr: str):
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = job_pb_grpc.JobServiceStub(channel)
+    job_id = _submit(
+        stub,
+        target="emu:real-hifi",
+        metadata={
+            "simulate_runtime_sec": "5",
+            "timeout_seconds": "0.05",
+        },
+    )
+
+    deadline = time.time() + 1.0
+    state = types_pb.JOB_STATE_UNSPECIFIED
+    while time.time() < deadline:
+        state = stub.GetJobStatus(job_pb.GetJobStatusRequest(job_id=job_id)).status.state
+        if state == types_pb.JOB_STATE_TIMEOUT:
+            break
+        time.sleep(0.01)
+    assert state == types_pb.JOB_STATE_TIMEOUT
+
+    results = stub.GetJobResults(job_pb.GetJobResultsRequest(job_id=job_id))
+    assert results.state == types_pb.JOB_STATE_TIMEOUT
+
