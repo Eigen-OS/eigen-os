@@ -308,7 +308,7 @@ class JobService:
                 metadata=record.results_metadata,
             )
             record.results_parquet = results_parquet
-            QFS_STORE.put_bytes(record.results_metadata["qfs_results_parquet"], results_parquet)
+            QFS_STORE.atomic_write_bytes(record.results_metadata["qfs_results_parquet"], results_parquet)
             if terminal_state == self._types_pb.JOB_STATE_ERROR and record.error_details_ref:
                 error_payload = json.dumps(
                     {
@@ -319,7 +319,7 @@ class JobService:
                     },
                     sort_keys=True,
                 ).encode("utf-8")
-                QFS_STORE.put_bytes(record.error_details_ref, error_payload)
+                QFS_STORE.atomic_write_bytes(record.error_details_ref, error_payload)
         else:
             QFS_STORE.delete_bytes(record.results_metadata["qfs_results_parquet"])
             if record.error_details_ref:
