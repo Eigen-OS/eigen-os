@@ -7,6 +7,7 @@ import threading
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from io import BytesIO
 
@@ -70,16 +71,22 @@ def _serialize_results_parquet(
 class _JobRecord:
     job_id: str
     created_at: Timestamp
+    created_at_dt: datetime
     updates: list
     counts: dict[str, int]
     results_metadata: dict[str, str]
-    results_parquet: bytes
-    terminal_state: int
-    current_update_idx: int
+    results_parquet: bytes | None
     completed_at: Timestamp | None
     error_code: str
     error_summary: str
     error_details_ref: str
+    should_fail: bool
+    run_duration_sec: float
+    timeout_at: datetime | None
+    timeout_reason: str
+    cancel_requested: bool
+    finalized: bool
+    temp_refs: list[str]
 
 
 @dataclass
@@ -265,11 +272,134 @@ class JobService:
         )
         return updates
 
-    
+    def _append_update(self, record: _JobRecord, *, state: int, stage: str, progress: float, message: str) -> None:
+        record.updates.append(
+            self._mk_update(
+                job_id=record.job_id,
+                state=state,
+                stage=stage,
+                progress=progress,
+                message=message,
+                event_seq=len(record.updates) + 1,
+            )
+        )
+
+    def _provision_temporary_artifacts(self, record: _JobRecord) -> None:
+        compiled = record.results_metadata["qfs_compiled_aqo"]
+        temp_prefix = f"qfs://jobs/{record.job_id}/tmp/"
+        temp_refs = [
+            f"{temp_prefix}request.json",
+            f"{temp_prefix}compiled.tmp",
+        ]
+        QFS_STORE.put_bytes(compiled, b"{\"version\":\"0.1\",\"operations\":[]}")
+        for temp_ref in temp_refs:
+            QFS_STORE.put_bytes(temp_ref, b"tmp")
+        record.temp_refs = temp_refs
+
+    def _finalize_terminal_state(self, record: _JobRecord) -> None:
+        if record.finalized:
+            return
+        terminal_state = record.updates[-1].state
+        if terminal_state in {self._types_pb.JOB_STATE_DONE, self._types_pb.JOB_STATE_ERROR}:
+            counts_payload = record.counts or {"error": 0}
+            results_parquet = _serialize_results_parquet(
+                job_id=record.job_id,
+                counts=counts_payload,
+                metadata=record.results_metadata,
+            )
+            record.results_parquet = results_parquet
+            QFS_STORE.put_bytes(record.results_metadata["qfs_results_parquet"], results_parquet)
+            if terminal_state == self._types_pb.JOB_STATE_ERROR and record.error_details_ref:
+                error_payload = json.dumps(
+                    {
+                        "job_id": record.job_id,
+                        "error_code": record.error_code,
+                        "error_summary": record.error_summary,
+                        "backend_target": record.results_metadata.get("backend", "sim:local"),
+                    },
+                    sort_keys=True,
+                ).encode("utf-8")
+                QFS_STORE.put_bytes(record.error_details_ref, error_payload)
+        else:
+            QFS_STORE.delete_bytes(record.results_metadata["qfs_results_parquet"])
+            if record.error_details_ref:
+                QFS_STORE.delete_bytes(record.error_details_ref)
+            record.results_parquet = None
+            record.counts = {}
+
+        for temp_ref in record.temp_refs:
+            QFS_STORE.delete_bytes(temp_ref)
+        record.finalized = True
+        if record.completed_at is None:
+            record.completed_at = _ts_now()
+
+    def _advance_job(self, record: _JobRecord) -> None:
+        if record.updates[-1].state in {getattr(self._types_pb, name) for name in TERMINAL_JOB_STATES}:
+            self._finalize_terminal_state(record)
+            return
+
+        now_dt = datetime.now(timezone.utc)
+        elapsed = max((now_dt - record.created_at_dt).total_seconds(), 0.0)
+        compiling_after = max(record.run_duration_sec * 0.2, 0.0)
+        running_after = max(record.run_duration_sec * 0.6, 0.0)
+
+        if len(record.updates) == 1 and elapsed >= compiling_after:
+            self._append_update(
+                record,
+                state=self._types_pb.JOB_STATE_COMPILING,
+                stage="COMPILING",
+                progress=0.25,
+                message="compiling",
+            )
+        if len(record.updates) <= 2 and elapsed >= running_after:
+            self._append_update(
+                record,
+                state=self._types_pb.JOB_STATE_RUNNING,
+                stage="RUNNING",
+                progress=0.7,
+                message="running",
+            )
+
+        if record.cancel_requested:
+            self._append_update(
+                record,
+                state=self._types_pb.JOB_STATE_CANCELLED,
+                stage="CANCELLED",
+                progress=1.0,
+                message="cancelled by user request",
+            )
+        elif record.timeout_at is not None and now_dt >= record.timeout_at:
+            self._append_update(
+                record,
+                state=self._types_pb.JOB_STATE_TIMEOUT,
+                stage="TIMEOUT",
+                progress=1.0,
+                message=record.timeout_reason,
+            )
+        elif elapsed >= record.run_duration_sec:
+            if record.should_fail:
+                self._append_update(
+                    record,
+                    state=self._types_pb.JOB_STATE_ERROR,
+                    stage="ERROR",
+                    progress=1.0,
+                    message=record.error_summary,
+                )
+            else:
+                self._append_update(
+                    record,
+                    state=self._types_pb.JOB_STATE_DONE,
+                    stage="DONE",
+                    progress=1.0,
+                    message="done",
+                )
+
+        if record.updates[-1].state in {getattr(self._types_pb, name) for name in TERMINAL_JOB_STATES}:
+            self._finalize_terminal_state(record)
+
     def _build_job_record(self, request, *, job_id: str, created_at: Timestamp) -> _JobRecord:
         metadata = dict(request.metadata)
-        trace_id = metadata.get("trace_id")
-        max_iters = int(metadata.get("max_iters", "0") or 0)
+        created_at_dt = created_at.ToDatetime().replace(tzinfo=timezone.utc)
 
         backend_error_kind = metadata.get("backend_error_kind", "").strip().lower()
         should_fail = request.target.startswith("emu:fail") or bool(backend_error_kind)
@@ -277,25 +407,16 @@ class JobService:
         error_summary = ""
         error_details_ref = ""
 
+        runtime_error_map = {
+            "timeout": ("RUNTIME_BACKEND_TIMEOUT", "backend execution timeout"),
+            "unavailable": ("RUNTIME_BACKEND_UNAVAILABLE", "backend unavailable"),
+            "invalid_program": ("RUNTIME_INVALID_PROGRAM", "backend rejected compiled program"),
+        }
         if should_fail:
-            runtime_error_map = {
-                "timeout": ("RUNTIME_BACKEND_TIMEOUT", "backend execution timeout"),
-                "unavailable": ("RUNTIME_BACKEND_UNAVAILABLE", "backend unavailable"),
-                "invalid_program": ("RUNTIME_INVALID_PROGRAM", "backend rejected compiled program"),
-            }
-            selected = runtime_error_map.get(
+            error_code, error_summary = runtime_error_map.get(
                 backend_error_kind,
                 ("RUNTIME_BACKEND_EXECUTION_ERROR", "backend execution failed"),
             )
-            error_code, error_summary = selected
-            updates = self._mk_error_updates(job_id=job_id, summary=error_summary)
-            objective_history = []
-        elif max_iters > 0:
-            updates = self._mk_vqe_updates(job_id=job_id, trace_id=trace_id, max_iters=max_iters)
-            objective_history = [round(1.0 - (0.08 * i), 6) for i in range(max_iters)]
-        else:
-            updates = self._mk_default_updates(job_id)
-            objective_history = []
 
         results_metadata = {
             "backend": request.target or "sim:local",
@@ -303,45 +424,56 @@ class JobService:
             "qfs_results_parquet": f"qfs://jobs/{job_id}/results.parquet",
             "qfs_metrics": f"qfs://jobs/{job_id}/results/metrics.json",
         }
-        if objective_history:
-            results_metadata["objective_history"] = json.dumps(objective_history)
-            results_metadata["qfs_results_stream_prefix"] = f"qfs://jobs/{job_id}/results/parts/"
-
+        
         counts = {} if should_fail else {"00": 512, "11": 512}
-        results_parquet = _serialize_results_parquet(
-            job_id=job_id,
-            counts=counts or {"error": 0},
-            metadata=results_metadata,
-        )
-        QFS_STORE.put_bytes(results_metadata["qfs_results_parquet"], results_parquet)
-
+        
         if should_fail:
             error_details_ref = f"qfs://jobs/{job_id}/errors/runtime_error.json"
-            error_payload = json.dumps(
-                {
-                    "job_id": job_id,
-                    "error_code": error_code,
-                    "error_summary": error_summary,
-                    "backend_target": request.target or "sim:local",
-                },
-                sort_keys=True,
-            ).encode("utf-8")
-            QFS_STORE.put_bytes(error_details_ref, error_payload)
+            try:
+            run_duration_sec = max(float(metadata.get("simulate_runtime_sec", "0.0") or 0.0), 0.0)
+        except ValueError:
+            run_duration_sec = 0.0
+        timeout_sec_raw = metadata.get("timeout_seconds", "").strip()
+        timeout_at: datetime | None = None
+        timeout_reason = "deadline exceeded"
+        if timeout_sec_raw:
+            try:
+                timeout_sec = max(float(timeout_sec_raw), 0.0)
+                timeout_at = created_at_dt + timedelta(seconds=timeout_sec)
+            except ValueError:
+                timeout_at = None
 
-        return _JobRecord(
+        record = _JobRecord(
             job_id=job_id,
             created_at=created_at,
-            updates=updates,
+            created_at_dt=created_at_dt,
+            updates=[
+                self._mk_update(
+                    job_id=job_id,
+                    state=self._types_pb.JOB_STATE_PENDING,
+                    stage="PENDING",
+                    progress=0.0,
+                    message="pending",
+                    event_seq=1,
+                )
+            ],
             counts=counts,
             results_metadata=results_metadata,
-            results_parquet=results_parquet,
-            terminal_state=updates[-1].state,
-            current_update_idx=0,
+            results_parquet=None,
             completed_at=None,
             error_code=error_code,
             error_summary=error_summary,
             error_details_ref=error_details_ref,
+            should_fail=should_fail,
+            run_duration_sec=run_duration_sec,
+            timeout_at=timeout_at,
+            timeout_reason=timeout_reason,
+            cancel_requested=False,
+            finalized=False,
+            temp_refs=[],
         )
+        self._provision_temporary_artifacts(record)
+        return record
 
     def SubmitJob(self, request, context: grpc.ServicerContext):
         enforce_authn(context, method_name="JobService.SubmitJob")
@@ -366,7 +498,8 @@ class JobService:
                             f"idempotency key reuse with different payload: {idem_key}",
                         )
                     existing = self._jobs[previous.job_id]
-                    latest = existing.updates[existing.current_update_idx]
+                    self._advance_job(existing)
+                    latest = existing.updates[-1]
                     rc.job_id = existing.job_id
                     log_request_end("JobService.SubmitJob", rc)
                     return self._job_pb.SubmitJobResponse(
@@ -424,16 +557,9 @@ class JobService:
 
         if record is None:
             context.abort(grpc.StatusCode.NOT_FOUND, f"job_id not found: {request.job_id}")
-        latest = record.updates[-1]
         with self._lock:
-            if record.current_update_idx < len(record.updates) - 1:
-                record.current_update_idx += 1
-                if (
-                    record.updates[record.current_update_idx].state == self._types_pb.JOB_STATE_DONE
-                    and record.completed_at is None
-                ):
-                    record.completed_at = _ts_now()
-            latest = record.updates[record.current_update_idx]
+            self._advance_job(record)
+            latest = record.updates[-1]
         created_at = record.created_at
 
         resp = self._job_pb.GetJobStatusResponse(
@@ -470,19 +596,11 @@ class JobService:
             record = self._jobs.get(request.job_id)
             if record is None:
                 context.abort(grpc.StatusCode.NOT_FOUND, f"job_id not found: {request.job_id}")
+            self._advance_job(record)
             terminal_values = {getattr(self._types_pb, name) for name in TERMINAL_JOB_STATES}
-            if record.updates[-1].state not in terminal_values:
-                seq = int(record.updates[-1].event_seq) + 1
-                record.updates.append(
-                    self._mk_update(
-                        job_id=request.job_id,
-                        state=self._types_pb.JOB_STATE_CANCELLED,
-                        stage="CANCELLED",
-                        progress=1.0,
-                        message="cancelled",
-                        event_seq=seq,
-                    )
-                )
+            if record.updates[-1].state not in terminal_values and not record.cancel_requested:
+                record.cancel_requested = True
+                self._advance_job(record)
                 accepted = True
 
         resp = self._job_pb.CancelJobResponse(accepted=accepted)
@@ -505,18 +623,13 @@ class JobService:
             record = self._jobs.get(request.job_id)
             if record is None:
                 context.abort(grpc.StatusCode.NOT_FOUND, f"job_id not found: {request.job_id}")
+                self._advance_job(record)
             selected_updates = list(record.updates)
 
         for update in selected_updates:
             if int(update.event_seq) <= start_after_seq:
                 continue
             yield self._job_pb.StreamJobUpdatesResponse(update=update)
-
-        with self._lock:
-            if record.current_update_idx < len(record.updates) - 1:
-                record.current_update_idx = len(record.updates) - 1
-            if record.updates[record.current_update_idx].state == self._types_pb.JOB_STATE_DONE and record.completed_at is None:
-                record.completed_at = _ts_now()
 
         log_request_end("JobService.StreamJobUpdates", rc)
 
@@ -533,10 +646,12 @@ class JobService:
 
         with self._lock:
             record = self._jobs.get(request.job_id)
+            if record is not None:
+                self._advance_job(record)
 
         if record is None:
             context.abort(grpc.StatusCode.NOT_FOUND, f"job_id not found: {request.job_id}")
-        current_state = record.updates[record.current_update_idx].state
+        current_state = record.updates[-1].state
         if current_state in {
             self._types_pb.JOB_STATE_PENDING,
             self._types_pb.JOB_STATE_COMPILING,
@@ -553,7 +668,7 @@ class JobService:
             counts=record.counts,
             metadata={
                 **record.results_metadata,
-                "qfs_results_parquet_bytes": str(len(record.results_parquet)),
+                "qfs_results_parquet_bytes": str(len(record.results_parquet or b"")),
             },
             error_code=record.error_code,
             error_summary=record.error_summary,
