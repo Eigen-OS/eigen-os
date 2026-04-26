@@ -5,7 +5,7 @@
 - **Created**: 2026-04-25
 - **Accepted on**: 2026-04-25
 - **Target Milestone**: Phase 0 (MVP-3)
-- **Tracking Issue**: docs/development/mvp-3-tracking-issue.md
+- **Status Note**: MVP-3 baseline closure is recorded in `docs/development/mvp-3-execution-and-results.md`.
 - **Replaces / Related**: RFC 0010, RFC 0011, docs/development/mvp-3-execution-and-results.md
 
 ## Summary

@@ -1,7 +1,7 @@
 # Eigen OS
 
 Eigen OS is a modular platform for **hybrid quantum-classical workloads**.
-This repository currently contains the MVP baseline with service implementations, contracts, conformance suites, and local E2E workflows.
+This repository contains the completed MVP baseline and the post-MVP open-source roadmap.
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 ![Status](https://img.shields.io/badge/Status-alpha-orange)
@@ -18,27 +18,32 @@ Contract-level compatibility is treated as stable only after:
 - reference documentation is updated,
 - and conformance checks exist.
 
-Current delivery focus:
-- ✅ MVP-1 (Core Services Setup) complete as of **2026-04-24**.
-- ✅ MVP-2 (Compilation Pipeline) complete as of **2026-04-24**; see [`docs/development/mvp-2-compilation-pipeline.md`](docs/development/mvp-2-compilation-pipeline.md).
-- ✅ MVP-3 (Runtime Execution & Results) complete as of **2026-04-25**; see [`docs/development/mvp-3-execution-and-results.md`](docs/development/mvp-3-execution-and-results.md) and [`docs/development/mvp-3-tracking-issue.md`](docs/development/mvp-3-tracking-issue.md).
+MVP baseline status:
+- ✅ MVP-1 (Core Services Setup) completed.
+- ✅ MVP-2 (Compilation Pipeline) completed.
+- ✅ MVP-3 (Runtime Execution & Results) completed.
 
-### API version policy (MVP freeze)
+Next planning baseline:
+- 📍 Post-MVP roadmap: [`docs/development/post-mvp-open-source-roadmap.md`](docs/development/post-mvp-open-source-roadmap.md).
 
-- Public product API version is **fixed to `0.1`** for MVP.
+### API version policy (baseline freeze)
+
+- Public product API version is **fixed to `0.1`** for the MVP baseline.
 - JobSpec `apiVersion` remains `eigen.os/v0.1`.
 - Protobuf package namespace stays `...v1` (`proto/eigen/api/v1`) as a wire namespace.
 
-## What is in scope now (MVP)
+## What is in scope now
 
 - Public and internal API contracts (`proto/`).
 - Job and format contracts (`docs/reference/`, `specs/`).
 - Service skeletons for local E2E flow.
 - Local deployment profile and CI quality gates.
+- Post-MVP open-source execution plan.
 
 ## Quick navigation
 
 - **Documentation hub:** [`docs/README.md`](docs/README.md)
+- **Post-MVP roadmap:** [`docs/development/post-mvp-open-source-roadmap.md`](docs/development/post-mvp-open-source-roadmap.md)
 - **Protobuf contracts:** [`proto/README.md`](proto/README.md)
 - **Examples:** [`examples/README.md`](examples/README.md)
 - **Specifications:** [`specs/README.md`](specs/README.md)

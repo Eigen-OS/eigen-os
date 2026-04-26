@@ -39,8 +39,7 @@ If you are new to the repository, read in this order:
 
 ### Development
 - [`development/README.md`](development/README.md)
-- [`development/mvp-definition-of-done.md`](development/mvp-definition-of-done.md)
-- [`development/mvp-contract-freeze-checklist.md`](development/mvp-contract-freeze-checklist.md)
+- [`development/post-mvp-open-source-roadmap.md`](development/post-mvp-open-source-roadmap.md)
 
 ### Explanation
 - [`explanation/mission.md`](explanation/mission.md)
