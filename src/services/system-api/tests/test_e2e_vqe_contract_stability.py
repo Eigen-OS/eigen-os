@@ -44,6 +44,9 @@ def test_e2e_vqe_contract_stability(grpc_addr: str):
 
     assert len(updates) >= 5
     assert updates[-1].state == types_pb.JOB_STATE_DONE
+    assert updates[0].stage == "QUEUED"
+    assert updates[1].stage == "COMPILED"
+    assert updates[2].stage == "DISPATCHED"
 
     seqs = [int(u.event_seq) for u in updates]
     assert seqs == sorted(seqs)
@@ -68,4 +71,6 @@ def test_e2e_vqe_contract_stability(grpc_addr: str):
     assert results.metadata["qfs_results_parquet"].endswith("/results.parquet")
     assert results.metadata["qfs_metrics"].endswith("/results/metrics.json")
     assert "qfs_results_stream_prefix" in results.metadata
+    assert results.metadata["trace_id"] == "trace-vqe-e2e-001"
+    assert results.metadata["trace_ref"] == "trace://trace-vqe-e2e-001"
     
