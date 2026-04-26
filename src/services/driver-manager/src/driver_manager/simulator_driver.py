@@ -129,6 +129,10 @@ class SimulatorDriver:
         if not isinstance(payload, dict):
             raise DriverExecutionError(grpc.StatusCode.INVALID_ARGUMENT, "aqo payload must be an object")
         
+        version = payload.get("version")
+        if not isinstance(version, str) or not version.strip():
+            raise DriverExecutionError(grpc.StatusCode.INVALID_ARGUMENT, "aqo.version is required")
+
         operations = payload.get("operations")
         if not isinstance(operations, list):
             raise DriverExecutionError(grpc.StatusCode.INVALID_ARGUMENT, "aqo.operations must be a list")

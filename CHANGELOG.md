@@ -19,7 +19,12 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 ### Added
 
 - Project health documentation baseline: `CONTRIBUTING.md`, `SECURITY.md`, and roadmap/project-health alignment.
+- Phase-1 release readiness checklist with consolidated security/performance/docs/upgrade gates and locked contract version matrix.
+- Contract compatibility runner script: `scripts/test/run-contract-compatibility-suite.sh`.
 
 ### Changed
 
 - Documentation now explicitly freezes MVP public API contract version at `0.1`, while clarifying that protobuf `...v1` remains a package/namespace convention.
+- Pull request template now requires `Version Impact`, `Affected Interfaces`, and `Migration Notes`.
+- CI includes a dedicated Phase-1 contract compatibility suite job.
+- AQO simulator driver now enforces mandatory top-level `version` field.
