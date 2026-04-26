@@ -86,3 +86,18 @@ For `ERROR`, expose:
 - No boolean success flags in response bodies.
 - Vendor errors are normalized before they reach Kernel.
 
+## 6) Backend normalization examples (Qiskit Runtime → Eigen)
+
+Driver Manager normalizes provider-native failures into Eigen canonical errors before they reach Kernel/API:
+
+| Qiskit / backend condition | Canonical gRPC | Eigen reason | Taxonomy | Remediation hint |
+|---|---|---|---|---|
+| Invalid or expired token | `UNAUTHENTICATED` | `EIGEN_BACKEND_AUTH` | `auth` | Refresh token/secret and retry. |
+| Access denied to instance/backend | `PERMISSION_DENIED` | `EIGEN_BACKEND_AUTHZ` | `auth` | Verify IAM/instance entitlements. |
+| Provider service temporarily down | `UNAVAILABLE` | `EIGEN_BACKEND_UNAVAILABLE` | `network` | Retry with exponential backoff; check provider status page. |
+| Queue/quota exceeded | `RESOURCE_EXHAUSTED` | `EIGEN_BACKEND_QUOTA` | `quota` | Reduce shots/concurrency or wait for quota reset. |
+| Unsupported operation/payload | `UNIMPLEMENTED` | `EIGEN_BACKEND_PROVIDER` | `provider` | Use supported feature/circuit format. |
+| Backend rejects malformed provider payload | `INVALID_ARGUMENT` | `EIGEN_BACKEND_INVALID_ARGUMENT` | `provider` | Correct payload options and retry. |
+| Unknown provider/runtime failure | `INTERNAL` | `EIGEN_BACKEND_INTERNAL` | `internal` | Capture correlation id and escalate to operators. |
+
+All entries above are emitted in the normalized `ErrorInfo` envelope with correlation and diagnostics metadata.
