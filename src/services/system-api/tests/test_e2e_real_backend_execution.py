@@ -41,6 +41,8 @@ def test_e2e_real_backend_success_persists_qfs_and_public_results(grpc_addr: str
     results = stub.GetJobResults(job_pb.GetJobResultsRequest(job_id=job_id))
     assert results.state == types_pb.JOB_STATE_DONE
     assert dict(results.counts) == {"00": 512, "11": 512}
+    assert results.metadata["qfs_job_timeline"].endswith("/timeline.json")
+    assert results.metadata["timeline_version"] == "2.0.0"
 
     qfs_results_ref = results.metadata["qfs_results_parquet"]
     stored = QFS_STORE.get_bytes(qfs_results_ref)
@@ -75,6 +77,8 @@ def test_e2e_real_backend_error_is_mapped_to_standard_runtime_error(grpc_addr: s
     details = json.loads(payload.decode("utf-8"))
     assert details["error_code"] == "RUNTIME_BACKEND_UNAVAILABLE"
     assert details["job_id"] == job_id
+    timeline_payload = QFS_STORE.get_bytes(results.metadata["qfs_job_timeline"])
+    assert timeline_payload is not None
 
 
 def test_cancel_transitions_to_terminal_state_and_cleans_temp_artifacts(grpc_addr: str):
@@ -122,4 +126,3 @@ def test_timeout_transitions_to_terminal_state_without_hanging(grpc_addr: str):
 
     results = stub.GetJobResults(job_pb.GetJobResultsRequest(job_id=job_id))
     assert results.state == types_pb.JOB_STATE_TIMEOUT
-

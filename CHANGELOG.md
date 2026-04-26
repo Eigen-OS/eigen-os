@@ -21,6 +21,7 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 - Project health documentation baseline: `CONTRIBUTING.md`, `SECURITY.md`, and roadmap/project-health alignment.
 - Phase-1 release readiness checklist with consolidated security/performance/docs/upgrade gates and locked contract version matrix.
 - Contract compatibility runner script: `scripts/test/run-contract-compatibility-suite.sh`.
+- Observability v2 per-job timeline persisted to QFS (`qfs_job_timeline`) with explicit timeline schema version (`2.0.0`) and trace correlation metadata (`trace_id`, `trace_ref`).
 
 ### Changed
 
@@ -28,3 +29,4 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 - Pull request template now requires `Version Impact`, `Affected Interfaces`, and `Migration Notes`.
 - CI includes a dedicated Phase-1 contract compatibility suite job.
 - AQO simulator driver now enforces mandatory top-level `version` field.
+- System API job lifecycle stream now emits detailed stages (`QUEUED` → `COMPILED` → `DISPATCHED` → `RUNNING` → `COMPLETED`) with timestamped event history and trace-aware event messages
