@@ -7,7 +7,7 @@ import re
 
 import grpc
 
-from .errors import FieldViolation, abort_invalid_argument
+from .errors import FieldViolation, abort_invalid_argument, abort_normalized, map_backend_error
 from .registry import DriverRegistry
 from .simulator_driver import DriverExecutionError
 
@@ -42,9 +42,10 @@ class DriverManagerService:
 
         driver = self._registry.get_driver_for_device(request.device_id)
         if driver is None:
-            context.abort(
-                grpc.StatusCode.FAILED_PRECONDITION,
-                f"device not registered: {request.device_id}",
+            abort_normalized(
+                context,
+                normalized=map_backend_error(grpc.StatusCode.INVALID_ARGUMENT, f"device not registered: {request.device_id}"),
+                provider="driver_registry",
             )
 
         info = driver.get_device_status(request.device_id)
@@ -74,15 +75,21 @@ class DriverManagerService:
 
         driver = self._registry.get_driver_for_device(request.device_id)
         if driver is None:
-            context.abort(
-                grpc.StatusCode.FAILED_PRECONDITION,
-                f"device not registered: {request.device_id}",
+            abort_normalized(
+                context,
+                normalized=map_backend_error(grpc.StatusCode.INVALID_ARGUMENT, f"device not registered: {request.device_id}"),
+                provider="driver_registry",
             )
 
         if request.payload.format != _circuit_format_value(self._types_pb, "CIRCUIT_FORMAT_AQO_JSON", "AQO_JSON"):
-            context.abort(
-                grpc.StatusCode.UNIMPLEMENTED,
-                f"unsupported circuit payload format: {request.payload.format}",
+            abort_normalized(
+                context,
+                normalized=map_backend_error(
+                    grpc.StatusCode.UNIMPLEMENTED,
+                    f"unsupported circuit payload format: {request.payload.format}",
+                ),
+                job_id=request.job_id,
+                provider="driver_manager",
             )
 
         try:
@@ -93,7 +100,12 @@ class DriverManagerService:
                 options=dict(request.options),
             )
         except DriverExecutionError as err:
-            context.abort(err.code, err.message)
+            abort_normalized(
+                context,
+                normalized=map_backend_error(err.code, err.message),
+                job_id=request.job_id,
+                provider=getattr(driver, "name", "unknown"),
+            )
 
         resp = self._drv_pb.ExecuteCircuitResponse(
             counts=counts,

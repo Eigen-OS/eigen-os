@@ -7,6 +7,8 @@ from typing import Iterator
 
 import grpc
 import pytest
+from google.rpc import error_details_pb2
+from grpc_status import rpc_status
 
 from driver_manager.grpc_server import serve
 from driver_manager.proto_gen import ensure_generated
@@ -38,6 +40,15 @@ def grpc_addr() -> Iterator[str]:
     time.sleep(0.05)
     yield addr
     server.stop(grace=None)
+
+
+def _extract_error_info(err: grpc.RpcError) -> error_details_pb2.ErrorInfo:
+    st = rpc_status.from_call(err)
+    assert st is not None
+    info = error_details_pb2.ErrorInfo()
+    unpacked = [d.Unpack(info) for d in st.details]
+    assert any(unpacked)
+    return info
 
 
 def _aqo(operations: list[dict], qubits: int = 2) -> bytes:
@@ -142,6 +153,11 @@ def test_execute_circuit_simulated_unavailable(grpc_addr: str) -> None:
         _execute(stub, payload=_aqo([{"op": "MEASURE", "q": [0], "c": [0]}], qubits=1), options={"simulate_error": "UNAVAILABLE"})
 
     assert err.value.code() == grpc.StatusCode.UNAVAILABLE
+    info = _extract_error_info(err.value)
+    assert info.reason == "EIGEN_BACKEND_UNAVAILABLE"
+    assert info.metadata["taxonomy"] == "network"
+    assert info.metadata["remediation"]
+    assert info.metadata["job_id"] == "job-1"
 
 
 def test_execute_circuit_simulated_resource_exhausted(grpc_addr: str) -> None:
@@ -156,6 +172,9 @@ def test_execute_circuit_simulated_resource_exhausted(grpc_addr: str) -> None:
         )
 
     assert err.value.code() == grpc.StatusCode.RESOURCE_EXHAUSTED
+    info = _extract_error_info(err.value)
+    assert info.reason == "EIGEN_BACKEND_QUOTA"
+    assert info.metadata["taxonomy"] == "quota"
 
 
 @pytest.mark.parametrize(

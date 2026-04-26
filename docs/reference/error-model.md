@@ -27,3 +27,17 @@
 - All services adhere to a unified mapping (see [`error-mapping.md`](error-mapping.md)).
 - Kernel stores `error_summary` and `error_details_ref` (QFS) for job in `ERROR` state.
 - Client/SDK displays: **code**, **message**, **hint** (if available).
+
+## Normalized backend error envelope (P1-05)
+
+For backend-facing failures, services MUST emit `google.rpc.Status` with a normalized `ErrorInfo` detail carrying:
+
+- `reason`: stable Eigen code (`EIGEN_BACKEND_*`)
+- `domain`: `eigen.driver_manager`
+- `metadata.taxonomy`: one of `provider | network | auth | quota | internal`
+- `metadata.remediation`: actionable operator/client hint
+- `metadata.correlation_id`: request correlation id for incident triage
+- `metadata.job_timeline`: pointer to timeline artifact (`qfs://jobs/<job_id>/timeline.json`) when available
+- `metadata.trace`: trace pointer (`trace://<trace_id>`) when available
+
+This envelope is additive and does not change existing gRPC status semantics.
