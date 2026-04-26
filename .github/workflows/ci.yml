@@ -229,4 +229,5 @@ jobs:
           workspaces: src/rust
 
       - name: Run compatibility suite
-        run: scripts/test/run-contract-compatibility-suite.sh
+        run: bash scripts/test/run-contract-compatibility-suite.sh
+        
