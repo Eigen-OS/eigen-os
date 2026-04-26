@@ -1,108 +1,112 @@
 # Eigen OS
 
-Eigen OS is a modular platform for **hybrid quantum-classical workloads**.
-This repository contains the completed MVP baseline and the post-MVP open-source roadmap.
+Eigen OS is a **platform for running hybrid quantum-classical workloads**: from job submission and quantum program compilation to execution and result retrieval.
+
+In short, this repository is a distributed system scaffold where:
+- you describe a workload using a JobSpec,
+- services validate and compile it,
+- the runtime executes it via a driver/simulator,
+- and the API returns status, logs, and results in a predictable format.
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 ![Status](https://img.shields.io/badge/Status-alpha-orange)
 ![Python](https://img.shields.io/badge/Python-3.12%2B-blue)
 ![Rust](https://img.shields.io/badge/Rust-1.92%2B-orange)
 
-## Project status
+## What this product is
 
-> ⚠️ **Pre-alpha (architecture + contracts).**
-> Breaking changes are expected until `v1.0`.
+## Who it is for
+- Teams that need a **transparent backend platform** for quantum experiments.
+- Platform engineers evolving APIs, contracts, and runtime behavior through an RFC-driven process.
+- Integrators who need stable formats, gRPC contracts, and a local E2E development path.
 
-Contract-level compatibility is treated as stable only after:
-- an RFC is accepted,
-- reference documentation is updated,
-- and conformance checks exist.
+### What it does today
+- Delivers the MVP baseline in three parts:
+  - ✅ MVP-1: core services and contracts.
+  - ✅ MVP-2: compilation pipeline.
+  - ✅ MVP-3: execution and results retrieval.
+- Provides public and internal protobuf APIs (`proto/`).
+- Includes services (compiler, system-api, driver-manager), local deployment assets, examples, observability, and CI scripts.
 
-MVP baseline status:
-- ✅ MVP-1 (Core Services Setup) completed.
-- ✅ MVP-2 (Compilation Pipeline) completed.
-- ✅ MVP-3 (Runtime Execution & Results) completed.
+### What it does not guarantee yet
+- The project is **pre-alpha**: breaking changes can happen before `v1.0`.
+- Contract stability is considered real only when all of the following exist:
+  1. an accepted RFC,
+  2. updated reference documentation,
+  3. conformance checks.
 
-Next planning baseline:
-- 📍 Post-MVP roadmap: [`docs/development/post-mvp-open-source-roadmap.md`](docs/development/post-mvp-open-source-roadmap.md).
+## How it works (5 steps)
 
-### API version policy (baseline freeze)
+1. A client submits a JobSpec through the API.
+2. `system-api` validates the request and manages the job lifecycle.
+3. `eigen-compiler` converts the program into executable artifacts (AQO and related outputs).
+4. `driver-manager` selects a driver (for example, a simulator) and launches execution.
+5. Kernel/runtime updates status, and the client reads progress and final results.
 
-- Public product API version is **fixed to `0.1`** for the MVP baseline.
-- JobSpec `apiVersion` remains `eigen.os/v0.1`.
-- Protobuf package namespace stays `...v1` (`proto/eigen/api/v1`) as a wire namespace.
+Useful references:
+- Architecture overview: [`docs/architecture/overview.md`](docs/architecture/overview.md)
+- Contract map: [`docs/architecture/contract-map.md`](docs/architecture/contract-map.md)
+- JobSpec format: [`docs/reference/jobspec.md`](docs/reference/jobspec.md)
 
-## What is in scope now
+## Quick start
 
-- Public and internal API contracts (`proto/`).
-- Job and format contracts (`docs/reference/`, `specs/`).
-- Service skeletons for local E2E flow.
-- Local deployment profile and CI quality gates.
-- Post-MVP open-source execution plan.
+### 1) Read the key docs
+- [`docs/README.md`](docs/README.md)
+- [`docs/reference/README.md`](docs/reference/README.md)
+- [`examples/README.md`](examples/README.md)
 
-## Quick navigation
+### 2) Start the local environment
 
-- **Documentation hub:** [`docs/README.md`](docs/README.md)
-- **Post-MVP roadmap:** [`docs/development/post-mvp-open-source-roadmap.md`](docs/development/post-mvp-open-source-roadmap.md)
-- **Protobuf contracts:** [`proto/README.md`](proto/README.md)
-- **Examples:** [`examples/README.md`](examples/README.md)
-- **Specifications:** [`specs/README.md`](specs/README.md)
-- **Local deployment:** [`deploy/local/README.md`](deploy/local/README.md)
+```bash
+./deploy/local/dev_env.sh up
+```
+
+Stop it:
+
+```bash
+./deploy/local/dev_env.sh down
+```
+
+Details: [`deploy/local/README.md`](deploy/local/README.md)
+
+### 3) Run CI-equivalent checks
+Commands and flows are documented in [`docs/development/README.md`](docs/development/README.md).
 
 ## Repository layout
 
 ```text
 eigen-os/
 ├── docs/                # Architecture, reference, tutorials, development docs
-├── proto/               # Public/internal protobuf contracts (source of truth)
-├── specs/               # Schema-level specs and examples
-├── src/                 # Rust workspace + Python services
-├── examples/            # Small runnable and integration examples
-├── deploy/              # Local and container deployment assets
-├── monitoring/          # Metrics/logging/tracing/dashboards
-├── rfcs/                # Design proposals and contract evolution
-└── scripts/             # Build/dev/test/CI helpers
+├── proto/               # gRPC/Protobuf contracts (source of truth)
+├── specs/               # Format specifications and examples
+├── src/                 # Rust workspace and Python services
+├── examples/            # Workload and integration examples
+├── deploy/              # Local and Docker deployment
+├── monitoring/          # Metrics, logs, tracing, dashboards
+├── rfcs/                # RFCs and architecture evolution
+└── scripts/             # Build, test, and CI helpers
 ```
 
-## Getting started
+## API versioning (current baseline)
 
-### 1) Read architecture and contracts
+- Product API for the MVP baseline is fixed to **`0.1`**.
+- `JobSpec.apiVersion`: `eigen.os/v0.1`.
+- Protobuf namespace: `proto/eigen/api/v1` (wire namespace).
 
-Start with:
-- [`docs/README.md`](docs/README.md)
-- [`docs/architecture/overview.md`](docs/architecture/overview.md)
-- [`docs/reference/README.md`](docs/reference/README.md)
+## Where to go next
 
-### 2) Run CI-equivalent checks locally
-
-See exact commands in:
-- [`docs/development/README.md`](docs/development/README.md)
-
-### 3) Bring up the local stack
-
-```bash
-./deploy/local/dev_env.sh up
-```
-
-Then tear it down:
-
-```bash
-./deploy/local/dev_env.sh down
-```
-
-Details:
-- [`deploy/local/README.md`](deploy/local/README.md)
+- Post-MVP roadmap: [`docs/development/post-mvp-open-source-roadmap.md`](docs/development/post-mvp-open-source-roadmap.md)
+- ADR index: [`docs/adr/README.md`](docs/adr/README.md)
+- RFC directory: [`rfcs/`](rfcs)
 
 ## Contributing
 
-Contributions are welcome, especially around:
-- contract clarity,
-- API consistency,
-- docs quality,
-- conformance and CI automation.
+If you change public contracts or cross-service behavior, open an issue/RFC first.
 
-Please open an issue/RFC when changing public or cross-service behavior.
+- Contribution process: [`CONTRIBUTING.md`](CONTRIBUTING.md)
+- Security policy: [`SECURITY.md`](SECURITY.md)
+- Code of conduct: [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md)
 
 ## License
 
-Licensed under the **Apache License 2.0**. See [`LICENSE`](LICENSE).
+Licensed under **Apache License 2.0** — see [`LICENSE`](LICENSE).
