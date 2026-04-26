@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .base_driver import BaseDriver
+from .base_driver import BaseDriver, DriverCapabilities, DriverHealth
 
 
 @dataclass(frozen=True)
@@ -12,6 +12,7 @@ class RegisteredDriver:
     name: str
     driver: BaseDriver
     device_ids: frozenset[str]
+    capabilities: DriverCapabilities
 
 
 class DriverRegistry:
@@ -26,6 +27,10 @@ class DriverRegistry:
             raise ValueError("driver name is required")
         if name in self._drivers:
             raise ValueError(f"driver already registered: {name}")
+        
+        capabilities = driver.capability_handshake()
+        if not capabilities.driver_api_version:
+            raise ValueError(f"driver {name} capability handshake missing driver_api_version")
 
         device_ids = []
         for device in driver.get_devices():
@@ -46,6 +51,7 @@ class DriverRegistry:
             name=name,
             driver=driver,
             device_ids=frozenset(device_ids),
+            capabilities=capabilities,
         )
 
     def remove_driver(self, name: str) -> bool:
@@ -73,3 +79,9 @@ class DriverRegistry:
         for registered in self._drivers.values():
             devices.extend(registered.driver.get_devices())
         return devices
+
+    def health_snapshot(self) -> dict[str, DriverHealth]:
+        return {name: registered.driver.healthcheck() for name, registered in self._drivers.items()}
+
+    def capability_snapshot(self) -> dict[str, DriverCapabilities]:
+        return {name: registered.capabilities for name, registered in self._drivers.items()}
