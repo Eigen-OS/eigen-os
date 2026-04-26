@@ -623,7 +623,7 @@ class JobService:
             record = self._jobs.get(request.job_id)
             if record is None:
                 context.abort(grpc.StatusCode.NOT_FOUND, f"job_id not found: {request.job_id}")
-                self._advance_job(record)
+            self._advance_job(record)
             selected_updates = list(record.updates)
 
         for update in selected_updates:
