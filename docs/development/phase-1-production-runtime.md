@@ -6,6 +6,7 @@
 - **Planning status**: Active
 - **Last updated**: 2026-04-26
 - **Primary RFC**: [`../../rfcs/0019-phase1-production-runtime-plan.md`](../../rfcs/0019-phase1-production-runtime-plan.md)
+- **Release checklist**: [`phase-1-release-readiness-checklist.md`](phase-1-release-readiness-checklist.md)
 
 ## Why this phase exists
 
@@ -86,6 +87,7 @@ Phase 1 is considered complete when all items below are true:
 4. **Retry policy conformance tests**
 5. **Object storage persistence contract tests**
 6. **Observability v2 assertions (metrics + traces + logs)**
+7. **Contract compatibility suite (JobSpec/AQO/QFS version markers + conformance)**
 
 ## Proposed milestone cadence
 

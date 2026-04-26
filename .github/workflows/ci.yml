@@ -199,3 +199,34 @@ jobs:
       - name: Buf breaking (against main)
         working-directory: proto
         run: buf breaking --against '../.git#ref=refs/remotes/origin/main,subdir=proto'
+
+  phase1-contract-compatibility:
+    name: Phase-1 contract compatibility suite
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python deps (system-api)
+        working-directory: src/services/system-api
+        run: pip install -e .[dev]
+
+      - name: Install Python deps (driver-manager)
+        working-directory: src/services/driver-manager
+        run: pip install -e .[dev]
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src/rust
+
+      - name: Run compatibility suite
+        run: scripts/test/run-contract-compatibility-suite.sh
