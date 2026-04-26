@@ -17,6 +17,7 @@ import pyarrow.parquet as pq
 
 from .errors import abort_invalid_argument
 from .observability import log_request_end, log_request_start, new_request_context
+from .qfs_store import QFS_STORE
 from .security import enforce_authn, enforce_authz
 from .validation import (
     validate_device_id,
@@ -76,6 +77,9 @@ class _JobRecord:
     terminal_state: int
     current_update_idx: int
     completed_at: Timestamp | None
+    error_code: str
+    error_summary: str
+    error_details_ref: str
 
 
 @dataclass
@@ -178,6 +182,42 @@ class JobService:
             ),
         ]
     
+    def _mk_error_updates(self, *, job_id: str, summary: str) -> list:
+        return [
+            self._mk_update(
+                job_id=job_id,
+                state=self._types_pb.JOB_STATE_PENDING,
+                stage="PENDING",
+                progress=0.0,
+                message="pending",
+                event_seq=1,
+            ),
+            self._mk_update(
+                job_id=job_id,
+                state=self._types_pb.JOB_STATE_COMPILING,
+                stage="COMPILING",
+                progress=0.25,
+                message="compiling",
+                event_seq=2,
+            ),
+            self._mk_update(
+                job_id=job_id,
+                state=self._types_pb.JOB_STATE_RUNNING,
+                stage="RUNNING",
+                progress=0.6,
+                message="dispatching_to_backend",
+                event_seq=3,
+            ),
+            self._mk_update(
+                job_id=job_id,
+                state=self._types_pb.JOB_STATE_ERROR,
+                stage="ERROR",
+                progress=1.0,
+                message=summary,
+                event_seq=4,
+            ),
+        ]
+
     def _mk_vqe_updates(self, *, job_id: str, trace_id: str | None, max_iters: int) -> list:
         updates = [
             self._mk_update(
@@ -231,7 +271,26 @@ class JobService:
         trace_id = metadata.get("trace_id")
         max_iters = int(metadata.get("max_iters", "0") or 0)
 
-        if max_iters > 0:
+        backend_error_kind = metadata.get("backend_error_kind", "").strip().lower()
+        should_fail = request.target.startswith("emu:fail") or bool(backend_error_kind)
+        error_code = ""
+        error_summary = ""
+        error_details_ref = ""
+
+        if should_fail:
+            runtime_error_map = {
+                "timeout": ("RUNTIME_BACKEND_TIMEOUT", "backend execution timeout"),
+                "unavailable": ("RUNTIME_BACKEND_UNAVAILABLE", "backend unavailable"),
+                "invalid_program": ("RUNTIME_INVALID_PROGRAM", "backend rejected compiled program"),
+            }
+            selected = runtime_error_map.get(
+                backend_error_kind,
+                ("RUNTIME_BACKEND_EXECUTION_ERROR", "backend execution failed"),
+            )
+            error_code, error_summary = selected
+            updates = self._mk_error_updates(job_id=job_id, summary=error_summary)
+            objective_history = []
+        elif max_iters > 0:
             updates = self._mk_vqe_updates(job_id=job_id, trace_id=trace_id, max_iters=max_iters)
             objective_history = [round(1.0 - (0.08 * i), 6) for i in range(max_iters)]
         else:
@@ -248,12 +307,26 @@ class JobService:
             results_metadata["objective_history"] = json.dumps(objective_history)
             results_metadata["qfs_results_stream_prefix"] = f"qfs://jobs/{job_id}/results/parts/"
 
-        counts = {"00": 512, "11": 512}
+        counts = {} if should_fail else {"00": 512, "11": 512}
         results_parquet = _serialize_results_parquet(
             job_id=job_id,
-            counts=counts,
+            counts=counts or {"error": 0},
             metadata=results_metadata,
         )
+        QFS_STORE.put_bytes(results_metadata["qfs_results_parquet"], results_parquet)
+
+        if should_fail:
+            error_details_ref = f"qfs://jobs/{job_id}/errors/runtime_error.json"
+            error_payload = json.dumps(
+                {
+                    "job_id": job_id,
+                    "error_code": error_code,
+                    "error_summary": error_summary,
+                    "backend_target": request.target or "sim:local",
+                },
+                sort_keys=True,
+            ).encode("utf-8")
+            QFS_STORE.put_bytes(error_details_ref, error_payload)
 
         return _JobRecord(
             job_id=job_id,
@@ -262,9 +335,12 @@ class JobService:
             counts=counts,
             results_metadata=results_metadata,
             results_parquet=results_parquet,
-            terminal_state=self._types_pb.JOB_STATE_DONE,
+            terminal_state=updates[-1].state,
             current_update_idx=0,
             completed_at=None,
+            error_code=error_code,
+            error_summary=error_summary,
+            error_details_ref=error_details_ref,
         )
 
     def SubmitJob(self, request, context: grpc.ServicerContext):
@@ -369,6 +445,9 @@ class JobService:
                 message=latest.message,
                 created_at=created_at,
                 updated_at=latest.timestamp,
+                error_code=record.error_code if latest.state == self._types_pb.JOB_STATE_ERROR else "",
+                error_summary=record.error_summary if latest.state == self._types_pb.JOB_STATE_ERROR else "",
+                error_details_ref=record.error_details_ref if latest.state == self._types_pb.JOB_STATE_ERROR else "",
             )
         )
 
@@ -476,6 +555,9 @@ class JobService:
                 **record.results_metadata,
                 "qfs_results_parquet_bytes": str(len(record.results_parquet)),
             },
+            error_code=record.error_code,
+            error_summary=record.error_summary,
+            error_details_ref=record.error_details_ref,
             completed_at=record.completed_at or _ts_now(),
         )
 
