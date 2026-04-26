@@ -23,6 +23,8 @@ cd examples/basic/vqe_cycle
 ../../../scripts/install-eigen-cli.sh
 ```
 
+Run this command without `sudo`.
+
 3. Check `job.yaml`:
 
 - `apiVersion: eigen.os/v0.1`

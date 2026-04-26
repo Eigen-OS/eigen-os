@@ -27,8 +27,6 @@ test -f examples/basic/vqe_cycle/job.yaml
 test -f examples/basic/vqe_cycle/program.eigen.py
 ```
 
-## Instructions
-
 ### 0) `eigen: command not found`
 
 **Symptoms**
@@ -45,6 +43,14 @@ eigen --help
 
 The installer puts `eigen` into your active virtualenv (`$VIRTUAL_ENV/bin`) when available,
 or `~/.local/bin` otherwise.
+Do **not** run it with `sudo`.
+
+If you previously ran with `sudo` and now see `Permission denied` under `src/rust/target`,
+fix ownership once:
+
+```bash
+sudo chown -R "$USER:$USER" src/rust/target
+```
 
 ---
 

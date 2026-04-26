@@ -39,6 +39,8 @@ cargo run -p cli --manifest-path src/rust/Cargo.toml -- --help
 ./scripts/install-eigen-cli.sh
 ```
 
+> Run without `sudo` so installation targets your current user / virtualenv.
+
 If you prefer no installation, use `cargo run -p cli --manifest-path src/rust/Cargo.toml -- ...` in every step below.
 
 3. Go to the example directory:
