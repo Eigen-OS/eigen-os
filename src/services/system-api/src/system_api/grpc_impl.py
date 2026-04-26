@@ -429,7 +429,7 @@ class JobService:
         
         if should_fail:
             error_details_ref = f"qfs://jobs/{job_id}/errors/runtime_error.json"
-            try:
+        try:
             run_duration_sec = max(float(metadata.get("simulate_runtime_sec", "0.0") or 0.0), 0.0)
         except ValueError:
             run_duration_sec = 0.0
