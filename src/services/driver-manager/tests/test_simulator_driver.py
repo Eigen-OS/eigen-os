@@ -87,3 +87,15 @@ def test_simulated_errors() -> None:
     with pytest.raises(DriverExecutionError) as exhausted:
         drv.execute_circuit("sim:golden", payload, 10, {"simulate_error": "RESOURCE_EXHAUSTED"})
     assert exhausted.value.code == grpc.StatusCode.RESOURCE_EXHAUSTED
+
+
+def test_aqo_version_is_required() -> None:
+    drv = _driver()
+    payload = json.dumps({"qubits": 1, "operations": [{"op": "MEASURE", "q": [0], "c": [0]}]}).encode("utf-8")
+
+    with pytest.raises(DriverExecutionError) as invalid:
+        drv.execute_circuit("sim:golden", payload, 10, {})
+
+    assert invalid.value.code == grpc.StatusCode.INVALID_ARGUMENT
+    assert invalid.value.message == "aqo.version is required"
+    
