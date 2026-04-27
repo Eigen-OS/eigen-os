@@ -1,6 +1,6 @@
 This roadmap is aligned with the current MVP definition and tracks the minimum milestones required for an end-to-end release.
 
-## Current delivery focus (as of 2026-04-25)
+## Current delivery focus
 
 - ✅ **MVP-1 (Core Services Setup)** completed: repository skeleton, public contracts, service stubs, QRTX/Driver Manager/QFS scaffolding, and CI baseline.
 - ✅ **MVP-2 (Compilation Pipeline)** completed: JobSpec parser/validator, Eigen-Lang AST→AQO compiler hardening, CLI `eigen submit`, and conformance suites.
@@ -9,7 +9,7 @@ This roadmap is aligned with the current MVP definition and tracks the minimum m
 - MVP-3 RFC package (accepted): [`../rfcs/0016-mvp3-kernel-driver-execution-contract.md`](../rfcs/0016-mvp3-kernel-driver-execution-contract.md), [`../rfcs/0017-mvp3-results-retrieval-and-cli-runtime-ux.md`](../rfcs/0017-mvp3-results-retrieval-and-cli-runtime-ux.md), [`../rfcs/0018-mvp3-runtime-observability-and-release-gates.md`](../rfcs/0018-mvp3-runtime-observability-and-release-gates.md)
 - Post-MVP open-source roadmap: [`development/post-mvp-open-source-roadmap.md`](development/post-mvp-open-source-roadmap.md)
 - Phase 1 release readiness checklist: [`development/phase-1-release-readiness-checklist.md`](development/phase-1-release-readiness-checklist.md)
-- Phase 1 RFC (draft): [`../rfcs/0019-phase1-production-runtime-plan.md`](../rfcs/0019-phase1-production-runtime-plan.md)
+- Phase 1 RFC (implemented): [`../rfcs/0019-phase1-production-runtime-plan.md`](../rfcs/0019-phase1-production-runtime-plan.md)
 - MVP-3 ADR package: [`adr/0007-mvp3-release-readiness-runtime-contracts-and-security-closure.md`](adr/0007-mvp3-release-readiness-runtime-contracts-and-security-closure.md)
 - MVP-2 RFC package (implemented): [`../rfcs/0013-mvp2-jobspec-parser-submit-contract.md`](../rfcs/0013-mvp2-jobspec-parser-submit-contract.md), [`../rfcs/0014-mvp2-eigen-lang-ast-safety-deterministic-aqo.md`](../rfcs/0014-mvp2-eigen-lang-ast-safety-deterministic-aqo.md), [`../rfcs/0015-mvp2-conformance-and-ci-gates.md`](../rfcs/0015-mvp2-conformance-and-ci-gates.md)
 
@@ -42,7 +42,7 @@ This roadmap is aligned with the current MVP definition and tracks the minimum m
 
 - ✅ Completed MVP Definition of Done checklist for all in-scope services.
 - ✅ Confirmed docs and governance artifacts are up to date.
-- ✅ MVP baseline is frozen after MVP-3 closure (2026-04-25); post-MVP planning is now active.
+- ✅ MVP baseline is frozen after MVP-3 closure; post-MVP planning is now active.
 
 ## Out of scope for MVP (tracked after release)
 
@@ -52,9 +52,17 @@ This roadmap is aligned with the current MVP definition and tracks the minimum m
 - Multi-node high availability
 - Advanced optimization passes
 
-## Milestone 6 — Phase 1 production runtime (in progress)
+## Milestone 6 — Phase 1 production runtime (completed)
 
-- 🚧 External provider driver integration baseline (IBM/Qiskit Runtime path).
-- 🚧 Timeout, cancellation, and retry policy hardening in runtime state machine.
-- 🚧 Object-storage-compatible artifact persistence and retrieval semantics.
-- 🚧 Observability v2 rollout with stage latency and timeline visibility.
+- ✅ External provider driver integration baseline (IBM/Qiskit Runtime path).
+- ✅ Timeout, cancellation, and retry policy hardening in runtime state machine.
+- ✅ Object-storage-compatible artifact persistence and retrieval semantics.
+- ✅ Observability v2 rollout with stage latency and timeline visibility.
+- ✅ Release readiness checklist closed; product version advanced to `0.2.0`
+
+## Milestone 7 — Phase 2 orchestration layer (in progress)
+
+- 🚧 Scheduler core: priority queues, quotas, and baseline fairness policies.
+- 🚧 Device-aware scheduling using latency/calibration/availability signals.
+- 🚧 Multi-device and batch orchestration contracts and guardrails.
+- 🚧 Operational controls for orchestration SLOs and rebalancing safety.

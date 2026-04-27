@@ -18,6 +18,15 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 
 ### Added
 
+- Phase-2 orchestration documentation baseline: execution plan and a ready-to-copy GitHub issue pack for scheduler/device-aware/multi-device/batch workstreams.
+
+### Changed
+
+- Phase-1 is marked complete in roadmap and development planning docs with explicit closure date (**2026-04-27**).
+- Product/service package versions advanced from `0.1.0` to `0.2.0` for post-Phase-1 release line.
+
+### Added
+
 - Project health documentation baseline: `CONTRIBUTING.md`, `SECURITY.md`, and roadmap/project-health alignment.
 - Phase-1 release readiness checklist with consolidated security/performance/docs/upgrade gates and locked contract version matrix.
 - Contract compatibility runner script: `scripts/test/run-contract-compatibility-suite.sh`.
