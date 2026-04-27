@@ -35,6 +35,15 @@ from .run_api import (
     BenchmarkRunRequestValidationError,
 )
 
+from .reproducibility import (
+    DEFAULT_REPRODUCIBILITY_POLICY,
+    REPRODUCIBILITY_POLICY_VERSION,
+    DriftDiagnostic,
+    ReproducibilityGate,
+    ReproducibilityPolicy,
+    ReproducibilityReport,
+)
+
 from .run_lifecycle import (
     RUN_CONTRACT_VERSION,
     SNAPSHOT_VERSION,
@@ -55,6 +64,12 @@ __all__ = [
     "BenchmarkCompareApi",
     "BenchmarkCompareRequestValidationError",
     "CompareValidationError",
+    "DEFAULT_REPRODUCIBILITY_POLICY",
+    "REPRODUCIBILITY_POLICY_VERSION",
+    "DriftDiagnostic",
+    "ReproducibilityGate",
+    "ReproducibilityPolicy",
+    "ReproducibilityReport",
     "RUN_CONTRACT_VERSION",
     "SNAPSHOT_VERSION",
     "BenchmarkRunService",
