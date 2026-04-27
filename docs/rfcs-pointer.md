@@ -31,12 +31,16 @@
 
 ## Phase-3 RFC set (implemented)
 
-- Status on 2026-04-27: required Phase-3 contract RFC package is merged and indexed.
+- Status on 2026-04-27: required Phase-3 contract RFC package is merged and synchronized with ADRs.
 - Coverage check: [development/phase-3-rfc-adr-gap-analysis.md](development/phase-3-rfc-adr-gap-analysis.md)
-- Implemented:
+- Implemented RFCs:
   - [RFC 0020 — Phase-3 Benchmark Run Lifecycle Contract v1](../rfcs/0020-phase3-benchmark-run-lifecycle-contract-v1.md)
 - [RFC 0021 — Phase-3 Dataset Ingestion Contract v1](../rfcs/0021-phase3-dataset-ingestion-contract-v1.md)
   - [RFC 0022 — Phase-3 Comparison Methodology and History Contract v1](../rfcs/0022-phase3-compare-history-contract-v1.md)
+  - Synchronized ADRs:
+  - [ADR 0008 — Phase-3 benchmark run lifecycle core v1](adr/0008-phase3-benchmark-run-lifecycle-core-v1.md)
+  - [ADR 0009 — Phase-3 dataset ingestion contract v1](adr/0009-phase3-dataset-ingestion-contract-v1.md)
+  - [ADR 0010 — Phase-3 comparison methodology and history contract v1](adr/0010-phase3-compare-history-contract-v1.md)
 
 ## Quick links
 

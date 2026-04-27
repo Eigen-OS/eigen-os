@@ -91,6 +91,8 @@ git fetch origin main:main
 - Phase 3 benchmarking plan: [`phase-3-benchmarking-platform.md`](phase-3-benchmarking-platform.md)
 - Phase 3 issue pack: [`phase-3-issue-pack.md`](phase-3-issue-pack.md)
 - Phase 3 RFC/ADR gap analysis: [`phase-3-rfc-adr-gap-analysis.md`](phase-3-rfc-adr-gap-analysis.md)
+- Phase 3 release readiness checklist: [`phase-3-release-readiness-checklist.md`](phase-3-release-readiness-checklist.md)
+- Phase 3 compatibility report: [`phase-3-compatibility-report.md`](phase-3-compatibility-report.md)
 - Architecture decisions: [`../adr/README.md`](../adr/README.md)
 - RFC package: [`../../rfcs/`](../../rfcs/)
 
