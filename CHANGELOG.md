@@ -20,6 +20,7 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 
 - Phase-3 P3-01 benchmark-service core (`benchmark-service` package `0.1.0`) with run lifecycle state machine, idempotent start/retry semantics, and immutable deterministic snapshot metadata.
 - RFC 0020 and ADR 0008 for benchmark run lifecycle contract governance.
+- Phase-3 P3-02 QSBench-compatible dataset ingestion pipeline (`benchmark-service` package `0.2.0`) with manifest schema validation, checksum/provenance verification, and queryable dataset version catalog.
 
 ### Phase-3: Benchmark Service Core v1 (P3-01)
 
@@ -28,6 +29,12 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 - **Migration notes:** No migration required for existing clients.
 
 ## [0.3.0]
+
+### Phase-3: Dataset Ingestion Pipeline (P3-02)
+
+- **Version impact:** MINOR (adds new dataset ingestion + catalog capability and stable manifest schema contract `1.0.0`).
+- **Compatibility:** Additive; existing benchmark run lifecycle contract `1.0.0` is unchanged.
+- **Migration notes:** No mandatory migration. Producers must include `manifest.json` with required provenance/checksum fields for ingestion.
 
 ### Added
 
