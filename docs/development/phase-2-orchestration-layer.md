@@ -3,12 +3,14 @@
 ## Status
 
 - **Phase**: 2 (Post-MVP)
-- **Planning status**: Active
+- **Planning status**: Completed
 - **Started on**: 2026-04-27
 - **Last updated**: 2026-04-27
 - **Previous phase closure**: [`phase-1-production-runtime.md`](phase-1-production-runtime.md)
 - **Execution backlog**: [`phase-2-issue-pack.md`](phase-2-issue-pack.md)
 - **Compatibility report**: [`phase-2-compatibility-report.md`](phase-2-compatibility-report.md)
+- **Release checklist**: [`phase-2-release-readiness-checklist.md`](phase-2-release-readiness-checklist.md)
+- **Migration notes**: [`phase-2-migration-notes.md`](phase-2-migration-notes.md)
 
 ## Goal
 

@@ -60,9 +60,11 @@ This roadmap is aligned with the current MVP definition and tracks the minimum m
 - ✅ Observability v2 rollout with stage latency and timeline visibility.
 - ✅ Release readiness checklist closed; product version advanced to `0.2.0`
 
-## Milestone 7 — Phase 2 orchestration layer (in progress)
+## Milestone 7 — Phase 2 orchestration layer (completed)
 
-- 🚧 Scheduler core: priority queues, quotas, and baseline fairness policies.
-- 🚧 Device-aware scheduling using latency/calibration/availability signals.
-- 🚧 Multi-device and batch orchestration contracts and guardrails.
-- 🚧 Operational controls for orchestration SLOs and rebalancing safety.
+- ✅ Scheduler core: priority queues, quotas, and baseline fairness policies.
+- ✅ Device-aware scheduling using latency/calibration/availability signals.
+- ✅ Multi-device and batch orchestration contracts and guardrails.
+- ✅ Operational controls for orchestration SLOs and rebalancing safety.
+- ✅ Release readiness checklist, compatibility package, and migration notes completed.
+- ✅ Product version advanced to `0.3.0`.
