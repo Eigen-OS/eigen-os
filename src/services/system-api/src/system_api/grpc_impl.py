@@ -423,10 +423,12 @@ class JobService:
         compiling_after = max(record.run_duration_sec * 0.2, 0.0)
         dispatch_after = max(record.run_duration_sec * 0.45, 0.0)
         running_after = max(record.run_duration_sec * 0.6, 0.0)
+        completion_after = max(record.run_duration_sec, 0.0)
         if record.batch_id:
             compiling_after *= 0.8
             dispatch_after *= 0.8
             running_after *= 0.8
+            completion_after *= 0.8
 
         if len(record.updates) == 1 and elapsed >= scheduling_delay + compiling_after:
             self._append_update(
@@ -469,7 +471,7 @@ class JobService:
                 progress=1.0,
                 message=record.timeout_reason,
             )
-        elif elapsed >= scheduling_delay + record.run_duration_sec:
+        elif elapsed >= scheduling_delay + completion_after:
             if record.should_fail:
                 self._append_update(
                     record,
