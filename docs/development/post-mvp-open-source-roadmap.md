@@ -47,12 +47,12 @@ Why this path is strong:
 
 ## 4. Roadmap Overview
 
-- **Phase 1: Production Runtime** — deliver practical utility beyond simulation-only workflows
-- **Phase 2: Orchestration Layer** — introduce robust resource and execution management
+- ✅ **Phase 1: Production Runtime** — completed on **2026-04-27** and shipped in product version **0.2.0**
+- **Phase 2: Orchestration Layer** — active execution focus for the next release cycle
 - **Phase 3: Benchmarking Platform** — add strong analytical and research capabilities
 - **Phase 4: Intelligent Runtime** — introduce data-driven runtime optimization
 
-## 5. Phase 1 — Production Runtime
+## 5. Phase 1 — Production Runtime (Completed)
 
 Goal: make Eigen-OS suitable for real-world usage and hardware-connected execution.
 
@@ -80,8 +80,14 @@ Expected outcome:
 - Real quantum job execution support
 - Production-ready execution path
 - First practical open-source utility for external users
+- Release readiness closure and version uplift to `0.2.0`
 
-## 6. Phase 2 — Orchestration Layer
+Implementation closure artifacts:
+
+- [`phase-1-production-runtime.md`](phase-1-production-runtime.md)
+- [`phase-1-release-readiness-checklist.md`](phase-1-release-readiness-checklist.md)
+
+## 6. Phase 2 — Orchestration Layer (Active)
 
 Goal: turn Eigen-OS into a full workload orchestrator.
 
@@ -101,6 +107,11 @@ Key workstreams:
 Expected outcome:
 
 - Eigen-OS becomes a Kubernetes-like orchestrator for quantum workloads
+
+Execution artifacts:
+
+- Phase-2 plan: [`phase-2-orchestration-layer.md`](phase-2-orchestration-layer.md)
+- Phase-2 issue pack: [`phase-2-issue-pack.md`](phase-2-issue-pack.md)
 
 ## 7. Phase 3 — Benchmarking Platform
 
