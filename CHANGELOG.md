@@ -57,3 +57,9 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 - **Version impact:** MINOR (adds rebalance/preemption policy artifacts and idempotent requeue behavior with explicit version marker `2.2.0`).
 - **Compatibility:** Existing admission/dispatch reason codes remain intact; new preemption reason codes and metrics are additive. Terminal/preempted status semantics are unchanged.
 - **Migration notes:** No mandatory migration. Integrations can optionally consume `RebalancePlan`/`PreemptionDecision` and the new scheduler metrics (`rebalance_trigger_total`, `preemption_attempted_total`, `preempted_total`, `requeued_total`, `requeue_idempotent_hits_total`).
+
+### Phase-2: Orchestration Observability Pack
+
+- **Version impact:** MINOR (adds a new stable observability metric family, orchestrator dashboard, alerts, and runbook).
+- **Compatibility:** Existing stage observability metrics remain unchanged; new `eigen_orch_*` metrics are additive and version-marked via `eigen_orch_contract_info{version="2.3.0"}`.
+- **Migration notes:** No mandatory migration. Operators should import `monitoring/dashboards/orchestration_dashboard.json`, load `monitoring/metrics/prometheus/orchestrator-alerts.yaml`, and wire orchestrator scrape target (`127.0.0.1:9094`).

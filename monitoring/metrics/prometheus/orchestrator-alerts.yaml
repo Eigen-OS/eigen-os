@@ -1,0 +1,32 @@
+groups:
+  - name: eigen-orchestrator
+    interval: 30s
+    rules:
+      - alert: EigenOrchestratorQueueOverload
+        expr: eigen_orch_queue_depth > 250
+        for: 10m
+        labels: { severity: critical, team: sre }
+        annotations:
+          summary: "Orchestrator queue depth remains above overload threshold"
+
+      - alert: EigenOrchestratorQueueStarvationRisk
+        expr: eigen_orch_queue_oldest_age_seconds > 120
+        for: 10m
+        labels: { severity: critical, team: sre }
+        annotations:
+          summary: "Oldest queued job age indicates starvation risk"
+
+      - alert: EigenOrchestratorFairnessLagHigh
+        expr: eigen_orch_fairness_lag_millis_max > 2000
+        for: 15m
+        labels: { severity: warning, team: sre }
+        annotations:
+          summary: "Fairness lag max is consistently above policy budget"
+
+      - alert: EigenOrchestratorQuotaDenySpike
+        expr: increase(eigen_orch_quota_denied_tenant_total[10m]) + increase(eigen_orch_quota_denied_project_total[10m]) > 25
+        for: 10m
+        labels: { severity: warning, team: sre }
+        annotations:
+          summary: "Quota denials spiking for orchestrator"
+          

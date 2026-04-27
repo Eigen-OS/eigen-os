@@ -1,0 +1,93 @@
+{
+  "title": "Eigen Orchestrator — Queue, Fairness, Quotas",
+  "uid": "eigen-orchestrator-v23",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Queue Depth",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "eigen_orch_queue_depth", "legendFormat": "depth" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green" }, { "color": "orange", "value": 100 }, { "color": "red", "value": 250 } ] }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Queue Age (oldest / avg)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "eigen_orch_queue_oldest_age_seconds", "legendFormat": "oldest" },
+        { "expr": "eigen_orch_queue_avg_age_seconds", "legendFormat": "avg" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green" }, { "color": "orange", "value": 30 }, { "color": "red", "value": 120 } ] }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Fairness Lag",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "eigen_orch_fairness_lag_millis_max", "legendFormat": "max lag" },
+        { "expr": "increase(eigen_orch_fairness_lag_millis_total[5m])", "legendFormat": "lag increase / 5m" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green" }, { "color": "orange", "value": 500 }, { "color": "red", "value": 2000 } ] }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Quota Denials (tenant/project)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "increase(eigen_orch_quota_denied_tenant_total[5m])", "legendFormat": "tenant / 5m" },
+        { "expr": "increase(eigen_orch_quota_denied_project_total[5m])", "legendFormat": "project / 5m" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "Rebalance & Starvation Counters",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "increase(eigen_orch_rebalance_trigger_total[15m])", "legendFormat": "rebalance / 15m" },
+        { "expr": "increase(eigen_orch_starvation_prevention_total[15m])", "legendFormat": "starvation prevent / 15m" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] }
+    },
+    {
+      "type": "stat",
+      "title": "Observability Contract Version",
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 24 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "eigen_orch_contract_info", "legendFormat": "contract" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none" }, "overrides": [] }
+    }
+  ]
+}
