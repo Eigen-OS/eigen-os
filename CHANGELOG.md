@@ -25,7 +25,14 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 - Phase-3 P3-03 benchmark run API contract (`/benchmarks/run`) and compatibility fixtures (`benchmark-service` package `0.3.0`) with stable request/response/error envelopes and explicit artifact version markers.
 - Phase-3 P3-01 benchmark-service core (`benchmark-service` package `0.1.0`) with run lifecycle state machine, idempotent start/retry semantics, and immutable deterministic snapshot metadata.
 - RFC 0020 and ADR 0008 for benchmark run lifecycle contract governance.
+- Phase-3 P3-09 RFC package for benchmark contracts (run lifecycle, dataset ingestion, compare/history) with explicit statuses and indexed docs links (RFC 0020/0021/0022).
 - Phase-3 P3-02 QSBench-compatible dataset ingestion pipeline (`benchmark-service` package `0.2.0`) with manifest schema validation, checksum/provenance verification, and queryable dataset version catalog.
+
+### Phase-3: RFC Package for Contracts (P3-09)
+
+- **Version impact:** MINOR (governance package completion; benchmark-service package advanced to `0.8.0`).
+- **Compatibility:** No payload or behavior break; stable contract baselines remain `1.0.0` for run (`state/snapshot`), dataset ingestion (`manifest/ingestion`), compare (`comparison/methodology`), and history (`history_contract_version`).
+- **Migration notes:** No mandatory migration. Teams should pin and validate explicit version markers in run snapshots, ingestion artifacts, compare outputs, and history entries.
 
 ### Phase-3: Reproducibility and Determinism Gate (P3-08)
 

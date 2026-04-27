@@ -29,15 +29,14 @@
 - Post-MVP roadmap: [development/post-mvp-open-source-roadmap.md](development/post-mvp-open-source-roadmap.md)
 - ADR package: [docs/adr/0007-mvp3-release-readiness-runtime-contracts-and-security-closure.md](adr/0007-mvp3-release-readiness-runtime-contracts-and-security-closure.md)
 
-## Phase-3 RFC set (in progress)
+## Phase-3 RFC set (implemented)
 
-- Status on 2026-04-27: benchmark run lifecycle RFC has landed; package is still incomplete.
+- Status on 2026-04-27: required Phase-3 contract RFC package is merged and indexed.
 - Coverage check: [development/phase-3-rfc-adr-gap-analysis.md](development/phase-3-rfc-adr-gap-analysis.md)
 - Implemented:
   - [RFC 0020 — Phase-3 Benchmark Run Lifecycle Contract v1](../rfcs/0020-phase3-benchmark-run-lifecycle-contract-v1.md)
-- Remaining planned package:
-  - dataset ingestion contract RFC
-  - compare/history methodology RFC
+- [RFC 0021 — Phase-3 Dataset Ingestion Contract v1](../rfcs/0021-phase3-dataset-ingestion-contract-v1.md)
+  - [RFC 0022 — Phase-3 Comparison Methodology and History Contract v1](../rfcs/0022-phase3-compare-history-contract-v1.md)
 
 ## Quick links
 
