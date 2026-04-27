@@ -1,0 +1,1 @@
+{"workload":"vqe-h2","dataset":"qfs://datasets/vqe-h2/1.0.0","backend":"sim:local","seed":4242,"metrics":{"latency_ms":101.5,"fidelity":0.9912,"throughput_qps":55.0}}
