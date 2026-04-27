@@ -29,3 +29,9 @@ Ingestion guarantees:
 - Provenance validation via required `source_uri` and `source_checksum`.
 - Bundle checksum verification for `source_file`.
 - Dataset catalog registration with queryable versions per dataset.
+
+## Benchmark Run API contract (`/benchmarks/run`)
+
+- Stable request/response envelope with SemVer marker `api_version: 1.0.0`.
+- Error envelope aligned with public conventions: `error.code`, `error.message`, `error.details[]`.
+- Contract fixture tests enforce required field stability in CI.

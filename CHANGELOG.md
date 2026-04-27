@@ -18,6 +18,7 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 
 ### Added
 
+- Phase-3 P3-03 benchmark run API contract (`/benchmarks/run`) and compatibility fixtures (`benchmark-service` package `0.3.0`) with stable request/response/error envelopes and explicit artifact version markers.
 - Phase-3 P3-01 benchmark-service core (`benchmark-service` package `0.1.0`) with run lifecycle state machine, idempotent start/retry semantics, and immutable deterministic snapshot metadata.
 - RFC 0020 and ADR 0008 for benchmark run lifecycle contract governance.
 - Phase-3 P3-02 QSBench-compatible dataset ingestion pipeline (`benchmark-service` package `0.2.0`) with manifest schema validation, checksum/provenance verification, and queryable dataset version catalog.
@@ -29,6 +30,12 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 - **Migration notes:** No migration required for existing clients.
 
 ## [0.3.0]
+
+### Phase-3: Benchmark Run API Contract Tests (P3-03)
+
+- **Version impact:** MINOR (new `/benchmarks/run` contract surface and conformance fixtures).
+- **Compatibility:** Additive; no breaking changes to existing benchmark lifecycle (`1.0.0`) or dataset ingestion (`1.0.0`) contracts.
+- **Migration notes:** No mandatory migration. API consumers should validate against the new documented required request fields (`idempotency_key`, `config`) and rely on explicit response version markers.
 
 ### Phase-3: Dataset Ingestion Pipeline (P3-02)
 
