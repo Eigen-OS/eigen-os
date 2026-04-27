@@ -81,3 +81,13 @@ def test_e2e_smoke_submit_watch_results(grpc_addr: str):
     assert dict(results.counts) == fixture["counts"]
     for key, template in fixture["metadata_templates"].items():
         assert results.metadata.get(key) == template.format(job_id=job_id)
+
+    rationale = stub.GetDispatchRationale(job_pb.GetDispatchRationaleRequest(job_id=job_id)).rationale
+    assert rationale.version == "2.0.0"
+    assert rationale.policy_version
+    assert "WEIGHTED_FAIRNESS" in rationale.reason_codes
+    assert "DEVICE_SCORE" in rationale.reason_codes
+    assert rationale.selected_backend == "sim:local"
+    assert rationale.timeline_ref == f"qfs://jobs/{job_id}/timeline.json"
+    assert rationale.logs_ref == f"qfs://jobs/{job_id}/logs/dispatch.log"
+    
