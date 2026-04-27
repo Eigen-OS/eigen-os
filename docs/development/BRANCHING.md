@@ -144,13 +144,17 @@ During MVP, stick to `main` + short-lived branches.
 After MVP (when releases start), optional branches:
 
 ### Release branches
+
 - `release/0.1.0`
 - `release/0.2.0`
+- `release/0.3.0`
 
 ### Hotfix branches
+
 - `hotfix/0.1.1-critical-grpc-crash`
 
 Releases should follow **Semantic Versioning (SemVer)**:
+
 - MAJOR.MINOR.PATCH
 - patch = bug fixes
 - minor = backward compatible features

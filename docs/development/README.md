@@ -85,6 +85,9 @@ git fetch origin main:main
 - Phase 1 runtime plan (completed): [`phase-1-production-runtime.md`](phase-1-production-runtime.md)
 - Phase 2 orchestration plan: [`phase-2-orchestration-layer.md`](phase-2-orchestration-layer.md)
 - Phase 2 issue pack: [`phase-2-issue-pack.md`](phase-2-issue-pack.md)
+- Phase 2 release readiness checklist: [`phase-2-release-readiness-checklist.md`](phase-2-release-readiness-checklist.md)
+- Phase 2 compatibility report: [`phase-2-compatibility-report.md`](phase-2-compatibility-report.md)
+- Phase 2 migration notes: [`phase-2-migration-notes.md`](phase-2-migration-notes.md)
 - Architecture decisions: [`../adr/README.md`](../adr/README.md)
 - RFC package: [`../../rfcs/`](../../rfcs/)
 

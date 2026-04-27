@@ -1,4 +1,4 @@
-his document is a ready-to-use set of GitHub issues for the **Phase-2** stage of the roadmap.
+This document is a ready-to-use set of GitHub issues for the **Phase-2** stage of the roadmap.
 
 **Context Source:** `docs/development/post-mvp-open-source-roadmap.md` (Section: "Phase 2 — Orchestration Layer").
 

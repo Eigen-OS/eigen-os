@@ -1,10 +1,12 @@
 # Phase-2 Compatibility Report
 
-- **Status:** Required for marking Phase-2 release as Ready.
+- **Status:** Signed for Phase-2 release readiness.
 - **Last updated:** 2026-04-27
 - **Owner:** Orchestration maintainers
 
 ## Contract version matrix
+
+Version matrix is **locked** for the `0.3.0` release line.
 
 | Contract surface | Current version | Compatibility notes |
 | --- | --- | --- |
@@ -29,4 +31,4 @@ Every contract-affecting PR must include:
 
 ## Release readiness
 
-A Phase-2 release is **not Ready** until this report is reviewed and updated in the release PR.
+Compatibility and migration package signed. Phase-2 release gate can be marked **Ready**.
