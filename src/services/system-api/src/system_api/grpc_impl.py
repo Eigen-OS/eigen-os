@@ -396,6 +396,8 @@ class JobService:
             record.completed_at = _ts_now()
 
     def _advance_job(self, record: _JobRecord) -> None:
+        if self._batch_mode_enabled and not record.batch_id and len(record.updates) == 1:
+            self._try_batch_assignments()
         if record.updates[-1].state in {getattr(self._types_pb, name) for name in TERMINAL_JOB_STATES}:
             self._finalize_terminal_state(record)
             return
