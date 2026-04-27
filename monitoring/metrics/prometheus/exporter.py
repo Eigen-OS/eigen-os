@@ -26,6 +26,19 @@ class OrchestrationMetricsSnapshot:
     starvation_prevention_total: int
 
 
+@dataclass(frozen=True)
+class BenchmarkMetricsSnapshot:
+    """Stable benchmark observability metrics contract (version 1.0.0)."""
+
+    contract_version: str
+    queue_depth: int
+    run_duration_seconds: float
+    runs_succeeded_total: int
+    runs_failed_total: int
+    ingestion_failures_total: int
+    stalled_runs: int
+
+
 class StageTelemetryExporter:
     def __init__(self, *, max_samples_per_stage: int = 4096) -> None:
         self._aggregator = StageLatencyAggregator(max_samples_per_stage=max_samples_per_stage)
@@ -58,6 +71,49 @@ class StageTelemetryExporter:
                 )
             return "\n".join(lines) + "\n"
 
+
+class BenchmarkTelemetryExporter:
+    """Exporter for benchmark queue/run/ingestion lifecycle metrics."""
+
+    def __init__(self) -> None:
+        self._lock = Lock()
+        self._snapshot = BenchmarkMetricsSnapshot(
+            contract_version="1.0.0",
+            queue_depth=0,
+            run_duration_seconds=0.0,
+            runs_succeeded_total=0,
+            runs_failed_total=0,
+            ingestion_failures_total=0,
+            stalled_runs=0,
+        )
+
+    def update_snapshot(self, snapshot: BenchmarkMetricsSnapshot) -> None:
+        with self._lock:
+            self._snapshot = snapshot
+
+    def render_prometheus_text(self) -> str:
+        with self._lock:
+            snapshot = self._snapshot
+
+        lines: list[str] = [
+            "# TYPE eigen_bench_contract_info gauge",
+            "# TYPE eigen_bench_queue_depth gauge",
+            "# TYPE eigen_bench_run_duration_seconds gauge",
+            "# TYPE eigen_bench_runs_succeeded_total counter",
+            "# TYPE eigen_bench_runs_failed_total counter",
+            "# TYPE eigen_bench_ingestion_failures_total counter",
+            "# TYPE eigen_bench_stalled_runs gauge",
+            f'eigen_bench_contract_info{{version="{snapshot.contract_version}"}} 1',
+            f"eigen_bench_queue_depth {snapshot.queue_depth}",
+            f"eigen_bench_run_duration_seconds {snapshot.run_duration_seconds:.6f}",
+            f"eigen_bench_runs_succeeded_total {snapshot.runs_succeeded_total}",
+            f"eigen_bench_runs_failed_total {snapshot.runs_failed_total}",
+            f"eigen_bench_ingestion_failures_total {snapshot.ingestion_failures_total}",
+            f"eigen_bench_stalled_runs {snapshot.stalled_runs}",
+        ]
+        return "\n".join(lines) + "\n"
+    
+    
 class OrchestrationTelemetryExporter:
     """Exporter for queue/fairness/quota/rebalance orchestration metrics."""
 

@@ -15,6 +15,7 @@ Use this scenario when you need to locally verify MVP observability:
   - System API metrics: `9090`
   - Driver Manager metrics: `9092`
   - Compiler metrics: `9093`
+  - Benchmark metrics: `9095`
 
 ## Instructions
 
@@ -32,6 +33,7 @@ EIGEN_COMPILER_METRICS_PORT=9093 python -m eigen_compiler.main
 curl -s http://127.0.0.1:9090/metrics
 curl -s http://127.0.0.1:9092/metrics
 curl -s http://127.0.0.1:9093/metrics
+curl -s http://127.0.0.1:9095/metrics
 ```
 
 3. For trace propagation, run the kernel integration test:
