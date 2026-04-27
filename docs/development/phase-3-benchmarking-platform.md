@@ -90,7 +90,6 @@ Turn Eigen-OS into a reproducible benchmarking and comparative analytics platfor
 1. Planning + backlog: this document + [`phase-3-issue-pack.md`](phase-3-issue-pack.md).
 2. Governance package: [`phase-3-rfc-adr-gap-analysis.md`](phase-3-rfc-adr-gap-analysis.md) + RFCs `0020/0021/0022` in `rfcs/`.
 3. Implementation slices: benchmark service, dataset pipeline, compare/history APIs, CLI commands.
-4. Release closure package (to be added during implementation):
-   - `phase-3-release-readiness-checklist.md`
-   - `phase-3-compatibility-report.md`
-   - `phase-3-migration-notes.md`
+4. Release closure package:
+   - [`phase-3-release-readiness-checklist.md`](phase-3-release-readiness-checklist.md)
+   - [`phase-3-compatibility-report.md`](phase-3-compatibility-report.md)
