@@ -60,3 +60,11 @@ Turn Eigen-OS from a production runtime into a workload orchestrator with predic
 - Breaking changes to queue semantics, reason codes, or batch/event contract require `MAJOR`.
 - Backward-compatible policy extensions use `MINOR`.
 - Documentation and operational tuning only uses `PATCH`.
+
+## P2-07 baseline: rebalancing and preemption safety rules
+
+- **Rebalancing trigger:** rebalance is planned only when all three conditions are true: `source_load >= high_watermark`, `target_load <= low_watermark`, and `source_load - target_load >= min_imbalance_gap`.
+- **Preemption guardrails:** rebalance preemption is blocked if a job has not met `min_dispatch_rounds_before_preempt` or if it reached `max_preemptions_per_job`.
+- **Idempotent requeue:** every preemption request must carry a `requeue_token`; repeated token usage must be handled as a no-op duplicate.
+- **Artifact version marker:** all rebalance plans and preemption/requeue decisions carry `version = 2.2.0`.
+- **Observability metrics:** `rebalance_trigger_total`, `preemption_attempted_total`, `preempted_total`, `requeued_total`, `requeue_idempotent_hits_total`.

@@ -18,6 +18,8 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 pub const SCHEDULER_DECISION_VERSION: &str = "2.1.0";
 /// SemVer version for device score DTOs/contracts.
 pub const DEVICE_SCORE_VERSION: &str = "2.1.0";
+/// SemVer version for rebalancing/preemption safety artifacts.
+pub const REBALANCING_POLICY_VERSION: &str = "2.2.0";
 /// SemVer version for multi-device split/merge execution contract artifacts.
 ///
 /// Breaking changes to partial-result envelopes or merge semantics must bump MAJOR.
@@ -518,6 +520,13 @@ impl QueueState {
             .push_back(job);
     }
 
+    fn push_front(&mut self, job: ScheduledJob) {
+        self.per_priority
+            .entry(job.priority)
+            .or_default()
+            .push_front(job);
+    }
+
     fn pop_next(&mut self) -> Option<ScheduledJob> {
         let priority = self.per_priority.keys().next_back().copied()?;
         let queue = self
@@ -546,6 +555,11 @@ pub struct SchedulerMetrics {
     pub fairness_lag_millis_total: u64,
     /// Maximum observed non-negative fairness lag (milli-jobs).
     pub fairness_lag_millis_max: u64,
+    pub rebalance_trigger_total: u64,
+    pub preemption_attempted_total: u64,
+    pub preempted_total: u64,
+    pub requeued_total: u64,
+    pub requeue_idempotent_hits_total: u64,
 }
 
 /// Health/status snapshot for health endpoints.
@@ -555,6 +569,87 @@ pub struct SchedulerHealth {
     pub total_queue_depth: usize,
     pub fairness_entities: usize,
     pub metrics: SchedulerMetrics,
+}
+
+/// Device load sample used for rebalance trigger evaluation.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DeviceLoad {
+    pub device_id: String,
+    /// Ratio in the `[0.0, 1.0]` interval.
+    pub load_ratio: f64,
+}
+
+/// Rebalancing trigger policy.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RebalancingPolicy {
+    pub high_watermark: f64,
+    pub low_watermark: f64,
+    pub min_imbalance_gap: f64,
+    pub max_preemptions_per_rebalance: usize,
+}
+
+impl Default for RebalancingPolicy {
+    fn default() -> Self {
+        Self {
+            high_watermark: 0.85,
+            low_watermark: 0.40,
+            min_imbalance_gap: 0.30,
+            max_preemptions_per_rebalance: 2,
+        }
+    }
+}
+
+/// Guardrails for safe preemption.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PreemptionPolicy {
+    pub min_dispatch_rounds_before_preempt: u64,
+    pub max_preemptions_per_job: u32,
+}
+
+impl Default for PreemptionPolicy {
+    fn default() -> Self {
+        Self {
+            min_dispatch_rounds_before_preempt: 1,
+            max_preemptions_per_job: 3,
+        }
+    }
+}
+
+/// Stable reason codes for preemption outcomes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PreemptionReasonCode {
+    RebalanceOverloadedDevice,
+    DuplicateRequeueRequest,
+    GuardrailMinRuntime,
+    GuardrailPreemptionCap,
+    ActiveDispatchNotFound,
+}
+
+/// Rebalance plan artifact with explicit version marker.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RebalancePlan {
+    pub version: &'static str,
+    pub source_device_id: String,
+    pub target_device_id: String,
+    pub candidate_job_ids: Vec<String>,
+}
+
+/// Preemption + requeue decision artifact.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreemptionDecision {
+    pub version: &'static str,
+    pub job_id: String,
+    pub disposition: AdmissionDisposition,
+    pub reason_code: PreemptionReasonCode,
+    pub queue_depth_after: usize,
+    pub idempotent: bool,
+}
+
+#[derive(Debug, Clone)]
+struct ActiveDispatch {
+    job: ScheduledJob,
+    assigned_round: u64,
+    assigned_device_id: Option<String>,
 }
 
 /// Priority scheduler with fairness-aware entity selection.
@@ -570,6 +665,10 @@ pub struct Scheduler {
     dispatch_count: u64,
     dispatch_by_entity: HashMap<FairnessKey, u64>,
     last_dispatch_round: HashMap<FairnessKey, u64>,
+    preemption_policy: PreemptionPolicy,
+    active_dispatches: HashMap<String, ActiveDispatch>,
+    preemptions_by_job: HashMap<String, u32>,
+    applied_requeue_tokens: HashMap<String, String>,
     metrics: SchedulerMetrics,
 }
 
@@ -586,8 +685,17 @@ impl Scheduler {
             dispatch_count: 0,
             dispatch_by_entity: HashMap::new(),
             last_dispatch_round: HashMap::new(),
+            preemption_policy: PreemptionPolicy::default(),
+            active_dispatches: HashMap::new(),
+            preemptions_by_job: HashMap::new(),
+            applied_requeue_tokens: HashMap::new(),
             metrics: SchedulerMetrics::default(),
         }
+    }
+
+    pub fn with_preemption_policy(mut self, preemption_policy: PreemptionPolicy) -> Self {
+        self.preemption_policy = preemption_policy;
+        self
     }
 
     pub fn admission_policy(&self) -> AdmissionPolicy {
@@ -604,6 +712,10 @@ impl Scheduler {
 
     pub fn metrics(&self) -> SchedulerMetrics {
         self.metrics.clone()
+    }
+
+    pub fn active_dispatches(&self) -> usize {
+        self.active_dispatches.len()
     }
 
     /// Scores candidate devices and returns a deterministic dispatch record.
@@ -790,6 +902,14 @@ impl Scheduler {
         self.metrics.fairness_lag_millis_total += fairness_lag;
         self.metrics.fairness_lag_millis_max =
             self.metrics.fairness_lag_millis_max.max(fairness_lag);
+        self.active_dispatches.insert(
+            job.job_id.clone(),
+            ActiveDispatch {
+                job: job.clone(),
+                assigned_round: self.dispatch_count,
+                assigned_device_id: None,
+            },
+        );
 
         SchedulerDecision {
             version: SCHEDULER_DECISION_VERSION,
@@ -813,8 +933,171 @@ impl Scheduler {
         decision.device_dispatch = self.score_devices(candidates, policy);
         if let Some(device_dispatch) = decision.device_dispatch.as_ref() {
             decision.reason_code = device_dispatch.reason_code;
+            if let Some(job_id) = decision.selected_job_id.as_ref() {
+                if let Some(active) = self.active_dispatches.get_mut(job_id) {
+                    active.assigned_device_id = Some(device_dispatch.selected_device_id.clone());
+                }
+            }
         }
         decision
+    }
+
+    /// Marks an active job as terminal and removes it from in-flight tracking.
+    pub fn complete_job(&mut self, job_id: &str) -> bool {
+        self.active_dispatches.remove(job_id).is_some()
+    }
+
+    /// Evaluates load samples and returns a deterministic rebalance plan when thresholds are crossed.
+    pub fn evaluate_rebalance(
+        &self,
+        device_loads: &[DeviceLoad],
+        policy: RebalancingPolicy,
+    ) -> Option<RebalancePlan> {
+        if device_loads.len() < 2 {
+            return None;
+        }
+
+        let mut sorted = device_loads.to_vec();
+        sorted.sort_by(|a, b| {
+            b.load_ratio
+                .total_cmp(&a.load_ratio)
+                .then_with(|| a.device_id.cmp(&b.device_id))
+        });
+        let source = sorted.first()?;
+        let target = sorted.last()?;
+        if source.load_ratio < policy.high_watermark
+            || target.load_ratio > policy.low_watermark
+            || (source.load_ratio - target.load_ratio) < policy.min_imbalance_gap
+        {
+            return None;
+        }
+
+        let mut candidate_job_ids: Vec<String> = self
+            .active_dispatches
+            .iter()
+            .filter_map(|(job_id, active)| {
+                (active.assigned_device_id.as_deref() == Some(source.device_id.as_str()))
+                    .then_some(job_id.clone())
+            })
+            .collect();
+        candidate_job_ids.sort();
+        candidate_job_ids.truncate(policy.max_preemptions_per_rebalance);
+        if candidate_job_ids.is_empty() {
+            return None;
+        }
+
+        Some(RebalancePlan {
+            version: REBALANCING_POLICY_VERSION,
+            source_device_id: source.device_id.clone(),
+            target_device_id: target.device_id.clone(),
+            candidate_job_ids,
+        })
+    }
+
+    /// Helper that increments rebalance metrics and returns a plan if trigger conditions are met.
+    pub fn plan_rebalance(
+        &mut self,
+        device_loads: &[DeviceLoad],
+        policy: RebalancingPolicy,
+    ) -> Option<RebalancePlan> {
+        let plan = self.evaluate_rebalance(device_loads, policy)?;
+        self.metrics.rebalance_trigger_total += 1;
+        Some(plan)
+    }
+
+    /// Applies rebalance-triggered preemption with idempotent requeue semantics.
+    pub fn preempt_for_rebalance(
+        &mut self,
+        job_id: &str,
+        requeue_token: &str,
+    ) -> PreemptionDecision {
+        self.metrics.preemption_attempted_total += 1;
+
+        if let Some(existing_job_id) = self.applied_requeue_tokens.get(requeue_token) {
+            self.metrics.requeue_idempotent_hits_total += 1;
+            return PreemptionDecision {
+                version: REBALANCING_POLICY_VERSION,
+                job_id: existing_job_id.clone(),
+                disposition: AdmissionDisposition::Admit,
+                reason_code: PreemptionReasonCode::DuplicateRequeueRequest,
+                queue_depth_after: self.total_depth,
+                idempotent: true,
+            };
+        }
+
+        let Some(active) = self.active_dispatches.get(job_id).cloned() else {
+            return PreemptionDecision {
+                version: REBALANCING_POLICY_VERSION,
+                job_id: job_id.to_string(),
+                disposition: AdmissionDisposition::Reject,
+                reason_code: PreemptionReasonCode::ActiveDispatchNotFound,
+                queue_depth_after: self.total_depth,
+                idempotent: false,
+            };
+        };
+
+        if self.dispatch_count.saturating_sub(active.assigned_round)
+            < self.preemption_policy.min_dispatch_rounds_before_preempt
+        {
+            return PreemptionDecision {
+                version: REBALANCING_POLICY_VERSION,
+                job_id: job_id.to_string(),
+                disposition: AdmissionDisposition::Defer,
+                reason_code: PreemptionReasonCode::GuardrailMinRuntime,
+                queue_depth_after: self.total_depth,
+                idempotent: false,
+            };
+        }
+
+        let preemption_count = *self.preemptions_by_job.get(job_id).unwrap_or(&0);
+        if preemption_count >= self.preemption_policy.max_preemptions_per_job {
+            return PreemptionDecision {
+                version: REBALANCING_POLICY_VERSION,
+                job_id: job_id.to_string(),
+                disposition: AdmissionDisposition::Reject,
+                reason_code: PreemptionReasonCode::GuardrailPreemptionCap,
+                queue_depth_after: self.total_depth,
+                idempotent: false,
+            };
+        }
+
+        self.active_dispatches.remove(job_id);
+        self.applied_requeue_tokens
+            .insert(requeue_token.to_string(), job_id.to_string());
+        *self
+            .preemptions_by_job
+            .entry(job_id.to_string())
+            .or_insert(0) += 1;
+        self.metrics.preempted_total += 1;
+        self.metrics.requeued_total += 1;
+
+        let key = FairnessKey::from_job(&active.job);
+        self.queues
+            .entry(key)
+            .or_insert_with(QueueState::new)
+            .push_front(active.job.clone());
+        self.total_depth += 1;
+        *self
+            .per_priority_depth
+            .entry(active.job.priority)
+            .or_insert(0) += 1;
+        *self
+            .per_tenant_depth
+            .entry(active.job.tenant_id.clone())
+            .or_insert(0) += 1;
+        *self
+            .per_project_depth
+            .entry(active.job.project_id.clone())
+            .or_insert(0) += 1;
+
+        PreemptionDecision {
+            version: REBALANCING_POLICY_VERSION,
+            job_id: job_id.to_string(),
+            disposition: AdmissionDisposition::Admit,
+            reason_code: PreemptionReasonCode::RebalanceOverloadedDevice,
+            queue_depth_after: self.total_depth,
+            idempotent: false,
+        }
     }
 
     fn pick_dispatch_entity(
@@ -1182,5 +1465,150 @@ mod tests {
             .expect("candidates must produce score");
         assert_eq!(record.reason_code, DispatchReasonCode::DeviceScoreTieBreak);
         assert_eq!(record.selected_device_id, "device-a");
+    }
+
+    #[test]
+    fn rebalance_trigger_and_preemption_requeue_are_safe_and_idempotent() {
+        let mut scheduler = Scheduler::new(strict_policy(), fairness_policy())
+            .with_preemption_policy(PreemptionPolicy {
+                min_dispatch_rounds_before_preempt: 0,
+                max_preemptions_per_job: 2,
+            });
+        scheduler.submit(ScheduledJob {
+            job_id: "job-1".to_string(),
+            tenant_id: "tenant-a".to_string(),
+            project_id: "proj-a".to_string(),
+            priority: 9,
+        });
+
+        let dispatch = scheduler.dispatch_next_with_device_scores(
+            &[
+                DeviceScoreInput {
+                    device_id: "device-hot".to_string(),
+                    queue_depth: 0,
+                    recent_latency_ms: 100,
+                    calibration_age_sec: 10,
+                    health_status: DeviceHealthStatus::Healthy,
+                },
+                DeviceScoreInput {
+                    device_id: "device-cold".to_string(),
+                    queue_depth: 90,
+                    recent_latency_ms: 2_000,
+                    calibration_age_sec: 3_000,
+                    health_status: DeviceHealthStatus::Degraded,
+                },
+            ],
+            DeviceScoringPolicy::default(),
+        );
+        assert_eq!(dispatch.selected_job_id.as_deref(), Some("job-1"));
+        assert_eq!(scheduler.queue_depth(), 0);
+        assert_eq!(scheduler.active_dispatches(), 1);
+
+        let plan = scheduler
+            .plan_rebalance(
+                &[
+                    DeviceLoad {
+                        device_id: "device-hot".to_string(),
+                        load_ratio: 0.92,
+                    },
+                    DeviceLoad {
+                        device_id: "device-cold".to_string(),
+                        load_ratio: 0.15,
+                    },
+                ],
+                RebalancingPolicy::default(),
+            )
+            .expect("rebalance must be triggered");
+        assert_eq!(plan.version, REBALANCING_POLICY_VERSION);
+        assert_eq!(plan.candidate_job_ids, vec!["job-1".to_string()]);
+
+        let first = scheduler.preempt_for_rebalance("job-1", "rq-1");
+        assert_eq!(
+            first.reason_code,
+            PreemptionReasonCode::RebalanceOverloadedDevice
+        );
+        assert_eq!(first.disposition, AdmissionDisposition::Admit);
+        assert!(!first.idempotent);
+        assert_eq!(scheduler.queue_depth(), 1);
+        assert_eq!(scheduler.active_dispatches(), 0);
+
+        let duplicate = scheduler.preempt_for_rebalance("job-1", "rq-1");
+        assert_eq!(
+            duplicate.reason_code,
+            PreemptionReasonCode::DuplicateRequeueRequest
+        );
+        assert!(duplicate.idempotent);
+        assert_eq!(scheduler.queue_depth(), 1);
+
+        let next = scheduler.dispatch_next();
+        assert_eq!(next.selected_job_id.as_deref(), Some("job-1"));
+    }
+
+    #[test]
+    fn preemption_guardrails_block_thrashing() {
+        let mut scheduler = Scheduler::new(strict_policy(), fairness_policy())
+            .with_preemption_policy(PreemptionPolicy {
+                min_dispatch_rounds_before_preempt: 2,
+                max_preemptions_per_job: 1,
+            });
+        scheduler.submit(ScheduledJob {
+            job_id: "job-guard".to_string(),
+            tenant_id: "tenant-a".to_string(),
+            project_id: "proj-a".to_string(),
+            priority: 5,
+        });
+        let _ = scheduler.dispatch_next();
+
+        let early = scheduler.preempt_for_rebalance("job-guard", "rq-early");
+        assert_eq!(early.reason_code, PreemptionReasonCode::GuardrailMinRuntime);
+        assert_eq!(early.disposition, AdmissionDisposition::Defer);
+
+        scheduler.submit(ScheduledJob {
+            job_id: "filler-1".to_string(),
+            tenant_id: "tenant-b".to_string(),
+            project_id: "proj-b".to_string(),
+            priority: 5,
+        });
+        scheduler.submit(ScheduledJob {
+            job_id: "filler-2".to_string(),
+            tenant_id: "tenant-c".to_string(),
+            project_id: "proj-c".to_string(),
+            priority: 5,
+        });
+        let _ = scheduler.dispatch_next();
+        let _ = scheduler.dispatch_next();
+
+        let accepted = scheduler.preempt_for_rebalance("job-guard", "rq-ok");
+        assert_eq!(
+            accepted.reason_code,
+            PreemptionReasonCode::RebalanceOverloadedDevice
+        );
+        let _ = scheduler.dispatch_next();
+        scheduler.submit(ScheduledJob {
+            job_id: "filler-3".to_string(),
+            tenant_id: "tenant-d".to_string(),
+            project_id: "proj-d".to_string(),
+            priority: 5,
+        });
+        scheduler.submit(ScheduledJob {
+            job_id: "filler-4".to_string(),
+            tenant_id: "tenant-e".to_string(),
+            project_id: "proj-e".to_string(),
+            priority: 5,
+        });
+        let _ = scheduler.dispatch_next();
+        let _ = scheduler.dispatch_next();
+        let capped = scheduler.preempt_for_rebalance("job-guard", "rq-cap");
+        assert_eq!(
+            capped.reason_code,
+            PreemptionReasonCode::GuardrailPreemptionCap
+        );
+        assert_eq!(capped.disposition, AdmissionDisposition::Reject);
+
+        let metrics = scheduler.metrics();
+        assert_eq!(metrics.preempted_total, 1);
+        assert_eq!(metrics.requeued_total, 1);
+        assert_eq!(metrics.preemption_attempted_total, 3);
+        assert_eq!(metrics.requeue_idempotent_hits_total, 0);
     }
 }
