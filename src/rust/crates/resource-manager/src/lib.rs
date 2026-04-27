@@ -15,7 +15,9 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 ///
 /// Any breaking change to queue semantics, quota semantics,
 /// dispatch reason codes, or dispatch contracts must bump MAJOR.
-pub const SCHEDULER_DECISION_VERSION: &str = "2.0.0";
+pub const SCHEDULER_DECISION_VERSION: &str = "2.1.0";
+/// SemVer version for device score DTOs/contracts.
+pub const DEVICE_SCORE_VERSION: &str = "2.1.0";
 
 /// Outcome of admission control for a candidate job.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,7 +43,74 @@ pub enum AdmissionReasonCode {
 pub enum DispatchReasonCode {
     WeightedFairness,
     StarvationPrevention,
+    DeviceScore,
+    DeviceScoreTieBreak,
     QueueEmpty,
+}
+
+/// Stable operational health statuses consumed by device scoring.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeviceHealthStatus {
+    Healthy,
+    Degraded,
+    Unavailable,
+}
+
+/// Runtime signals used by the device scoring engine.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeviceScoreInput {
+    pub device_id: String,
+    pub queue_depth: usize,
+    pub recent_latency_ms: u64,
+    pub calibration_age_sec: u64,
+    pub health_status: DeviceHealthStatus,
+}
+
+/// Weight/policy configuration for score calculation.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DeviceScoringPolicy {
+    pub queue_depth_weight: f64,
+    pub latency_weight: f64,
+    pub calibration_weight: f64,
+    pub availability_weight: f64,
+    pub max_queue_depth: usize,
+    pub target_latency_ms: u64,
+    pub calibration_ttl_sec: u64,
+}
+
+impl Default for DeviceScoringPolicy {
+    fn default() -> Self {
+        Self {
+            queue_depth_weight: 0.35,
+            latency_weight: 0.30,
+            calibration_weight: 0.20,
+            availability_weight: 0.15,
+            max_queue_depth: 100,
+            target_latency_ms: 2_000,
+            calibration_ttl_sec: 3_600,
+        }
+    }
+}
+
+/// Score components for explainable dispatch records.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeviceScoreBreakdown {
+    pub version: &'static str,
+    pub device_id: String,
+    pub total_score_millis: u64,
+    pub queue_depth_score_millis: u64,
+    pub latency_score_millis: u64,
+    pub calibration_score_millis: u64,
+    pub availability_score_millis: u64,
+}
+
+/// Device scoring decision record used by dispatch traces.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeviceDispatchRecord {
+    pub version: &'static str,
+    pub selected_device_id: String,
+    pub reason_code: DispatchReasonCode,
+    pub score_breakdown: Vec<DeviceScoreBreakdown>,
 }
 
 /// Job envelope tracked by scheduler queues.
@@ -75,6 +144,7 @@ pub struct SchedulerDecision {
     pub selected_priority: Option<u8>,
     pub queue_depth_after: usize,
     pub reason_code: DispatchReasonCode,
+    pub device_dispatch: Option<DeviceDispatchRecord>,
 }
 
 /// Scheduler configuration for admission control.
@@ -232,7 +302,7 @@ impl Scheduler {
             per_priority_depth: HashMap::new(),
             per_tenant_depth: HashMap::new(),
             per_project_depth: HashMap::new(),
-            dispatch_count: 0,healthy: self.total_depth <= self.policy.max_total_queue_depth,
+            dispatch_count: 0,
             dispatch_by_entity: HashMap::new(),
             last_dispatch_round: HashMap::new(),
             metrics: SchedulerMetrics::default(),
@@ -253,6 +323,46 @@ impl Scheduler {
 
     pub fn metrics(&self) -> SchedulerMetrics {
         self.metrics.clone()
+    }
+
+    /// Scores candidate devices and returns a deterministic dispatch record.
+    pub fn score_devices(
+        &self,
+        candidates: &[DeviceScoreInput],
+        policy: DeviceScoringPolicy,
+    ) -> Option<DeviceDispatchRecord> {
+        if candidates.is_empty() {
+            return None;
+        }
+
+        let mut breakdown: Vec<DeviceScoreBreakdown> = candidates
+            .iter()
+            .map(|candidate| score_candidate(candidate, policy))
+            .collect();
+        breakdown.sort_by(|a, b| {
+            b.total_score_millis
+                .cmp(&a.total_score_millis)
+                .then_with(|| a.device_id.cmp(&b.device_id))
+        });
+
+        let top_score = breakdown[0].total_score_millis;
+        let tied_for_top = breakdown
+            .iter()
+            .filter(|item| item.total_score_millis == top_score)
+            .count()
+            > 1;
+        let reason_code = if tied_for_top {
+            DispatchReasonCode::DeviceScoreTieBreak
+        } else {
+            DispatchReasonCode::DeviceScore
+        };
+
+        Some(DeviceDispatchRecord {
+            version: DEVICE_SCORE_VERSION,
+            selected_device_id: breakdown[0].device_id.clone(),
+            reason_code,
+            score_breakdown: breakdown,
+        })
     }
 
     pub fn health(&self) -> SchedulerHealth {
@@ -362,6 +472,7 @@ impl Scheduler {
                 selected_priority: None,
                 queue_depth_after: 0,
                 reason_code: DispatchReasonCode::QueueEmpty,
+                device_dispatch: None,
             };
         }
 
@@ -407,7 +518,22 @@ impl Scheduler {
             selected_priority: Some(job.priority),
             queue_depth_after: self.total_depth,
             reason_code,
+            device_dispatch: None,
         }
+    }
+
+    /// Dispatches the next job and appends device scoring details to the record.
+    pub fn dispatch_next_with_device_scores(
+        &mut self,
+        candidates: &[DeviceScoreInput],
+        policy: DeviceScoringPolicy,
+    ) -> SchedulerDecision {
+        let mut decision = self.dispatch_next();
+        decision.device_dispatch = self.score_devices(candidates, policy);
+        if let Some(device_dispatch) = decision.device_dispatch.as_ref() {
+            decision.reason_code = device_dispatch.reason_code;
+        }
+        decision
     }
 
     fn pick_dispatch_entity(
@@ -497,6 +623,53 @@ impl Scheduler {
     }
 }
 
+fn score_candidate(
+    candidate: &DeviceScoreInput,
+    policy: DeviceScoringPolicy,
+) -> DeviceScoreBreakdown {
+    let queue_depth_max = policy.max_queue_depth.max(1) as f64;
+    let latency_target = policy.target_latency_ms.max(1) as f64;
+    let calibration_ttl = policy.calibration_ttl_sec.max(1) as f64;
+
+    let queue_depth_score = bounded_ratio(1.0 - (candidate.queue_depth as f64 / queue_depth_max));
+    let latency_score = bounded_ratio(1.0 - (candidate.recent_latency_ms as f64 / latency_target));
+    let calibration_score =
+        bounded_ratio(1.0 - (candidate.calibration_age_sec as f64 / calibration_ttl));
+    let availability_score = match candidate.health_status {
+        DeviceHealthStatus::Healthy => 1.0,
+        DeviceHealthStatus::Degraded => 0.5,
+        DeviceHealthStatus::Unavailable => 0.0,
+    };
+
+    let queue_depth_score_millis = weighted_millis(queue_depth_score, policy.queue_depth_weight);
+    let latency_score_millis = weighted_millis(latency_score, policy.latency_weight);
+    let calibration_score_millis = weighted_millis(calibration_score, policy.calibration_weight);
+    let availability_score_millis = weighted_millis(availability_score, policy.availability_weight);
+    let total_score_millis = queue_depth_score_millis
+        + latency_score_millis
+        + calibration_score_millis
+        + availability_score_millis;
+
+    DeviceScoreBreakdown {
+        version: DEVICE_SCORE_VERSION,
+        device_id: candidate.device_id.clone(),
+        total_score_millis,
+        queue_depth_score_millis,
+        latency_score_millis,
+        calibration_score_millis,
+        availability_score_millis,
+    }
+}
+
+fn weighted_millis(signal: f64, weight: f64) -> u64 {
+    let bounded_weight = bounded_ratio(weight);
+    (bounded_ratio(signal) * bounded_weight * 1_000.0).round() as u64
+}
+
+fn bounded_ratio(value: f64) -> f64 {
+    value.clamp(0.0, 1.0)
+}
+
 fn compare_keys(a: &FairnessKey, b: &FairnessKey) -> Ordering {
     a.tenant_id
         .cmp(&b.tenant_id)
@@ -506,6 +679,7 @@ fn compare_keys(a: &FairnessKey, b: &FairnessKey) -> Ordering {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
 
     fn strict_policy() -> AdmissionPolicy {
         AdmissionPolicy {
@@ -659,5 +833,73 @@ mod tests {
         assert_eq!(empty.version, SCHEDULER_DECISION_VERSION);
         assert_eq!(empty.reason_code, DispatchReasonCode::QueueEmpty);
         assert!(empty.selected_job_id.is_none());
+        assert!(empty.device_dispatch.is_none());
+    }
+
+    #[test]
+    fn device_score_is_loaded_from_fixtures() {
+        let scheduler = Scheduler::new(strict_policy(), fairness_policy());
+        let fixture = include_str!("../tests/fixtures/device_score_fixtures.csv");
+        let mut candidates = Vec::new();
+
+        for line in fixture.lines().skip(1) {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let columns: Vec<&str> = line.split(',').collect();
+            assert_eq!(columns.len(), 5);
+            candidates.push(DeviceScoreInput {
+                device_id: columns[0].to_string(),
+                queue_depth: usize::from_str(columns[1]).expect("queue_depth must be usize"),
+                recent_latency_ms: u64::from_str(columns[2]).expect("latency must be u64"),
+                calibration_age_sec: u64::from_str(columns[3])
+                    .expect("calibration_age_sec must be u64"),
+                health_status: match columns[4] {
+                    "healthy" => DeviceHealthStatus::Healthy,
+                    "degraded" => DeviceHealthStatus::Degraded,
+                    "unavailable" => DeviceHealthStatus::Unavailable,
+                    other => panic!("unknown health status: {other}"),
+                },
+            });
+        }
+
+        let record = scheduler
+            .score_devices(&candidates, DeviceScoringPolicy::default())
+            .expect("fixture must contain candidates");
+        assert_eq!(record.version, DEVICE_SCORE_VERSION);
+        assert_eq!(record.selected_device_id, "ionq-qpu-1");
+        assert_eq!(record.reason_code, DispatchReasonCode::DeviceScore);
+        assert_eq!(record.score_breakdown.len(), 3);
+        assert!(
+            record.score_breakdown[0].total_score_millis
+                > record.score_breakdown[1].total_score_millis
+        );
+    }
+
+    #[test]
+    fn tie_breaker_is_deterministic_by_device_id() {
+        let scheduler = Scheduler::new(strict_policy(), fairness_policy());
+        let candidates = vec![
+            DeviceScoreInput {
+                device_id: "device-b".to_string(),
+                queue_depth: 10,
+                recent_latency_ms: 1000,
+                calibration_age_sec: 200,
+                health_status: DeviceHealthStatus::Healthy,
+            },
+            DeviceScoreInput {
+                device_id: "device-a".to_string(),
+                queue_depth: 10,
+                recent_latency_ms: 1000,
+                calibration_age_sec: 200,
+                health_status: DeviceHealthStatus::Healthy,
+            },
+        ];
+
+        let record = scheduler
+            .score_devices(&candidates, DeviceScoringPolicy::default())
+            .expect("candidates must produce score");
+        assert_eq!(record.reason_code, DispatchReasonCode::DeviceScoreTieBreak);
+        assert_eq!(record.selected_device_id, "device-a");
     }
 }

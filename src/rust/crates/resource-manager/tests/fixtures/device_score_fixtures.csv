@@ -1,0 +1,4 @@
+device_id,queue_depth,recent_latency_ms,calibration_age_sec,health_status
+ionq-qpu-1,8,750,900,healthy
+rigetti-qpu-2,35,1200,1600,degraded
+generic-sim-1,60,1800,4000,unavailable
