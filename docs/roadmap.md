@@ -1,70 +1,327 @@
-This roadmap is aligned with the current MVP definition and tracks the minimum milestones required for an end-to-end release.
+# Eigen-OS Roadmap
 
-## Current delivery focus
+## Overview
 
-- ✅ **MVP-1 (Core Services Setup)** completed: repository skeleton, public contracts, service stubs, QRTX/Driver Manager/QFS scaffolding, and CI baseline.
-- ✅ **MVP-2 (Compilation Pipeline)** completed: JobSpec parser/validator, Eigen-Lang AST→AQO compiler hardening, CLI `eigen submit`, and conformance suites.
-- Detailed MVP-2 execution plan: [`development/mvp-2-compilation-pipeline.md`](development/mvp-2-compilation-pipeline.md)
-- ✅ MVP-3 (Execution & Results Pipeline) completed; closure record: [`development/mvp-3-execution-and-results.md`](development/mvp-3-execution-and-results.md)
-- MVP-3 RFC package (accepted): [`../rfcs/0016-mvp3-kernel-driver-execution-contract.md`](../rfcs/0016-mvp3-kernel-driver-execution-contract.md), [`../rfcs/0017-mvp3-results-retrieval-and-cli-runtime-ux.md`](../rfcs/0017-mvp3-results-retrieval-and-cli-runtime-ux.md), [`../rfcs/0018-mvp3-runtime-observability-and-release-gates.md`](../rfcs/0018-mvp3-runtime-observability-and-release-gates.md)
-- Post-MVP open-source roadmap: [`development/post-mvp-open-source-roadmap.md`](development/post-mvp-open-source-roadmap.md)
-- Phase 1 release readiness checklist: [`development/phase-1-release-readiness-checklist.md`](development/phase-1-release-readiness-checklist.md)
-- Phase 1 RFC (implemented): [`../rfcs/0019-phase1-production-runtime-plan.md`](../rfcs/0019-phase1-production-runtime-plan.md)
-- MVP-3 ADR package: [`adr/0007-mvp3-release-readiness-runtime-contracts-and-security-closure.md`](adr/0007-mvp3-release-readiness-runtime-contracts-and-security-closure.md)
-- MVP-2 RFC package (implemented): [`../rfcs/0013-mvp2-jobspec-parser-submit-contract.md`](../rfcs/0013-mvp2-jobspec-parser-submit-contract.md), [`../rfcs/0014-mvp2-eigen-lang-ast-safety-deterministic-aqo.md`](../rfcs/0014-mvp2-eigen-lang-ast-safety-deterministic-aqo.md), [`../rfcs/0015-mvp2-conformance-and-ci-gates.md`](../rfcs/0015-mvp2-conformance-and-ci-gates.md)
+This document defines the open-source development roadmap for Eigen-OS.
 
-## Milestone 1 — API and contract baseline
+Eigen-OS is positioned as:
+> A cloud-native runtime and orchestration layer for hybrid quantum-classical workloads
 
-- Stabilize public gRPC services (`JobService`, `DeviceService`) for MVP workflows.
-- Freeze internal service contracts between kernel, compiler, and driver manager.
-- Validate canonical error mapping and structured error details.
+The open-source version focuses on:
 
-## Milestone 2 — End-to-end MVP execution (MVP-2 completed)
+- execution
+- orchestration
+- reproducibility
+- benchmarking
+- developer experience
 
-- Deliver submit → compile → execute → results flow on `sim:local`.
-- Ensure deterministic AST-only compilation to AQO for MVP subset.
-- Add a fixture-driven JobSpec→`SubmitJobRequest` parser/validator gate.
-- Enforce conformance tests for Eigen-Lang→AQO and CLI submit request packaging.
+---
 
-## Milestone 3 — CLI and developer workflow (completed)
+## 1. Current State
 
-- ✅ Finalized CLI MVP commands (`submit`, `status`, `results`, `watch`).
-- ✅ Documented packaging and reproducible local execution flow.
-- ✅ Kept examples and quickstarts synchronized with current contracts.
+### Completed
 
-## Milestone 4 — Quality and observability gates (completed)
+- MVP-1: Core services and contracts
+- MVP-2: Compilation pipeline
+- MVP-3: Execution and results retrieval
+- Phase-1: Production runtime
+- Phase-2: Orchestration layer
 
-- ✅ Enforced unit + smoke integration coverage for core services.
-- ✅ Verified metrics exposure and trace propagation across service boundaries.
-- ✅ Validated error handling and conformance fixtures in CI.
+### Capabilities Today
 
-## Milestone 5 — MVP release readiness (completed)
+- JobSpec-based execution model
+- Compiler pipeline (AST → IR → execution artifacts)
+- QRTX kernel lifecycle management
+- DriverManager + simulator execution
+- Device-aware scheduling (baseline)
+- Observability (metrics + tracing)
+- Local development environment
 
-- ✅ Completed MVP Definition of Done checklist for all in-scope services.
-- ✅ Confirmed docs and governance artifacts are up to date.
-- ✅ MVP baseline is frozen after MVP-3 closure; post-MVP planning is now active.
+---
 
-## Out of scope for MVP (tracked after release)
+## 2. Strategic Direction
 
-- Real hardware backends
-- Advanced scheduler fairness/quotas
-- Web dashboard
-- Multi-node high availability
-- Advanced optimization passes
+Eigen-OS evolves along three axes:
 
-## Milestone 6 — Phase 1 production runtime (completed)
+1. **Execution → Orchestration → Intelligence**
+2. **Local → Distributed → Cloud-native**
+3. **Runtime → Benchmarking → Optimization**
 
-- ✅ External provider driver integration baseline (IBM/Qiskit Runtime path).
-- ✅ Timeout, cancellation, and retry policy hardening in runtime state machine.
-- ✅ Object-storage-compatible artifact persistence and retrieval semantics.
-- ✅ Observability v2 rollout with stage latency and timeline visibility.
-- ✅ Release readiness checklist closed; product version advanced to `0.2.0`
+---
 
-## Milestone 7 — Phase 2 orchestration layer (completed)
+## 3. Phase-3: Benchmarking Platform
 
-- ✅ Scheduler core: priority queues, quotas, and baseline fairness policies.
-- ✅ Device-aware scheduling using latency/calibration/availability signals.
-- ✅ Multi-device and batch orchestration contracts and guardrails.
-- ✅ Operational controls for orchestration SLOs and rebalancing safety.
-- ✅ Release readiness checklist, compatibility package, and migration notes completed.
-- ✅ Product version advanced to `0.3.0`.
+### Goal
+
+Transform Eigen-OS into a **reproducible benchmarking and analytics platform**.
+
+### Why This Matters
+
+Quantum execution today is:
+- hard to evaluate
+- non-reproducible
+- opaque
+
+Eigen-OS will provide:
+> measurable, comparable, and explainable execution results
+
+### Key Features
+
+#### 1) Dataset Integration
+
+- QSBench-compatible datasets
+- Support for:
+  - circuit datasets
+  - noise models
+  - backend configurations
+
+#### 2) Benchmark Execution
+
+- standardized benchmark runs
+- reproducible execution pipelines
+- deterministic configuration snapshots
+
+#### 3) Experiment Tracking
+
+- run registry:
+  - job metadata
+  - backend
+  - parameters
+  - execution results
+- persistent storage of runs
+
+#### 4) Comparison Engine
+
+- side-by-side comparison:
+  - backend A vs backend B
+  - noise vs no-noise
+  - transpilation strategies
+
+#### 5) Metrics
+
+Core metrics:
+- latency
+- execution time breakdown
+- success rate
+- fidelity / expectation deviation
+- circuit characteristics
+
+### Deliverables
+
+- `benchmark-service`
+- dataset ingestion pipeline
+- CLI:
+  - `eigen benchmark run`
+  - `eigen benchmark compare`
+- API endpoints:
+  - `/benchmarks/run`
+  - `/benchmarks/compare`
+  - `/benchmarks/history`
+
+### Outcome
+
+Eigen-OS becomes:
+- a benchmarking standard
+- a research tool
+- a validation layer for runtime behavior
+
+---
+
+## 4. Phase-4: Intelligent Runtime (Open Source Scope)
+
+### Goal
+
+Introduce **data-driven and explainable runtime decisions**.
+
+Important:
+> This phase avoids heavy proprietary ML and focuses on transparency
+
+### Key Features
+
+#### 1) Backend Scoring
+
+- scoring based on:
+  - latency
+  - availability
+  - historical performance
+  - error characteristics
+- deterministic + statistical approach
+
+#### 2) Adaptive Scheduling
+
+- improved scheduling policies:
+  - priority + fairness
+  - device-aware routing
+  - queue optimization
+- rule-based and configurable
+
+#### 3) Compilation Optimization (Baseline)
+
+- rule-based circuit optimizations
+- transpilation strategy selection
+- pattern-based improvements
+
+#### 4) Explainability
+
+System must provide:
+
+- "why this backend was selected"
+- "why this execution took longer"
+- "where errors likely occurred"
+
+### Deliverables
+
+- scoring module
+- scheduling policy engine (configurable)
+- explanation API:
+  - `/explain/backend-selection`
+  - `/explain/execution`
+
+### Outcome
+
+Eigen-OS becomes:
+- predictable
+- debuggable
+- explainable
+
+---
+
+## 5. Phase-5: Distributed Execution (OSS)
+
+### Goal
+
+Move from single-node runtime to **distributed cluster execution**.
+
+### Key Features
+
+#### 1) Multi-node Execution
+
+- distributed job execution
+- worker nodes with driver access
+
+#### 2) Control Plane Separation
+
+- scheduler as control plane
+- execution nodes as workers
+
+#### 3) Queue-Based Architecture
+
+- async job execution
+- message-based communication
+
+#### 4) Fault Tolerance
+
+- retries
+- node failure handling
+- job rescheduling
+
+### Deliverables
+
+- cluster mode (`--cluster`)
+- worker node service
+- queue layer (pluggable)
+- distributed tracing support
+
+### Outcome
+
+Eigen-OS becomes:
+- scalable
+- resilient
+- suitable for real workloads
+
+---
+
+## 6. Phase-6: Plugin Ecosystem
+
+### Goal
+
+Turn Eigen-OS into a **platform, not just a system**.
+
+### Key Features
+
+#### 1) Driver Plugins
+
+- hardware connectors
+- simulator extensions
+
+#### 2) Compiler Plugins
+
+- alternative backends
+- optimization strategies
+
+#### 3) Scheduler Plugins
+
+- custom scheduling policies
+- research algorithms
+
+### Deliverables
+
+- plugin API specification
+- plugin loading system
+- validation and compatibility checks
+
+### Outcome
+
+- community contributions
+- extensibility
+- ecosystem growth
+
+---
+
+## 7. Phase-7: Stability & Developer Experience
+
+### Goal
+
+Make Eigen-OS easy to adopt and use.
+
+### Key Features
+
+- stable APIs and versioning
+- improved documentation
+- reproducible local setup
+- better CLI UX
+- test coverage and CI improvements
+
+### Deliverables
+
+- versioning policy
+- compatibility guarantees
+- improved docs and tutorials
+- example workloads
+
+### Outcome
+
+- lower adoption barrier
+- better developer onboarding
+- increased community usage
+
+---
+
+## 8. Long-Term Vision
+
+Eigen-OS (open source) becomes:
+
+- the standard runtime layer for quantum workloads
+- a reproducible benchmarking platform
+- an extensible orchestration system
+- a foundation for research and experimentation
+
+---
+
+## 9. Guiding Principles
+
+- contracts-first architecture remains core
+- reproducibility over "magic"
+- explainability over opaque intelligence
+- modularity over monolith
+- developer-first experience
+
+---
+
+## 10. Immediate Next Steps
+
+1. Implement minimal benchmark pipeline
+2. Integrate first QSBench dataset
+3. Add run tracking and comparison
+4. Expose benchmark API and CLI
+5. Prepare demo-ready workflow
