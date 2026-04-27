@@ -5,6 +5,7 @@ global:
 rule_files:
   - stage-slo-alerts.yaml
   - orchestrator-alerts.yaml
+  - benchmark-alerts.yaml
 
 scrape_configs:
   - job_name: eigen-kernel-stage-metrics
@@ -16,3 +17,8 @@ scrape_configs:
     metrics_path: /metrics
     static_configs:
       - targets: ["127.0.0.1:9094"]
+
+  - job_name: eigen-benchmark-metrics
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["127.0.0.1:9095"]

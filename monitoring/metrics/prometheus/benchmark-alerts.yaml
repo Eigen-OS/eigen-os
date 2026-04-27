@@ -1,0 +1,24 @@
+groups:
+  - name: eigen-benchmark
+    interval: 30s
+    rules:
+      - alert: EigenBenchmarkRunStalled
+        expr: eigen_bench_stalled_runs > 0
+        for: 10m
+        labels: { severity: critical, team: sre }
+        annotations:
+          summary: "Benchmark pipeline has stalled run(s)"
+
+      - alert: EigenBenchmarkIngestionFailuresSpike
+        expr: increase(eigen_bench_ingestion_failures_total[10m]) > 0
+        for: 10m
+        labels: { severity: warning, team: sre }
+        annotations:
+          summary: "Benchmark ingestion failures detected"
+
+      - alert: EigenBenchmarkFailureRateHigh
+        expr: increase(eigen_bench_runs_failed_total[15m]) / clamp_min(increase(eigen_bench_runs_failed_total[15m]) + increase(eigen_bench_runs_succeeded_total[15m]), 1) > 0.20
+        for: 15m
+        labels: { severity: warning, team: sre }
+        annotations:
+          summary: "Benchmark run failure rate above 20%"

@@ -1,6 +1,8 @@
 from monitoring.metrics.aggregation.aggregator import StageLatencyAggregator
 from monitoring.metrics.aggregation.alerts import StageSLOAlertEvaluator, default_stage_slos
 from monitoring.metrics.prometheus.exporter import (
+    BenchmarkMetricsSnapshot,
+    BenchmarkTelemetryExporter,
     OrchestrationMetricsSnapshot,
     OrchestrationTelemetryExporter,
     StageTelemetryExporter,
@@ -67,3 +69,28 @@ def test_orchestration_metrics_exporter_renders_stable_contract_metrics():
     assert "eigen_orch_quota_denied_project_total 5" in text
     assert "eigen_orch_rebalance_trigger_total 7" in text
     assert "eigen_orch_starvation_prevention_total 2" in text
+
+
+def test_benchmark_metrics_exporter_renders_stable_contract_metrics():
+    exporter = BenchmarkTelemetryExporter()
+    exporter.update_snapshot(
+        BenchmarkMetricsSnapshot(
+            contract_version="1.0.0",
+            queue_depth=9,
+            run_duration_seconds=97.125,
+            runs_succeeded_total=120,
+            runs_failed_total=8,
+            ingestion_failures_total=3,
+            stalled_runs=1,
+        )
+    )
+
+    text = exporter.render_prometheus_text()
+
+    assert 'eigen_bench_contract_info{version="1.0.0"} 1' in text
+    assert "eigen_bench_queue_depth 9" in text
+    assert "eigen_bench_run_duration_seconds 97.125000" in text
+    assert "eigen_bench_runs_succeeded_total 120" in text
+    assert "eigen_bench_runs_failed_total 8" in text
+    assert "eigen_bench_ingestion_failures_total 3" in text
+    assert "eigen_bench_stalled_runs 1" in text

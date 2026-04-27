@@ -1,6 +1,6 @@
 # benchmark-service
 
-Phase-3 benchmark core service for run lifecycle contract `1.0.0` and comparison contract `1.0.0`.
+Phase-3 benchmark core service for run lifecycle contract `1.0.0`, comparison contract `1.0.0`, and benchmark observability contract `1.0.0`.
 
 ## Run lifecycle state machine (v1)
 
@@ -65,6 +65,6 @@ Ingestion guarantees:
 
 For every Phase-3 PR, include:
 
-- **Version impact**: additive `/benchmarks/history` feature, package version raised to `0.5.0`.
-- **Compatibility**: backward-compatible addition; existing `/benchmarks/run`, `/benchmarks/compare`, and dataset contracts unchanged.
-- **Migration notes**: clients can adopt `/benchmarks/history` incrementally; pagination tokens are opaque and ordering is guaranteed by contract.
+- **Version impact**: additive benchmark observability pack, package version raised to `0.6.0`.
+- **Compatibility**: backward-compatible addition; existing `/benchmarks/run`, `/benchmarks/compare`, `/benchmarks/history`, and dataset contracts unchanged.
+- **Migration notes**: no mandatory migration. Operators should import `monitoring/dashboards/benchmark_dashboard.json`, load `monitoring/metrics/prometheus/benchmark-alerts.yaml`, and follow `docs/howto/benchmark-observability-runbook.md`.
