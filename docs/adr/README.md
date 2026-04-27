@@ -18,3 +18,9 @@ Architecture Decision Records (ADRs) capture decisions that are already adopted 
 - [0006 — MVP-2 release closure and baseline freeze](0006-mvp2-release-closure-and-baseline-freeze.md)
 
 - [0007 — MVP-3 release readiness, runtime contracts, and security closure](0007-mvp3-release-readiness-runtime-contracts-and-security-closure.md)
+
+## Phase-3 status
+
+- As of 2026-04-27, no Phase-3 benchmarking ADR has been accepted yet.
+- Required coverage check: [`../development/phase-3-rfc-adr-gap-analysis.md`](../development/phase-3-rfc-adr-gap-analysis.md).
+- Policy reminder: once any Phase-3 RFC is implemented, its normative decisions must be mirrored in one or more ADRs before release closure.
