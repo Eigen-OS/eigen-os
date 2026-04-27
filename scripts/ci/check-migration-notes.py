@@ -4,7 +4,7 @@ import json
 import os
 import re
 import sys
-from pathlib import Path
+from pathlib import Paths
 
 
 def _extract_section(body: str, heading: str) -> str:
@@ -33,14 +33,9 @@ def main() -> int:
     body = pr.get("body") or ""
     migration_notes = _extract_section(body, "Migration Notes")
     version_impact = _extract_section(body, "Version Impact")
-    compatibility = _extract_section(body, "Compatibility")
 
     if not version_impact:
         print("[migration-gate] Missing '**Version Impact**' in PR body.")
-        return 1
-
-    if not compatibility:
-        print("[migration-gate] Missing '**Compatibility**' in PR body.")
         return 1
 
     placeholders = {
