@@ -1,19 +1,21 @@
 //! Resource manager scheduler core (Phase-2 baseline).
 //!
-//! This module implements Scheduler Core v1 with:
-//! - priority queues with FIFO ordering per priority bucket
-//! - configurable admission control (admit/defer/reject)
+//! This module implements Scheduler Core v2 with:
+//! - configurable admission control with per-tenant and per-project quotas
+//! - weighted fairness dispatch across tenants/projects
+//! - starvation prevention guardrails
 //! - observable scheduler decisions and health/metrics snapshots
 
 #![forbid(unsafe_code)]
 
-use std::collections::{BTreeMap, VecDeque};
+use std::cmp::Ordering;
+use std::collections::{BTreeMap, HashMap, VecDeque};
 
 /// SemVer version for scheduler decision DTOs/contracts.
 ///
-/// Any breaking change to `SchedulerDecision`/`DispatchReasonCode`
-/// must bump MAJOR according to Phase-2 policy.
-pub const SCHEDULER_DECISION_VERSION: &str = "1.0.0";
+/// Any breaking change to queue semantics, quota semantics,
+/// dispatch reason codes, or dispatch contracts must bump MAJOR.
+pub const SCHEDULER_DECISION_VERSION: &str = "2.0.0";
 
 /// Outcome of admission control for a candidate job.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,12 +32,15 @@ pub enum AdmissionReasonCode {
     DeferredHighBacklog,
     RejectedGlobalQueueLimit,
     RejectedPriorityQueueLimit,
+    RejectedTenantQuota,
+    RejectedProjectQuota,
 }
 
 /// Stable reason codes for dispatch outcomes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DispatchReasonCode {
-    PriorityThenFifo,
+    WeightedFairness,
+    StarvationPrevention,
     QueueEmpty,
 }
 
@@ -43,6 +48,8 @@ pub enum DispatchReasonCode {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScheduledJob {
     pub job_id: String,
+    pub tenant_id: String,
+    pub project_id: String,
     pub priority: u8,
 }
 
@@ -54,6 +61,8 @@ pub struct AdmissionDecision {
     pub reason_code: AdmissionReasonCode,
     pub total_queue_depth: usize,
     pub priority_queue_depth: usize,
+    pub tenant_queue_depth: usize,
+    pub project_queue_depth: usize,
 }
 
 /// Dispatch decision DTO.
@@ -61,6 +70,8 @@ pub struct AdmissionDecision {
 pub struct SchedulerDecision {
     pub version: &'static str,
     pub selected_job_id: Option<String>,
+    pub selected_tenant_id: Option<String>,
+    pub selected_project_id: Option<String>,
     pub selected_priority: Option<u8>,
     pub queue_depth_after: usize,
     pub reason_code: DispatchReasonCode,
@@ -73,6 +84,10 @@ pub struct AdmissionPolicy {
     pub max_total_queue_depth: usize,
     /// Maximum number of jobs in any single priority queue.
     pub max_per_priority_queue_depth: usize,
+    /// Maximum number of queued jobs per tenant.
+    pub max_per_tenant_queue_depth: usize,
+    /// Maximum number of queued jobs per project.
+    pub max_per_project_queue_depth: usize,
     /// Once total depth reaches this threshold, admissions are deferred.
     pub defer_at_total_queue_depth: usize,
 }
@@ -82,8 +97,87 @@ impl Default for AdmissionPolicy {
         Self {
             max_total_queue_depth: 1_000,
             max_per_priority_queue_depth: 100,
+            max_per_tenant_queue_depth: 200,
+            max_per_project_queue_depth: 100,
             defer_at_total_queue_depth: 800,
         }
+    }
+}
+
+/// Weighted fairness + starvation policy.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FairnessPolicy {
+    /// Relative tenant weight used in expected-share computation.
+    pub default_tenant_weight: u32,
+    /// Relative project weight used in expected-share computation.
+    pub default_project_weight: u32,
+    /// Dispatch-round age that triggers starvation override.
+    pub starvation_round_threshold: u64,
+}
+
+impl Default for FairnessPolicy {
+    fn default() -> Self {
+        Self {
+            default_tenant_weight: 1,
+            default_project_weight: 1,
+            starvation_round_threshold: 10,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct FairnessKey {
+    tenant_id: String,
+    project_id: String,
+}
+
+impl FairnessKey {
+    fn from_job(job: &ScheduledJob) -> Self {
+        Self {
+            tenant_id: job.tenant_id.clone(),
+            project_id: job.project_id.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct QueueState {
+    per_priority: BTreeMap<u8, VecDeque<ScheduledJob>>,
+}
+
+impl QueueState {
+    fn new() -> Self {
+        Self {
+            per_priority: BTreeMap::new(),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.per_priority.is_empty()
+    }
+
+    fn depth(&self) -> usize {
+        self.per_priority.values().map(VecDeque::len).sum()
+    }
+
+    fn push(&mut self, job: ScheduledJob) {
+        self.per_priority
+            .entry(job.priority)
+            .or_default()
+            .push_back(job);
+    }
+
+    fn pop_next(&mut self) -> Option<ScheduledJob> {
+        let priority = self.per_priority.keys().next_back().copied()?;
+        let queue = self
+            .per_priority
+            .get_mut(&priority)
+            .expect("priority bucket must exist");
+        let job = queue.pop_front();
+        if queue.is_empty() {
+            self.per_priority.remove(&priority);
+        }
+        job
     }
 }
 
@@ -93,7 +187,14 @@ pub struct SchedulerMetrics {
     pub admitted_total: u64,
     pub deferred_total: u64,
     pub rejected_total: u64,
+    pub quota_denied_tenant_total: u64,
+    pub quota_denied_project_total: u64,
     pub dispatched_total: u64,
+    pub starvation_prevention_total: u64,
+    /// Accumulated non-negative fairness lag (milli-jobs).
+    pub fairness_lag_millis_total: u64,
+    /// Maximum observed non-negative fairness lag (milli-jobs).
+    pub fairness_lag_millis_max: u64,
 }
 
 /// Health/status snapshot for health endpoints.
@@ -101,31 +202,49 @@ pub struct SchedulerMetrics {
 pub struct SchedulerHealth {
     pub healthy: bool,
     pub total_queue_depth: usize,
-    pub distinct_priority_buckets: usize,
+    pub fairness_entities: usize,
     pub metrics: SchedulerMetrics,
 }
 
-/// Priority scheduler (higher priority value wins, FIFO within priority).
+/// Priority scheduler with fairness-aware entity selection.
 #[derive(Debug)]
 pub struct Scheduler {
-    policy: AdmissionPolicy,
-    queues: BTreeMap<u8, VecDeque<ScheduledJob>>,
+    admission_policy: AdmissionPolicy,
+    fairness_policy: FairnessPolicy,
+    queues: HashMap<FairnessKey, QueueState>,
     total_depth: usize,
+    per_priority_depth: HashMap<u8, usize>,
+    per_tenant_depth: HashMap<String, usize>,
+    per_project_depth: HashMap<String, usize>,
+    dispatch_count: u64,
+    dispatch_by_entity: HashMap<FairnessKey, u64>,
+    last_dispatch_round: HashMap<FairnessKey, u64>,
     metrics: SchedulerMetrics,
 }
 
 impl Scheduler {
-    pub fn new(policy: AdmissionPolicy) -> Self {
+    pub fn new(admission_policy: AdmissionPolicy, fairness_policy: FairnessPolicy) -> Self {
         Self {
-            policy,
-            queues: BTreeMap::new(),
+            admission_policy,
+            fairness_policy,
+            queues: HashMap::new(),
             total_depth: 0,
+            per_priority_depth: HashMap::new(),
+            per_tenant_depth: HashMap::new(),
+            per_project_depth: HashMap::new(),
+            dispatch_count: 0,healthy: self.total_depth <= self.policy.max_total_queue_depth,
+            dispatch_by_entity: HashMap::new(),
+            last_dispatch_round: HashMap::new(),
             metrics: SchedulerMetrics::default(),
         }
     }
 
     pub fn admission_policy(&self) -> AdmissionPolicy {
-        self.policy
+        self.admission_policy
+    }
+
+    pub fn fairness_policy(&self) -> FairnessPolicy {
+        self.fairness_policy.clone()
     }
 
     pub fn queue_depth(&self) -> usize {
@@ -138,35 +257,53 @@ impl Scheduler {
 
     pub fn health(&self) -> SchedulerHealth {
         SchedulerHealth {
-            healthy: self.total_depth <= self.policy.max_total_queue_depth,
+            healthy: self.total_depth <= self.admission_policy.max_total_queue_depth,
             total_queue_depth: self.total_depth,
-            distinct_priority_buckets: self.queues.len(),
+            fairness_entities: self.queues.len(),
             metrics: self.metrics(),
         }
     }
 
     /// Evaluate admission without mutating queue state.
-    pub fn evaluate_admission(&self, priority: u8) -> AdmissionDecision {
-        let priority_depth = self.queues.get(&priority).map_or(0, VecDeque::len);
+    pub fn evaluate_admission(
+        &self,
+        tenant_id: &str,
+        project_id: &str,
+        priority: u8,
+    ) -> AdmissionDecision {
+        let priority_depth = *self.per_priority_depth.get(&priority).unwrap_or(&0);
+        let tenant_depth = *self.per_tenant_depth.get(tenant_id).unwrap_or(&0);
+        let project_depth = *self.per_project_depth.get(project_id).unwrap_or(&0);
 
-        let (disposition, reason_code) = if self.total_depth >= self.policy.max_total_queue_depth {
-            (
-                AdmissionDisposition::Reject,
-                AdmissionReasonCode::RejectedGlobalQueueLimit,
-            )
-        } else if priority_depth >= self.policy.max_per_priority_queue_depth {
-            (
-                AdmissionDisposition::Reject,
-                AdmissionReasonCode::RejectedPriorityQueueLimit,
-            )
-        } else if self.total_depth >= self.policy.defer_at_total_queue_depth {
-            (
-                AdmissionDisposition::Defer,
-                AdmissionReasonCode::DeferredHighBacklog,
-            )
-        } else {
-            (AdmissionDisposition::Admit, AdmissionReasonCode::Accepted)
-        };
+        let (disposition, reason_code) =
+            if self.total_depth >= self.admission_policy.max_total_queue_depth {
+                (
+                    AdmissionDisposition::Reject,
+                    AdmissionReasonCode::RejectedGlobalQueueLimit,
+                )
+            } else if priority_depth >= self.admission_policy.max_per_priority_queue_depth {
+                (
+                    AdmissionDisposition::Reject,
+                    AdmissionReasonCode::RejectedPriorityQueueLimit,
+                )
+            } else if tenant_depth >= self.admission_policy.max_per_tenant_queue_depth {
+                (
+                    AdmissionDisposition::Reject,
+                    AdmissionReasonCode::RejectedTenantQuota,
+                )
+            } else if project_depth >= self.admission_policy.max_per_project_queue_depth {
+                (
+                    AdmissionDisposition::Reject,
+                    AdmissionReasonCode::RejectedProjectQuota,
+                )
+            } else if self.total_depth >= self.admission_policy.defer_at_total_queue_depth {
+                (
+                    AdmissionDisposition::Defer,
+                    AdmissionReasonCode::DeferredHighBacklog,
+                )
+            } else {
+                (AdmissionDisposition::Admit, AdmissionReasonCode::Accepted)
+            };
 
         AdmissionDecision {
             version: SCHEDULER_DECISION_VERSION,
@@ -174,16 +311,25 @@ impl Scheduler {
             reason_code,
             total_queue_depth: self.total_depth,
             priority_queue_depth: priority_depth,
+            tenant_queue_depth: tenant_depth,
+            project_queue_depth: project_depth,
         }
     }
 
     /// Attempts to enqueue a job according to admission control policy.
     pub fn submit(&mut self, job: ScheduledJob) -> AdmissionDecision {
-        let decision = self.evaluate_admission(job.priority);
+        let decision = self.evaluate_admission(&job.tenant_id, &job.project_id, job.priority);
         match decision.disposition {
             AdmissionDisposition::Admit => {
-                self.queues.entry(job.priority).or_default().push_back(job);
+                let key = FairnessKey::from_job(&job);
+                self.queues
+                    .entry(key)
+                    .or_insert_with(QueueState::new)
+                    .push(job.clone());
                 self.total_depth += 1;
+                *self.per_priority_depth.entry(job.priority).or_insert(0) += 1;
+                *self.per_tenant_depth.entry(job.tenant_id).or_insert(0) += 1;
+                *self.per_project_depth.entry(job.project_id).or_insert(0) += 1;
                 self.metrics.admitted_total += 1;
             }
             AdmissionDisposition::Defer => {
@@ -191,46 +337,170 @@ impl Scheduler {
             }
             AdmissionDisposition::Reject => {
                 self.metrics.rejected_total += 1;
+                match decision.reason_code {
+                    AdmissionReasonCode::RejectedTenantQuota => {
+                        self.metrics.quota_denied_tenant_total += 1;
+                    }
+                    AdmissionReasonCode::RejectedProjectQuota => {
+                        self.metrics.quota_denied_project_total += 1;
+                    }
+                    _ => {}
+                }
             }
         }
         decision
     }
 
-    /// Deterministically picks next job: highest priority first, FIFO inside bucket.
+    /// Fairness-based dispatch with starvation prevention.
     pub fn dispatch_next(&mut self) -> SchedulerDecision {
-        let maybe_priority = self.queues.keys().next_back().copied();
-
-        if let Some(priority) = maybe_priority {
-            let queue = self
-                .queues
-                .get_mut(&priority)
-                .expect("priority key must exist while dispatching");
-            let job = queue
-                .pop_front()
-                .expect("priority queue must have at least one job");
-            if queue.is_empty() {
-                self.queues.remove(&priority);
-            }
-            self.total_depth -= 1;
-            self.metrics.dispatched_total += 1;
-
-            SchedulerDecision {
-                version: SCHEDULER_DECISION_VERSION,
-                selected_job_id: Some(job.job_id),
-                selected_priority: Some(priority),
-                queue_depth_after: self.total_depth,
-                reason_code: DispatchReasonCode::PriorityThenFifo,
-            }
-        } else {
-            SchedulerDecision {
+        if self.total_depth == 0 {
+            return SchedulerDecision {
                 version: SCHEDULER_DECISION_VERSION,
                 selected_job_id: None,
+                selected_tenant_id: None,
+                selected_project_id: None,
                 selected_priority: None,
                 queue_depth_after: 0,
                 reason_code: DispatchReasonCode::QueueEmpty,
+            };
+        }
+
+        let current_round = self.dispatch_count + 1;
+        let candidate = self.pick_dispatch_entity(current_round);
+
+        let (key, reason_code) = candidate.expect("queue depth > 0 must have dispatch candidate");
+
+        let queue = self
+            .queues
+            .get_mut(&key)
+            .expect("selected fairness queue must exist");
+        let job = queue.pop_next().expect("selected queue must be non-empty");
+
+        if queue.is_empty() {
+            self.queues.remove(&key);
+        }
+
+        self.total_depth -= 1;
+        self.dispatch_count += 1;
+        *self.dispatch_by_entity.entry(key.clone()).or_insert(0) += 1;
+        self.last_dispatch_round
+            .insert(key.clone(), self.dispatch_count);
+        Self::decrement_counter(&mut self.per_priority_depth, job.priority);
+        Self::decrement_counter(&mut self.per_tenant_depth, job.tenant_id.clone());
+        Self::decrement_counter(&mut self.per_project_depth, job.project_id.clone());
+
+        self.metrics.dispatched_total += 1;
+        if reason_code == DispatchReasonCode::StarvationPrevention {
+            self.metrics.starvation_prevention_total += 1;
+        }
+
+        let fairness_lag = self.compute_entity_fairness_lag_millis(&key, self.dispatch_count);
+        self.metrics.fairness_lag_millis_total += fairness_lag;
+        self.metrics.fairness_lag_millis_max =
+            self.metrics.fairness_lag_millis_max.max(fairness_lag);
+
+        SchedulerDecision {
+            version: SCHEDULER_DECISION_VERSION,
+            selected_job_id: Some(job.job_id),
+            selected_tenant_id: Some(job.tenant_id),
+            selected_project_id: Some(job.project_id),
+            selected_priority: Some(job.priority),
+            queue_depth_after: self.total_depth,
+            reason_code,
+        }
+    }
+
+    fn pick_dispatch_entity(
+        &self,
+        current_round: u64,
+    ) -> Option<(FairnessKey, DispatchReasonCode)> {
+        // Starvation override first.
+        let starvation_choice = self
+            .queues
+            .iter()
+            .filter_map(|(key, queue)| {
+                if queue.is_empty() {
+                    return None;
+                }
+                let rounds_since_dispatch = self.rounds_since_dispatch(key, current_round);
+                (rounds_since_dispatch >= self.fairness_policy.starvation_round_threshold)
+                    .then_some((key.clone(), rounds_since_dispatch))
+            })
+            .max_by(|(ka, ra), (kb, rb)| ra.cmp(rb).then_with(|| compare_keys(ka, kb)));
+
+        if let Some((key, _)) = starvation_choice {
+            return Some((key, DispatchReasonCode::StarvationPrevention));
+        }
+
+        self.queues
+            .iter()
+            .filter(|(_, queue)| !queue.is_empty())
+            .map(|(key, _)| {
+                let lag = self.compute_entity_fairness_lag_millis(key, current_round);
+                let depth = self.queues.get(key).map_or(0, QueueState::depth);
+                (key.clone(), lag, depth)
+            })
+            .max_by(|(ka, laga, deptha), (kb, lagb, depthb)| {
+                laga.cmp(lagb)
+                    .then_with(|| deptha.cmp(depthb))
+                    .then_with(|| compare_keys(ka, kb))
+            })
+            .map(|(key, _, _)| (key, DispatchReasonCode::WeightedFairness))
+    }
+
+    fn rounds_since_dispatch(&self, key: &FairnessKey, current_round: u64) -> u64 {
+        match self.last_dispatch_round.get(key) {
+            Some(round) => current_round.saturating_sub(*round),
+            None => current_round,
+        }
+    }
+
+    fn compute_entity_fairness_lag_millis(&self, key: &FairnessKey, round: u64) -> u64 {
+        let total_weight = self.total_active_weight();
+        if total_weight == 0 {
+            return 0;
+        }
+
+        let entity_weight = self.weight_for_key(key) as u128;
+        let expected_times_weight = round as u128 * entity_weight;
+        let expected_millis = (expected_times_weight * 1_000) / total_weight as u128;
+
+        let actual = *self.dispatch_by_entity.get(key).unwrap_or(&0) as u128;
+        let actual_millis = actual * 1_000;
+
+        expected_millis.saturating_sub(actual_millis) as u64
+    }
+
+    fn total_active_weight(&self) -> u64 {
+        self.queues
+            .iter()
+            .filter(|(_, queue)| !queue.is_empty())
+            .map(|(key, _)| self.weight_for_key(key))
+            .sum()
+    }
+
+    fn weight_for_key(&self, _key: &FairnessKey) -> u64 {
+        self.fairness_policy.default_tenant_weight as u64
+            * self.fairness_policy.default_project_weight as u64
+    }
+
+    fn decrement_counter<K: std::cmp::Eq + std::hash::Hash + Clone>(
+        map: &mut HashMap<K, usize>,
+        key: K,
+    ) {
+        if let Some(value) = map.get_mut(&key) {
+            *value = value.saturating_sub(1);
+            if *value == 0 {
+                map.remove(&key);
             }
         }
     }
+}
+
+fn compare_keys(a: &FairnessKey, b: &FairnessKey) -> Ordering {
+    a.tenant_id
+        .cmp(&b.tenant_id)
+        .then_with(|| a.project_id.cmp(&b.project_id))
 }
 
 #[cfg(test)]
@@ -239,123 +509,155 @@ mod tests {
 
     fn strict_policy() -> AdmissionPolicy {
         AdmissionPolicy {
-            max_total_queue_depth: 3,
-            max_per_priority_queue_depth: 2,
-            defer_at_total_queue_depth: 2,
+            max_total_queue_depth: 10,
+            max_per_priority_queue_depth: 10,
+            max_per_tenant_queue_depth: 3,
+            max_per_project_queue_depth: 10,
+            defer_at_total_queue_depth: 9,
+        }
+    }
+
+    fn fairness_policy() -> FairnessPolicy {
+        FairnessPolicy {
+            default_tenant_weight: 1,
+            default_project_weight: 1,
+            starvation_round_threshold: 3,
         }
     }
 
     #[test]
-    fn dispatch_is_priority_then_fifo() {
-        let mut scheduler = Scheduler::new(strict_policy());
-
-        assert_eq!(
-            scheduler.submit(ScheduledJob {
-                job_id: "p5-first".to_string(),
-                priority: 5,
-            })
-            .disposition,
-            AdmissionDisposition::Admit
+    fn quota_rejections_are_reported_in_metrics() {
+        let mut scheduler = Scheduler::new(
+            AdmissionPolicy {
+                max_total_queue_depth: 100,
+                max_per_priority_queue_depth: 100,
+                max_per_tenant_queue_depth: 1,
+                max_per_project_queue_depth: 1,
+                defer_at_total_queue_depth: 99,
+            },
+            fairness_policy(),
         );
-        assert_eq!(
-            scheduler.submit(ScheduledJob {
-                job_id: "p9".to_string(),
-                priority: 9,
-            })
-            .disposition,
-            AdmissionDisposition::Admit
-        );
-
-        // Next submission is deferred due to defer threshold.
-        assert_eq!(
-            scheduler.submit(ScheduledJob {
-                job_id: "p5-second".to_string(),
-                priority: 5,
-            })
-            .disposition,
-            AdmissionDisposition::Defer
-        );
-
-        let first = scheduler.dispatch_next();
-        assert_eq!(first.selected_job_id.as_deref(), Some("p9"));
-        assert_eq!(first.selected_priority, Some(9));
-        assert_eq!(first.reason_code, DispatchReasonCode::PriorityThenFifo);
-
-        let second = scheduler.dispatch_next();
-        assert_eq!(second.selected_job_id.as_deref(), Some("p5-first"));
-
-        let empty = scheduler.dispatch_next();
-        assert_eq!(empty.reason_code, DispatchReasonCode::QueueEmpty);
-        assert_eq!(empty.version, SCHEDULER_DECISION_VERSION);
-    }
-
-    #[test]
-    fn admission_rejects_per_priority_and_global_limits() {
-        let mut scheduler = Scheduler::new(AdmissionPolicy {
-            max_total_queue_depth: 2,
-            max_per_priority_queue_depth: 1,
-            defer_at_total_queue_depth: 99,
-        });
 
         let first = scheduler.submit(ScheduledJob {
-            job_id: "a".to_string(),
-            priority: 7,
+            job_id: "j1".to_string(),
+            tenant_id: "t1".to_string(),
+            project_id: "p1".to_string(),
+            priority: 5,
         });
         assert_eq!(first.reason_code, AdmissionReasonCode::Accepted);
 
-        let per_priority_reject = scheduler.submit(ScheduledJob {
-            job_id: "b".to_string(),
-            priority: 7,
+        let tenant_denied = scheduler.submit(ScheduledJob {
+            job_id: "j2".to_string(),
+            tenant_id: "t1".to_string(),
+            project_id: "p2".to_string(),
+            priority: 5,
         });
         assert_eq!(
-            per_priority_reject.reason_code,
-            AdmissionReasonCode::RejectedPriorityQueueLimit
+            tenant_denied.reason_code,
+            AdmissionReasonCode::RejectedTenantQuota
         );
 
-        let second_priority = scheduler.submit(ScheduledJob {
-            job_id: "c".to_string(),
-            priority: 6,
-        });
-        assert_eq!(second_priority.reason_code, AdmissionReasonCode::Accepted);
-
-        let global_reject = scheduler.submit(ScheduledJob {
-            job_id: "d".to_string(),
-            priority: 1,
+        let project_denied = scheduler.submit(ScheduledJob {
+            job_id: "j3".to_string(),
+            tenant_id: "t2".to_string(),
+            project_id: "p1".to_string(),
+            priority: 5,
         });
         assert_eq!(
-            global_reject.reason_code,
-            AdmissionReasonCode::RejectedGlobalQueueLimit
+            project_denied.reason_code,
+            AdmissionReasonCode::RejectedProjectQuota
         );
+
+        let metrics = scheduler.metrics();
+        assert_eq!(metrics.quota_denied_tenant_total, 1);
+        assert_eq!(metrics.quota_denied_project_total, 1);
     }
 
     #[test]
-    fn health_and_metrics_are_observable() {
-        let mut scheduler = Scheduler::new(strict_policy());
+    fn dispatch_uses_weighted_fairness_and_publishes_lag_metrics() {
+        let mut scheduler = Scheduler::new(strict_policy(), fairness_policy());
 
-        scheduler.submit(ScheduledJob {
-            job_id: "a".to_string(),
-            priority: 1,
-        });
-        scheduler.submit(ScheduledJob {
-            job_id: "b".to_string(),
-            priority: 2,
-        });
-        scheduler.submit(ScheduledJob {
-            job_id: "c".to_string(),
-            priority: 3,
-        }); // deferred
-        scheduler.dispatch_next();
+        for idx in 0..3 {
+            scheduler.submit(ScheduledJob {
+                job_id: format!("a-{idx}"),
+                tenant_id: "tenant-a".to_string(),
+                project_id: "proj-a".to_string(),
+                priority: 9,
+            });
+            scheduler.submit(ScheduledJob {
+                job_id: format!("b-{idx}"),
+                tenant_id: "tenant-b".to_string(),
+                project_id: "proj-b".to_string(),
+                priority: 1,
+            });
+        }
+
+        let mut seen_a = 0;
+        let mut seen_b = 0;
+
+        for _ in 0..6 {
+            let decision = scheduler.dispatch_next();
+            assert_eq!(decision.version, SCHEDULER_DECISION_VERSION);
+            assert_eq!(decision.reason_code, DispatchReasonCode::WeightedFairness);
+            match decision.selected_tenant_id.as_deref() {
+                Some("tenant-a") => seen_a += 1,
+                Some("tenant-b") => seen_b += 1,
+                other => panic!("unexpected tenant in dispatch: {other:?}"),
+            }
+        }
+
+        assert_eq!(seen_a, 3);
+        assert_eq!(seen_b, 3);
 
         let metrics = scheduler.metrics();
-        assert_eq!(metrics.admitted_total, 2);
-        assert_eq!(metrics.deferred_total, 1);
-        assert_eq!(metrics.rejected_total, 0);
-        assert_eq!(metrics.dispatched_total, 1);
+        assert!(metrics.fairness_lag_millis_total > 0);
+        assert!(metrics.fairness_lag_millis_max > 0);
+    }
 
-        let health = scheduler.health();
-        assert!(health.healthy);
-        assert_eq!(health.total_queue_depth, 1);
-        assert_eq!(health.distinct_priority_buckets, 1);
-        assert_eq!(health.metrics, metrics);
+    #[test]
+    fn starvation_prevention_forces_dispatch_after_threshold() {
+        let mut scheduler = Scheduler::new(
+            strict_policy(),
+            FairnessPolicy {
+                default_tenant_weight: 1,
+                default_project_weight: 1,
+                starvation_round_threshold: 2,
+            },
+        );
+
+        scheduler.submit(ScheduledJob {
+            job_id: "cold-0".to_string(),
+            tenant_id: "cold-tenant".to_string(),
+            project_id: "cold-project".to_string(),
+            priority: 1,
+        });
+        
+        for idx in 0..3 {
+            scheduler.submit(ScheduledJob {
+                job_id: format!("hot-{idx}"),
+                tenant_id: "hot-tenant".to_string(),
+                project_id: "hot-project".to_string(),
+                priority: 9,
+            });
+        }
+
+        // First dispatch can pick hot tenant due higher lag tie-break on depth.
+        let _ = scheduler.dispatch_next();
+        // Second dispatch must invoke starvation prevention for cold tenant.
+        let second = scheduler.dispatch_next();
+        assert_eq!(second.reason_code, DispatchReasonCode::StarvationPrevention);
+        assert_eq!(second.selected_tenant_id.as_deref(), Some("cold-tenant"));
+
+        let metrics = scheduler.metrics();
+        assert_eq!(metrics.starvation_prevention_total, 1);
+    }
+
+    #[test]
+    fn empty_queue_returns_versioned_empty_decision() {
+        let mut scheduler = Scheduler::new(strict_policy(), fairness_policy());
+        let empty = scheduler.dispatch_next();
+        assert_eq!(empty.version, SCHEDULER_DECISION_VERSION);
+        assert_eq!(empty.reason_code, DispatchReasonCode::QueueEmpty);
+        assert!(empty.selected_job_id.is_none());
     }
 }
