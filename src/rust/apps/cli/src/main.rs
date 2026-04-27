@@ -40,6 +40,10 @@ fn main() {
             if let Err(code) = run_results(&args[2..]) {
                 std::process::exit(code);
             }
+        "explain" => {
+            if let Err(code) = run_explain(&args[2..]) {
+                std::process::exit(code);
+            }
         }
         "compile" => {
             if let Err(err) = run_compile(&args[2..]) {
@@ -158,6 +162,29 @@ fn run_results(args: &[String]) -> Result<(), i32> {
             Ok(())
         }
         Err(err) => Err(print_grpc_like_error("results", &err)),
+    }
+}
+
+fn run_explain(args: &[String]) -> Result<(), i32> {
+    let job_id = parse_job_id_arg(args, "eigen explain <job_id>")?;
+    match jobspec::get_dispatch_rationale_from_system_api(&job_id) {
+        Ok(rationale) => {
+            println!("job_id: {job_id}");
+            println!("version: {}", rationale.version);
+            println!("policy_version: {}", rationale.policy_version);
+            println!("selected_backend: {}", rationale.selected_backend);
+            println!("selected_queue: {}", rationale.selected_queue);
+            println!("reason_codes:");
+            for code in &rationale.reason_codes {
+                println!("  - {code}");
+            }
+            println!("timeline_ref: {}", rationale.timeline_ref);
+            println!("logs_ref: {}", rationale.logs_ref);
+            println!("trace_id: {}", rationale.trace_id.unwrap_or_default());
+            println!("trace_ref: {}", rationale.trace_ref.unwrap_or_default());
+            Ok(())
+        }
+        Err(err) => Err(print_grpc_like_error("explain", &err)),
     }
 }
 
@@ -302,7 +329,7 @@ fn run_visualize(args: &[String]) -> Result<(), String> {
 
 fn print_help() {
     println!(
-        "Eigen CLI (scaffold)\n\nUsage:\n  eigen <command> [args...]\n\nCommands:\n  help        Show this message\n  version     Print version\n  submit      Submit job: eigen submit -f job.yaml\n  status      Get job status: eigen status <job_id>\n  watch       Stream progress: eigen watch <job_id>\n  results     Fetch results: eigen results <job_id>\n  compile     Compile locally: eigen compile -f job.yaml --out circuit.aqo.json\n  visualize   Visualize AQO: eigen visualize -f circuit.aqo.json\n"
+        "Eigen CLI (scaffold)\n\nUsage:\n  eigen <command> [args...]\n\nCommands:\n  help        Show this message\n  version     Print version\n  submit      Submit job: eigen submit -f job.yaml\n  status      Get job status: eigen status <job_id>\n  watch       Stream progress: eigen watch <job_id>\n  results     Fetch results: eigen results <job_id>\n  explain     Dispatch rationale: eigen explain <job_id>\n  compile     Compile locally: eigen compile -f job.yaml --out circuit.aqo.json\n  visualize   Visualize AQO: eigen visualize -f circuit.aqo.json\n"
     );
 }
 

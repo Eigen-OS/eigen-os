@@ -693,6 +693,19 @@ pub struct DownloadedArtifactView {
     pub bytes: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DispatchRationaleView {
+    pub version: &'static str,
+    pub policy_version: &'static str,
+    pub reason_codes: Vec<&'static str>,
+    pub selected_backend: &'static str,
+    pub selected_queue: String,
+    pub timeline_ref: String,
+    pub logs_ref: String,
+    pub trace_id: Option<String>,
+    pub trace_ref: Option<String>,
+}
+
 pub fn compile_job_to_aqo_json(job_path: &Path) -> Result<String, SubmitBuildError> {
     let req = build_submit_request_from_job_file(job_path)?;
     let ProgramSource::EigenLangSource {
@@ -926,6 +939,41 @@ pub fn get_job_results_from_system_api(job_id: &str) -> Result<JobResultsView, G
         artifacts,
         error_code: None,
         error_summary: None,
+    })
+}
+
+pub fn get_dispatch_rationale_from_system_api(
+    job_id: &str,
+) -> Result<DispatchRationaleView, GrpcLikeError> {
+    if job_id.trim().is_empty() {
+        return Err(GrpcLikeError {
+            code: GrpcCode::InvalidArgument,
+            message: "job_id is required".to_string(),
+            retry_hint: None,
+        });
+    }
+    if job_id.starts_with("net-") {
+        return Err(GrpcLikeError {
+            code: GrpcCode::Unavailable,
+            message: "system-api is temporarily unavailable".to_string(),
+            retry_hint: Some("retry with exponential backoff".to_string()),
+        });
+    }
+    let trace_id = if job_id.contains("trace") {
+        Some(format!("trace-{job_id}"))
+    } else {
+        None
+    };
+    Ok(DispatchRationaleView {
+        version: "2.0.0",
+        policy_version: "2.1.0",
+        reason_codes: vec!["WEIGHTED_FAIRNESS", "DEVICE_SCORE"],
+        selected_backend: "sim:local",
+        selected_queue: "priority-50".to_string(),
+        timeline_ref: format!("qfs://jobs/{job_id}/timeline.json"),
+        logs_ref: format!("qfs://jobs/{job_id}/logs/dispatch.log"),
+        trace_ref: trace_id.as_ref().map(|id| format!("trace://{id}")),
+        trace_id,
     })
 }
 
@@ -1190,6 +1238,16 @@ spec:
         assert!(viz.contains("program_sha256:"));
     }
     
+    #[test]
+    fn dispatch_rationale_contains_version_and_reason_codes() {
+        let rationale = get_dispatch_rationale_from_system_api("job-demo").expect("rationale");
+        assert_eq!(rationale.version, "2.0.0");
+        assert_eq!(rationale.policy_version, "2.1.0");
+        assert!(rationale.reason_codes.contains(&"WEIGHTED_FAIRNESS"));
+        assert!(rationale.reason_codes.contains(&"DEVICE_SCORE"));
+        assert!(rationale.timeline_ref.ends_with("/timeline.json"));
+    }
+
     #[test]
     fn client_side_schema_validation_rejects_invalid_submit_request() {
         let req = SubmitJobRequest {

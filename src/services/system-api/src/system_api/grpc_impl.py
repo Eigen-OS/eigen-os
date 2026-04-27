@@ -89,6 +89,7 @@ class _JobRecord:
     temp_refs: list[str]
     trace_id: str | None
     max_iters: int
+    dispatch_rationale: dict[str, object]
 
 
 @dataclass
@@ -509,6 +510,22 @@ class JobService:
             "trace_ref": f"trace://{trace_id}" if trace_id else "",
             "timeline_version": "2.0.0",
         }
+        dispatch_rationale = {
+            "version": "2.0.0",
+            "policy_version": metadata.get("dispatch_policy_version", "2.1.0"),
+            "reason_codes": ["WEIGHTED_FAIRNESS", "DEVICE_SCORE"],
+            "selected_backend": request.target or "sim:local",
+            "selected_queue": f"priority-{int(request.priority)}",
+            "attributes": {
+                "priority": str(int(request.priority)),
+                "target": request.target or "sim:local",
+                "job_name": request.name,
+            },
+            "timeline_ref": f"qfs://jobs/{job_id}/timeline.json",
+            "logs_ref": f"qfs://jobs/{job_id}/logs/dispatch.log",
+            "trace_id": trace_id or "",
+            "trace_ref": f"trace://{trace_id}" if trace_id else "",
+        }
         
         max_iters = 0
         if metadata.get("max_iters", "").strip():
@@ -571,6 +588,7 @@ class JobService:
             temp_refs=[],
             trace_id=trace_id,
             max_iters=max_iters,
+            dispatch_rationale=dispatch_rationale,
         )
         self._provision_temporary_artifacts(record)
         self._store_timeline(record)
@@ -777,6 +795,42 @@ class JobService:
         )
 
         log_request_end("JobService.GetJobResults", rc)
+        return resp
+    
+    def GetDispatchRationale(self, request, context: grpc.ServicerContext):
+        enforce_authn(context, method_name="JobService.GetDispatchRationale")
+        enforce_authz(context, required_permission="jobs:read")
+        rc = new_request_context(context)
+        rc.job_id = request.job_id
+        log_request_start("JobService.GetDispatchRationale", rc)
+
+        violations = validate_job_id(request)
+        if violations:
+            abort_invalid_argument(context, "validation failed", violations)
+
+        with self._lock:
+            record = self._jobs.get(request.job_id)
+            if record is None:
+                context.abort(grpc.StatusCode.NOT_FOUND, f"job_id not found: {request.job_id}")
+            self._advance_job(record)
+            rationale = dict(record.dispatch_rationale)
+
+        resp = self._job_pb.GetDispatchRationaleResponse(
+            rationale=self._job_pb.DispatchRationale(
+                version=str(rationale["version"]),
+                policy_version=str(rationale["policy_version"]),
+                reason_codes=[str(code) for code in rationale["reason_codes"]],
+                selected_backend=str(rationale["selected_backend"]),
+                selected_queue=str(rationale["selected_queue"]),
+                attributes={k: str(v) for k, v in dict(rationale["attributes"]).items()},
+                timeline_ref=str(rationale["timeline_ref"]),
+                logs_ref=str(rationale["logs_ref"]),
+                trace_id=str(rationale["trace_id"]),
+                trace_ref=str(rationale["trace_ref"]),
+            )
+        )
+
+        log_request_end("JobService.GetDispatchRationale", rc)
         return resp
 
 
