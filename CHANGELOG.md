@@ -18,10 +18,17 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 
 ### Added
 
+- Phase-3 P3-05 benchmark history API (`/benchmarks/history`) and trend queries (`benchmark-service` package `0.5.0`) with validated time-range filters, deterministic pagination, and stable ordering guarantees.
 - Phase-3 P3-03 benchmark run API contract (`/benchmarks/run`) and compatibility fixtures (`benchmark-service` package `0.3.0`) with stable request/response/error envelopes and explicit artifact version markers.
 - Phase-3 P3-01 benchmark-service core (`benchmark-service` package `0.1.0`) with run lifecycle state machine, idempotent start/retry semantics, and immutable deterministic snapshot metadata.
 - RFC 0020 and ADR 0008 for benchmark run lifecycle contract governance.
 - Phase-3 P3-02 QSBench-compatible dataset ingestion pipeline (`benchmark-service` package `0.2.0`) with manifest schema validation, checksum/provenance verification, and queryable dataset version catalog.
+
+### Phase-3: History API and Trend Queries (P3-05)
+
+- **Version impact:** MINOR (adds `/benchmarks/history` contract surface and trend query aggregates; package version advanced to `0.5.0`).
+- **Compatibility:** Additive; existing `/benchmarks/run` (`1.0.0`), `/benchmarks/compare` (`1.0.0`), and dataset ingestion contracts remain unchanged.
+- **Migration notes:** No mandatory migration. Consumers can adopt deterministic cursor pagination (`page_token`) and rely on stable ordering contract `created_at DESC, run_id ASC`.
 
 ### Phase-3: Benchmark Service Core v1 (P3-01)
 

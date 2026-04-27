@@ -47,10 +47,24 @@ Ingestion guarantees:
   - `comparison_schema_version: 1.0.0`
   - `methodology.methodology_version: 1.0.0`
 
+## Benchmark History API contract (`/benchmarks/history`)
+
+- Deterministic pagination with opaque cursor token (`page_token`) and bounded `page_size` in `[1, 100]`.
+- Stable ordering guarantee is part of the public contract: `created_at DESC, run_id ASC`.
+- Mandatory query validation: `time_range.start_at`, `time_range.end_at`, optional `filters.states[]`, and optional `filters.dataset`.
+- Trend-oriented aggregates per query window:
+  - `trend.total_runs`, `trend.terminal_runs`, `trend.success_rate`
+  - `trend.state_counts`
+  - `trend.daily[]` (`run_count`, `success_count`, `failure_count`, `cancelled_count`)
+- Version markers:
+  - `api_version: 1.0.0`
+  - `query_version: 1.0.0`
+  - history entries keep explicit `history_entry_version`.
+
 ## Phase-3 change log discipline
 
 For every Phase-3 PR, include:
 
-- **Version impact**: additive `/benchmarks/compare` feature, package version raised to `0.4.0`.
-- **Compatibility**: backward-compatible addition; existing `/benchmarks/run` and dataset contracts unchanged.
-- **Migration notes**: clients can adopt `/benchmarks/compare` without changes to existing run lifecycle integrations.
+- **Version impact**: additive `/benchmarks/history` feature, package version raised to `0.5.0`.
+- **Compatibility**: backward-compatible addition; existing `/benchmarks/run`, `/benchmarks/compare`, and dataset contracts unchanged.
+- **Migration notes**: clients can adopt `/benchmarks/history` incrementally; pagination tokens are opaque and ordering is guaranteed by contract.
