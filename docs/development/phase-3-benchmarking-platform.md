@@ -3,7 +3,7 @@
 ## Status
 
 - **Phase**: 3 (Post-MVP)
-- **Planning status**: Drafted
+- **Planning status**: Active (RFC package landed)
 - **Started on**: 2026-04-27
 - **Last updated**: 2026-04-27
 - **Previous phase closure**: [`phase-2-release-readiness-checklist.md`](phase-2-release-readiness-checklist.md)
@@ -88,7 +88,7 @@ Turn Eigen-OS into a reproducible benchmarking and comparative analytics platfor
 ## Deliverables map
 
 1. Planning + backlog: this document + [`phase-3-issue-pack.md`](phase-3-issue-pack.md).
-2. Governance package: [`phase-3-rfc-adr-gap-analysis.md`](phase-3-rfc-adr-gap-analysis.md).
+2. Governance package: [`phase-3-rfc-adr-gap-analysis.md`](phase-3-rfc-adr-gap-analysis.md) + RFCs `0020/0021/0022` in `rfcs/`.
 3. Implementation slices: benchmark service, dataset pipeline, compare/history APIs, CLI commands.
 4. Release closure package (to be added during implementation):
    - `phase-3-release-readiness-checklist.md`
