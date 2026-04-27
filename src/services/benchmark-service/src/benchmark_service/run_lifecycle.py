@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from collections.abc import Callable
 from enum import Enum
 import hashlib
 import json
@@ -57,10 +58,11 @@ class BenchmarkRun:
 class BenchmarkRunService:
     """In-memory benchmark run lifecycle core with idempotent start/retry."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, now_fn: Callable[[], datetime] | None = None) -> None:
         self._runs: dict[str, BenchmarkRun] = {}
         self._start_index: dict[str, str] = {}
         self._retry_index: dict[tuple[str, str], str] = {}
+        self._now_fn = now_fn or (lambda: datetime.now(tz=timezone.utc))
 
     def start_run(self, *, idempotency_key: str, config: dict[str, Any]) -> BenchmarkRun:
         existing_run_id = self._start_index.get(idempotency_key)
@@ -110,6 +112,9 @@ class BenchmarkRunService:
     def get_run(self, run_id: str) -> BenchmarkRun:
         return self._runs[run_id]
 
+    def list_runs(self) -> list[BenchmarkRun]:
+        return list(self._runs.values())
+
     def _create_run(
         self,
         *,
@@ -125,7 +130,7 @@ class BenchmarkRunService:
             snapshot_version=SNAPSHOT_VERSION,
             run_id=run_id,
             request_hash=request_hash,
-            created_at=datetime.now(tz=timezone.utc).isoformat(),
+            created_at=self._now_fn().astimezone(timezone.utc).isoformat(),
             payload=canonical_payload,
         )
         return BenchmarkRun(
