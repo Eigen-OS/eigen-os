@@ -1,0 +1,25 @@
+{
+  "version": "2.0.0",
+  "parent_job_id": "job-parent-compat-01",
+  "scheduler_decision_version": "2.1.0",
+  "shard_plans": [
+    {
+      "version": "2.0.0",
+      "parent_job_id": "job-parent-compat-01",
+      "shard_id": "job-parent-compat-01-shard-001",
+      "backend_id": "backend-a",
+      "task_ids": [
+        "task-a"
+      ]
+    },
+    {
+      "version": "2.0.0",
+      "parent_job_id": "job-parent-compat-01",
+      "shard_id": "job-parent-compat-01-shard-002",
+      "backend_id": "backend-b",
+      "task_ids": [
+        "task-b"
+      ]
+    }
+  ]
+}

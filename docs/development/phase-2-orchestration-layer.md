@@ -8,6 +8,7 @@
 - **Last updated**: 2026-04-27
 - **Previous phase closure**: [`phase-1-production-runtime.md`](phase-1-production-runtime.md)
 - **Execution backlog**: [`phase-2-issue-pack.md`](phase-2-issue-pack.md)
+- **Compatibility report**: [`phase-2-compatibility-report.md`](phase-2-compatibility-report.md)
 
 ## Goal
 
