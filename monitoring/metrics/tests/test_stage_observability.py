@@ -1,6 +1,10 @@
 from monitoring.metrics.aggregation.aggregator import StageLatencyAggregator
 from monitoring.metrics.aggregation.alerts import StageSLOAlertEvaluator, default_stage_slos
-from monitoring.metrics.prometheus.exporter import StageTelemetryExporter
+from monitoring.metrics.prometheus.exporter import (
+    OrchestrationMetricsSnapshot,
+    OrchestrationTelemetryExporter,
+    StageTelemetryExporter,
+)
 
 
 def test_aggregator_quantiles_and_error_rate():
@@ -33,3 +37,33 @@ def test_default_slo_configuration_covers_core_runtime_stages():
     evaluator = StageSLOAlertEvaluator(slos)
     expected = {"queue", "compile", "schedule", "execute", "result"}
     assert set(evaluator._slos.keys()) == expected
+
+def test_orchestration_metrics_exporter_renders_stable_contract_metrics():
+    exporter = OrchestrationTelemetryExporter()
+    exporter.update_snapshot(
+        OrchestrationMetricsSnapshot(
+            contract_version="2.3.0",
+            queue_depth=42,
+            queue_oldest_age_seconds=18.5,
+            queue_avg_age_seconds=4.25,
+            fairness_lag_millis_total=8123,
+            fairness_lag_millis_max=600,
+            quota_denied_tenant_total=3,
+            quota_denied_project_total=5,
+            rebalance_trigger_total=7,
+            starvation_prevention_total=2,
+        )
+    )
+
+    text = exporter.render_prometheus_text()
+
+    assert 'eigen_orch_contract_info{version="2.3.0"} 1' in text
+    assert "eigen_orch_queue_depth 42" in text
+    assert "eigen_orch_queue_oldest_age_seconds 18.500000" in text
+    assert "eigen_orch_queue_avg_age_seconds 4.250000" in text
+    assert "eigen_orch_fairness_lag_millis_total 8123" in text
+    assert "eigen_orch_fairness_lag_millis_max 600" in text
+    assert "eigen_orch_quota_denied_tenant_total 3" in text
+    assert "eigen_orch_quota_denied_project_total 5" in text
+    assert "eigen_orch_rebalance_trigger_total 7" in text
+    assert "eigen_orch_starvation_prevention_total 2" in text
