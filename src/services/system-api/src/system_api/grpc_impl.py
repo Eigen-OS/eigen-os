@@ -660,10 +660,14 @@ class JobService:
         manifest_ref = self._emit_batch_manifest(batch_id=batch_id, members=members, queue_key=queue_key)
         slot = self._dispatch_slot_seq
         self._dispatch_slot_seq += 1
+        batch_delay_sec = float(slot) * self._batch_dispatch_gap_sec
+        existing_delays = [max(rec.queue_delay_sec, 0.0) for rec in members if rec.queue_delay_sec > 0]
+        if existing_delays:
+            batch_delay_sec = min(batch_delay_sec, min(existing_delays))
         for rec in members:
             rec.batch_id = batch_id
             rec.batch_manifest_ref = manifest_ref
-            rec.queue_delay_sec = float(slot) * self._batch_dispatch_gap_sec
+            rec.queue_delay_sec = batch_delay_sec
             rec.dispatch_rationale["reason_codes"] = ["WEIGHTED_FAIRNESS", "DEVICE_SCORE", "BATCH_EXECUTION_V1"]
             attrs = dict(rec.dispatch_rationale["attributes"])
             attrs["batch_id"] = batch_id
