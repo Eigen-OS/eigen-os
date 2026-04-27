@@ -2,12 +2,17 @@
 
 mod jobspec;
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
 const EXIT_USER_ERROR: i32 = 2;
 const EXIT_NETWORK_ERROR: i32 = 3;
 const EXIT_SERVER_ERROR: i32 = 4;
+const BENCHMARK_RUN_CONTRACT_VERSION: &str = "1.0.0";
+const BENCHMARK_RUN_SNAPSHOT_VERSION: &str = "1.0.0";
+const BENCHMARK_COMPARISON_CONTRACT_VERSION: &str = "1.0.0";
+const BENCHMARK_COMPARISON_VERSION: &str = "1.0.0";
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -19,7 +24,13 @@ fn main() {
 
     match args[1].as_str() {
         "help" | "--help" | "-h" => print_help(),
-        "version" | "--version" | "-V" => println!("eigen-cli 0.3.0"),
+        "version" | "--version" | "-V" => println!("eigen-cli 0.4.0"),
+        "benchmark" => {
+            if let Err(err) = run_benchmark(&args[2..]) {
+                eprintln!("benchmark failed: {err}");
+                std::process::exit(EXIT_USER_ERROR);
+            }
+        }
         "submit" => {
             if let Err(err) = run_submit(&args[2..]) {
                 eprintln!("submit failed: {err}");
@@ -63,6 +74,152 @@ fn main() {
             std::process::exit(1);
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct BenchmarkRunSnapshot {
+    contract_version: String,
+    snapshot_version: String,
+    run_id: String,
+    created_at: String,
+    workload: String,
+    dataset: String,
+    backend: String,
+    seed: u64,
+    metrics: BTreeMap<String, f64>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct BenchmarkMetricComparison {
+    metric: String,
+    direction: String,
+    baseline: f64,
+    candidate: f64,
+    delta: f64,
+    delta_percent: f64,
+    regression: bool,
+}
+
+fn run_benchmark(args: &[String]) -> Result<(), String> {
+    let Some(subcommand) = args.first() else {
+        return Err("usage: eigen benchmark <run|compare> [args...]".to_string());
+    };
+    match subcommand.as_str() {
+        "run" => run_benchmark_run(&args[1..]),
+        "compare" => run_benchmark_compare(&args[1..]),
+        other => Err(format!(
+            "unknown benchmark subcommand: {other}. expected run|compare"
+        )),
+    }
+}
+
+fn run_benchmark_run(args: &[String]) -> Result<(), String> {
+    let mut config_path: Option<PathBuf> = None;
+    let mut output_mode = "human".to_string();
+    let mut output_file: Option<PathBuf> = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--config" => {
+                let Some(next) = args.get(i + 1) else {
+                    return Err("expected value after --config".to_string());
+                };
+                config_path = Some(PathBuf::from(next));
+                i += 2;
+            }
+            "--output" => {
+                let Some(next) = args.get(i + 1) else {
+                    return Err("expected value after --output".to_string());
+                };
+                output_mode = next.clone();
+                i += 2;
+            }
+            "--output-file" => {
+                let Some(next) = args.get(i + 1) else {
+                    return Err("expected value after --output-file".to_string());
+                };
+                output_file = Some(PathBuf::from(next));
+                i += 2;
+            }
+            unknown => return Err(format!("unknown benchmark run argument: {unknown}")),
+        }
+    }
+
+    let Some(config_path) = config_path else {
+        return Err(
+            "usage: eigen benchmark run --config benchmark-run.json [--output json|human] [--output-file path]"
+                .to_string(),
+        );
+    };
+    let snapshot = parse_benchmark_run_config(&config_path)?;
+    let json = benchmark_run_snapshot_json(&snapshot);
+    if let Some(path) = output_file {
+        std::fs::write(&path, format!("{json}\n"))
+            .map_err(|e| format!("failed to write {}: {e}", path.display()))?;
+    }
+    render_benchmark_run_output(&snapshot, &json, &output_mode)
+}
+
+fn run_benchmark_compare(args: &[String]) -> Result<(), String> {
+    let mut baseline_path: Option<PathBuf> = None;
+    let mut candidate_path: Option<PathBuf> = None;
+    let mut output_mode = "human".to_string();
+    let mut output_file: Option<PathBuf> = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--baseline" => {
+                let Some(next) = args.get(i + 1) else {
+                    return Err("expected value after --baseline".to_string());
+                };
+                baseline_path = Some(PathBuf::from(next));
+                i += 2;
+            }
+            "--candidate" => {
+                let Some(next) = args.get(i + 1) else {
+                    return Err("expected value after --candidate".to_string());
+                };
+                candidate_path = Some(PathBuf::from(next));
+                i += 2;
+            }
+            "--output" => {
+                let Some(next) = args.get(i + 1) else {
+                    return Err("expected value after --output".to_string());
+                };
+                output_mode = next.clone();
+                i += 2;
+            }
+            "--output-file" => {
+                let Some(next) = args.get(i + 1) else {
+                    return Err("expected value after --output-file".to_string());
+                };
+                output_file = Some(PathBuf::from(next));
+                i += 2;
+            }
+            unknown => return Err(format!("unknown benchmark compare argument: {unknown}")),
+        }
+    }
+    let Some(baseline_path) = baseline_path else {
+        return Err(
+            "usage: eigen benchmark compare --baseline baseline.json --candidate candidate.json [--output json|human] [--output-file path]"
+                .to_string(),
+        );
+    };
+    let Some(candidate_path) = candidate_path else {
+        return Err(
+            "usage: eigen benchmark compare --baseline baseline.json --candidate candidate.json [--output json|human] [--output-file path]"
+                .to_string(),
+        );
+    };
+    let baseline = parse_benchmark_snapshot_file(&baseline_path)?;
+    let candidate = parse_benchmark_snapshot_file(&candidate_path)?;
+    let comparisons = compare_snapshots(&baseline, &candidate);
+    let json = benchmark_comparison_json(&baseline, &candidate, &comparisons);
+    if let Some(path) = output_file {
+        std::fs::write(&path, format!("{json}\n"))
+            .map_err(|e| format!("failed to write {}: {e}", path.display()))?;
+    }
+    render_benchmark_compare_output(&baseline, &candidate, &comparisons, &json, &output_mode)
 }
 
 fn parse_job_id_arg(args: &[String], usage: &str) -> Result<String, i32> {
@@ -328,15 +485,329 @@ fn run_visualize(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn parse_benchmark_run_config(path: &PathBuf) -> Result<BenchmarkRunSnapshot, String> {
+    let raw = std::fs::read_to_string(path)
+        .map_err(|e| format!("failed to read benchmark config {}: {e}", path.display()))?;
+    let workload = extract_required_json_string(&raw, "workload")?;
+    let dataset = extract_required_json_string(&raw, "dataset")?;
+    let backend = extract_required_json_string(&raw, "backend")?;
+    let seed = extract_required_json_u64(&raw, "seed")?;
+    let metrics = extract_required_metrics(&raw)?;
+    let run_id = format!("run-{:016x}", fnv1a64(raw.as_bytes()));
+    let created_at = format_seed_timestamp(seed);
+    Ok(BenchmarkRunSnapshot {
+        contract_version: BENCHMARK_RUN_CONTRACT_VERSION.to_string(),
+        snapshot_version: BENCHMARK_RUN_SNAPSHOT_VERSION.to_string(),
+        run_id,
+        created_at,
+        workload,
+        dataset,
+        backend,
+        seed,
+        metrics,
+    })
+}
+
+fn parse_benchmark_snapshot_file(path: &PathBuf) -> Result<BenchmarkRunSnapshot, String> {
+    let raw = std::fs::read_to_string(path)
+        .map_err(|e| format!("failed to read benchmark snapshot {}: {e}", path.display()))?;
+    Ok(BenchmarkRunSnapshot {
+        contract_version: extract_required_json_string(&raw, "contract_version")?,
+        snapshot_version: extract_required_json_string(&raw, "snapshot_version")?,
+        run_id: extract_required_json_string(&raw, "run_id")?,
+        created_at: extract_required_json_string(&raw, "created_at")?,
+        workload: extract_required_json_string(&raw, "workload")?,
+        dataset: extract_required_json_string(&raw, "dataset")?,
+        backend: extract_required_json_string(&raw, "backend")?,
+        seed: extract_required_json_u64(&raw, "seed")?,
+        metrics: extract_required_metrics(&raw)?,
+    })
+}
+
+fn render_benchmark_run_output(
+    snapshot: &BenchmarkRunSnapshot,
+    json: &str,
+    output_mode: &str,
+) -> Result<(), String> {
+    match output_mode {
+        "json" => {
+            println!("{json}");
+            Ok(())
+        }
+        "human" => {
+            println!("benchmark run");
+            println!("run_id: {}", snapshot.run_id);
+            println!("contract_version: {}", snapshot.contract_version);
+            println!("snapshot_version: {}", snapshot.snapshot_version);
+            println!("created_at: {}", snapshot.created_at);
+            println!("workload: {}", snapshot.workload);
+            println!("dataset: {}", snapshot.dataset);
+            println!("backend: {}", snapshot.backend);
+            println!("seed: {}", snapshot.seed);
+            println!("metrics:");
+            for (name, value) in &snapshot.metrics {
+                println!("  {name}: {}", format_float(*value));
+            }
+            Ok(())
+        }
+        other => Err(format!("unknown output mode: {other}. expected json|human")),
+    }
+}
+
+fn render_benchmark_compare_output(
+    baseline: &BenchmarkRunSnapshot,
+    candidate: &BenchmarkRunSnapshot,
+    comparisons: &[BenchmarkMetricComparison],
+    json: &str,
+    output_mode: &str,
+) -> Result<(), String> {
+    match output_mode {
+        "json" => {
+            println!("{json}");
+            Ok(())
+        }
+        "human" => {
+            println!("benchmark compare");
+            println!("contract_version: {BENCHMARK_COMPARISON_CONTRACT_VERSION}");
+            println!("comparison_version: {BENCHMARK_COMPARISON_VERSION}");
+            println!("baseline_run_id: {}", baseline.run_id);
+            println!("candidate_run_id: {}", candidate.run_id);
+            println!("baseline_created_at: {}", baseline.created_at);
+            println!("candidate_created_at: {}", candidate.created_at);
+            println!("metrics:");
+            for cmp in comparisons {
+                println!(
+                    "  {} [{}] baseline={} candidate={} delta={} delta_percent={} regression={}",
+                    cmp.metric,
+                    cmp.direction,
+                    format_float(cmp.baseline),
+                    format_float(cmp.candidate),
+                    format_float(cmp.delta),
+                    format_float(cmp.delta_percent),
+                    cmp.regression
+                );
+            }
+            Ok(())
+        }
+        other => Err(format!("unknown output mode: {other}. expected json|human")),
+    }
+}
+
+fn compare_snapshots(
+    baseline: &BenchmarkRunSnapshot,
+    candidate: &BenchmarkRunSnapshot,
+) -> Vec<BenchmarkMetricComparison> {
+    let mut metrics: BTreeMap<String, (f64, f64)> = BTreeMap::new();
+    for (name, value) in &baseline.metrics {
+        metrics.insert(name.clone(), (*value, *value));
+    }
+    for (name, value) in &candidate.metrics {
+        if let Some((baseline_value, candidate_value)) = metrics.get_mut(name) {
+            *candidate_value = *value;
+            *baseline_value = *baseline.metrics.get(name).unwrap_or(value);
+        } else {
+            metrics.insert(name.clone(), (*value, *value));
+        }
+    }
+    metrics
+        .into_iter()
+        .map(|(metric, (baseline_value, candidate_value))| {
+            let direction = metric_direction(&metric);
+            let delta = candidate_value - baseline_value;
+            let delta_percent = if baseline_value == 0.0 {
+                0.0
+            } else {
+                (delta / baseline_value) * 100.0
+            };
+            let regression = match direction {
+                "lower_is_better" => candidate_value > baseline_value,
+                _ => candidate_value < baseline_value,
+            };
+            BenchmarkMetricComparison {
+                metric,
+                direction: direction.to_string(),
+                baseline: baseline_value,
+                candidate: candidate_value,
+                delta,
+                delta_percent,
+                regression,
+            }
+        })
+        .collect()
+}
+
+fn metric_direction(metric: &str) -> &'static str {
+    if metric.contains("latency")
+        || metric.contains("duration")
+        || metric.contains("time")
+        || metric.contains("error")
+    {
+        "lower_is_better"
+    } else {
+        "higher_is_better"
+    }
+}
+
+fn benchmark_run_snapshot_json(snapshot: &BenchmarkRunSnapshot) -> String {
+    let metrics = format_json_metrics(&snapshot.metrics);
+    format!(
+        "{{\"contract_version\":\"{}\",\"snapshot_version\":\"{}\",\"run_id\":\"{}\",\"created_at\":\"{}\",\"workload\":\"{}\",\"dataset\":\"{}\",\"backend\":\"{}\",\"seed\":{},\"metrics\":{{{metrics}}}}}",
+        snapshot.contract_version,
+        snapshot.snapshot_version,
+        snapshot.run_id,
+        snapshot.created_at,
+        json_escape(&snapshot.workload),
+        json_escape(&snapshot.dataset),
+        json_escape(&snapshot.backend),
+        snapshot.seed,
+    )
+}
+
+fn benchmark_comparison_json(
+    baseline: &BenchmarkRunSnapshot,
+    candidate: &BenchmarkRunSnapshot,
+    comparisons: &[BenchmarkMetricComparison],
+) -> String {
+    let comparison_rows: Vec<String> = comparisons
+        .iter()
+        .map(|cmp| {
+            format!(
+                "{{\"metric\":\"{}\",\"direction\":\"{}\",\"baseline\":{},\"candidate\":{},\"delta\":{},\"delta_percent\":{},\"regression\":{}}}",
+                json_escape(&cmp.metric),
+                cmp.direction,
+                format_float(cmp.baseline),
+                format_float(cmp.candidate),
+                format_float(cmp.delta),
+                format_float(cmp.delta_percent),
+                cmp.regression,
+            )
+        })
+        .collect();
+    format!(
+        "{{\"contract_version\":\"{BENCHMARK_COMPARISON_CONTRACT_VERSION}\",\"comparison_version\":\"{BENCHMARK_COMPARISON_VERSION}\",\"baseline_run_id\":\"{}\",\"candidate_run_id\":\"{}\",\"baseline_created_at\":\"{}\",\"candidate_created_at\":\"{}\",\"metrics\":[{}]}}",
+        json_escape(&baseline.run_id),
+        json_escape(&candidate.run_id),
+        json_escape(&baseline.created_at),
+        json_escape(&candidate.created_at),
+        comparison_rows.join(","),
+    )
+}
+
+fn format_json_metrics(metrics: &BTreeMap<String, f64>) -> String {
+    metrics
+        .iter()
+        .map(|(k, v)| format!("\"{}\":{}", json_escape(k), format_float(*v)))
+        .collect::<Vec<String>>()
+        .join(",")
+}
+
+fn extract_required_metrics(doc: &str) -> Result<BTreeMap<String, f64>, String> {
+    let marker = "\"metrics\":{";
+    let start = doc
+        .find(marker)
+        .ok_or_else(|| "missing required field: metrics".to_string())?
+        + marker.len();
+    let end = doc[start..]
+        .find('}')
+        .ok_or_else(|| "invalid metrics object".to_string())?
+        + start;
+    let body = &doc[start..end];
+    let mut metrics = BTreeMap::new();
+    if body.trim().is_empty() {
+        return Ok(metrics);
+    }
+    for entry in body.split(',') {
+        let mut parts = entry.splitn(2, ':');
+        let Some(raw_key) = parts.next() else {
+            continue;
+        };
+        let Some(raw_val) = parts.next() else {
+            continue;
+        };
+        let key = raw_key.trim().trim_matches('"').to_string();
+        let value = raw_val
+            .trim()
+            .parse::<f64>()
+            .map_err(|_| format!("metric '{key}' must be numeric"))?;
+        metrics.insert(key, value);
+    }
+    Ok(metrics)
+}
+
+fn extract_required_json_string(doc: &str, field: &str) -> Result<String, String> {
+    let marker = format!("\"{field}\":\"");
+    let start = doc
+        .find(&marker)
+        .ok_or_else(|| format!("missing required field: {field}"))?
+        + marker.len();
+    let end = doc[start..]
+        .find('"')
+        .ok_or_else(|| format!("invalid string field: {field}"))?
+        + start;
+    Ok(doc[start..end].to_string())
+}
+
+fn extract_required_json_u64(doc: &str, field: &str) -> Result<u64, String> {
+    let marker = format!("\"{field}\":");
+    let start = doc
+        .find(&marker)
+        .ok_or_else(|| format!("missing required field: {field}"))?
+        + marker.len();
+    let end = doc[start..]
+        .find(|ch: char| !ch.is_ascii_digit())
+        .unwrap_or(doc.len() - start)
+        + start;
+    doc[start..end]
+        .trim()
+        .parse::<u64>()
+        .map_err(|_| format!("field '{field}' must be an unsigned integer"))
+}
+
+fn json_escape(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+}
+
+fn format_float(value: f64) -> String {
+    let mut s = format!("{value:.6}");
+    while s.contains('.') && s.ends_with('0') {
+        s.pop();
+    }
+    if s.ends_with('.') {
+        s.push('0');
+    }
+    s
+}
+
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
+}
+
+fn format_seed_timestamp(seed: u64) -> String {
+    let day = (seed % 28) + 1;
+    let hour = (seed / 28) % 24;
+    let minute = (seed / (28 * 24)) % 60;
+    let second = (seed / (28 * 24 * 60)) % 60;
+    format!("2026-01-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
+}
+
 fn print_help() {
     println!(
-        "Eigen CLI (scaffold)\n\nUsage:\n  eigen <command> [args...]\n\nCommands:\n  help        Show this message\n  version     Print version\n  submit      Submit job: eigen submit -f job.yaml\n  status      Get job status: eigen status <job_id>\n  watch       Stream progress: eigen watch <job_id>\n  results     Fetch results: eigen results <job_id>\n  explain     Dispatch rationale: eigen explain <job_id>\n  compile     Compile locally: eigen compile -f job.yaml --out circuit.aqo.json\n  visualize   Visualize AQO: eigen visualize -f circuit.aqo.json\n"
+        "Eigen CLI\n\nUsage:\n  eigen <command> [args...]\n\nCommands:\n  help        Show this message\n  version     Print version\n  submit      Submit job: eigen submit -f job.yaml\n  status      Get job status: eigen status <job_id>\n  watch       Stream progress: eigen watch <job_id>\n  results     Fetch results: eigen results <job_id>\n  explain     Dispatch rationale: eigen explain <job_id>\n  compile     Compile locally: eigen compile -f job.yaml --out circuit.aqo.json\n  visualize   Visualize AQO: eigen visualize -f circuit.aqo.json\n  benchmark   Run/compare benchmark snapshots\n\nBenchmark examples (reproducible):\n  eigen benchmark run --config bench.json --output json --output-file baseline.json\n  eigen benchmark run --config bench-candidate.json --output json --output-file candidate.json\n  eigen benchmark compare --baseline baseline.json --candidate candidate.json --output human\n"
     );
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     #[test]
     fn terminal_exit_code_matches_runtime_semantics() {
@@ -345,5 +816,42 @@ mod tests {
         assert_eq!(terminal_exit_code("CANCELLED"), Some(EXIT_SERVER_ERROR));
         assert_eq!(terminal_exit_code("TIMEOUT"), Some(EXIT_SERVER_ERROR));
         assert_eq!(terminal_exit_code("RUNNING"), None);
+    }
+
+    #[test]
+    fn benchmark_run_snapshot_contract_fixture_is_stable() {
+        let fixture_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("benchmark");
+        let config = fixture_dir.join("benchmark-run-config.json");
+        let expected = std::fs::read_to_string(fixture_dir.join("expected-run-snapshot.json"))
+            .expect("expected fixture");
+        let snapshot = parse_benchmark_run_config(&config).expect("parse config");
+        let json = benchmark_run_snapshot_json(&snapshot);
+        assert_eq!(json, expected.trim());
+        assert_eq!(snapshot.contract_version, BENCHMARK_RUN_CONTRACT_VERSION);
+        assert_eq!(snapshot.snapshot_version, BENCHMARK_RUN_SNAPSHOT_VERSION);
+    }
+
+    #[test]
+    fn benchmark_compare_contract_fixture_is_stable() {
+        let fixture_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("benchmark");
+        let baseline = parse_benchmark_snapshot_file(&fixture_dir.join("baseline-snapshot.json"))
+            .expect("parse baseline");
+        let candidate = parse_benchmark_snapshot_file(&fixture_dir.join("candidate-snapshot.json"))
+            .expect("parse candidate");
+        let comparisons = compare_snapshots(&baseline, &candidate);
+        let json = benchmark_comparison_json(&baseline, &candidate, &comparisons);
+        let expected = std::fs::read_to_string(fixture_dir.join("expected-comparison.json"))
+            .expect("expected fixture");
+        assert_eq!(json, expected.trim());
+        assert!(
+            comparisons.iter().any(|metric| metric.regression),
+            "at least one regression marker should be visible in fixture",
+        );
     }
 }

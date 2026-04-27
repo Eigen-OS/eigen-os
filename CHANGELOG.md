@@ -18,11 +18,18 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 
 ### Added
 
+- Phase-3 P3-06 CLI benchmark UX: `eigen benchmark run` and `eigen benchmark compare` (Rust CLI package `0.4.0`) with stable JSON/human output modes, explicit output version markers, and compatibility fixtures.
 - Phase-3 P3-05 benchmark history API (`/benchmarks/history`) and trend queries (`benchmark-service` package `0.5.0`) with validated time-range filters, deterministic pagination, and stable ordering guarantees.
 - Phase-3 P3-03 benchmark run API contract (`/benchmarks/run`) and compatibility fixtures (`benchmark-service` package `0.3.0`) with stable request/response/error envelopes and explicit artifact version markers.
 - Phase-3 P3-01 benchmark-service core (`benchmark-service` package `0.1.0`) with run lifecycle state machine, idempotent start/retry semantics, and immutable deterministic snapshot metadata.
 - RFC 0020 and ADR 0008 for benchmark run lifecycle contract governance.
 - Phase-3 P3-02 QSBench-compatible dataset ingestion pipeline (`benchmark-service` package `0.2.0`) with manifest schema validation, checksum/provenance verification, and queryable dataset version catalog.
+
+### Phase-3: CLI UX run/compare (P3-06)
+
+- **Version impact:** MINOR (adds benchmark CLI surface and stable JSON contracts; Rust CLI package advanced to `0.4.0`).
+- **Compatibility:** Additive; existing CLI commands and benchmark service API contracts remain unchanged.
+- **Migration notes:** No mandatory migration. Automation consuming benchmark CLI output should pin to `contract_version`/`snapshot_version`/`comparison_version` and prefer `--output json` artifacts.
 
 ### Phase-3: History API and Trend Queries (P3-05)
 
