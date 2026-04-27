@@ -3,10 +3,12 @@
 ## Status
 
 - **Phase**: 1 (Post-MVP)
-- **Planning status**: Active
-- **Last updated**: 2026-04-26
+- **Planning status**: Complete
+- **Completed on**: 2026-04-27
+- **Last updated**: 2026-04-27
 - **Primary RFC**: [`../../rfcs/0019-phase1-production-runtime-plan.md`](../../rfcs/0019-phase1-production-runtime-plan.md)
 - **Release checklist**: [`phase-1-release-readiness-checklist.md`](phase-1-release-readiness-checklist.md)
+- **Release version**: `0.2.0`
 
 ## Why this phase exists
 
