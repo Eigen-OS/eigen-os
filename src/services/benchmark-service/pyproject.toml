@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "benchmark-service"
-version = "0.2.0"
+version = "0.3.0"
 description = "Eigen OS benchmark-service core run lifecycle contracts."
 requires-python = ">=3.12"
 dependencies = []

@@ -8,6 +8,7 @@ They should stay precise, explicit, and implementation-agnostic.
 - JobSpec: [`jobspec.md`](jobspec.md)
 - Eigen-Lang submission: [`eigen-lang-submission.md`](eigen-lang-submission.md)
 - Public API: [`api/grpc-public.md`](api/grpc-public.md)
+- Benchmark Run API: [`api/benchmark-run.md`](api/benchmark-run.md)
 - Internal API: [`api/grpc-internal.md`](api/grpc-internal.md)
 - Error model: [`error-model.md`](error-model.md)
 - Error mapping: [`error-mapping.md`](error-mapping.md)

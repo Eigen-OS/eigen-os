@@ -1,0 +1,40 @@
+{
+  "request_required_fields": [
+    "idempotency_key",
+    "config"
+  ],
+  "response_required_top_level_fields": [
+    "api_version",
+    "run",
+    "snapshot"
+  ],
+  "response_required_run_fields": [
+    "run_id",
+    "state",
+    "state_contract_version",
+    "parent_run_id",
+    "idempotency_key"
+  ],
+  "response_required_snapshot_fields": [
+    "contract_version",
+    "snapshot_version",
+    "history_entry_version",
+    "run_id",
+    "request_hash",
+    "created_at",
+    "payload"
+  ],
+  "error_required_top_level_fields": [
+    "error"
+  ],
+  "error_required_fields": [
+    "code",
+    "message",
+    "details"
+  ],
+  "error_required_detail_fields": [
+    "code",
+    "field",
+    "message"
+  ]
+}
