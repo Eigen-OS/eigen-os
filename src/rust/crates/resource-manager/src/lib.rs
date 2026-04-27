@@ -18,6 +18,287 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 pub const SCHEDULER_DECISION_VERSION: &str = "2.1.0";
 /// SemVer version for device score DTOs/contracts.
 pub const DEVICE_SCORE_VERSION: &str = "2.1.0";
+/// SemVer version for multi-device split/merge execution contract artifacts.
+///
+/// Breaking changes to partial-result envelopes or merge semantics must bump MAJOR.
+pub const MULTI_DEVICE_EXECUTION_CONTRACT_VERSION: &str = "2.0.0";
+
+/// Split planning input for a task that can run on multiple backends.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SplitTask {
+    pub task_id: String,
+    pub compatible_backends: Vec<String>,
+}
+
+/// Planned shard assignment artifact for multi-device execution.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SplitShardPlan {
+    pub version: &'static str,
+    pub parent_job_id: String,
+    pub shard_id: String,
+    pub backend_id: String,
+    pub task_ids: Vec<String>,
+}
+
+/// Split planner output that can be persisted as a manifest artifact.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SplitPlanManifest {
+    pub version: &'static str,
+    pub parent_job_id: String,
+    pub scheduler_decision_version: &'static str,
+    pub shard_plans: Vec<SplitShardPlan>,
+}
+
+/// Split planner validation errors.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SplitPlanError {
+    EmptyParentJobId,
+    EmptyTaskSet,
+    EmptyCompatibleBackends { task_id: String },
+    TooManyShards { requested: usize, allowed: usize },
+}
+
+/// Standardized partial-failure envelope for shard execution.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PartialFailureEnvelope {
+    pub version: &'static str,
+    pub parent_job_id: String,
+    pub shard_id: String,
+    pub backend_id: String,
+    pub reason_code: PartialFailureReasonCode,
+    pub retryable: bool,
+    pub message: String,
+}
+
+/// Stable reason codes for partial shard failures.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PartialFailureReasonCode {
+    BackendUnavailable,
+    ExecutionTimeout,
+    ValidationFailed,
+    InternalError,
+}
+
+/// Partial result payload produced by a successful shard.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PartialResultEnvelope {
+    pub version: &'static str,
+    pub parent_job_id: String,
+    pub shard_id: String,
+    pub backend_id: String,
+    pub payload_ref: String,
+    pub payload_checksum: String,
+}
+
+/// Merge success criteria.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MergePolicy {
+    /// All expected shards must produce a success result.
+    AllShardsRequired,
+    /// At least `min_successful_shards` successful results are required.
+    Quorum { min_successful_shards: usize },
+}
+
+/// Stable merge reason codes for orchestration audit and routing explanations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MergeReasonCode {
+    AllShardsMerged,
+    QuorumSatisfied,
+    QuorumNotReached,
+    MissingExpectedShards,
+    ParentJobMismatch,
+    DuplicateShardEnvelope,
+}
+
+/// Result of merge consistency checks for shard outcomes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MergeDecision {
+    pub version: &'static str,
+    pub parent_job_id: String,
+    pub reason_code: MergeReasonCode,
+    pub merged_shard_ids: Vec<String>,
+    pub failed_shard_ids: Vec<String>,
+    pub missing_shard_ids: Vec<String>,
+    pub failures: Vec<PartialFailureEnvelope>,
+}
+
+/// Plans deterministic shard splits across compatible backends.
+pub fn plan_split(
+    parent_job_id: &str,
+    tasks: &[SplitTask],
+    max_shards: usize,
+) -> Result<SplitPlanManifest, SplitPlanError> {
+    if parent_job_id.trim().is_empty() {
+        return Err(SplitPlanError::EmptyParentJobId);
+    }
+    if tasks.is_empty() {
+        return Err(SplitPlanError::EmptyTaskSet);
+    }
+    if max_shards == 0 {
+        return Err(SplitPlanError::TooManyShards {
+            requested: 1,
+            allowed: 0,
+        });
+    }
+
+    let mut assignments: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for task in tasks {
+        if task.compatible_backends.is_empty() {
+            return Err(SplitPlanError::EmptyCompatibleBackends {
+                task_id: task.task_id.clone(),
+            });
+        }
+
+        let mut normalized_backends: Vec<String> = task
+            .compatible_backends
+            .iter()
+            .map(|backend| backend.trim())
+            .filter(|backend| !backend.is_empty())
+            .map(ToOwned::to_owned)
+            .collect();
+        normalized_backends.sort();
+        normalized_backends.dedup();
+        if normalized_backends.is_empty() {
+            return Err(SplitPlanError::EmptyCompatibleBackends {
+                task_id: task.task_id.clone(),
+            });
+        }
+
+        let selected_backend = normalized_backends[0].clone();
+        assignments
+            .entry(selected_backend)
+            .or_default()
+            .push(task.task_id.clone());
+    }
+
+    if assignments.len() > max_shards {
+        return Err(SplitPlanError::TooManyShards {
+            requested: assignments.len(),
+            allowed: max_shards,
+        });
+    }
+
+    let shard_plans = assignments
+        .into_iter()
+        .enumerate()
+        .map(|(idx, (backend_id, task_ids))| SplitShardPlan {
+            version: MULTI_DEVICE_EXECUTION_CONTRACT_VERSION,
+            parent_job_id: parent_job_id.to_string(),
+            shard_id: format!("{}-shard-{:03}", parent_job_id, idx + 1),
+            backend_id,
+            task_ids,
+        })
+        .collect();
+
+    Ok(SplitPlanManifest {
+        version: MULTI_DEVICE_EXECUTION_CONTRACT_VERSION,
+        parent_job_id: parent_job_id.to_string(),
+        scheduler_decision_version: SCHEDULER_DECISION_VERSION,
+        shard_plans,
+    })
+}
+
+/// Validates and merges partial shard outcomes into a single merge decision.
+pub fn merge_partial_results(
+    parent_job_id: &str,
+    expected_shard_ids: &[String],
+    results: &[PartialResultEnvelope],
+    failures: &[PartialFailureEnvelope],
+    policy: MergePolicy,
+) -> MergeDecision {
+    let mut observed = std::collections::HashSet::new();
+    let mut merged_shard_ids = Vec::new();
+    let mut failed_shard_ids = Vec::new();
+    let mut filtered_failures = Vec::new();
+
+    for result in results {
+        if result.parent_job_id != parent_job_id {
+            return MergeDecision {
+                version: MULTI_DEVICE_EXECUTION_CONTRACT_VERSION,
+                parent_job_id: parent_job_id.to_string(),
+                reason_code: MergeReasonCode::ParentJobMismatch,
+                merged_shard_ids: Vec::new(),
+                failed_shard_ids: Vec::new(),
+                missing_shard_ids: expected_shard_ids.to_vec(),
+                failures: Vec::new(),
+            };
+        }
+        if !observed.insert(result.shard_id.clone()) {
+            return MergeDecision {
+                version: MULTI_DEVICE_EXECUTION_CONTRACT_VERSION,
+                parent_job_id: parent_job_id.to_string(),
+                reason_code: MergeReasonCode::DuplicateShardEnvelope,
+                merged_shard_ids: Vec::new(),
+                failed_shard_ids: Vec::new(),
+                missing_shard_ids: expected_shard_ids.to_vec(),
+                failures: Vec::new(),
+            };
+        }
+        merged_shard_ids.push(result.shard_id.clone());
+    }
+
+    for failure in failures {
+        if failure.parent_job_id != parent_job_id {
+            return MergeDecision {
+                version: MULTI_DEVICE_EXECUTION_CONTRACT_VERSION,
+                parent_job_id: parent_job_id.to_string(),
+                reason_code: MergeReasonCode::ParentJobMismatch,
+                merged_shard_ids: Vec::new(),
+                failed_shard_ids: Vec::new(),
+                missing_shard_ids: expected_shard_ids.to_vec(),
+                failures: Vec::new(),
+            };
+        }
+        if !observed.insert(failure.shard_id.clone()) {
+            return MergeDecision {
+                version: MULTI_DEVICE_EXECUTION_CONTRACT_VERSION,
+                parent_job_id: parent_job_id.to_string(),
+                reason_code: MergeReasonCode::DuplicateShardEnvelope,
+                merged_shard_ids: Vec::new(),
+                failed_shard_ids: Vec::new(),
+                missing_shard_ids: expected_shard_ids.to_vec(),
+                failures: Vec::new(),
+            };
+        }
+        failed_shard_ids.push(failure.shard_id.clone());
+        filtered_failures.push(failure.clone());
+    }
+
+    let missing_shard_ids: Vec<String> = expected_shard_ids
+        .iter()
+        .filter(|shard_id| !observed.contains(shard_id.as_str()))
+        .cloned()
+        .collect();
+
+    let reason_code = match policy {
+        MergePolicy::AllShardsRequired => {
+            if missing_shard_ids.is_empty() && failed_shard_ids.is_empty() {
+                MergeReasonCode::AllShardsMerged
+            } else {
+                MergeReasonCode::MissingExpectedShards
+            }
+        }
+        MergePolicy::Quorum {
+            min_successful_shards,
+        } => {
+            if merged_shard_ids.len() >= min_successful_shards {
+                MergeReasonCode::QuorumSatisfied
+            } else {
+                MergeReasonCode::QuorumNotReached
+            }
+        }
+    };
+
+    MergeDecision {
+        version: MULTI_DEVICE_EXECUTION_CONTRACT_VERSION,
+        parent_job_id: parent_job_id.to_string(),
+        reason_code,
+        merged_shard_ids,
+        failed_shard_ids,
+        missing_shard_ids,
+        failures: filtered_failures,
+    }
+}
 
 /// Outcome of admission control for a candidate job.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
