@@ -18,9 +18,16 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 
 ### Added
 
-- Placeholder for upcoming changes.
+- Phase-3 P3-01 benchmark-service core (`benchmark-service` package `0.1.0`) with run lifecycle state machine, idempotent start/retry semantics, and immutable deterministic snapshot metadata.
+- RFC 0020 and ADR 0008 for benchmark run lifecycle contract governance.
 
-## [0.3.0] - 2026-04-27
+### Phase-3: Benchmark Service Core v1 (P3-01)
+
+- **Version impact:** MINOR (new service capability + new stable lifecycle contract `1.0.0`).
+- **Compatibility:** Additive; no breaking changes to existing runtime services/APIs.
+- **Migration notes:** No migration required for existing clients.
+
+## [0.3.0]
 
 ### Added
 

@@ -6,40 +6,39 @@
 
 ## Executive summary
 
-Phase-3 goals are documented at roadmap level, but there is no dedicated accepted RFC package for benchmark run/compare/history contracts, and there are no Phase-3 ADRs yet. The current RFC/ADR set is sufficient for MVP-3 runtime execution but not sufficient for Phase-3 benchmarking standardization.
+Phase-3 goals are documented at roadmap level. Initial governance coverage now exists for benchmark run lifecycle via RFC 0020 + ADR 0008, but the full benchmark contract package (dataset + compare/history) is still missing. The current RFC/ADR set is sufficient for MVP-3 runtime execution and P3-01 core lifecycle only.
 
 ## What exists today
 
 ### RFCs available
 
 - MVP-3 RFC set exists (`0016`, `0017`, `0018`) and covers runtime execution, results retrieval, and observability gates.
-- No dedicated RFC is currently scoped to Phase-3 benchmark contracts.
+- RFC 0020 now covers benchmark run lifecycle core v1.
 
 ### ADRs available
 
 - ADR index currently ends at `0007` (MVP-3 release readiness/runtime contracts).
-- No ADR dedicated to Phase-3 benchmark architecture/contracts exists.
+- ADR 0008 now records implemented benchmark run lifecycle core v1.
 
 ## Gap matrix
 
 | Area | Needed for Phase-3 | Present now | Gap |
 | --- | --- | --- | --- |
-| Benchmark run contract | RFC + compatibility policy | No dedicated RFC | Missing |
+| Benchmark run contract | RFC + compatibility policy | RFC 0020 + ADR 0008 | Closed (P3-01) |
 | Dataset ingestion schema/provenance contract | RFC + migration policy | No dedicated RFC | Missing |
 | Comparison/history semantics | RFC + methodology guarantees | No dedicated RFC | Missing |
-| Implemented contract decisions in ADR | ADR(s) synchronized with RFC outcomes | No Phase-3 ADR | Missing |
-| Index/pointer documentation | Explicit Phase-3 package links | Not present | Missing |
+| Implemented contract decisions in ADR | ADR(s) synchronized with RFC outcomes | ADR 0008 for P3-01 | Partial |
+| Index/pointer documentation | Explicit Phase-3 package links | Updated for RFC 0020/ADR 0008 | Partial |
 
 ## Minimum required package to close the gap
 
-1. **Phase-3 RFC set (minimum 3 docs):**
-   - `benchmark run contract`
+1. **Phase-3 RFC set (remaining):**
    - `dataset ingestion + manifest contract`
    - `compare/history contract + methodology`
-2. **Phase-3 ADR set (minimum 1 umbrella ADR or 2-3 focused ADRs):**
-   - Operational decision records for implemented RFC outcomes.
+2. **Phase-3 ADR set (remaining):**
+   - Operational decision records for dataset/compare/history outcomes when implemented.
 3. **Docs synchronization:**
-   - Update `docs/rfcs-pointer.md` and `docs/adr/README.md` when RFC/ADR package lands.
+   - Update `docs/rfcs-pointer.md` and `docs/adr/README.md` as remaining RFC/ADR package lands.
 
 ## Recommended issue mapping
 
