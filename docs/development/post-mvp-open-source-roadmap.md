@@ -1,191 +1,110 @@
-# Eigen-OS Post-MVP Open-Source Development Plan
+# Eigen-OS Post-MVP Open-Source Roadmap
 
-## 1. Vision
+> Canonical roadmap: [`../roadmap.md`](../roadmap.md)
 
-Eigen-OS is positioned as the execution and orchestration layer between quantum SDKs (for example, Qiskit and Cirq) and compute backends (simulators and quantum hardware).
+This document mirrors the current post-MVP plan and keeps implementation-focused wording for contributors.
 
-In the modern quantum software stack, responsibilities are already split into layers:
+## Current State
 
-- SDK / programming layer
-- Compiler
-- Execution/runtime
-- Hardware
+Completed:
 
-Eigen-OS targets the runtime + orchestration + execution layer.
+- MVP-1: Core services and contracts
+- MVP-2: Compilation pipeline
+- MVP-3: Execution and results retrieval
+- Phase-1: Production runtime
+- Phase-2: Orchestration layer
 
-A useful analogy:
+Capabilities in place:
 
-- Kubernetes for container orchestration
-- Ray for distributed task orchestration
+- JobSpec-based execution model
+- Compiler pipeline (AST → IR → execution artifacts)
+- QRTX kernel lifecycle management
+- DriverManager + simulator execution
+- Device-aware scheduling baseline
+- Observability (metrics + tracing)
+- Local developer environment
 
-In the quantum context, orchestration is critical because hybrid quantum-classical workloads require strong coordination, scheduling, and observability.
+## Strategic Direction
 
-## 2. Current State (MVP)
+Eigen-OS evolves across three axes:
 
-MVP is complete and delivers end-to-end execution flow on a simulator backend.
+1. Execution → Orchestration → Intelligence
+2. Local → Distributed → Cloud-native
+3. Runtime → Benchmarking → Optimization
 
-Implemented capabilities:
+## Phase-3: Benchmarking Platform
 
-- Contract-first architecture (gRPC + protobuf)
-- Kernel (QRTX) with lifecycle handling
-- Compiler pipeline (AST -> IR)
-- DriverManager + SimulatorDriver
-- QFS storage layer
-- CLI
-- Observability baseline (metrics + tracing)
-- E2E job execution through simulator
+Goal: transform Eigen-OS into a reproducible benchmarking and analytics platform.
 
-## 3. Strategic Direction
+Deliverables:
 
-Primary direction: evolve Eigen-OS into a cloud-native runtime for hybrid quantum-classical workloads.
+- `benchmark-service`
+- dataset ingestion pipeline (QSBench-compatible)
+- CLI:
+  - `eigen benchmark run`
+  - `eigen benchmark compare`
+- APIs:
+  - `/benchmarks/run`
+  - `/benchmarks/compare`
+  - `/benchmarks/history`
 
-Why this path is strong:
+## Phase-4: Intelligent Runtime (OSS Scope)
 
-- Cloud execution is a dominant operational model in quantum platforms
-- Runtime abstraction reduces direct backend complexity for application teams
-- Orchestration is still an underdeveloped layer in the ecosystem
+Goal: data-driven and explainable runtime decisions without opaque proprietary ML.
 
-## 4. Roadmap Overview
+Deliverables:
 
-- ✅ **Phase 1: Production Runtime** — completed on **2026-04-27** and shipped in product version **0.2.0**
-- ✅ **Phase 2: Orchestration Layer** — completed on **2026-04-27** and shipped in product version **0.3.0**
-- **Phase 3: Benchmarking Platform** — add strong analytical and research capabilities
-- **Phase 4: Intelligent Runtime** — introduce data-driven runtime optimization
+- backend scoring module
+- configurable scheduling policy engine
+- explanation APIs:
+  - `/explain/backend-selection`
+  - `/explain/execution`
 
-## 5. Phase 1 — Production Runtime (Completed)
+## Phase-5: Distributed Execution (OSS)
 
-Goal: make Eigen-OS suitable for real-world usage and hardware-connected execution.
+Goal: transition from single-node runtime to distributed cluster execution.
 
-Implementation plan: [`phase-1-production-runtime.md`](phase-1-production-runtime.md) and RFC [`../../rfcs/0019-phase1-production-runtime-plan.md`](../../rfcs/0019-phase1-production-runtime-plan.md).
+Deliverables:
 
-Key workstreams:
+- cluster mode (`--cluster`)
+- worker node service
+- pluggable queue layer
+- distributed tracing support
 
-1. **Hardware drivers**
-   - Integrate with Qiskit Runtime / IBM backends
-   - Support external backend connectivity through a stable driver interface
-2. **Fault tolerance**
-   - Expand retry policy coverage
-   - Implement timeout handling and cancellation hygiene
-   - Harden behavior for backend-side errors and transient failures
-3. **Storage upgrade**
-   - Move from local QFS assumptions toward object-storage-compatible design (S3-like)
-   - Add result versioning and durable artifact conventions
-4. **Observability v2**
-   - Per-job timeline visibility
-   - Latency breakdown by pipeline stage
-   - Better tracing visualization and correlation
+## Phase-6: Plugin Ecosystem
 
-Expected outcome:
+Goal: make Eigen-OS a platform.
 
-- Real quantum job execution support
-- Production-ready execution path
-- First practical open-source utility for external users
-- Release readiness closure and version uplift to `0.2.0`
+Deliverables:
 
-Implementation closure artifacts:
+- plugin API specification
+- plugin loading system
+- validation and compatibility checks
 
-- [`phase-1-production-runtime.md`](phase-1-production-runtime.md)
-- [`phase-1-release-readiness-checklist.md`](phase-1-release-readiness-checklist.md)
+## Phase-7: Stability & Developer Experience
 
-## 6. Phase 2 — Orchestration Layer (Completed)
+Goal: make adoption and contribution easier.
 
-Goal: turn Eigen-OS into a full workload orchestrator.
+Deliverables:
 
-Key workstreams:
+- API/versioning policy
+- compatibility guarantees
+- improved docs/tutorials
+- example workloads
+- stronger test and CI coverage
 
-1. **Scheduler core**
-   - Priority queue support
-   - Quotas and basic fairness policies
-2. **Device-aware execution**
-   - Backend selection based on qubit availability, latency, and device availability
-3. **Multi-device execution**
-   - Execute one logical workload across multiple backends where appropriate
-4. **Batch execution**
-   - Group compatible jobs
-   - Improve throughput and backend utilization
+## Guiding Principles
 
-Expected outcome:
+- contracts-first architecture
+- reproducibility over magic
+- explainability over opacity
+- modularity over monolith
+- developer-first experience
 
-- Eigen-OS becomes a Kubernetes-like orchestrator for quantum workloads
+## Immediate Next Steps
 
-Execution/closure artifacts:
-
-- Phase-2 plan: [`phase-2-orchestration-layer.md`](phase-2-orchestration-layer.md)
-- Phase-2 issue pack: [`phase-2-issue-pack.md`](phase-2-issue-pack.md)
-- Phase-2 release checklist: [`phase-2-release-readiness-checklist.md`](phase-2-release-readiness-checklist.md)
-- Phase-2 compatibility package: [`phase-2-compatibility-report.md`](phase-2-compatibility-report.md)
-- Phase-2 migration notes: [`phase-2-migration-notes.md`](phase-2-migration-notes.md)
-
-## 7. Phase 3 — Benchmarking Platform
-
-Goal: add reproducible analytics and research value.
-
-Key workstreams:
-
-1. **Benchmark system**
-   - Integrate QSBench-style datasets
-   - Compare backend behavior with reproducible methodology
-2. **Experiment tracking**
-   - Execution history and metadata registry
-   - Side-by-side run/result comparison
-3. **Compiler optimization loop**
-   - Circuit optimization improvements
-   - Strategy-level transpilation analysis
-
-Expected outcome:
-
-- Eigen-OS becomes a research and benchmarking platform in addition to runtime infrastructure
-
-## 8. Phase 4 — Intelligent Runtime
-
-Goal: introduce an intelligent orchestration and optimization layer.
-
-Key workstreams:
-
-1. **Automatic backend selection**
-   - ML-based backend choice from historical and live signals
-2. **Adaptive scheduling**
-   - Learning-based scheduling policies
-3. **Optimization models**
-   - Use benchmark datasets to predict latency and fidelity outcomes
-
-Expected outcome:
-
-- AI-assisted quantum runtime behavior with data-informed decisions
-
-## 9. Open-Source Strategy
-
-Core open components:
-
-- Execution engine
-- Scheduler (baseline)
-- Driver interface
-- CLI
-
-Plugin-oriented extension areas:
-
-- Hardware drivers
-- Compiler backends
-- Optimizers
-
-Guiding principle: keep the execution/orchestration core modular, transparent, and contribution-friendly, while enabling extension through well-defined interfaces.
-
-## 10. Key Risks and Mitigations
-
-1. **Limited early adoption**
-   - Mitigation: prioritize developer experience, quickstart reliability, and real backend demos
-2. **Premature intelligence layer complexity**
-   - Mitigation: defer advanced ML/runtime intelligence until benchmark and telemetry foundations are mature
-3. **System complexity growth**
-   - Mitigation: preserve a simple UX contract and stable APIs while adding orchestration depth incrementally
-
-## 11. Immediate Open-Source Next Steps
-
-- Add Qiskit driver integration path
-- Validate end-to-end execution on a real backend
-- Introduce baseline scheduler capabilities
-- Improve observability depth (timeline + stage latency visibility)
-
-## 12. Long-Term Positioning
-
-Eigen-OS is positioned as the execution and orchestration layer for quantum computing workloads.
+1. Implement minimal benchmark pipeline
+2. Integrate first QSBench dataset
+3. Add run tracking and comparison
+4. Expose benchmark API and CLI
+5. Prepare demo-ready workflow
