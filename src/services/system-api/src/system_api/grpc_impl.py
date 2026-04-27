@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 import uuid
 from dataclasses import dataclass
@@ -90,6 +91,9 @@ class _JobRecord:
     trace_id: str | None
     max_iters: int
     dispatch_rationale: dict[str, object]
+    batch_manifest_ref: str
+    batch_id: str
+    queue_delay_sec: float
 
 
 @dataclass
@@ -107,6 +111,12 @@ class JobService:
         self._jobs: dict[str, _JobRecord] = {}
         self._idempotency: dict[str, _IdempotencyRecord] = {}
         self._lock = threading.RLock()
+        self._batch_mode_enabled = os.getenv("EIGEN_BATCH_MODE", "1").strip() not in {"0", "false", "off"}
+        self._batch_size = max(int(os.getenv("EIGEN_BATCH_SIZE", "4")), 2)
+        self._batch_wait_window_sec = max(float(os.getenv("EIGEN_BATCH_WAIT_WINDOW_SEC", "0.2")), 0.0)
+        self._batch_dispatch_gap_sec = max(float(os.getenv("EIGEN_BATCH_DISPATCH_GAP_SEC", "0.15")), 0.0)
+        self._batch_inflight_limit = max(int(os.getenv("EIGEN_BATCH_INFLIGHT_LIMIT", "64")), self._batch_size)
+        self._dispatch_slot_seq = 0
 
     def _request_fingerprint(self, request) -> str:
         payload = {
@@ -409,11 +419,16 @@ class JobService:
 
         now_dt = datetime.now(timezone.utc)
         elapsed = max((now_dt - record.created_at_dt).total_seconds(), 0.0)
+        scheduling_delay = max(record.queue_delay_sec, 0.0)
         compiling_after = max(record.run_duration_sec * 0.2, 0.0)
         dispatch_after = max(record.run_duration_sec * 0.45, 0.0)
         running_after = max(record.run_duration_sec * 0.6, 0.0)
+        if record.batch_id:
+            compiling_after *= 0.8
+            dispatch_after *= 0.8
+            running_after *= 0.8
 
-        if len(record.updates) == 1 and elapsed >= compiling_after:
+        if len(record.updates) == 1 and elapsed >= scheduling_delay + compiling_after:
             self._append_update(
                 record,
                 state=self._types_pb.JOB_STATE_COMPILING,
@@ -421,7 +436,7 @@ class JobService:
                 progress=0.25,
                 message="compiled",
             )
-        if len(record.updates) <= 2 and elapsed >= dispatch_after:
+        if len(record.updates) <= 2 and elapsed >= scheduling_delay + dispatch_after:
             self._append_update(
                 record,
                 state=self._types_pb.JOB_STATE_RUNNING,
@@ -429,7 +444,7 @@ class JobService:
                 progress=0.45,
                 message="dispatched",
             )
-        if len(record.updates) <= 3 and elapsed >= running_after:
+        if len(record.updates) <= 3 and elapsed >= scheduling_delay + running_after:
             self._append_update(
                 record,
                 state=self._types_pb.JOB_STATE_RUNNING,
@@ -454,7 +469,7 @@ class JobService:
                 progress=1.0,
                 message=record.timeout_reason,
             )
-        elif elapsed >= record.run_duration_sec:
+        elif elapsed >= scheduling_delay + record.run_duration_sec:
             if record.should_fail:
                 self._append_update(
                     record,
@@ -513,13 +528,14 @@ class JobService:
         dispatch_rationale = {
             "version": "2.0.0",
             "policy_version": metadata.get("dispatch_policy_version", "2.1.0"),
-            "reason_codes": ["WEIGHTED_FAIRNESS", "DEVICE_SCORE"],
+            "reason_codes": ["WEIGHTED_FAIRNESS", "DEVICE_SCORE", "SINGLE_DISPATCH"],
             "selected_backend": request.target or "sim:local",
             "selected_queue": f"priority-{int(request.priority)}",
             "attributes": {
                 "priority": str(int(request.priority)),
                 "target": request.target or "sim:local",
                 "job_name": request.name,
+                "batch_mode_enabled": str(self._batch_mode_enabled).lower(),
             },
             "timeline_ref": f"qfs://jobs/{job_id}/timeline.json",
             "logs_ref": f"qfs://jobs/{job_id}/logs/dispatch.log",
@@ -589,10 +605,105 @@ class JobService:
             trace_id=trace_id,
             max_iters=max_iters,
             dispatch_rationale=dispatch_rationale,
+            batch_manifest_ref="",
+            batch_id="",
+            queue_delay_sec=0.0,
         )
         self._provision_temporary_artifacts(record)
         self._store_timeline(record)
         return record
+    
+    def _queue_key_for(self, record: _JobRecord) -> str:
+        queue = record.dispatch_rationale.get("selected_queue", "priority-50")
+        backend = record.dispatch_rationale.get("selected_backend", "sim:local")
+        return f"{queue}|{backend}"
+
+    def _assign_single_dispatch_delay(self, record: _JobRecord) -> None:
+        slot = self._dispatch_slot_seq
+        self._dispatch_slot_seq += 1
+        record.queue_delay_sec = float(slot) * self._batch_dispatch_gap_sec
+
+    def _inflight_batch_jobs(self) -> int:
+        terminal_values = {getattr(self._types_pb, name) for name in TERMINAL_JOB_STATES}
+        return sum(
+            1
+            for rec in self._jobs.values()
+            if rec.batch_id and rec.updates and rec.updates[-1].state not in terminal_values
+        )
+
+    def _emit_batch_manifest(self, *, batch_id: str, members: list[_JobRecord], queue_key: str) -> str:
+        manifest_ref = f"qfs://batches/{batch_id}/manifest.json"
+        payload = {
+            "version": "1.0.0",
+            "schema_version": "batch_manifest.v1",
+            "batch_id": batch_id,
+            "queue_key": queue_key,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "jobs": [rec.job_id for rec in members],
+            "size": len(members),
+            "mode": "batch",
+        }
+        QFS_STORE.atomic_write_bytes(
+            manifest_ref,
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8"),
+        )
+        return manifest_ref
+
+    def _apply_batch_assignment(self, members: list[_JobRecord], *, queue_key: str) -> None:
+        if not members:
+            return
+        batch_id = f"batch_{uuid.uuid4().hex[:10]}"
+        manifest_ref = self._emit_batch_manifest(batch_id=batch_id, members=members, queue_key=queue_key)
+        slot = self._dispatch_slot_seq
+        self._dispatch_slot_seq += 1
+        for rec in members:
+            rec.batch_id = batch_id
+            rec.batch_manifest_ref = manifest_ref
+            rec.queue_delay_sec = float(slot) * self._batch_dispatch_gap_sec
+            rec.dispatch_rationale["reason_codes"] = ["WEIGHTED_FAIRNESS", "DEVICE_SCORE", "BATCH_EXECUTION_V1"]
+            attrs = dict(rec.dispatch_rationale["attributes"])
+            attrs["batch_id"] = batch_id
+            attrs["batch_manifest_ref"] = manifest_ref
+            attrs["batch_manifest_version"] = "1.0.0"
+            attrs["batch_mode_enabled"] = "true"
+            rec.dispatch_rationale["attributes"] = attrs
+            rec.results_metadata["batch_manifest_ref"] = manifest_ref
+            rec.results_metadata["batch_manifest_version"] = "1.0.0"
+
+    def _try_batch_assignments(self) -> None:
+        if not self._batch_mode_enabled:
+            return
+        if self._inflight_batch_jobs() >= self._batch_inflight_limit:
+            return
+        pending = [
+            rec
+            for rec in self._jobs.values()
+            if not rec.batch_id and len(rec.updates) == 1 and rec.updates[-1].stage == "QUEUED"
+        ]
+        groups: dict[str, list[_JobRecord]] = {}
+        for rec in pending:
+            groups.setdefault(self._queue_key_for(rec), []).append(rec)
+
+        now = datetime.now(timezone.utc)
+        for queue_key, members in groups.items():
+            members.sort(key=lambda item: item.created_at_dt)
+            while members:
+                if self._inflight_batch_jobs() >= self._batch_inflight_limit:
+                    return
+                oldest_wait = (now - members[0].created_at_dt).total_seconds()
+                if len(members) < self._batch_size and oldest_wait < self._batch_wait_window_sec:
+                    break
+                batch_members = members[: self._batch_size]
+                self._apply_batch_assignment(batch_members, queue_key=queue_key)
+                members = members[self._batch_size :]
+
+    def _assign_scheduler_slot(self, record: _JobRecord) -> None:
+        if not self._batch_mode_enabled:
+            self._assign_single_dispatch_delay(record)
+            return
+        self._try_batch_assignments()
+        if not record.batch_id:
+            self._assign_single_dispatch_delay(record)
 
     def SubmitJob(self, request, context: grpc.ServicerContext):
         enforce_authn(context, method_name="JobService.SubmitJob")
@@ -640,6 +751,7 @@ class JobService:
             trace_id = rc.trace_id or request.metadata.get("trace_id", "").strip() or None
             record = self._build_job_record(request, job_id=job_id, created_at=now, trace_id=trace_id)
             self._jobs[job_id] = record
+            self._assign_scheduler_slot(record)
             if idem_key:
                 self._idempotency[idem_key] = _IdempotencyRecord(
                     job_id=job_id, request_fingerprint=request_fingerprint
