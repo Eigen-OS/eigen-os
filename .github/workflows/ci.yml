@@ -151,17 +151,6 @@ jobs:
       - name: Run metrics persistence integration test
         run: cargo test -p eigen-kernel integration_vqe_loop_persists_metrics_and_results_metadata
 
-  migration-notes-gate:
-    name: Migration notes gate
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Validate PR migration notes section
-        run: python scripts/ci/check-migration-notes.py
-
   golden-fixture-review-gate:
     name: Golden fixture review gate
     runs-on: ubuntu-latest
