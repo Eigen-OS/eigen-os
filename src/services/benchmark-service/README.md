@@ -61,10 +61,23 @@ Ingestion guarantees:
   - `query_version: 1.0.0`
   - history entries keep explicit `history_entry_version`.
 
+## Reproducibility and determinism gate (P3-08)
+
+- Reproducibility gate policy version: `1.0.0`.
+- Thresholds:
+  - `min_runs: 3`
+  - `max_relative_stddev_pct: 2.0`
+  - `max_absolute_stddev: 0.005`
+- Gate validates:
+  - deterministic snapshot metadata (`snapshot.request_hash`, `snapshot.payload`)
+  - bounded per-metric variance for identical run configs
+- CI quality gate: `scripts/ci/check-benchmark-reproducibility.sh`.
+- Failed gate emits drift diagnostics with `code`, `field`, and `message`.
+
 ## Phase-3 change log discipline
 
 For every Phase-3 PR, include:
 
-- **Version impact**: additive benchmark observability pack, package version raised to `0.6.0`.
+- **Version impact**: additive benchmark observability pack, package version raised to `0.7.0`.
 - **Compatibility**: backward-compatible addition; existing `/benchmarks/run`, `/benchmarks/compare`, `/benchmarks/history`, and dataset contracts unchanged.
 - **Migration notes**: no mandatory migration. Operators should import `monitoring/dashboards/benchmark_dashboard.json`, load `monitoring/metrics/prometheus/benchmark-alerts.yaml`, and follow `docs/howto/benchmark-observability-runbook.md`.
