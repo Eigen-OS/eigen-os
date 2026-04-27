@@ -22,4 +22,11 @@ echo "[compat] QFS metadata/version contract"
   cargo test -p qfs compiled_artifacts_roundtrip_with_optional_qasm_and_metadata
 )
 
+
+echo "[compat] Scheduler contract compatibility"
+(
+  cd "$ROOT_DIR"
+  bash scripts/test/run-scheduler-contract-compatibility-suite.sh
+)
+
 echo "[compat] ✅ all contract compatibility checks passed"

@@ -151,6 +151,17 @@ jobs:
       - name: Run metrics persistence integration test
         run: cargo test -p eigen-kernel integration_vqe_loop_persists_metrics_and_results_metadata
 
+  migration-notes-gate:
+    name: Migration notes gate
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate PR migration notes section
+        run: python scripts/ci/check-migration-notes.py
+
   golden-fixture-review-gate:
     name: Golden fixture review gate
     runs-on: ubuntu-latest
@@ -166,6 +177,7 @@ jobs:
               - 'src/services/system-api/tests/fixtures/jobspec/**'
               - 'src/services/system-api/tests/fixtures/runtime/**'
               - 'src/rust/apps/cli/tests/fixtures/**'
+              - 'src/rust/crates/resource-manager/tests/fixtures/scheduler_contracts/**'
 
       - name: Require maintainer approval label for fixture updates
         if: steps.filter.outputs.golden == 'true'
@@ -200,8 +212,8 @@ jobs:
         working-directory: proto
         run: buf breaking --against '../.git#ref=refs/remotes/origin/main,subdir=proto'
 
-  phase1-contract-compatibility:
-    name: Phase-1 contract compatibility suite
+  phase2-contract-compatibility:
+    name: Phase-2 contract compatibility suite
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
