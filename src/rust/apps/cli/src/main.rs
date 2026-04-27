@@ -40,6 +40,7 @@ fn main() {
             if let Err(code) = run_results(&args[2..]) {
                 std::process::exit(code);
             }
+        }
         "explain" => {
             if let Err(code) = run_explain(&args[2..]) {
                 std::process::exit(code);
