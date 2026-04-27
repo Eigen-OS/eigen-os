@@ -1,0 +1,26 @@
+{
+  "baseline": {
+    "run_id": "run_base_001",
+    "metrics": [
+      {"name": "latency_ms", "mean": 100.0, "stddev": 10.0, "sample_size": 30},
+      {"name": "throughput_qps", "mean": 200.0, "stddev": 20.0, "sample_size": 30}
+    ]
+  },
+  "candidate": {
+    "run_id": "run_cand_001",
+    "metrics": [
+      {"name": "latency_ms", "mean": 112.0, "stddev": 10.0, "sample_size": 30},
+      {"name": "throughput_qps", "mean": 215.0, "stddev": 20.0, "sample_size": 30}
+    ]
+  },
+  "cohort_filters": {
+    "dataset": "finance-v2",
+    "device": "simulator",
+    "compiler": "eigen-compiler@1.4"
+  },
+  "policy": {
+    "direction": "lower_is_better",
+    "regression_threshold_pct": 5.0,
+    "min_confidence": 0.95
+  }
+}

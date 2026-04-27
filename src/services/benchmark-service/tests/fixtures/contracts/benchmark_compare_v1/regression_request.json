@@ -1,0 +1,24 @@
+{
+  "baseline": {
+    "run_id": "run_base_002",
+    "metrics": [
+      {"name": "energy_j", "mean": 40.0, "stddev": 5.0, "sample_size": 40},
+      {"name": "fidelity", "mean": 0.92, "stddev": 0.02, "sample_size": 40}
+    ]
+  },
+  "candidate": {
+    "run_id": "run_cand_002",
+    "metrics": [
+      {"name": "energy_j", "mean": 46.0, "stddev": 5.0, "sample_size": 40},
+      {"name": "fidelity", "mean": 0.95, "stddev": 0.02, "sample_size": 40}
+    ]
+  },
+  "cohort_filters": {
+    "dataset": "chemistry-v1"
+  },
+  "policy": {
+    "direction": "lower_is_better",
+    "regression_threshold_pct": 10.0,
+    "min_confidence": 0.8
+  }
+}
