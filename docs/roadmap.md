@@ -106,6 +106,14 @@ Core metrics:
 - fidelity / expectation deviation
 - circuit characteristics
 
+### Contract governance status (updated 2026-04-27)
+
+- Stable Phase-3 benchmark contracts are now backed by accepted/implemented RFCs:
+  - run lifecycle: `RFC 0020`
+  - dataset ingestion: `RFC 0021`
+  - compare/history methodology: `RFC 0022`
+- No Phase-3 benchmark contract is considered stable without an accepted RFC.
+
 ### Deliverables
 
 - `benchmark-service`
