@@ -1,0 +1,9 @@
+{
+  "version": "2.1.0",
+  "selected_job_id": "job-contract-001",
+  "selected_tenant_id": "tenant-a",
+  "selected_project_id": "project-a",
+  "selected_priority": 7,
+  "queue_depth_after": 0,
+  "reason_code": "WeightedFairness"
+}

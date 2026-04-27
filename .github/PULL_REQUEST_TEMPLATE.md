@@ -11,6 +11,7 @@
 
 - **Version Impact**: <!-- MAJOR | MINOR | PATCH | NONE -->
 - **Affected Interfaces**: <!-- API | JobSpec | AQO | QFS | Metrics -->
+- **Compatibility**: <!-- Backward-compatible | Breaking (requires MAJOR) -->
 - **Migration Notes**: <!-- Required actions for operators/clients, or "None" -->
 
 ## Release Notes Draft
