@@ -10,6 +10,15 @@ from .dataset_ingestion import (
     ValidationError,
 )
 
+from .compare_api import (
+    BENCHMARK_COMPARE_API_VERSION,
+    BENCHMARK_COMPARE_METHODOLOGY_VERSION,
+    BENCHMARK_COMPARE_SCHEMA_VERSION,
+    BenchmarkCompareApi,
+    BenchmarkCompareRequestValidationError,
+    CompareValidationError,
+)
+
 from .run_api import (
     BENCHMARK_RUN_API_VERSION,
     BENCHMARK_RUN_HISTORY_VERSION,
@@ -27,6 +36,12 @@ from .run_lifecycle import (
 )
 
 __all__ = [
+    "BENCHMARK_COMPARE_API_VERSION",
+    "BENCHMARK_COMPARE_SCHEMA_VERSION",
+    "BENCHMARK_COMPARE_METHODOLOGY_VERSION",
+    "BenchmarkCompareApi",
+    "BenchmarkCompareRequestValidationError",
+    "CompareValidationError",
     "RUN_CONTRACT_VERSION",
     "SNAPSHOT_VERSION",
     "BenchmarkRunService",
