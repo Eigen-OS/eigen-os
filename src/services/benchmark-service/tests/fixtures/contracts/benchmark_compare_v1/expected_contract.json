@@ -1,0 +1,9 @@
+{
+  "request_required_fields": ["baseline", "candidate", "policy"],
+  "response_required_top_level_fields": ["api_version", "comparison_schema_version", "comparison"],
+  "response_required_comparison_fields": ["baseline_run_id", "candidate_run_id", "cohort_filters", "policy", "methodology", "metrics", "summary"],
+  "response_required_metric_fields": ["name", "baseline", "candidate", "delta", "statistical_metadata", "regression"],
+  "error_required_top_level_fields": ["error"],
+  "error_required_fields": ["code", "message", "details"],
+  "error_required_detail_fields": ["code", "field", "message"]
+}
