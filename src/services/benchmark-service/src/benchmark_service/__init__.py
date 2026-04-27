@@ -19,6 +19,14 @@ from .compare_api import (
     CompareValidationError,
 )
 
+from .history_api import (
+    BENCHMARK_HISTORY_API_VERSION,
+    BENCHMARK_HISTORY_QUERY_VERSION,
+    BenchmarkHistoryApi,
+    BenchmarkHistoryRequestValidationError,
+    HistoryValidationError,
+)
+
 from .run_api import (
     BENCHMARK_RUN_API_VERSION,
     BENCHMARK_RUN_HISTORY_VERSION,
@@ -37,6 +45,11 @@ from .run_lifecycle import (
 
 __all__ = [
     "BENCHMARK_COMPARE_API_VERSION",
+    "BENCHMARK_HISTORY_API_VERSION",
+    "BENCHMARK_HISTORY_QUERY_VERSION",
+    "BenchmarkHistoryApi",
+    "BenchmarkHistoryRequestValidationError",
+    "HistoryValidationError",
     "BENCHMARK_COMPARE_SCHEMA_VERSION",
     "BENCHMARK_COMPARE_METHODOLOGY_VERSION",
     "BenchmarkCompareApi",
