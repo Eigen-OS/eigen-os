@@ -88,6 +88,9 @@ git fetch origin main:main
 - Phase 2 release readiness checklist: [`phase-2-release-readiness-checklist.md`](phase-2-release-readiness-checklist.md)
 - Phase 2 compatibility report: [`phase-2-compatibility-report.md`](phase-2-compatibility-report.md)
 - Phase 2 migration notes: [`phase-2-migration-notes.md`](phase-2-migration-notes.md)
+- Phase 3 benchmarking plan: [`phase-3-benchmarking-platform.md`](phase-3-benchmarking-platform.md)
+- Phase 3 issue pack: [`phase-3-issue-pack.md`](phase-3-issue-pack.md)
+- Phase 3 RFC/ADR gap analysis: [`phase-3-rfc-adr-gap-analysis.md`](phase-3-rfc-adr-gap-analysis.md)
 - Architecture decisions: [`../adr/README.md`](../adr/README.md)
 - RFC package: [`../../rfcs/`](../../rfcs/)
 
