@@ -45,3 +45,9 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 - **Version impact:** MINOR (new backward-compatible RPC + CLI command + docs).
 - **Compatibility:** Existing `JobService` methods and reason codes remain intact; dispatch explainability is additive.
 - **Migration notes:** No migration required. Clients may optionally call `GetDispatchRationale` and CLI `eigen explain <job_id>`.
+
+### Phase-2: Multi-device Execution Contract (Split/Merge)
+
+- **Version impact:** MINOR (adds a new split/merge contract artifact family and integration coverage).
+- **Compatibility:** Existing scheduler admission/dispatch DTOs are unchanged; split/merge envelopes are additive and independently versioned (`2.0.0`).
+- **Migration notes:** No mandatory migration. Consumers may start reading `SplitPlanManifest`, `PartialResultEnvelope`, `PartialFailureEnvelope`, and `MergeDecision` artifacts with explicit `version`, `parent_job_id`, and `shard_id` fields.
