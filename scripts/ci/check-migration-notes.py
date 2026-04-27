@@ -3,8 +3,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import sys
-from pathlib import Paths
 
 
 def _extract_section(body: str, heading: str) -> str:
@@ -24,7 +22,7 @@ def main() -> int:
         print("[migration-gate] GITHUB_EVENT_PATH is not set; skipping.")
         return 0
 
-    event = json.loads(Path(event_path).read_text(encoding="utf-8"))
+    event = json.loads(pathlib.Path(event_path).read_text(encoding="utf-8"))
     pr = event.get("pull_request")
     if not pr:
         print("[migration-gate] Not a pull_request event; skipping.")
