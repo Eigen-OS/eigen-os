@@ -16,10 +16,9 @@ service JobService {
   rpc SubmitJob(SubmitJobRequest) returns (SubmitJobResponse);
   rpc GetJobStatus(GetJobStatusRequest) returns (GetJobStatusResponse);
   rpc CancelJob(CancelJobRequest) returns (CancelJobResponse);
-  rpc CancelJob(CancelJobRequest) returns (CancelJobResponse);
   rpc StreamJobUpdates(StreamJobUpdatesRequest) returns (stream StreamJobUpdatesResponse);
   rpc GetJobResults(GetJobResultsRequest) returns (GetJobResultsResponse);
-
+  rpc GetDispatchRationale(GetDispatchRationaleRequest) returns (GetDispatchRationaleResponse);
 }
 ```
 
@@ -180,6 +179,24 @@ Common error mappings:
 
 - `UNAVAILABLE`: service temporarily unavailable
 
+### 5. Dispatch Explainability (Phase-2)
+
+- `GetDispatchRationale(job_id)` returns an explainability payload for dispatched jobs.
+- Payload includes:
+  - `version` (explainability schema version)
+  - `policy_version` (scheduler/device policy SemVer)
+  - `reason_codes` (stable reason-code contract)
+  - correlation pointers (`timeline_ref`, `logs_ref`, `trace_id`, `trace_ref`)
+
+#### Troubleshooting use cases
+
+1. **Why was this backend selected?**  
+   Inspect `reason_codes`, `selected_backend`, and `selected_queue`.
+2. **Correlate with timeline/logs/traces**  
+   Use `timeline_ref` + `logs_ref` + `trace_ref` to pivot from API response into runtime artifacts.
+3. **Policy rollback/regression checks**  
+   Compare `policy_version` across successful and failing jobs to detect policy rollout impact.
+
 ## Authentication & Authorization
 
 ### MVP Auth Model
@@ -300,3 +317,4 @@ for update in stub.StreamJobUpdates(JobUpdatesRequest(job_id=job_id)):
     RFC 0008: Observability (metrics, tracing)
 
     RFC 0009: Security (authz model)
+    

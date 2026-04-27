@@ -39,3 +39,9 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 - CI includes a dedicated Phase-1 contract compatibility suite job.
 - AQO simulator driver now enforces mandatory top-level `version` field.
 - System API job lifecycle stream now emits detailed stages (`QUEUED` → `COMPILED` → `DISPATCHED` → `RUNNING` → `COMPLETED`) with timestamped event history and trace-aware event messages
+
+### Phase-2: Dispatch Explainability API/CLI
+
+- **Version impact:** MINOR (new backward-compatible RPC + CLI command + docs).
+- **Compatibility:** Existing `JobService` methods and reason codes remain intact; dispatch explainability is additive.
+- **Migration notes:** No migration required. Clients may optionally call `GetDispatchRationale` and CLI `eigen explain <job_id>`.
