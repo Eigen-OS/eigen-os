@@ -18,12 +18,20 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 
 ### Added
 
+- Placeholder for upcoming changes.
+
+## [0.3.0] - 2026-04-27
+
+### Added
+
 - Phase-2 orchestration documentation baseline: execution plan and a ready-to-copy GitHub issue pack for scheduler/device-aware/multi-device/batch workstreams.
+- Phase-2 release readiness checklist with locked orchestration contract version matrix and signed compatibility/migration package.
+- Phase-2 migration notes and release notes template with mandatory `Version impact`, `Compatibility`, and `Migration notes` sections.
 
 ### Changed
 
 - Phase-1 is marked complete in roadmap and development planning docs with explicit closure date (**2026-04-27**).
-- Product/service package versions advanced from `0.1.0` to `0.2.0` for post-Phase-1 release line.
+- Product/service package versions advanced from `0.2.0` to `0.3.0` for Phase-2 release closure.
 
 ### Added
 

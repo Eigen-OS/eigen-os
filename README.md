@@ -25,6 +25,8 @@ In short, this repository is a distributed system scaffold where:
   - ✅ MVP-1: core services and contracts.
   - ✅ MVP-2: compilation pipeline.
   - ✅ MVP-3: execution and results retrieval.
+- ✅ Phase-1: production runtime hardening.
+- ✅ Phase-2: orchestration layer (scheduler/device-aware routing/multi-device/batch contracts).
 - Provides public and internal protobuf APIs (`proto/`).
 - Includes services (compiler, system-api, driver-manager), local deployment assets, examples, observability, and CI scripts.
 
@@ -89,9 +91,15 @@ eigen-os/
 
 ## API versioning (current baseline)
 
+- Product release line after Phase-2 closure: **`0.3.0`**.
 - Product API for the MVP baseline is fixed to **`0.1`**.
 - `JobSpec.apiVersion`: `eigen.os/v0.1`.
 - Protobuf namespace: `proto/eigen/api/v1` (wire namespace).
+
+Phase-2 release closure artifacts:
+- [`docs/development/phase-2-release-readiness-checklist.md`](docs/development/phase-2-release-readiness-checklist.md)
+- [`docs/development/phase-2-compatibility-report.md`](docs/development/phase-2-compatibility-report.md)
+- [`docs/development/phase-2-migration-notes.md`](docs/development/phase-2-migration-notes.md)
 
 ## Where to go next
 
