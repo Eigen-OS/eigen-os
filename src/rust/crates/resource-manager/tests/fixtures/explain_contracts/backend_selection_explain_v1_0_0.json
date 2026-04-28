@@ -1,0 +1,290 @@
+{
+  "candidate_scores": [
+    {
+      "backend_id": "sim:cpu-a",
+      "eligible": true,
+      "feature_contributions": [
+        {
+          "contribution_millis": 197,
+          "feature": "queue_length"
+        },
+        {
+          "contribution_millis": 148,
+          "feature": "historical_latency"
+        },
+        {
+          "contribution_millis": 199,
+          "feature": "historical_success_rate"
+        },
+        {
+          "contribution_millis": 147,
+          "feature": "historical_fidelity"
+        },
+        {
+          "contribution_millis": 149,
+          "feature": "availability"
+        },
+        {
+          "contribution_millis": 42,
+          "feature": "calibration_age"
+        },
+        {
+          "contribution_millis": 50,
+          "feature": "cost_sensitivity"
+        },
+        {
+          "contribution_millis": 0,
+          "feature": "runtime_retry_penalty"
+        },
+        {
+          "contribution_millis": 10,
+          "feature": "runtime_warm_cache_bonus"
+        }
+      ],
+      "ineligibility_reason": null,
+      "score_millis": 942
+    },
+    {
+      "backend_id": "sim:gpu-z",
+      "eligible": true,
+      "feature_contributions": [
+        {
+          "contribution_millis": 198,
+          "feature": "queue_length"
+        },
+        {
+          "contribution_millis": 155,
+          "feature": "historical_latency"
+        },
+        {
+          "contribution_millis": 199,
+          "feature": "historical_success_rate"
+        },
+        {
+          "contribution_millis": 146,
+          "feature": "historical_fidelity"
+        },
+        {
+          "contribution_millis": 141,
+          "feature": "availability"
+        },
+        {
+          "contribution_millis": 40,
+          "feature": "calibration_age"
+        },
+        {
+          "contribution_millis": 50,
+          "feature": "cost_sensitivity"
+        },
+        {
+          "contribution_millis": 0,
+          "feature": "runtime_retry_penalty"
+        },
+        {
+          "contribution_millis": 10,
+          "feature": "runtime_warm_cache_bonus"
+        }
+      ],
+      "ineligibility_reason": null,
+      "score_millis": 939
+    },
+    {
+      "backend_id": "qpu:ion-1",
+      "eligible": true,
+      "feature_contributions": [
+        {
+          "contribution_millis": 191,
+          "feature": "queue_length"
+        },
+        {
+          "contribution_millis": 15,
+          "feature": "historical_latency"
+        },
+        {
+          "contribution_millis": 194,
+          "feature": "historical_success_rate"
+        },
+        {
+          "contribution_millis": 149,
+          "feature": "historical_fidelity"
+        },
+        {
+          "contribution_millis": 131,
+          "feature": "availability"
+        },
+        {
+          "contribution_millis": 37,
+          "feature": "calibration_age"
+        },
+        {
+          "contribution_millis": 49,
+          "feature": "cost_sensitivity"
+        },
+        {
+          "contribution_millis": 0,
+          "feature": "runtime_retry_penalty"
+        },
+        {
+          "contribution_millis": 10,
+          "feature": "runtime_warm_cache_bonus"
+        }
+      ],
+      "ineligibility_reason": null,
+      "score_millis": 776
+    }
+  ],
+  "confidence": {
+    "confidence": 0.0031847133757961785,
+    "runner_up_score_millis": 939,
+    "score_margin_millis": 3,
+    "selected_score_millis": 942
+  },
+  "decision_id": "backend-selection-decision-001",
+  "explain_contract_version": "1.0.0",
+  "factor_contributions": [
+    {
+      "backend_id": "qpu:ion-1",
+      "contribution_millis": 131,
+      "factor": "availability"
+    },
+    {
+      "backend_id": "qpu:ion-1",
+      "contribution_millis": 37,
+      "factor": "calibration_age"
+    },
+    {
+      "backend_id": "qpu:ion-1",
+      "contribution_millis": 49,
+      "factor": "cost_sensitivity"
+    },
+    {
+      "backend_id": "qpu:ion-1",
+      "contribution_millis": 149,
+      "factor": "historical_fidelity"
+    },
+    {
+      "backend_id": "qpu:ion-1",
+      "contribution_millis": 15,
+      "factor": "historical_latency"
+    },
+    {
+      "backend_id": "qpu:ion-1",
+      "contribution_millis": 194,
+      "factor": "historical_success_rate"
+    },
+    {
+      "backend_id": "qpu:ion-1",
+      "contribution_millis": 191,
+      "factor": "queue_length"
+    },
+    {
+      "backend_id": "qpu:ion-1",
+      "contribution_millis": 0,
+      "factor": "runtime_retry_penalty"
+    },
+    {
+      "backend_id": "qpu:ion-1",
+      "contribution_millis": 10,
+      "factor": "runtime_warm_cache_bonus"
+    },
+    {
+      "backend_id": "sim:cpu-a",
+      "contribution_millis": 149,
+      "factor": "availability"
+    },
+    {
+      "backend_id": "sim:cpu-a",
+      "contribution_millis": 42,
+      "factor": "calibration_age"
+    },
+    {
+      "backend_id": "sim:cpu-a",
+      "contribution_millis": 50,
+      "factor": "cost_sensitivity"
+    },
+    {
+      "backend_id": "sim:cpu-a",
+      "contribution_millis": 147,
+      "factor": "historical_fidelity"
+    },
+    {
+      "backend_id": "sim:cpu-a",
+      "contribution_millis": 148,
+      "factor": "historical_latency"
+    },
+    {
+      "backend_id": "sim:cpu-a",
+      "contribution_millis": 199,
+      "factor": "historical_success_rate"
+    },
+    {
+      "backend_id": "sim:cpu-a",
+      "contribution_millis": 197,
+      "factor": "queue_length"
+    },
+    {
+      "backend_id": "sim:cpu-a",
+      "contribution_millis": 0,
+      "factor": "runtime_retry_penalty"
+    },
+    {
+      "backend_id": "sim:cpu-a",
+      "contribution_millis": 10,
+      "factor": "runtime_warm_cache_bonus"
+    },
+    {
+      "backend_id": "sim:gpu-z",
+      "contribution_millis": 141,
+      "factor": "availability"
+    },
+    {
+      "backend_id": "sim:gpu-z",
+      "contribution_millis": 40,
+      "factor": "calibration_age"
+    },
+    {
+      "backend_id": "sim:gpu-z",
+      "contribution_millis": 50,
+      "factor": "cost_sensitivity"
+    },
+    {
+      "backend_id": "sim:gpu-z",
+      "contribution_millis": 146,
+      "factor": "historical_fidelity"
+    },
+    {
+      "backend_id": "sim:gpu-z",
+      "contribution_millis": 155,
+      "factor": "historical_latency"
+    },
+    {
+      "backend_id": "sim:gpu-z",
+      "contribution_millis": 199,
+      "factor": "historical_success_rate"
+    },
+    {
+      "backend_id": "sim:gpu-z",
+      "contribution_millis": 198,
+      "factor": "queue_length"
+    },
+    {
+      "backend_id": "sim:gpu-z",
+      "contribution_millis": 0,
+      "factor": "runtime_retry_penalty"
+    },
+    {
+      "backend_id": "sim:gpu-z",
+      "contribution_millis": 10,
+      "factor": "runtime_warm_cache_bonus"
+    }
+  ],
+  "profile_schema_version": "1.0.0",
+  "profile_version": "1.0.0",
+  "request_version": "1.0.0",
+  "response_version": "1.0.0",
+  "scoring_contract_version": "1.0.0",
+  "selected_backend_id": "sim:cpu-a",
+  "tie_break_trace": [
+    "score-desc"
+  ]
+}
