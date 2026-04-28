@@ -18,6 +18,7 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 
 ### Added
 
+- Phase-4 P4-06 intelligent runtime observability pack (`runtime-observability` assets `0.1.0`) with stable `eigen_runtime_*` metrics contract (`1.0.0`), decision-flow dashboard, Prometheus alerts, and triage/rollback runbook.
 - Phase-4 P4-02 scheduling policy engine and policy bundles (`resource-manager` package `0.5.0`) with versioned `PolicyBundle` schema (`1.0.0`), deterministic precedence-based resolution, and safe fallback artifacts for missing/invalid policy inputs.
 - Phase-4 P4-05 Eigen-Lang runtime-intelligence compile hints/diagnostics (`cli` in Rust workspace `0.6.0`) with deterministic unsupported-target/policy-conflict diagnostics, explicit hint metadata versions, and explainability-linked execution annotations in AQO metadata.
 - Phase-3 P3-08 reproducibility and determinism quality gate (`benchmark-service` package `0.7.0`) with versioned reproducibility policy thresholds (`1.0.0`), deterministic snapshot consistency checks, bounded metric variance checks, and CI drift diagnostics.
@@ -35,6 +36,12 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 - **Version impact:** MINOR (governance package completion; benchmark-service package advanced to `0.8.0`).
 - **Compatibility:** No payload or behavior break; stable contract baselines remain `1.0.0` for run (`state/snapshot`), dataset ingestion (`manifest/ingestion`), compare (`comparison/methodology`), and history (`history_contract_version`).
 - **Migration notes:** No mandatory migration. Teams should pin and validate explicit version markers in run snapshots, ingestion artifacts, compare outputs, and history entries.
+
+### Phase-4: Observability Pack for Intelligent Runtime (P4-06)
+
+- **Version impact:** MINOR (adds new intelligent-runtime observability contract/assets; observability asset pack advanced to `0.1.0`).
+- **Compatibility:** Additive; existing `eigen_orch_*`, `eigen_stage_*`, and `eigen_bench_*` contracts remain unchanged while `eigen_runtime_*` metrics are introduced with explicit marker `eigen_runtime_contract_info{version="1.0.0"}`.
+- **Migration notes:** No mandatory migration. Operators should import `monitoring/dashboards/intelligent_runtime_dashboard.json`, load `monitoring/metrics/prometheus/intelligent-runtime-alerts.yaml`, and adopt `docs/howto/intelligent-runtime-observability-runbook.md`.
 
 ### Phase-4: Scheduling Policy Engine and Policy Bundles (P4-02)
 

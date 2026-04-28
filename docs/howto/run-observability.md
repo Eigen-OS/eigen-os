@@ -48,3 +48,11 @@ cargo test -p eigen-kernel integration_propagates_traceparent_to_compiler_and_dr
 - Each `/metrics` response contains at least one `*_requests_total`.
 - Service logs are written in JSON and contain `trace_id`; for job RPC also `job_id`.
 - The test `integration_propagates_traceparent_to_compiler_and_driver` passes.
+
+## Phase-4 intelligent runtime pack
+
+- Dashboard: `monitoring/dashboards/intelligent_runtime_dashboard.json`
+- Alerts: `monitoring/metrics/prometheus/intelligent-runtime-alerts.yaml`
+- Runbook: `docs/howto/intelligent-runtime-observability-runbook.md`
+
+Prometheus must include `intelligent-runtime-alerts.yaml` in `rule_files` and scrape the intelligent runtime metrics target exposing `eigen_runtime_*` series.
