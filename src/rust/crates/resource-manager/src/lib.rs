@@ -22,6 +22,10 @@ pub const DEVICE_SCORE_VERSION: &str = "2.1.0";
 pub const BACKEND_SCORING_CONTRACT_VERSION: &str = "1.0.0";
 /// SemVer schema version for persisted backend scoring profiles.
 pub const BACKEND_SCORING_PROFILE_SCHEMA_VERSION: &str = "1.0.0";
+/// SemVer schema version for scheduling policy bundles (Phase-4 policy engine).
+pub const SCHEDULING_POLICY_BUNDLE_SCHEMA_VERSION: &str = "1.0.0";
+/// SemVer version for scheduling policy-resolution decision artifacts.
+pub const SCHEDULING_POLICY_RESOLUTION_VERSION: &str = "1.0.0";
 /// SemVer version for rebalancing/preemption safety artifacts.
 pub const REBALANCING_POLICY_VERSION: &str = "2.2.0";
 /// SemVer version for multi-device split/merge execution contract artifacts.
@@ -525,6 +529,240 @@ pub struct BackendScoringDecisionArtifact {
     pub candidates: Vec<BackendScoreCandidate>,
     pub selected_backend_id: Option<String>,
     pub tie_break_trace: Vec<String>,
+}
+
+/// Named policy operating mode for scheduling policy bundle resolution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PolicyMode {
+    Latency,
+    Throughput,
+    Cost,
+    Balanced,
+}
+
+/// Deterministic priority ladder used by policy resolution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PolicyPriorityMap {
+    pub hard_constraints: u16,
+    pub correctness: u16,
+    pub user_intent: u16,
+    pub operational_optimization: u16,
+    pub learning_hints: u16,
+}
+
+impl Default for PolicyPriorityMap {
+    fn default() -> Self {
+        Self {
+            hard_constraints: 100,
+            correctness: 90,
+            user_intent: 70,
+            operational_optimization: 50,
+            learning_hints: 30,
+        }
+    }
+}
+
+/// User-intent weights for deterministic policy ranking.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct UserIntentWeights {
+    pub fidelity: f64,
+    pub latency: f64,
+    pub cost: f64,
+    pub throughput: f64,
+    pub determinism: f64,
+    pub debuggability: f64,
+}
+
+impl Default for UserIntentWeights {
+    fn default() -> Self {
+        Self {
+            fidelity: 1.0,
+            latency: 0.8,
+            cost: 0.7,
+            throughput: 0.6,
+            determinism: 0.9,
+            debuggability: 0.85,
+        }
+    }
+}
+
+/// Versioned scheduling policy bundle schema.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PolicyBundle {
+    pub policy_bundle_id: String,
+    pub policy_bundle_version: String,
+    pub policy_mode: PolicyMode,
+    pub policy_priority_map: PolicyPriorityMap,
+    pub user_intent_weights: UserIntentWeights,
+}
+
+impl Default for PolicyBundle {
+    fn default() -> Self {
+        Self {
+            policy_bundle_id: "balanced".to_string(),
+            policy_bundle_version: "1.0.0".to_string(),
+            policy_mode: PolicyMode::Balanced,
+            policy_priority_map: PolicyPriorityMap::default(),
+            user_intent_weights: UserIntentWeights::default(),
+        }
+    }
+}
+
+/// Policy bundle validation errors.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PolicyBundleValidationError {
+    EmptyBundleId,
+    InvalidBundleVersion,
+    InvalidPriorityOrder,
+    InvalidWeight { field: &'static str },
+}
+
+/// Execution candidate signals consumed by policy resolution.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PolicyCandidate {
+    pub candidate_id: String,
+    pub hard_constraint_satisfied: bool,
+    pub correctness_score: f64,
+    pub fidelity_score: f64,
+    pub latency_ms: u64,
+    pub cost_units: u64,
+    pub throughput_qps: u64,
+    pub deterministic: bool,
+    pub debuggability_score: f64,
+    pub learning_hint_score: f64,
+}
+
+/// Failure code for policy-resolution errors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PolicyResolutionErrorCode {
+    PolicyBundleInvalid,
+    PolicyModeUnsupported,
+    PolicyResolutionFailed,
+}
+
+/// Versioned policy-resolution artifact for scheduling/explainability.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PolicyResolutionArtifact {
+    pub version: &'static str,
+    pub policy_bundle_schema_version: &'static str,
+    pub policy_bundle_id: String,
+    pub policy_bundle_version: String,
+    pub policy_mode: PolicyMode,
+    pub selected_candidate_id: Option<String>,
+    pub resolution_trace: Vec<String>,
+    pub fallback_applied: bool,
+    pub fallback_reason: Option<String>,
+    pub error_code: Option<PolicyResolutionErrorCode>,
+}
+
+/// Validate policy bundle schema and values.
+pub fn validate_policy_bundle(bundle: &PolicyBundle) -> Result<(), PolicyBundleValidationError> {
+    if bundle.policy_bundle_id.trim().is_empty() {
+        return Err(PolicyBundleValidationError::EmptyBundleId);
+    }
+    if !is_semver_like(&bundle.policy_bundle_version) {
+        return Err(PolicyBundleValidationError::InvalidBundleVersion);
+    }
+    if !(bundle.policy_priority_map.hard_constraints > bundle.policy_priority_map.correctness
+        && bundle.policy_priority_map.correctness > bundle.policy_priority_map.user_intent
+        && bundle.policy_priority_map.user_intent
+            > bundle.policy_priority_map.operational_optimization
+        && bundle.policy_priority_map.operational_optimization
+            > bundle.policy_priority_map.learning_hints)
+    {
+        return Err(PolicyBundleValidationError::InvalidPriorityOrder);
+    }
+
+    for (field, value) in [
+        ("fidelity", bundle.user_intent_weights.fidelity),
+        ("latency", bundle.user_intent_weights.latency),
+        ("cost", bundle.user_intent_weights.cost),
+        ("throughput", bundle.user_intent_weights.throughput),
+        ("determinism", bundle.user_intent_weights.determinism),
+        ("debuggability", bundle.user_intent_weights.debuggability),
+    ] {
+        if !value.is_finite() || value < 0.0 {
+            return Err(PolicyBundleValidationError::InvalidWeight { field });
+        }
+    }
+
+    Ok(())
+}
+
+/// Deterministically resolves policy bundle against scheduling candidates.
+///
+/// Safe fallback behavior:
+/// - missing bundle -> `balanced@1.0.0`
+/// - invalid bundle -> `balanced@1.0.0` + `POLICY_BUNDLE_INVALID`
+/// - no viable candidate -> deterministic empty selection + `POLICY_RESOLUTION_FAILED`
+pub fn resolve_policy_bundle(
+    bundle: Option<&PolicyBundle>,
+    candidates: &[PolicyCandidate],
+) -> PolicyResolutionArtifact {
+    let mut trace = vec![
+        "validate-policy-schema".to_string(),
+        "apply-profile-defaults".to_string(),
+        "apply-overrides-canonical-order".to_string(),
+        "resolve-conflicts-fixed-precedence".to_string(),
+    ];
+
+    let (resolved_bundle, fallback_applied, fallback_reason, error_code) = match bundle {
+        Some(candidate_bundle) => match validate_policy_bundle(candidate_bundle) {
+            Ok(()) => (candidate_bundle.clone(), false, None, None),
+            Err(_) => (
+                PolicyBundle::default(),
+                true,
+                Some("invalid_policy_bundle".to_string()),
+                Some(PolicyResolutionErrorCode::PolicyBundleInvalid),
+            ),
+        },
+        None => (
+            PolicyBundle::default(),
+            true,
+            Some("missing_policy_bundle".to_string()),
+            None,
+        ),
+    };
+
+    let mut ranked: Vec<&PolicyCandidate> = candidates
+        .iter()
+        .filter(|candidate| candidate.hard_constraint_satisfied)
+        .collect();
+    ranked.sort_by(|left, right| compare_policy_candidates(left, right, &resolved_bundle));
+
+    if ranked.is_empty() {
+        trace.push("emit-fallback-no-viable-candidate".to_string());
+        return PolicyResolutionArtifact {
+            version: SCHEDULING_POLICY_RESOLUTION_VERSION,
+            policy_bundle_schema_version: SCHEDULING_POLICY_BUNDLE_SCHEMA_VERSION,
+            policy_bundle_id: resolved_bundle.policy_bundle_id,
+            policy_bundle_version: resolved_bundle.policy_bundle_version,
+            policy_mode: resolved_bundle.policy_mode,
+            selected_candidate_id: None,
+            resolution_trace: trace,
+            fallback_applied: true,
+            fallback_reason: Some("no_viable_candidate".to_string()),
+            error_code: Some(PolicyResolutionErrorCode::PolicyResolutionFailed),
+        };
+    }
+
+    let selected_candidate_id = ranked
+        .first()
+        .map(|candidate| candidate.candidate_id.clone());
+    trace.push("selection-complete".to_string());
+
+    PolicyResolutionArtifact {
+        version: SCHEDULING_POLICY_RESOLUTION_VERSION,
+        policy_bundle_schema_version: SCHEDULING_POLICY_BUNDLE_SCHEMA_VERSION,
+        policy_bundle_id: resolved_bundle.policy_bundle_id,
+        policy_bundle_version: resolved_bundle.policy_bundle_version,
+        policy_mode: resolved_bundle.policy_mode,
+        selected_candidate_id,
+        resolution_trace: trace,
+        fallback_applied,
+        fallback_reason,
+        error_code,
+    }
 }
 
 /// Job envelope tracked by scheduler queues.
@@ -1535,6 +1773,78 @@ fn weighted_millis(signal: f64, weight: f64) -> u64 {
     (bounded_ratio(signal) * bounded_weight * 1_000.0).round() as u64
 }
 
+fn is_semver_like(version: &str) -> bool {
+    let parts: Vec<&str> = version.split('.').collect();
+    parts.len() == 3
+        && parts
+            .iter()
+            .all(|part| !part.is_empty() && part.chars().all(|ch| ch.is_ascii_digit()))
+}
+
+fn compare_policy_candidates(
+    left: &PolicyCandidate,
+    right: &PolicyCandidate,
+    bundle: &PolicyBundle,
+) -> Ordering {
+    let left_correctness = bounded_ratio(left.correctness_score);
+    let right_correctness = bounded_ratio(right.correctness_score);
+    let left_user = policy_user_intent_score(left, bundle);
+    let right_user = policy_user_intent_score(right, bundle);
+    let left_ops = policy_operational_score(left, bundle.policy_mode);
+    let right_ops = policy_operational_score(right, bundle.policy_mode);
+    let left_hint = bounded_ratio(left.learning_hint_score);
+    let right_hint = bounded_ratio(right.learning_hint_score);
+
+    right_correctness
+        .partial_cmp(&left_correctness)
+        .unwrap_or(Ordering::Equal)
+        .then_with(|| {
+            right_user
+                .partial_cmp(&left_user)
+                .unwrap_or(Ordering::Equal)
+        })
+        .then_with(|| right_ops.partial_cmp(&left_ops).unwrap_or(Ordering::Equal))
+        .then_with(|| {
+            right_hint
+                .partial_cmp(&left_hint)
+                .unwrap_or(Ordering::Equal)
+        })
+        .then_with(|| left.candidate_id.cmp(&right.candidate_id))
+}
+
+fn policy_user_intent_score(candidate: &PolicyCandidate, bundle: &PolicyBundle) -> f64 {
+    let latency_signal = bounded_ratio(1.0 - (candidate.latency_ms as f64 / 10_000.0));
+    let cost_signal = bounded_ratio(1.0 - (candidate.cost_units as f64 / 10_000.0));
+    let throughput_signal = bounded_ratio(candidate.throughput_qps as f64 / 10_000.0);
+    let determinism_signal = if candidate.deterministic { 1.0 } else { 0.0 };
+
+    bounded_ratio(candidate.fidelity_score) * bundle.user_intent_weights.fidelity
+        + latency_signal * bundle.user_intent_weights.latency
+        + cost_signal * bundle.user_intent_weights.cost
+        + throughput_signal * bundle.user_intent_weights.throughput
+        + determinism_signal * bundle.user_intent_weights.determinism
+        + bounded_ratio(candidate.debuggability_score) * bundle.user_intent_weights.debuggability
+}
+
+fn policy_operational_score(candidate: &PolicyCandidate, mode: PolicyMode) -> f64 {
+    let latency_signal = bounded_ratio(1.0 - (candidate.latency_ms as f64 / 10_000.0));
+    let cost_signal = bounded_ratio(1.0 - (candidate.cost_units as f64 / 10_000.0));
+    let throughput_signal = bounded_ratio(candidate.throughput_qps as f64 / 10_000.0);
+
+    match mode {
+        PolicyMode::Latency => {
+            latency_signal * 0.65 + throughput_signal * 0.25 + cost_signal * 0.10
+        }
+        PolicyMode::Throughput => {
+            throughput_signal * 0.70 + latency_signal * 0.20 + cost_signal * 0.10
+        }
+        PolicyMode::Cost => cost_signal * 0.70 + latency_signal * 0.20 + throughput_signal * 0.10,
+        PolicyMode::Balanced => {
+            latency_signal * 0.34 + throughput_signal * 0.33 + cost_signal * 0.33
+        }
+    }
+}
+
 fn bounded_ratio(value: f64) -> f64 {
     value.clamp(0.0, 1.0)
 }
@@ -1792,6 +2102,155 @@ mod tests {
             retry_count: 1,
             warm_cache_hit: true,
         }
+    }
+
+    fn policy_candidates_fixture() -> Vec<PolicyCandidate> {
+        vec![
+            PolicyCandidate {
+                candidate_id: "cand-fast".to_string(),
+                hard_constraint_satisfied: true,
+                correctness_score: 0.94,
+                fidelity_score: 0.90,
+                latency_ms: 700,
+                cost_units: 300,
+                throughput_qps: 500,
+                deterministic: true,
+                debuggability_score: 0.8,
+                learning_hint_score: 0.2,
+            },
+            PolicyCandidate {
+                candidate_id: "cand-cheap".to_string(),
+                hard_constraint_satisfied: true,
+                correctness_score: 0.94,
+                fidelity_score: 0.89,
+                latency_ms: 950,
+                cost_units: 120,
+                throughput_qps: 450,
+                deterministic: true,
+                debuggability_score: 0.85,
+                learning_hint_score: 0.9,
+            },
+            PolicyCandidate {
+                candidate_id: "cand-blocked".to_string(),
+                hard_constraint_satisfied: false,
+                correctness_score: 1.0,
+                fidelity_score: 1.0,
+                latency_ms: 10,
+                cost_units: 10,
+                throughput_qps: 1_000,
+                deterministic: true,
+                debuggability_score: 1.0,
+                learning_hint_score: 1.0,
+            },
+        ]
+    }
+
+    #[test]
+    fn policy_bundle_validation_enforces_semver_priority_and_weights() {
+        let mut invalid = PolicyBundle::default();
+        invalid.policy_bundle_version = "v1".to_string();
+        assert_eq!(
+            validate_policy_bundle(&invalid),
+            Err(PolicyBundleValidationError::InvalidBundleVersion)
+        );
+
+        invalid.policy_bundle_version = "1.0.0".to_string();
+        invalid.policy_priority_map.correctness = 101;
+        assert_eq!(
+            validate_policy_bundle(&invalid),
+            Err(PolicyBundleValidationError::InvalidPriorityOrder)
+        );
+
+        invalid.policy_priority_map = PolicyPriorityMap::default();
+        invalid.user_intent_weights.cost = f64::NAN;
+        assert_eq!(
+            validate_policy_bundle(&invalid),
+            Err(PolicyBundleValidationError::InvalidWeight { field: "cost" })
+        );
+    }
+
+    #[test]
+    fn policy_resolution_is_deterministic_and_reproducible() {
+        let bundle = PolicyBundle {
+            policy_bundle_id: "latency".to_string(),
+            policy_bundle_version: "1.0.0".to_string(),
+            policy_mode: PolicyMode::Latency,
+            policy_priority_map: PolicyPriorityMap::default(),
+            user_intent_weights: UserIntentWeights {
+                fidelity: 0.8,
+                latency: 1.4,
+                cost: 0.2,
+                throughput: 0.8,
+                determinism: 0.9,
+                debuggability: 0.85,
+            },
+        };
+        let candidates = policy_candidates_fixture();
+
+        let first = resolve_policy_bundle(Some(&bundle), &candidates);
+        let second = resolve_policy_bundle(Some(&bundle), &candidates);
+        assert_eq!(first, second);
+        assert_eq!(first.selected_candidate_id.as_deref(), Some("cand-fast"));
+        assert!(!first.fallback_applied);
+        assert_eq!(first.version, SCHEDULING_POLICY_RESOLUTION_VERSION);
+        assert_eq!(
+            first.policy_bundle_schema_version,
+            SCHEDULING_POLICY_BUNDLE_SCHEMA_VERSION
+        );
+    }
+
+    #[test]
+    fn policy_resolution_falls_back_for_missing_or_invalid_bundle() {
+        let candidates = policy_candidates_fixture();
+        let missing = resolve_policy_bundle(None, &candidates);
+        assert!(missing.fallback_applied);
+        assert_eq!(
+            missing.fallback_reason.as_deref(),
+            Some("missing_policy_bundle")
+        );
+        assert_eq!(missing.policy_bundle_id, "balanced");
+        assert_eq!(missing.policy_bundle_version, "1.0.0");
+
+        let mut invalid = PolicyBundle::default();
+        invalid.policy_bundle_version = "invalid".to_string();
+        let invalid_result = resolve_policy_bundle(Some(&invalid), &candidates);
+        assert!(invalid_result.fallback_applied);
+        assert_eq!(
+            invalid_result.error_code,
+            Some(PolicyResolutionErrorCode::PolicyBundleInvalid)
+        );
+        assert_eq!(
+            invalid_result.fallback_reason.as_deref(),
+            Some("invalid_policy_bundle")
+        );
+    }
+
+    #[test]
+    fn policy_resolution_returns_safe_empty_selection_when_no_viable_candidate() {
+        let no_viable = vec![PolicyCandidate {
+            candidate_id: "blocked".to_string(),
+            hard_constraint_satisfied: false,
+            correctness_score: 0.99,
+            fidelity_score: 0.99,
+            latency_ms: 100,
+            cost_units: 100,
+            throughput_qps: 100,
+            deterministic: true,
+            debuggability_score: 0.5,
+            learning_hint_score: 0.5,
+        }];
+
+        let decision = resolve_policy_bundle(Some(&PolicyBundle::default()), &no_viable);
+        assert!(decision.selected_candidate_id.is_none());
+        assert!(decision.fallback_applied);
+        assert_eq!(
+            decision.fallback_reason.as_deref(),
+            Some("no_viable_candidate")
+        );
+        assert_eq!(
+            decision.error_code,
+            Some(PolicyResolutionErrorCode::PolicyResolutionFailed)
+        );
     }
 
     #[test]
