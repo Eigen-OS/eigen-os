@@ -46,6 +46,12 @@ pub const CLUSTER_ASSIGNMENT_LINEAGE_VERSION: &str = "1.0.0";
 pub const WORKER_NODE_EXECUTION_CONTRACT_VERSION: &str = "1.0.0";
 /// SemVer version for runtime artifact staging/materialization metadata.
 pub const WORKER_RUNTIME_ARTIFACT_CONTRACT_VERSION: &str = "1.0.0";
+/// SemVer version for provider-neutral distributed queue envelope contract.
+pub const DISTRIBUTED_QUEUE_CONTRACT_VERSION: &str = "1.0.0";
+/// SemVer version for queue lease lifecycle event records.
+pub const QUEUE_LEASE_EVENT_VERSION: &str = "1.0.0";
+/// SemVer version for queue dead-letter records.
+pub const QUEUE_DEAD_LETTER_CONTRACT_VERSION: &str = "1.0.0";
 
 /// Runtime mode for control-plane bootstrap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -220,6 +226,323 @@ pub enum WorkerExecutionError {
     IdempotencyConflict,
     LeaseMismatch,
     NotRunning,
+}
+
+/// Queue task envelope shared across queue adapter implementations.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueueTaskEnvelope {
+    pub queue_contract_version: &'static str,
+    pub queue_name: String,
+    pub task_id: String,
+    pub job_id: String,
+    pub assignment_id: String,
+    pub idempotency_key: String,
+    pub tenant_id: String,
+    pub project_id: String,
+    pub attempt: u32,
+    pub max_attempts: u32,
+    pub visibility_timeout_seconds: u32,
+    pub enqueued_at_ms: u64,
+}
+
+/// Lease acquisition record returned to workers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueueLeaseRecord {
+    pub lease_event_version: &'static str,
+    pub lease_id: String,
+    pub queue_name: String,
+    pub task_id: String,
+    pub job_id: String,
+    pub assignment_id: String,
+    pub idempotency_key: String,
+    pub worker_id: String,
+    pub attempt: u32,
+    pub leased_at_ms: u64,
+    pub lease_expires_at_ms: u64,
+}
+
+/// Dead-letter artifact for tasks that exceed retry budget.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeadLetterRecord {
+    pub dead_letter_version: &'static str,
+    pub queue_name: String,
+    pub task_id: String,
+    pub job_id: String,
+    pub assignment_id: String,
+    pub idempotency_key: String,
+    pub attempt: u32,
+    pub max_attempts: u32,
+    pub reason: String,
+    pub dead_lettered_at_ms: u64,
+}
+
+/// Queue adapter metrics for observability assertions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct QueueAdapterMetrics {
+    pub queue_enqueued_total: u64,
+    pub queue_lease_acquired_total: u64,
+    pub queue_redelivery_total: u64,
+    pub queue_dead_letter_total: u64,
+}
+
+/// Queue adapter validation and runtime errors.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum QueueAdapterError {
+    EmptyQueueName,
+    EmptyTaskId,
+    EmptyJobId,
+    EmptyAssignmentId,
+    EmptyIdempotencyKey,
+    EmptyWorkerId,
+    DuplicateTaskId,
+    UnknownLeaseId,
+    LeaseNotOwnedByWorker,
+    InvalidVisibilityTimeout,
+    InvalidAttempts,
+}
+
+/// Provider-neutral queue interface for pluggable delivery backends.
+pub trait QueueAdapter {
+    fn enqueue(&mut self, task: QueueTaskEnvelope) -> Result<(), QueueAdapterError>;
+    fn lease(
+        &mut self,
+        queue_name: &str,
+        worker_id: &str,
+        now_ms: u64,
+    ) -> Result<Option<QueueLeaseRecord>, QueueAdapterError>;
+    fn ack(&mut self, lease_id: &str, worker_id: &str, now_ms: u64) -> Result<bool, QueueAdapterError>;
+    fn requeue(
+        &mut self,
+        lease_id: &str,
+        worker_id: &str,
+        reason: &str,
+        now_ms: u64,
+    ) -> Result<bool, QueueAdapterError>;
+    fn metrics(&self) -> QueueAdapterMetrics;
+    fn dead_letters(&self) -> &[DeadLetterRecord];
+}
+
+#[derive(Debug, Clone)]
+struct InFlightLease {
+    task: QueueTaskEnvelope,
+    lease: QueueLeaseRecord,
+}
+
+/// Deterministic in-memory queue adapter implementing v1 delivery semantics.
+#[derive(Debug, Default, Clone)]
+pub struct InMemoryQueueAdapter {
+    sequence: u64,
+    queues: BTreeMap<String, VecDeque<QueueTaskEnvelope>>,
+    in_flight: HashMap<String, InFlightLease>,
+    metrics: QueueAdapterMetrics,
+    dead_letters: Vec<DeadLetterRecord>,
+}
+
+impl InMemoryQueueAdapter {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn validate_task(task: &QueueTaskEnvelope) -> Result<(), QueueAdapterError> {
+        if task.queue_name.trim().is_empty() {
+            return Err(QueueAdapterError::EmptyQueueName);
+        }
+        if task.task_id.trim().is_empty() {
+            return Err(QueueAdapterError::EmptyTaskId);
+        }
+        if task.job_id.trim().is_empty() {
+            return Err(QueueAdapterError::EmptyJobId);
+        }
+        if task.assignment_id.trim().is_empty() {
+            return Err(QueueAdapterError::EmptyAssignmentId);
+        }
+        if task.idempotency_key.trim().is_empty() {
+            return Err(QueueAdapterError::EmptyIdempotencyKey);
+        }
+        if task.max_attempts == 0 || task.attempt == 0 || task.attempt > task.max_attempts {
+            return Err(QueueAdapterError::InvalidAttempts);
+        }
+        if task.visibility_timeout_seconds == 0 {
+            return Err(QueueAdapterError::InvalidVisibilityTimeout);
+        }
+        Ok(())
+    }
+
+    fn lease_expiry_ms(task: &QueueTaskEnvelope, leased_at_ms: u64) -> u64 {
+        leased_at_ms.saturating_add(u64::from(task.visibility_timeout_seconds).saturating_mul(1_000))
+    }
+
+    fn queue_or_dead_letter(&mut self, task: QueueTaskEnvelope, reason: &str, now_ms: u64) {
+        if task.attempt >= task.max_attempts {
+            self.metrics.queue_dead_letter_total += 1;
+            self.dead_letters.push(DeadLetterRecord {
+                dead_letter_version: QUEUE_DEAD_LETTER_CONTRACT_VERSION,
+                queue_name: task.queue_name.clone(),
+                task_id: task.task_id,
+                job_id: task.job_id,
+                assignment_id: task.assignment_id,
+                idempotency_key: task.idempotency_key,
+                attempt: task.attempt,
+                max_attempts: task.max_attempts,
+                reason: reason.trim().to_string(),
+                dead_lettered_at_ms: now_ms,
+            });
+            return;
+        }
+
+        let mut redelivery = task;
+        redelivery.attempt += 1;
+        self.metrics.queue_redelivery_total += 1;
+        self.queues
+            .entry(redelivery.queue_name.clone())
+            .or_default()
+            .push_back(redelivery);
+    }
+
+    fn sweep_expired_leases(&mut self, now_ms: u64) {
+        let expired_ids: Vec<String> = self
+            .in_flight
+            .iter()
+            .filter_map(|(lease_id, lease)| {
+                if now_ms >= lease.lease.lease_expires_at_ms {
+                    Some(lease_id.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        for lease_id in expired_ids {
+            let lease = self
+                .in_flight
+                .remove(&lease_id)
+                .expect("expired lease id must exist");
+            self.queue_or_dead_letter(lease.task, "lease-expired", now_ms);
+        }
+    }
+}
+
+impl QueueAdapter for InMemoryQueueAdapter {
+    fn enqueue(&mut self, task: QueueTaskEnvelope) -> Result<(), QueueAdapterError> {
+        Self::validate_task(&task)?;
+
+        let queue_name = task.queue_name.clone();
+        let task_id = task.task_id.clone();
+        let duplicate_in_queue = self
+            .queues
+            .get(&queue_name)
+            .is_some_and(|q| q.iter().any(|existing| existing.task_id == task_id));
+        let duplicate_in_flight = self
+            .in_flight
+            .values()
+            .any(|lease| lease.task.task_id == task_id && lease.task.queue_name == queue_name);
+        if duplicate_in_queue || duplicate_in_flight {
+            return Err(QueueAdapterError::DuplicateTaskId);
+        }
+
+        self.metrics.queue_enqueued_total += 1;
+        self.queues.entry(queue_name).or_default().push_back(task);
+        Ok(())
+    }
+
+    fn lease(
+        &mut self,
+        queue_name: &str,
+        worker_id: &str,
+        now_ms: u64,
+    ) -> Result<Option<QueueLeaseRecord>, QueueAdapterError> {
+        if queue_name.trim().is_empty() {
+            return Err(QueueAdapterError::EmptyQueueName);
+        }
+        if worker_id.trim().is_empty() {
+            return Err(QueueAdapterError::EmptyWorkerId);
+        }
+
+        self.sweep_expired_leases(now_ms);
+
+        let queue_key = queue_name.trim().to_string();
+        let (task, queue_became_empty) = {
+            let queue = self.queues.entry(queue_key.clone()).or_default();
+            let Some(task) = queue.pop_front() else {
+                return Ok(None);
+            };
+            (task, queue.is_empty())
+        };
+        if queue_became_empty {
+            self.queues.remove(&queue_key);
+        }
+
+        self.sequence += 1;
+        let lease_id = format!("lease-{:08}", self.sequence);
+        let lease = QueueLeaseRecord {
+            lease_event_version: QUEUE_LEASE_EVENT_VERSION,
+            lease_id: lease_id.clone(),
+            queue_name: task.queue_name.clone(),
+            task_id: task.task_id.clone(),
+            job_id: task.job_id.clone(),
+            assignment_id: task.assignment_id.clone(),
+            idempotency_key: task.idempotency_key.clone(),
+            worker_id: worker_id.trim().to_string(),
+            attempt: task.attempt,
+            leased_at_ms: now_ms,
+            lease_expires_at_ms: Self::lease_expiry_ms(&task, now_ms),
+        };
+
+        self.in_flight.insert(
+            lease_id,
+            InFlightLease {
+                task,
+                lease: lease.clone(),
+            },
+        );
+        self.metrics.queue_lease_acquired_total += 1;
+        Ok(Some(lease))
+    }
+
+    fn ack(&mut self, lease_id: &str, worker_id: &str, now_ms: u64) -> Result<bool, QueueAdapterError> {
+        if worker_id.trim().is_empty() {
+            return Err(QueueAdapterError::EmptyWorkerId);
+        }
+        self.sweep_expired_leases(now_ms);
+        let Some(lease) = self.in_flight.get(lease_id) else {
+            return Ok(false);
+        };
+        if lease.lease.worker_id != worker_id.trim() {
+            return Err(QueueAdapterError::LeaseNotOwnedByWorker);
+        }
+        self.in_flight.remove(lease_id);
+        Ok(true)
+    }
+
+    fn requeue(
+        &mut self,
+        lease_id: &str,
+        worker_id: &str,
+        reason: &str,
+        now_ms: u64,
+    ) -> Result<bool, QueueAdapterError> {
+        if worker_id.trim().is_empty() {
+            return Err(QueueAdapterError::EmptyWorkerId);
+        }
+        self.sweep_expired_leases(now_ms);
+        let Some(lease) = self.in_flight.remove(lease_id) else {
+            return Ok(false);
+        };
+        if lease.lease.worker_id != worker_id.trim() {
+            self.in_flight.insert(lease_id.to_string(), lease);
+            return Err(QueueAdapterError::LeaseNotOwnedByWorker);
+        }
+        self.queue_or_dead_letter(lease.task, reason, now_ms);
+        Ok(true)
+    }
+
+    fn metrics(&self) -> QueueAdapterMetrics {
+        self.metrics
+    }
+
+    fn dead_letters(&self) -> &[DeadLetterRecord] {
+        &self.dead_letters
+    }
 }
 
 /// In-memory worker-node service implementing deterministic remote-execution lifecycle.

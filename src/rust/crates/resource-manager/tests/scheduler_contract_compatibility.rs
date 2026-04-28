@@ -5,11 +5,13 @@ use std::path::PathBuf;
 use resource_manager::{
     AdmissionPolicy, BACKEND_SCORING_CONTRACT_VERSION, BACKEND_SCORING_PROFILE_SCHEMA_VERSION,
     CLUSTER_ASSIGNMENT_LINEAGE_VERSION, CLUSTER_CONTROL_PLANE_CONTRACT_VERSION,
-    WORKER_NODE_EXECUTION_CONTRACT_VERSION, WORKER_RUNTIME_ARTIFACT_CONTRACT_VERSION,
-    ClusterWorkerRegistration, ClusterWorkerState, DEVICE_SCORE_VERSION, DispatchReasonCode,
-    FairnessPolicy,
+    DISTRIBUTED_QUEUE_CONTRACT_VERSION, InMemoryQueueAdapter, QUEUE_DEAD_LETTER_CONTRACT_VERSION,
+    QUEUE_LEASE_EVENT_VERSION, WORKER_NODE_EXECUTION_CONTRACT_VERSION,
+    WORKER_RUNTIME_ARTIFACT_CONTRACT_VERSION, ClusterWorkerRegistration, ClusterWorkerState,
+    DEVICE_SCORE_VERSION, DispatchReasonCode, FairnessPolicy,
     MULTI_DEVICE_EXECUTION_CONTRACT_VERSION, REBALANCING_POLICY_VERSION,
     SCHEDULER_DECISION_VERSION, ScheduledJob, Scheduler, assign_cluster_job, plan_split,
+    QueueAdapter, QueueTaskEnvelope,
 };
 use serde_json::{Value, json};
 
@@ -162,6 +164,71 @@ fn cluster_assignment_contract_matches_golden_fixture() {
 }
 
 #[test]
+fn queue_delivery_contract_matches_golden_fixture() {
+    let mut adapter = InMemoryQueueAdapter::new();
+    adapter
+        .enqueue(QueueTaskEnvelope {
+            queue_contract_version: DISTRIBUTED_QUEUE_CONTRACT_VERSION,
+            queue_name: "priority-10".to_string(),
+            task_id: "task-contract-01".to_string(),
+            job_id: "job-contract-queue-01".to_string(),
+            assignment_id: "assign-contract-01".to_string(),
+            idempotency_key: "idem-contract-01".to_string(),
+            tenant_id: "tenant-a".to_string(),
+            project_id: "project-a".to_string(),
+            attempt: 1,
+            max_attempts: 2,
+            visibility_timeout_seconds: 5,
+            enqueued_at_ms: 1_746_200_000_000,
+        })
+        .expect("enqueue must succeed");
+
+    let first_lease = adapter
+        .lease("priority-10", "worker-a", 1_746_200_000_100)
+        .expect("lease must succeed")
+        .expect("task must be leaseable");
+    let redelivery = adapter
+        .lease("priority-10", "worker-b", 1_746_200_005_200)
+        .expect("lease must succeed")
+        .expect("expired task must be re-delivered");
+    let _ = adapter
+        .requeue(
+            &redelivery.lease_id,
+            "worker-b",
+            "contract-test-requeue",
+            1_746_200_005_250,
+        )
+        .expect("requeue must succeed");
+
+    let dead_letter = adapter
+        .dead_letters()
+        .first()
+        .expect("task must transition to dead-letter");
+
+    let snapshot = json!({
+        "queue_contract_version": DISTRIBUTED_QUEUE_CONTRACT_VERSION,
+        "lease_event_version": first_lease.lease_event_version,
+        "first_lease_attempt": first_lease.attempt,
+        "redelivery_attempt": redelivery.attempt,
+        "dead_letter": {
+            "dead_letter_version": dead_letter.dead_letter_version,
+            "task_id": dead_letter.task_id,
+            "attempt": dead_letter.attempt,
+            "max_attempts": dead_letter.max_attempts,
+            "reason": dead_letter.reason,
+        },
+        "metrics": {
+            "queue_enqueued_total": adapter.metrics().queue_enqueued_total,
+            "queue_lease_acquired_total": adapter.metrics().queue_lease_acquired_total,
+            "queue_redelivery_total": adapter.metrics().queue_redelivery_total,
+            "queue_dead_letter_total": adapter.metrics().queue_dead_letter_total,
+        }
+    });
+
+    assert_eq!(snapshot, fixture("queue_delivery_contract_v1_0_0.json"));
+}
+
+#[test]
 fn all_orchestration_contracts_keep_explicit_version_markers() {
     assert_eq!(SCHEDULER_DECISION_VERSION, "2.1.0");
     assert_eq!(DEVICE_SCORE_VERSION, "2.1.0");
@@ -173,4 +240,7 @@ fn all_orchestration_contracts_keep_explicit_version_markers() {
     assert_eq!(CLUSTER_ASSIGNMENT_LINEAGE_VERSION, "1.0.0");
     assert_eq!(WORKER_NODE_EXECUTION_CONTRACT_VERSION, "1.0.0");
     assert_eq!(WORKER_RUNTIME_ARTIFACT_CONTRACT_VERSION, "1.0.0");
+    assert_eq!(DISTRIBUTED_QUEUE_CONTRACT_VERSION, "1.0.0");
+    assert_eq!(QUEUE_LEASE_EVENT_VERSION, "1.0.0");
+    assert_eq!(QUEUE_DEAD_LETTER_CONTRACT_VERSION, "1.0.0");
 }
