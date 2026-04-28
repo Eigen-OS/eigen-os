@@ -2,18 +2,21 @@
 
 ## Overview
 
-This document defines the open-source development roadmap for Eigen-OS.
+Eigen-OS is a cloud-native runtime and orchestration platform for hybrid quantum-classical workloads.
 
-Eigen-OS is positioned as:
-> A cloud-native runtime and orchestration layer for hybrid quantum-classical workloads
-
-The open-source version focuses on:
+The open-source roadmap focuses on:
 
 - execution
 - orchestration
-- reproducibility
 - benchmarking
+- distributed runtime infrastructure
+- explainable runtime intelligence
+- extensibility
 - developer experience
+
+Eigen-OS evolves as:
+
+> Runtime → Benchmarking → Intelligent Orchestration → Distributed Platform
 
 ---
 
@@ -26,310 +29,269 @@ The open-source version focuses on:
 - MVP-3: Execution and results retrieval
 - Phase-1: Production runtime
 - Phase-2: Orchestration layer
+- Phase-3: Benchmarking platform
 
 ### Capabilities Today
 
 - JobSpec-based execution model
-- Compiler pipeline (AST → IR → execution artifacts)
+- Deterministic compilation pipeline (AST → IR → execution artifacts)
 - QRTX kernel lifecycle management
 - DriverManager + simulator execution
-- Device-aware scheduling (baseline)
+- Baseline device-aware scheduling
+- Benchmark run/compare/history APIs and CLI flow
 - Observability (metrics + tracing)
-- Local development environment
+- Local developer environment
 
 ---
 
-## 2. Strategic Direction
+## 2. Eigen-Lang Track
 
-Eigen-OS evolves along three axes:
+Eigen-Lang is a first-class component of Eigen-OS.
 
-1. **Execution → Orchestration → Intelligence**
-2. **Local → Distributed → Cloud-native**
-3. **Runtime → Benchmarking → Optimization**
+The language layer evolves in parallel with runtime and orchestration.
+
+### Current State
+
+- Python-based DSL
+- deterministic AST-based compilation
+- AQO mapping
+- language versioning policy
+- restricted and validated execution model
+
+### Focus Areas
+
+- compiler stability
+- language ergonomics
+- tooling
+- explainability
+- reusable workflow abstractions
+
+### Guiding Rules
+
+- RFC-first evolution
+- deterministic compilation
+- compatibility-aware versioning
+- conformance-driven implementation
 
 ---
 
-## 3. Phase-3: Benchmarking Platform
+## 3. Phase-4: Intelligent Runtime (Open Source Scope)
 
 ### Goal
 
-Transform Eigen-OS into a **reproducible benchmarking and analytics platform**.
+Introduce data-driven and explainable runtime decisions without opaque proprietary ML.
 
-### Why This Matters
+### Runtime Deliverables
 
-Quantum execution today is:
-- hard to evaluate
-- non-reproducible
-- opaque
-
-Eigen-OS will provide:
-> measurable, comparable, and explainable execution results
-
-### Key Features
-
-#### 1) Dataset Integration
-
-- QSBench-compatible datasets
-- Support for:
-  - circuit datasets
-  - noise models
-  - backend configurations
-
-#### 2) Benchmark Execution
-
-- standardized benchmark runs
-- reproducible execution pipelines
-- deterministic configuration snapshots
-
-#### 3) Experiment Tracking
-
-- run registry:
-  - job metadata
-  - backend
-  - parameters
-  - execution results
-- persistent storage of runs
-
-#### 4) Comparison Engine
-
-- side-by-side comparison:
-  - backend A vs backend B
-  - noise vs no-noise
-  - transpilation strategies
-
-#### 5) Metrics
-
-Core metrics:
-- latency
-- execution time breakdown
-- success rate
-- fidelity / expectation deviation
-- circuit characteristics
-
-### Contract governance status (updated 2026-04-27)
-
-- Stable Phase-3 benchmark contracts are now backed by accepted/implemented RFCs:
-  - run lifecycle: `RFC 0020`
-  - dataset ingestion: `RFC 0021`
-  - compare/history methodology: `RFC 0022`
-- No Phase-3 benchmark contract is considered stable without an accepted RFC.
-
-### Deliverables
-
-- `benchmark-service`
-- dataset ingestion pipeline
-- CLI:
-  - `eigen benchmark run`
-  - `eigen benchmark compare`
-- API endpoints:
-  - `/benchmarks/run`
-  - `/benchmarks/compare`
-  - `/benchmarks/history`
-
-### Outcome
-
-Eigen-OS becomes:
-- a benchmarking standard
-- a research tool
-- a validation layer for runtime behavior
-
----
-
-## 4. Phase-4: Intelligent Runtime (Open Source Scope)
-
-### Goal
-
-Introduce **data-driven and explainable runtime decisions**.
-
-Important:
-> This phase avoids heavy proprietary ML and focuses on transparency
-
-### Key Features
-
-#### 1) Backend Scoring
-
-- scoring based on:
-  - latency
-  - availability
-  - historical performance
-  - error characteristics
-- deterministic + statistical approach
-
-#### 2) Adaptive Scheduling
-
-- improved scheduling policies:
-  - priority + fairness
-  - device-aware routing
-  - queue optimization
-- rule-based and configurable
-
-#### 3) Compilation Optimization (Baseline)
-
-- rule-based circuit optimizations
-- transpilation strategy selection
-- pattern-based improvements
-
-#### 4) Explainability
-
-System must provide:
-
-- "why this backend was selected"
-- "why this execution took longer"
-- "where errors likely occurred"
-
-### Deliverables
-
-- scoring module
-- scheduling policy engine (configurable)
-- explanation API:
+- backend scoring module
+- configurable scheduling policy engine
+- explanation APIs:
   - `/explain/backend-selection`
   - `/explain/execution`
 
-### Outcome
+### Eigen-Lang Integrations
 
-Eigen-OS becomes:
-- predictable
-- debuggable
-- explainable
+#### Goals
+
+Make runtime intelligence visible and explainable at the language level.
+
+#### Deliverables
+
+- compile-time diagnostics
+- runtime-aware compiler hints
+- explainable backend selection metadata
+- execution annotations in Eigen-Lang workflows
+- deterministic optimization recommendations
+
+#### Example
+
+```python
+@hybrid_program(
+    target="auto",
+    optimization_profile="latency"
+)
+def workflow():
+    ...
+```
+
+Compiler/runtime may explain:
+
+- why a backend was selected
+- why scheduling changed
+- why execution latency increased
+- why transpilation strategy was chosen
 
 ---
 
-## 5. Phase-5: Distributed Execution (OSS)
+## 4. Phase-5: Distributed Execution (OSS)
 
 ### Goal
 
-Move from single-node runtime to **distributed cluster execution**.
+Transition from single-node runtime to distributed cluster execution.
 
-### Key Features
-
-#### 1) Multi-node Execution
-
-- distributed job execution
-- worker nodes with driver access
-
-#### 2) Control Plane Separation
-
-- scheduler as control plane
-- execution nodes as workers
-
-#### 3) Queue-Based Architecture
-
-- async job execution
-- message-based communication
-
-#### 4) Fault Tolerance
-
-- retries
-- node failure handling
-- job rescheduling
-
-### Deliverables
+### Runtime Deliverables
 
 - cluster mode (`--cluster`)
 - worker node service
-- queue layer (pluggable)
+- pluggable queue layer
 - distributed tracing support
 
-### Outcome
+### Eigen-Lang Integration
 
-Eigen-OS becomes:
-- scalable
-- resilient
-- suitable for real workloads
+#### Goals
+
+Enable distributed execution semantics inside workflows.
+
+#### Deliverables
+
+- distributed execution metadata
+- remote execution targets
+- workload partitioning support
+- execution topology annotations
+- cluster-aware execution policies
+
+#### Example
+
+```python
+@hybrid_program(
+    execution_mode="distributed"
+)
+def workflow():
+    ...
+```
+
+Future support:
+
+- distributed parameter sweeps
+- multi-backend orchestration
+- federated execution patterns
 
 ---
 
-## 6. Phase-6: Plugin Ecosystem
+## 5. Phase-6: Plugin Ecosystem
 
 ### Goal
 
-Turn Eigen-OS into a **platform, not just a system**.
+Make Eigen-OS a platform.
 
-### Key Features
-
-#### 1) Driver Plugins
-
-- hardware connectors
-- simulator extensions
-
-#### 2) Compiler Plugins
-
-- alternative backends
-- optimization strategies
-
-#### 3) Scheduler Plugins
-
-- custom scheduling policies
-- research algorithms
-
-### Deliverables
+### Runtime Deliverables
 
 - plugin API specification
 - plugin loading system
 - validation and compatibility checks
 
-### Outcome
+### Eigen-Lang Integration
 
-- community contributions
-- extensibility
-- ecosystem growth
+#### Goals
+
+Allow ecosystem extensions at the language level.
+
+#### Deliverables
+
+- pluggable standard library extensions
+- custom workflow primitives
+- backend-specific DSL modules
+- plugin-based compiler passes
+- external optimizer integration
+
+#### Example
+
+```python
+from eigen_lang_plugins.qaoa import QAOAAnsatz
+```
 
 ---
 
-## 7. Phase-7: Stability & Developer Experience
+## 6. Phase-7: Stability & Developer Experience
 
 ### Goal
 
-Make Eigen-OS easy to adopt and use.
+Make adoption and contribution easier.
 
-### Key Features
+### Runtime Deliverables
 
-- stable APIs and versioning
-- improved documentation
-- reproducible local setup
-- better CLI UX
-- test coverage and CI improvements
-
-### Deliverables
-
-- versioning policy
+- API/versioning policy
 - compatibility guarantees
-- improved docs and tutorials
+- improved docs/tutorials
 - example workloads
+- stronger test and CI coverage
 
-### Outcome
+### Eigen-Lang Integration
 
-- lower adoption barrier
-- better developer onboarding
-- increased community usage
+#### Goals
+
+Make Eigen-Lang production-grade for developers and researchers.
+
+#### Deliverables
+
+- stable language specification
+- language compatibility policy
+- formatter and linting support
+- language server support (future)
+- improved tutorials and examples
+- conformance test suite
+- migration documentation
 
 ---
 
-## 8. Long-Term Vision
+## 7. Long-Term Eigen-Lang Vision
 
-Eigen-OS (open source) becomes:
+Eigen-Lang evolves into:
 
-- the standard runtime layer for quantum workloads
-- a reproducible benchmarking platform
-- an extensible orchestration system
-- a foundation for research and experimentation
+- a deterministic hybrid workflow language
+- a reproducible quantum orchestration DSL
+- an explainable runtime interface
+- a portable workload specification format
+
+The language must remain:
+
+- deterministic
+- auditable
+- reproducible
+- backend-agnostic
 
 ---
 
-## 9. Guiding Principles
+## 8. Guiding Principles
 
-- contracts-first architecture remains core
-- reproducibility over "magic"
-- explainability over opaque intelligence
+- contracts-first architecture
+- reproducibility over magic
+- explainability over opacity
 - modularity over monolith
 - developer-first experience
 
 ---
 
-## 10. Immediate Next Steps
+## 9. Immediate Next Steps
 
-1. Implement minimal benchmark pipeline
-2. Integrate first QSBench dataset
-3. Add run tracking and comparison
-4. Expose benchmark API and CLI
-5. Prepare demo-ready workflow
+1. Kick off Phase-4 scoring module implementation
+2. Add scheduling policy configuration surfaces
+3. Implement explanation APIs for backend selection/execution
+4. Expose first Eigen-Lang runtime-intelligence diagnostics
+5. Prepare demo-ready explainability workflow
+
+---
+
+## 10. Strategic Direction
+
+Eigen-OS evolves across multiple layers:
+
+| Layer | Direction |
+| --- | --- |
+| Runtime | Execution → Orchestration → Distributed Infrastructure |
+| Intelligence | Benchmarking → Explainable Runtime Decisions |
+| Language | DSL → Stable Workflow Language |
+| Ecosystem | Core System → Extensible Platform |
+| DX | Research Prototype → Production-Ready OSS |
+
+---
+
+## 11. Long-Term Vision
+
+Eigen-OS becomes:
+
+- a standard runtime for hybrid quantum workloads
+- a reproducible benchmarking platform
+- an explainable orchestration system
+- a distributed execution layer
+- a programmable ecosystem centered around Eigen-Lang
