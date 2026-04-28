@@ -1,0 +1,113 @@
+{
+  "input": {
+    "cluster_id": "cluster-replay-01",
+    "job_id": "job-replay-01",
+    "assignment_sequence": 12,
+    "assignment_epoch_ms": 1746200100000,
+    "workers": [
+      {
+        "worker_id": "worker-b",
+        "state": "ready",
+        "capability_tags": ["qpu", "gpu"],
+        "max_parallel_tasks": 8,
+        "current_load": 1
+      },
+      {
+        "worker_id": "worker-a",
+        "state": "ready",
+        "capability_tags": ["qpu"],
+        "max_parallel_tasks": 8,
+        "current_load": 1
+      },
+      {
+        "worker_id": "worker-z",
+        "state": "offline",
+        "capability_tags": ["qpu"],
+        "max_parallel_tasks": 8,
+        "current_load": 0
+      }
+    ],
+    "required_tags": ["qpu"],
+    "queue_name": "priority-9",
+    "queue_tasks": [
+      {
+        "queue_name": "priority-9",
+        "task_id": "task-a",
+        "idempotency_key": "idem-a",
+        "tenant_id": "tenant-r",
+        "project_id": "project-r",
+        "max_attempts": 3,
+        "visibility_timeout_seconds": 5,
+        "enqueued_at_ms": 1746200100010
+      },
+      {
+        "queue_name": "priority-9",
+        "task_id": "task-b",
+        "idempotency_key": "idem-b",
+        "tenant_id": "tenant-r",
+        "project_id": "project-r",
+        "max_attempts": 3,
+        "visibility_timeout_seconds": 5,
+        "enqueued_at_ms": 1746200100015
+      }
+    ],
+    "first_lease_ms": 1746200100100,
+    "second_lease_ms": 1746200100120,
+    "sweep_expired_ms": 1746200106000,
+    "requeue_ms": 1746200106050,
+    "dead_letter_lease_ms": 1746200106100,
+    "dead_letter_requeue_ms": 1746200106110
+  },
+  "expected": {
+    "assignment": {
+      "cluster_contract_version": "1.0.0",
+      "lineage_version": "1.0.0",
+      "assignment_id": "job-replay-01-a-000012",
+      "selected_worker_id": "worker-a",
+      "candidate_workers": ["worker-a", "worker-b"],
+      "assignment_trace": [
+        "filter-offline-draining-and-lost",
+        "sort-by-load-asc-worker-id-asc"
+      ]
+    },
+    "queue": {
+      "queue_contract_version": "1.0.1",
+      "lease_event_version": "1.0.1",
+      "dead_letter_version": "1.0.1",
+      "first_lease": {
+        "lease_id": "lease-00000001",
+        "task_id": "task-a",
+        "attempt": 1
+      },
+      "second_lease": {
+        "lease_id": "lease-00000002",
+        "task_id": "task-b",
+        "attempt": 1
+      },
+      "redelivery_sequence": [
+        {
+          "lease_id": "lease-00000003",
+          "task_id": "task-a",
+          "attempt": 2
+        },
+        {
+          "lease_id": "lease-00000004",
+          "task_id": "task-b",
+          "attempt": 2
+        }
+      ],
+      "dead_letter": {
+        "task_id": "task-b",
+        "attempt": 3,
+        "max_attempts": 3,
+        "reason": "worker-e-final-requeue"
+      },
+      "metrics": {
+        "queue_enqueued_total": 2,
+        "queue_lease_acquired_total": 5,
+        "queue_redelivery_total": 3,
+        "queue_dead_letter_total": 1
+      }
+    }
+  }
+}
