@@ -19,6 +19,7 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 ### Added
 
 - Phase-4 P4-02 scheduling policy engine and policy bundles (`resource-manager` package `0.5.0`) with versioned `PolicyBundle` schema (`1.0.0`), deterministic precedence-based resolution, and safe fallback artifacts for missing/invalid policy inputs.
+- Phase-4 P4-05 Eigen-Lang runtime-intelligence compile hints/diagnostics (`cli` in Rust workspace `0.6.0`) with deterministic unsupported-target/policy-conflict diagnostics, explicit hint metadata versions, and explainability-linked execution annotations in AQO metadata.
 - Phase-3 P3-08 reproducibility and determinism quality gate (`benchmark-service` package `0.7.0`) with versioned reproducibility policy thresholds (`1.0.0`), deterministic snapshot consistency checks, bounded metric variance checks, and CI drift diagnostics.
 - Phase-3 P3-07 benchmark observability pack (`benchmark-service` package `0.6.0`) with stable `eigen_bench_*` metrics contract (`1.0.0`), benchmark lifecycle dashboard, Prometheus alerts, and triage runbook.
 - Phase-3 P3-06 CLI benchmark UX: `eigen benchmark run` and `eigen benchmark compare` (Rust CLI package `0.4.0`) with stable JSON/human output modes, explicit output version markers, and compatibility fixtures.
@@ -40,6 +41,12 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 - **Version impact:** MINOR (new scheduling policy contract surface; Rust workspace package advanced to `0.5.0`).
 - **Compatibility:** Additive; existing scheduler admission/dispatch and backend scoring contracts remain unchanged.
 - **Migration notes:** No mandatory migration for default behavior. Policy adopters should pin `policy_bundle_version` and consume `SCHEDULING_POLICY_*` version markers in decision artifacts.
+
+### Phase-4: Eigen-Lang Runtime-Intelligence Hints and Diagnostics (P4-05)
+
+- **Version impact:** MINOR (new compile metadata and diagnostics; Rust workspace package advanced to `0.6.0`).
+- **Compatibility:** Additive; existing AQO core fields remain unchanged while runtime-intelligence metadata/annotations are added and diagnostics are deterministic.
+- **Migration notes:** No mandatory migration. Consumers should pin `metadata.runtime_intelligence_hints.version`, `metadata.runtime_intelligence_hints.diagnostics_version`, and `metadata.execution_annotations.version`, and treat `RUNTIME_INTELLIGENCE_DIAGNOSTIC` as compile-time validation feedback.
 
 ### Phase-3: Reproducibility and Determinism Gate (P3-08)
 
