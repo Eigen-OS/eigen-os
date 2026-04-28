@@ -4,6 +4,7 @@
     "policy_branch",
     "fallback_reason",
     "artifact_version",
+    "topology_contract_version",
     "decision_lineage",
     "queue_delay_ms",
     "dispatch_latency_ms",
@@ -15,6 +16,12 @@
     "event",
     "outcome",
     "attributes"
+  ],
+  "lineage_attribute_required_keys": [
+    "cluster_id",
+    "worker_id",
+    "partition_id",
+    "attempt"
   ],
   "timing_required_fields": [
     "queue_delay_ms",

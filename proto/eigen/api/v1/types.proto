@@ -41,6 +41,9 @@ message JobStatus {
   string error_code = 20;        // Stable machine-readable reason.
   string error_summary = 21;     // Human-readable summary.
   string error_details_ref = 22; // QFS reference with full details (logs/trace).
+
+  // Topology lineage envelope for distributed tracing/debugging.
+  TopologyEnvelope topology = 23;
 }
 
 message JobUpdate {
@@ -55,6 +58,19 @@ message JobUpdate {
   uint64 event_seq = 6;
 
   google.protobuf.Timestamp timestamp = 7;
+
+  // Topology lineage envelope for distributed tracing/debugging.
+  TopologyEnvelope topology = 8;
+}
+
+message TopologyEnvelope {
+  // SemVer for topology lineage contract.
+  string contract_version = 1;
+  string lineage_version = 2;
+  string cluster_id = 3;
+  string worker_id = 4;
+  string partition_id = 5;
+  uint32 attempt = 6;
 }
 
 // Job program sources for MVP.

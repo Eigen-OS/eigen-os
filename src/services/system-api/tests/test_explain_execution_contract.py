@@ -52,7 +52,7 @@ def test_explain_execution_success_contract_fixture_is_stable(grpc_addr: str) ->
     rationale = stub.GetDispatchRationale(job_pb.GetDispatchRationaleRequest(job_id=job_id)).rationale
 
     assert set(contract["response_required_fields"]).issubset(set(rationale.DESCRIPTOR.fields_by_name))
-    assert rationale.version == "2.1.0"
+    assert rationale.version == "2.2.0"
     attrs = dict(rationale.attributes)
     assert set(contract["attributes_required_keys"]).issubset(attrs.keys())
     assert attrs["artifact_version"] == "1.1.0"
@@ -65,6 +65,8 @@ def test_explain_execution_success_contract_fixture_is_stable(grpc_addr: str) ->
         assert set(contract["lineage_required_fields"]).issubset(item.keys())
         assert item["event"]
         assert item["outcome"]
+    lineage_attr_keys = {key for item in lineage for key in dict(item["attributes"]).keys()}
+    assert set(contract["lineage_attribute_required_keys"]).issubset(lineage_attr_keys)
 
     assert int(attrs["queue_delay_ms"]) >= 0
     assert int(attrs["dispatch_latency_ms"]) >= 0
