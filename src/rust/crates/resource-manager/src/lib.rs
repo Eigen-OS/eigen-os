@@ -42,6 +42,10 @@ pub const MULTI_DEVICE_EXECUTION_CONTRACT_VERSION: &str = "2.0.0";
 pub const CLUSTER_CONTROL_PLANE_CONTRACT_VERSION: &str = "1.0.0";
 /// SemVer version for cluster assignment lineage metadata envelopes.
 pub const CLUSTER_ASSIGNMENT_LINEAGE_VERSION: &str = "1.0.0";
+/// SemVer version for worker-node remote execution lifecycle contract artifacts.
+pub const WORKER_NODE_EXECUTION_CONTRACT_VERSION: &str = "1.0.0";
+/// SemVer version for runtime artifact staging/materialization metadata.
+pub const WORKER_RUNTIME_ARTIFACT_CONTRACT_VERSION: &str = "1.0.0";
 
 /// Runtime mode for control-plane bootstrap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -119,6 +123,275 @@ pub enum ClusterControlPlaneError {
     EmptyJobId,
     NoWorkersRegistered,
     NoEligibleWorkers,
+}
+
+/// Runtime artifact descriptor passed to worker for materialization.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkerRuntimeArtifactRef {
+    pub artifact_id: String,
+    pub uri: String,
+    pub checksum: String,
+}
+
+/// Materialized artifact record persisted for debuggable execution replay.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkerRuntimeArtifactMaterialization {
+    pub artifact_contract_version: &'static str,
+    pub artifact_id: String,
+    pub uri: String,
+    pub checksum: String,
+    pub materialized_at_ms: u64,
+}
+
+/// Worker lifecycle state for a remote execution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkerExecutionState {
+    Running,
+    Completed,
+    Cancelled,
+    TimedOut,
+}
+
+/// Worker start request (remote execution contract).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkerExecutionStartRequest {
+    pub assignment_id: String,
+    pub worker_id: String,
+    pub lease_id: String,
+    pub idempotency_key: String,
+    pub runtime_artifacts: Vec<WorkerRuntimeArtifactRef>,
+}
+
+/// Worker execution heartbeat payload.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkerExecutionHeartbeat {
+    pub execution_id: String,
+    pub lease_id: String,
+}
+
+/// Worker completion payload.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkerExecutionCompleteRequest {
+    pub execution_id: String,
+    pub lease_id: String,
+    pub output_ref: String,
+}
+
+/// Worker cancellation payload.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkerExecutionCancelRequest {
+    pub execution_id: String,
+    pub reason: String,
+}
+
+/// Execution record persisted by worker-node service.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkerExecutionRecord {
+    pub worker_contract_version: &'static str,
+    pub execution_id: String,
+    pub assignment_id: String,
+    pub worker_id: String,
+    pub lease_id: String,
+    pub idempotency_key: String,
+    pub state: WorkerExecutionState,
+    pub started_at_ms: u64,
+    pub last_heartbeat_ms: u64,
+    pub completed_at_ms: Option<u64>,
+    pub output_ref: Option<String>,
+    pub cancellation_intent: Option<String>,
+    pub materialized_artifacts: Vec<WorkerRuntimeArtifactMaterialization>,
+}
+
+/// Start result including idempotent replay marker.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkerExecutionStartResult {
+    pub execution: WorkerExecutionRecord,
+    pub idempotent_replay: bool,
+}
+
+/// Worker-node lifecycle API errors.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkerExecutionError {
+    EmptyAssignmentId,
+    EmptyWorkerId,
+    EmptyLeaseId,
+    EmptyIdempotencyKey,
+    UnknownExecutionId,
+    IdempotencyConflict,
+    LeaseMismatch,
+    NotRunning,
+}
+
+/// In-memory worker-node service implementing deterministic remote-execution lifecycle.
+#[derive(Debug, Clone)]
+pub struct WorkerNodeService {
+    heartbeat_timeout_ms: u64,
+    sequence: u64,
+    executions: HashMap<String, WorkerExecutionRecord>,
+    idempotency_index: HashMap<String, String>,
+}
+
+impl WorkerNodeService {
+    pub fn new(heartbeat_timeout_ms: u64) -> Self {
+        Self {
+            heartbeat_timeout_ms: heartbeat_timeout_ms.max(1),
+            sequence: 0,
+            executions: HashMap::new(),
+            idempotency_index: HashMap::new(),
+        }
+    }
+
+    pub fn start(
+        &mut self,
+        request: WorkerExecutionStartRequest,
+        now_ms: u64,
+    ) -> Result<WorkerExecutionStartResult, WorkerExecutionError> {
+        if request.assignment_id.trim().is_empty() {
+            return Err(WorkerExecutionError::EmptyAssignmentId);
+        }
+        if request.worker_id.trim().is_empty() {
+            return Err(WorkerExecutionError::EmptyWorkerId);
+        }
+        if request.lease_id.trim().is_empty() {
+            return Err(WorkerExecutionError::EmptyLeaseId);
+        }
+        if request.idempotency_key.trim().is_empty() {
+            return Err(WorkerExecutionError::EmptyIdempotencyKey);
+        }
+
+        if let Some(existing_execution_id) = self.idempotency_index.get(request.idempotency_key.as_str()) {
+            let existing = self
+                .executions
+                .get(existing_execution_id)
+                .expect("idempotency index must reference existing execution");
+            if existing.assignment_id != request.assignment_id || existing.worker_id != request.worker_id {
+                return Err(WorkerExecutionError::IdempotencyConflict);
+            }
+            return Ok(WorkerExecutionStartResult {
+                execution: existing.clone(),
+                idempotent_replay: true,
+            });
+        }
+
+        self.sequence += 1;
+        let execution_id = format!("{}-exec-{:06}", request.assignment_id.trim(), self.sequence);
+        let mut artifacts = request.runtime_artifacts;
+        artifacts.sort_by(|left, right| {
+            left.uri
+                .cmp(&right.uri)
+                .then_with(|| left.artifact_id.cmp(&right.artifact_id))
+        });
+        artifacts.dedup_by(|left, right| left.artifact_id == right.artifact_id && left.uri == right.uri);
+        let materialized_artifacts = artifacts
+            .into_iter()
+            .map(|artifact| WorkerRuntimeArtifactMaterialization {
+                artifact_contract_version: WORKER_RUNTIME_ARTIFACT_CONTRACT_VERSION,
+                artifact_id: artifact.artifact_id.trim().to_string(),
+                uri: artifact.uri.trim().to_string(),
+                checksum: artifact.checksum.trim().to_string(),
+                materialized_at_ms: now_ms,
+            })
+            .collect();
+
+        let execution = WorkerExecutionRecord {
+            worker_contract_version: WORKER_NODE_EXECUTION_CONTRACT_VERSION,
+            execution_id: execution_id.clone(),
+            assignment_id: request.assignment_id.trim().to_string(),
+            worker_id: request.worker_id.trim().to_string(),
+            lease_id: request.lease_id.trim().to_string(),
+            idempotency_key: request.idempotency_key.trim().to_string(),
+            state: WorkerExecutionState::Running,
+            started_at_ms: now_ms,
+            last_heartbeat_ms: now_ms,
+            completed_at_ms: None,
+            output_ref: None,
+            cancellation_intent: None,
+            materialized_artifacts,
+        };
+
+        self.idempotency_index
+            .insert(execution.idempotency_key.clone(), execution_id.clone());
+        self.executions.insert(execution_id, execution.clone());
+
+        Ok(WorkerExecutionStartResult {
+            execution,
+            idempotent_replay: false,
+        })
+    }
+
+    pub fn heartbeat(
+        &mut self,
+        request: WorkerExecutionHeartbeat,
+        now_ms: u64,
+    ) -> Result<WorkerExecutionRecord, WorkerExecutionError> {
+        let execution = self
+            .executions
+            .get_mut(request.execution_id.as_str())
+            .ok_or(WorkerExecutionError::UnknownExecutionId)?;
+        if execution.lease_id != request.lease_id {
+            return Err(WorkerExecutionError::LeaseMismatch);
+        }
+        if execution.state != WorkerExecutionState::Running {
+            return Err(WorkerExecutionError::NotRunning);
+        }
+
+        if now_ms.saturating_sub(execution.last_heartbeat_ms) > self.heartbeat_timeout_ms {
+            execution.state = WorkerExecutionState::TimedOut;
+            execution.completed_at_ms = Some(now_ms);
+            return Ok(execution.clone());
+        }
+
+        execution.last_heartbeat_ms = now_ms;
+        Ok(execution.clone())
+    }
+
+    pub fn complete(
+        &mut self,
+        request: WorkerExecutionCompleteRequest,
+        now_ms: u64,
+    ) -> Result<WorkerExecutionRecord, WorkerExecutionError> {
+        let execution = self
+            .executions
+            .get_mut(request.execution_id.as_str())
+            .ok_or(WorkerExecutionError::UnknownExecutionId)?;
+        if execution.lease_id != request.lease_id {
+            return Err(WorkerExecutionError::LeaseMismatch);
+        }
+        if execution.state != WorkerExecutionState::Running {
+            return Err(WorkerExecutionError::NotRunning);
+        }
+        if execution.cancellation_intent.is_some() {
+            execution.state = WorkerExecutionState::Cancelled;
+            execution.completed_at_ms = Some(now_ms);
+            return Ok(execution.clone());
+        }
+
+        execution.state = WorkerExecutionState::Completed;
+        execution.completed_at_ms = Some(now_ms);
+        execution.output_ref = Some(request.output_ref.trim().to_string());
+        Ok(execution.clone())
+    }
+
+    pub fn cancel(
+        &mut self,
+        request: WorkerExecutionCancelRequest,
+        now_ms: u64,
+    ) -> Result<WorkerExecutionRecord, WorkerExecutionError> {
+        let execution = self
+            .executions
+            .get_mut(request.execution_id.as_str())
+            .ok_or(WorkerExecutionError::UnknownExecutionId)?;
+        execution.cancellation_intent = Some(request.reason.trim().to_string());
+        if execution.state == WorkerExecutionState::Running {
+            execution.state = WorkerExecutionState::Cancelled;
+            execution.completed_at_ms = Some(now_ms);
+        }
+        Ok(execution.clone())
+    }
+
+    pub fn execution(&self, execution_id: &str) -> Option<&WorkerExecutionRecord> {
+        self.executions.get(execution_id)
+    }
 }
 
 /// Bootstraps control-plane state and deterministically discovers workers.
