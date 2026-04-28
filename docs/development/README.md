@@ -93,6 +93,9 @@ git fetch origin main:main
 - Phase 3 RFC/ADR gap analysis: [`phase-3-rfc-adr-gap-analysis.md`](phase-3-rfc-adr-gap-analysis.md)
 - Phase 3 release readiness checklist: [`phase-3-release-readiness-checklist.md`](phase-3-release-readiness-checklist.md)
 - Phase 3 compatibility report: [`phase-3-compatibility-report.md`](phase-3-compatibility-report.md)
+- Phase 4 intelligent runtime plan: [`phase-4-intelligent-runtime.md`](phase-4-intelligent-runtime.md)
+- Phase 4 issue pack: [`phase-4-issue-pack.md`](phase-4-issue-pack.md)
+- Phase 4 RFC/ADR gap analysis: [`phase-4-rfc-adr-gap-analysis.md`](phase-4-rfc-adr-gap-analysis.md)
 - Architecture decisions: [`../adr/README.md`](../adr/README.md)
 - RFC package: [`../../rfcs/`](../../rfcs/)
 
