@@ -3,9 +3,11 @@
 ## Status
 
 - **Phase**: 5 (Post-MVP)
-- **Planning status**: Active (RFC package accepted and indexed)
+- **Planning status**: Completed (implemented + release package signed)
 - **Started on**: 2026-04-28
 - **Last updated**: 2026-04-28
+- **Release closure artifacts**: [`phase-5-release-readiness-checklist.md`](phase-5-release-readiness-checklist.md), [`phase-5-compatibility-report.md`](phase-5-compatibility-report.md)
+- **Synchronized ADR package**: [`../adr/0014-phase5-cluster-runtime-control-plane-contract-v1.md`](../adr/0014-phase5-cluster-runtime-control-plane-contract-v1.md), [`../adr/0015-phase5-distributed-queue-and-delivery-semantics-v1.md`](../adr/0015-phase5-distributed-queue-and-delivery-semantics-v1.md), [`../adr/0016-phase5-distributed-tracing-and-execution-topology-contract-v1.md`](../adr/0016-phase5-distributed-tracing-and-execution-topology-contract-v1.md)
 - **Previous phase closure**: [`phase-4-release-readiness-checklist.md`](phase-4-release-readiness-checklist.md)
 - **Execution backlog**: [`phase-5-issue-pack.md`](phase-5-issue-pack.md)
 - **RFC/ADR coverage check**: [`phase-5-rfc-adr-gap-analysis.md`](phase-5-rfc-adr-gap-analysis.md)
@@ -48,6 +50,8 @@ Transition Eigen-OS from single-node execution to deterministic, observable, and
 - Autonomous cross-cluster optimization loops.
 
 ## Exit criteria (Definition of Done)
+
+> Status: ✅ All closure criteria satisfied on 2026-04-28.
 
 1. Cluster mode can run submit/watch/results flow with at least one control-plane node and multiple workers.
 2. Worker registration, lease, retry, and cancellation flows are deterministic and fixture-tested.

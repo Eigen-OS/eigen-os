@@ -1,9 +1,10 @@
 # RFC 0027: Phase-5 Distributed Queue and Delivery Semantics v1
 
-- **Status**: Accepted
+- **Status**: Implemented
 - **Authors**: Eigen OS maintainers
 - **Created**: 2026-04-28
 - **Accepted on**: 2026-04-28
+- **Implemented on**: 2026-04-28
 - **Target Milestone**: Phase 5
 - **Tracking Issue**: P5-08 (docs/development/phase-5-issue-pack.md)
 - **Replaces / Related**: RFC 0026, docs/development/phase-5-distributed-execution.md

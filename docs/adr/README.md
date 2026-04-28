@@ -24,6 +24,9 @@ Architecture Decision Records (ADRs) capture decisions that are already adopted 
 - [0011 — Phase-4 backend selection scoring contract v1](0011-phase4-backend-selection-scoring-contract-v1.md)
 - [0012 — Phase-4 explainability API contract v1](0012-phase4-explainability-api-contract-v1.md)
 - [0013 — Phase-4 scheduling policy engine contract v1](0013-phase4-scheduling-policy-engine-contract-v1.md)
+- [0014 — Phase-5 cluster runtime control-plane contract v1](0014-phase5-cluster-runtime-control-plane-contract-v1.md)
+- [0015 — Phase-5 distributed queue and delivery semantics v1](0015-phase5-distributed-queue-and-delivery-semantics-v1.md)
+- [0016 — Phase-5 distributed tracing and execution topology contract v1](0016-phase5-distributed-tracing-and-execution-topology-contract-v1.md)
 
 ## Phase-3 status
 
@@ -38,3 +41,10 @@ Architecture Decision Records (ADRs) capture decisions that are already adopted 
 - Required coverage check: [`../development/phase-4-rfc-adr-gap-analysis.md`](../development/phase-4-rfc-adr-gap-analysis.md).
 - Phase-4 release package: [`../development/phase-4-release-readiness-checklist.md`](../development/phase-4-release-readiness-checklist.md), [`../development/phase-4-compatibility-report.md`](../development/phase-4-compatibility-report.md).
 - Policy reminder: when a Phase-4 RFC is marked `Implemented`, corresponding ADR record(s) must be synchronized before release closure.
+
+## Phase-5 status
+
+- As of 2026-04-28, implemented Phase-5 RFCs are synchronized with ADRs (ADR 0014/0015/0016).
+- Required coverage check: [`../development/phase-5-rfc-adr-gap-analysis.md`](../development/phase-5-rfc-adr-gap-analysis.md).
+- Phase-5 release package: [`../development/phase-5-release-readiness-checklist.md`](../development/phase-5-release-readiness-checklist.md), [`../development/phase-5-compatibility-report.md`](../development/phase-5-compatibility-report.md).
+- Policy reminder: when a Phase-5 RFC is marked `Implemented`, corresponding ADR record(s) must be synchronized before release closure.
