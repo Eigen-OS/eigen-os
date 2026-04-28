@@ -225,7 +225,7 @@ fn queue_delivery_contract_matches_golden_fixture() {
         }
     });
 
-    assert_eq!(snapshot, fixture("queue_delivery_contract_v1_0_0.json"));
+    assert_eq!(snapshot, fixture("queue_delivery_contract_v1_0_1.json"));
 }
 
 #[test]
@@ -240,7 +240,7 @@ fn all_orchestration_contracts_keep_explicit_version_markers() {
     assert_eq!(CLUSTER_ASSIGNMENT_LINEAGE_VERSION, "1.0.0");
     assert_eq!(WORKER_NODE_EXECUTION_CONTRACT_VERSION, "1.0.0");
     assert_eq!(WORKER_RUNTIME_ARTIFACT_CONTRACT_VERSION, "1.0.0");
-    assert_eq!(DISTRIBUTED_QUEUE_CONTRACT_VERSION, "1.0.0");
-    assert_eq!(QUEUE_LEASE_EVENT_VERSION, "1.0.0");
-    assert_eq!(QUEUE_DEAD_LETTER_CONTRACT_VERSION, "1.0.0");
+    assert_eq!(DISTRIBUTED_QUEUE_CONTRACT_VERSION, "1.0.1");
+    assert_eq!(QUEUE_LEASE_EVENT_VERSION, "1.0.1");
+    assert_eq!(QUEUE_DEAD_LETTER_CONTRACT_VERSION, "1.0.1");
 }

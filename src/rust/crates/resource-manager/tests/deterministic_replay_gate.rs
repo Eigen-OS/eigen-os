@@ -4,8 +4,12 @@ use std::path::PathBuf;
 use resource_manager::{
     BACKEND_SELECTION_EXPLAIN_REQUEST_VERSION, BACKEND_SELECTION_EXPLAIN_RESPONSE_VERSION,
     BackendCandidateDescriptor, BackendRuntimeDescriptor, BackendScoringProfile,
-    BackendWorkloadDescriptor, ExplainBackendSelectionRequest, PolicyBundle, PolicyCandidate,
-    PolicyMode, PolicyPriorityMap, UserIntentWeights, explain_backend_selection,
+    BackendWorkloadDescriptor, CLUSTER_ASSIGNMENT_LINEAGE_VERSION,
+    CLUSTER_CONTROL_PLANE_CONTRACT_VERSION, ClusterWorkerRegistration, ClusterWorkerState,
+    DISTRIBUTED_QUEUE_CONTRACT_VERSION, ExplainBackendSelectionRequest, InMemoryQueueAdapter,
+    PolicyBundle, PolicyCandidate, PolicyMode, PolicyPriorityMap,
+    QUEUE_DEAD_LETTER_CONTRACT_VERSION, QUEUE_LEASE_EVENT_VERSION, QueueAdapter,
+    QueueTaskEnvelope, UserIntentWeights, assign_cluster_job, explain_backend_selection,
     resolve_policy_bundle, score_backend_candidates,
 };
 use serde_json::{Value, json};
@@ -204,6 +208,46 @@ fn build_policy_candidates(value: &Value) -> Vec<PolicyCandidate> {
             learning_hint_score: candidate["learning_hint_score"]
                 .as_f64()
                 .expect("learning_hint_score must exist"),
+        })
+        .collect()
+}
+
+fn build_cluster_workers(value: &Value) -> Vec<ClusterWorkerRegistration> {
+    value
+        .as_array()
+        .expect("workers must exist")
+        .iter()
+        .map(|worker| {
+            let state = match worker["state"]
+                .as_str()
+                .expect("worker state must exist")
+            {
+                "ready" => ClusterWorkerState::Ready,
+                "degraded" => ClusterWorkerState::Degraded,
+                "draining" => ClusterWorkerState::Draining,
+                "offline" => ClusterWorkerState::Offline,
+                _ => ClusterWorkerState::Offline,
+            };
+
+            ClusterWorkerRegistration {
+                worker_id: worker["worker_id"]
+                    .as_str()
+                    .expect("worker_id must exist")
+                    .to_string(),
+                state,
+                capability_tags: worker["capability_tags"]
+                    .as_array()
+                    .expect("capability_tags must exist")
+                    .iter()
+                    .map(|tag| tag.as_str().expect("capability tag must be str").to_string())
+                    .collect(),
+                max_parallel_tasks: worker["max_parallel_tasks"]
+                    .as_u64()
+                    .expect("max_parallel_tasks must exist") as u32,
+                current_load: worker["current_load"]
+                    .as_u64()
+                    .expect("current_load must exist") as u32,
+            }
         })
         .collect()
 }
@@ -422,4 +466,220 @@ fn drift_diagnostics_identify_changed_input_or_branch() {
         panic_message.contains("non-deterministic input or decision branch"),
         "diagnostic must explain branch/input drift"
     );
+}
+
+#[test]
+fn distributed_scheduling_replay_gate_matches_recorded_artifacts() {
+    let replay = fixture("distributed_scheduling_replay_v1_0_1.json");
+
+    let workers = build_cluster_workers(&replay["input"]["workers"]);
+    let required_tags: Vec<String> = replay["input"]["required_tags"]
+        .as_array()
+        .expect("required_tags must exist")
+        .iter()
+        .map(|tag| tag.as_str().expect("required tag must be str").to_string())
+        .collect();
+
+    let assignment = assign_cluster_job(
+        replay["input"]["cluster_id"]
+            .as_str()
+            .expect("cluster_id must exist"),
+        replay["input"]["job_id"].as_str().expect("job_id must exist"),
+        replay["input"]["assignment_sequence"]
+            .as_u64()
+            .expect("assignment_sequence must exist"),
+        replay["input"]["assignment_epoch_ms"]
+            .as_u64()
+            .expect("assignment_epoch_ms must exist"),
+        &workers,
+        &required_tags,
+        &[],
+    )
+    .expect("distributed assignment fixture must be valid");
+
+    let mut queue = InMemoryQueueAdapter::new();
+    for task in replay["input"]["queue_tasks"]
+        .as_array()
+        .expect("queue_tasks must exist")
+    {
+        queue
+            .enqueue(QueueTaskEnvelope {
+                queue_contract_version: DISTRIBUTED_QUEUE_CONTRACT_VERSION,
+                queue_name: task["queue_name"]
+                    .as_str()
+                    .expect("queue_name must exist")
+                    .to_string(),
+                task_id: task["task_id"].as_str().expect("task_id must exist").to_string(),
+                job_id: assignment.job_id.clone(),
+                assignment_id: assignment.assignment_id.clone(),
+                idempotency_key: task["idempotency_key"]
+                    .as_str()
+                    .expect("idempotency_key must exist")
+                    .to_string(),
+                tenant_id: task["tenant_id"]
+                    .as_str()
+                    .expect("tenant_id must exist")
+                    .to_string(),
+                project_id: task["project_id"]
+                    .as_str()
+                    .expect("project_id must exist")
+                    .to_string(),
+                attempt: 1,
+                max_attempts: task["max_attempts"].as_u64().expect("max_attempts must exist") as u32,
+                visibility_timeout_seconds: task["visibility_timeout_seconds"]
+                    .as_u64()
+                    .expect("visibility_timeout_seconds must exist") as u32,
+                enqueued_at_ms: task["enqueued_at_ms"]
+                    .as_u64()
+                    .expect("enqueued_at_ms must exist"),
+            })
+            .expect("enqueue must succeed");
+    }
+
+    let first_lease = queue
+        .lease(
+            replay["input"]["queue_name"]
+                .as_str()
+                .expect("queue_name must exist"),
+            "worker-a",
+            replay["input"]["first_lease_ms"]
+                .as_u64()
+                .expect("first_lease_ms must exist"),
+        )
+        .expect("first lease must succeed")
+        .expect("first task should be leased");
+    let second_lease = queue
+        .lease(
+            replay["input"]["queue_name"]
+                .as_str()
+                .expect("queue_name must exist"),
+            "worker-b",
+            replay["input"]["second_lease_ms"]
+                .as_u64()
+                .expect("second_lease_ms must exist"),
+        )
+        .expect("second lease must succeed")
+        .expect("second task should be leased");
+
+    let redelivery_a = queue
+        .lease(
+            replay["input"]["queue_name"]
+                .as_str()
+                .expect("queue_name must exist"),
+            "worker-c",
+            replay["input"]["sweep_expired_ms"]
+                .as_u64()
+                .expect("sweep_expired_ms must exist"),
+        )
+        .expect("redelivery lease A must succeed")
+        .expect("redelivery A should be available");
+    let redelivery_b = queue
+        .lease(
+            replay["input"]["queue_name"]
+                .as_str()
+                .expect("queue_name must exist"),
+            "worker-d",
+            replay["input"]["sweep_expired_ms"]
+                .as_u64()
+                .expect("sweep_expired_ms must exist"),
+        )
+        .expect("redelivery lease B must succeed")
+        .expect("redelivery B should be available");
+
+    let _ = queue
+        .requeue(
+            &redelivery_b.lease_id,
+            "worker-d",
+            "worker-d-requeue",
+            replay["input"]["requeue_ms"]
+                .as_u64()
+                .expect("requeue_ms must exist"),
+        )
+        .expect("requeue must succeed");
+    let dead_letter_lease = queue
+        .lease(
+            replay["input"]["queue_name"]
+                .as_str()
+                .expect("queue_name must exist"),
+            "worker-e",
+            replay["input"]["dead_letter_lease_ms"]
+                .as_u64()
+                .expect("dead_letter_lease_ms must exist"),
+        )
+        .expect("dead-letter lease must succeed")
+        .expect("task should be redelivered for final attempt");
+    let _ = queue
+        .requeue(
+            &dead_letter_lease.lease_id,
+            "worker-e",
+            "worker-e-final-requeue",
+            replay["input"]["dead_letter_requeue_ms"]
+                .as_u64()
+                .expect("dead_letter_requeue_ms must exist"),
+        )
+        .expect("dead-letter requeue must succeed");
+
+    let dead_letter = queue
+        .dead_letters()
+        .first()
+        .expect("dead-letter record must exist");
+
+    let snapshot = json!({
+        "assignment": {
+            "cluster_contract_version": assignment.cluster_contract_version,
+            "lineage_version": assignment.lineage.lineage_version,
+            "assignment_id": assignment.assignment_id,
+            "selected_worker_id": assignment.selected_worker_id,
+            "candidate_workers": assignment.candidate_workers,
+            "assignment_trace": assignment.assignment_trace,
+        },
+        "queue": {
+            "queue_contract_version": DISTRIBUTED_QUEUE_CONTRACT_VERSION,
+            "lease_event_version": QUEUE_LEASE_EVENT_VERSION,
+            "dead_letter_version": QUEUE_DEAD_LETTER_CONTRACT_VERSION,
+            "first_lease": {
+                "lease_id": first_lease.lease_id,
+                "task_id": first_lease.task_id,
+                "attempt": first_lease.attempt,
+            },
+            "second_lease": {
+                "lease_id": second_lease.lease_id,
+                "task_id": second_lease.task_id,
+                "attempt": second_lease.attempt,
+            },
+            "redelivery_sequence": [
+                {
+                    "lease_id": redelivery_a.lease_id,
+                    "task_id": redelivery_a.task_id,
+                    "attempt": redelivery_a.attempt,
+                },
+                {
+                    "lease_id": redelivery_b.lease_id,
+                    "task_id": redelivery_b.task_id,
+                    "attempt": redelivery_b.attempt,
+                }
+            ],
+            "dead_letter": {
+                "task_id": dead_letter.task_id,
+                "attempt": dead_letter.attempt,
+                "max_attempts": dead_letter.max_attempts,
+                "reason": dead_letter.reason,
+            },
+            "metrics": {
+                "queue_enqueued_total": queue.metrics().queue_enqueued_total,
+                "queue_lease_acquired_total": queue.metrics().queue_lease_acquired_total,
+                "queue_redelivery_total": queue.metrics().queue_redelivery_total,
+                "queue_dead_letter_total": queue.metrics().queue_dead_letter_total,
+            },
+        },
+    });
+
+    assert_replay_snapshot_stable(
+        "distributed assignment + lease + retry replay",
+        &snapshot,
+        &replay["expected"],
+    );
+
+    assert_eq!(assignment.cluster_contract_version, CLUSTER_CONTROL_PLANE_CONTRACT_VERSION);
+    assert_eq!(assignment.lineage.lineage_version, CLUSTER_ASSIGNMENT_LINEAGE_VERSION);
 }

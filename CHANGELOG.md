@@ -18,6 +18,7 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 
 ### Added
 
+- Phase-5 P5-07 determinism and replay gate for distributed scheduling (`resource-manager` package `0.10.1`) with assignment + lease + retry replay fixture coverage, deterministic lease-expiry sweep ordering, drift-path diagnostics, and CI gating for distributed scheduling artifact regressions.
 - Phase-5 P5-06 SRE pack for cluster health and queue reliability (`runtime-observability` assets `0.2.0`) with stable `eigen_cluster_*` metrics contract (`1.0.0`), control-plane -> queue -> worker Grafana dashboard, Prometheus reliability alerts, and deterministic triage/rollback runbook.
 - Phase-5 P5-05 Eigen-Lang distributed execution metadata + topology hints (`eigen-compiler` package `0.4.0`) with deterministic distributed target validation, explicit distributed metadata version markers (`1.0.0`), AQO distributed execution envelope emission, and conformance fixtures for compatibility protection.
 - Phase-5 P5-03 pluggable distributed queue layer and delivery semantics v1 (`resource-manager` package `0.10.0`) with provider-neutral queue adapter contract (`enqueue`/`lease`/`ack`/`requeue`), deterministic lease-expiration redelivery, explicit dead-letter records, and compatibility fixtures for queue lease/dead-letter version markers.
@@ -74,6 +75,12 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 - **Version impact:** MINOR (adds distributed compile metadata/hints and deterministic validation; `eigen-compiler` package advanced to `0.4.0`).
 - **Compatibility:** Additive; existing AQO core fields remain unchanged while distributed metadata and AQO `distributed_execution` envelope fields are added under explicit `1.0.0` markers.
 - **Migration notes:** No mandatory migration. Consumers should pin `metadata.distributed.execution_metadata_version`, `metadata.distributed.topology_hints_version`, and `aqo.distributed_execution.version` before relying on distributed-target/topology hint behavior.
+
+### Phase-5: Determinism and Replay Gate for Distributed Scheduling (P5-07)
+
+- **Version impact:** PATCH (distributed queue delivery determinism bug fix + replay quality gate expansion; Rust workspace package advanced to `0.10.1`).
+- **Compatibility:** Backward compatible. Cluster control-plane (`1.0.0`) and lineage (`1.0.0`) contracts are unchanged; distributed queue envelope, lease event, and dead-letter artifact markers advance from `1.0.0` to `1.0.1` for deterministic retry-ordering fix coverage.
+- **Migration notes:** No mandatory migration. CI should run `scripts/ci/check-runtime-decision-determinism.sh`; distributed consumers should pin `DISTRIBUTED_QUEUE_CONTRACT_VERSION`, `QUEUE_LEASE_EVENT_VERSION`, and `QUEUE_DEAD_LETTER_CONTRACT_VERSION` at `1.0.1` and validate replay drift diagnostics for assignment/lease/retry transitions.
 
 ### Phase-4: ADR Synchronization and Release Meta (P4-09)
 
