@@ -1,8 +1,9 @@
 # RFC 0025: Phase-4 Scheduling Policy Engine Contract v1
 
-- **Status**: Draft
+- **Status**: Accepted
 - **Authors**: Eigen OS maintainers
 - **Created**: 2026-04-28
+- **Accepted**: 2026-04-28
 - **Target Milestone**: Phase 4
 - **Tracking Issue**: P4-08 (docs/development/phase-4-issue-pack.md)
 - **Replaces / Related**: docs/development/phase-4-intelligent-runtime.md, RFC 0023
