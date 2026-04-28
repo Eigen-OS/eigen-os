@@ -47,11 +47,11 @@ pub const WORKER_NODE_EXECUTION_CONTRACT_VERSION: &str = "1.0.0";
 /// SemVer version for runtime artifact staging/materialization metadata.
 pub const WORKER_RUNTIME_ARTIFACT_CONTRACT_VERSION: &str = "1.0.0";
 /// SemVer version for provider-neutral distributed queue envelope contract.
-pub const DISTRIBUTED_QUEUE_CONTRACT_VERSION: &str = "1.0.0";
+pub const DISTRIBUTED_QUEUE_CONTRACT_VERSION: &str = "1.0.1";
 /// SemVer version for queue lease lifecycle event records.
-pub const QUEUE_LEASE_EVENT_VERSION: &str = "1.0.0";
+pub const QUEUE_LEASE_EVENT_VERSION: &str = "1.0.1";
 /// SemVer version for queue dead-letter records.
-pub const QUEUE_DEAD_LETTER_CONTRACT_VERSION: &str = "1.0.0";
+pub const QUEUE_DEAD_LETTER_CONTRACT_VERSION: &str = "1.0.1";
 
 /// Runtime mode for control-plane bootstrap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -400,19 +400,22 @@ impl InMemoryQueueAdapter {
     }
 
     fn sweep_expired_leases(&mut self, now_ms: u64) {
-        let expired_ids: Vec<String> = self
+        let mut expired_ids: Vec<(String, u64)> = self
             .in_flight
             .iter()
             .filter_map(|(lease_id, lease)| {
                 if now_ms >= lease.lease.lease_expires_at_ms {
-                    Some(lease_id.clone())
+                    Some((lease_id.clone(), lease.lease.lease_expires_at_ms))
                 } else {
                     None
                 }
             })
             .collect();
+        expired_ids.sort_by(|(left_id, left_expiry), (right_id, right_expiry)| {
+            left_expiry.cmp(right_expiry).then_with(|| left_id.cmp(right_id))
+        });
 
-        for lease_id in expired_ids {
+        for (lease_id, _) in expired_ids {
             let lease = self
                 .in_flight
                 .remove(&lease_id)
