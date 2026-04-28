@@ -26,8 +26,8 @@ class CompilationService:
         self._comp_pb = comp_pb
         self._types_pb = types_pb
 
-    def _compile_response(self, *, source: bytes, source_ref: str | None = None):
-        result = compile_eigen_lang(source, source_ref=source_ref)
+    def _compile_response(self, *, source: bytes, source_ref: str | None = None, options: dict[str, str] | None = None):
+        result = compile_eigen_lang(source, source_ref=source_ref, options=options)
         return self._comp_pb.CompileCircuitResponse(
             circuit=self._types_pb.CircuitPayload(
                 format=_circuit_format_value(self._types_pb, "CIRCUIT_FORMAT_AQO_JSON", "AQO_JSON"),
@@ -45,7 +45,7 @@ class CompilationService:
         source = request.source if request.WhichOneof("input") == "source" else b""
         source_ref = request.source_ref if request.WhichOneof("input") == "source_ref" else None
         try:
-            resp = self._compile_response(source=source, source_ref=source_ref)
+            resp = self._compile_response(source=source, source_ref=source_ref, options=dict(request.options))
             _log_end("CompilationService.CompileCircuit", "", context)
             return resp
         except CompilerValidationError as exc:
@@ -60,7 +60,7 @@ class CompilationService:
         source = request.source if request.WhichOneof("input") == "source" else b""
         source_ref = request.source_ref if request.WhichOneof("input") == "source_ref" else None
         try:
-            compiled = self._compile_response(source=source, source_ref=source_ref)
+            compiled = self._compile_response(source=source, source_ref=source_ref, options=dict(request.options))
         except CompilerValidationError as exc:
             abort_invalid_argument(context, message="validation failed", violations=exc.violations)
 
