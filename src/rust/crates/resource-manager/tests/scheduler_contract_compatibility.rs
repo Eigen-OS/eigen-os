@@ -3,11 +3,12 @@ use std::fs;
 use std::path::PathBuf;
 
 use resource_manager::{
-    plan_split, AdmissionPolicy, DispatchReasonCode, FairnessPolicy, ScheduledJob, Scheduler,
-    DEVICE_SCORE_VERSION, MULTI_DEVICE_EXECUTION_CONTRACT_VERSION, REBALANCING_POLICY_VERSION,
-    SCHEDULER_DECISION_VERSION,
+    AdmissionPolicy, BACKEND_SCORING_CONTRACT_VERSION, BACKEND_SCORING_PROFILE_SCHEMA_VERSION,
+    DEVICE_SCORE_VERSION, DispatchReasonCode, FairnessPolicy,
+    MULTI_DEVICE_EXECUTION_CONTRACT_VERSION, REBALANCING_POLICY_VERSION,
+    SCHEDULER_DECISION_VERSION, ScheduledJob, Scheduler, plan_split,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 fn fixture(path: &str) -> Value {
     let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -52,8 +53,9 @@ fn dispatch_reason_codes_match_golden_fixture() {
         format!("{:?}", DispatchReasonCode::DeviceScoreTieBreak),
     ]);
 
-    let expected: BTreeSet<String> = serde_json::from_value(fixture("dispatch_reason_codes_v2_1_0.json"))
-        .expect("reason-code fixture must be an array of strings");
+    let expected: BTreeSet<String> =
+        serde_json::from_value(fixture("dispatch_reason_codes_v2_1_0.json"))
+            .expect("reason-code fixture must be an array of strings");
 
     assert_eq!(current, expected);
 }
@@ -104,6 +106,8 @@ fn split_plan_manifest_contract_matches_golden_fixture() {
 fn all_orchestration_contracts_keep_explicit_version_markers() {
     assert_eq!(SCHEDULER_DECISION_VERSION, "2.1.0");
     assert_eq!(DEVICE_SCORE_VERSION, "2.1.0");
+    assert_eq!(BACKEND_SCORING_CONTRACT_VERSION, "1.0.0");
+    assert_eq!(BACKEND_SCORING_PROFILE_SCHEMA_VERSION, "1.0.0");
     assert_eq!(REBALANCING_POLICY_VERSION, "2.2.0");
     assert_eq!(MULTI_DEVICE_EXECUTION_CONTRACT_VERSION, "2.0.0");
 }
