@@ -9,4 +9,10 @@ echo "[scheduler-compat] contract compatibility snapshots (DTOs, reason codes, m
   cargo test -p resource-manager --test scheduler_contract_compatibility
 )
 
+echo "[scheduler-compat] deterministic replay drift gate (scoring + policy + explain)"
+(
+  cd "$ROOT_DIR"
+  bash scripts/ci/check-runtime-decision-determinism.sh
+)
+
 echo "[scheduler-compat] ✅ scheduler compatibility suite passed"

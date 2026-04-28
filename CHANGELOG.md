@@ -18,6 +18,7 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 
 ### Added
 
+- Phase-4 P4-07 deterministic replay quality gate (`resource-manager` package `0.7.0`) with recorded decision-replay fixtures for scoring/policy/explain artifacts, drift-detection diagnostics, and CI gate script for deterministic runtime regression blocking.
 - Phase-4 P4-06 intelligent runtime observability pack (`runtime-observability` assets `0.1.0`) with stable `eigen_runtime_*` metrics contract (`1.0.0`), decision-flow dashboard, Prometheus alerts, and triage/rollback runbook.
 - Phase-4 P4-02 scheduling policy engine and policy bundles (`resource-manager` package `0.5.0`) with versioned `PolicyBundle` schema (`1.0.0`), deterministic precedence-based resolution, and safe fallback artifacts for missing/invalid policy inputs.
 - Phase-4 P4-05 Eigen-Lang runtime-intelligence compile hints/diagnostics (`cli` in Rust workspace `0.6.0`) with deterministic unsupported-target/policy-conflict diagnostics, explicit hint metadata versions, and explainability-linked execution annotations in AQO metadata.
@@ -54,6 +55,12 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 - **Version impact:** MINOR (new compile metadata and diagnostics; Rust workspace package advanced to `0.6.0`).
 - **Compatibility:** Additive; existing AQO core fields remain unchanged while runtime-intelligence metadata/annotations are added and diagnostics are deterministic.
 - **Migration notes:** No mandatory migration. Consumers should pin `metadata.runtime_intelligence_hints.version`, `metadata.runtime_intelligence_hints.diagnostics_version`, and `metadata.execution_annotations.version`, and treat `RUNTIME_INTELLIGENCE_DIAGNOSTIC` as compile-time validation feedback.
+
+### Phase-4: Determinism and Reproducibility Gate for Runtime Decisions (P4-07)
+
+- **Version impact:** MINOR (new deterministic replay fixture suite + CI drift gate; Rust workspace package advanced to `0.7.0`).
+- **Compatibility:** Additive quality gate only; scoring contract (`1.0.0`), policy bundle schema (`1.0.0`), policy-resolution artifact (`1.0.0`), and explain response/request envelopes (`1.0.0`) remain unchanged.
+- **Migration notes:** No API migration required. CI pipelines should execute `scripts/ci/check-runtime-decision-determinism.sh` (or `scripts/test/run-scheduler-contract-compatibility-suite.sh`) to block uncontrolled decision drift and surface field-level diagnostics.
 
 ### Phase-3: Reproducibility and Determinism Gate (P3-08)
 
