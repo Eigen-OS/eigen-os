@@ -18,6 +18,8 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 
 ### Added
 
+
+- Phase-4 P4-08 RFC package for intelligent-runtime contracts accepted and indexed (`governance-docs` package `0.8.0`) covering RFC 0023/0024/0025 with explicit statuses, compatibility sections, and benchmark/test-plan sections.
 - Phase-4 P4-07 deterministic replay quality gate (`resource-manager` package `0.7.0`) with recorded decision-replay fixtures for scoring/policy/explain artifacts, drift-detection diagnostics, and CI gate script for deterministic runtime regression blocking.
 - Phase-4 P4-06 intelligent runtime observability pack (`runtime-observability` assets `0.1.0`) with stable `eigen_runtime_*` metrics contract (`1.0.0`), decision-flow dashboard, Prometheus alerts, and triage/rollback runbook.
 - Phase-4 P4-02 scheduling policy engine and policy bundles (`resource-manager` package `0.5.0`) with versioned `PolicyBundle` schema (`1.0.0`), deterministic precedence-based resolution, and safe fallback artifacts for missing/invalid policy inputs.

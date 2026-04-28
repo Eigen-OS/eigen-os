@@ -3,7 +3,7 @@
 ## Status
 
 - **Phase**: 4 (Post-MVP)
-- **Planning status**: Active (RFC package drafted)
+- **Planning status**: Active (RFC package accepted and indexed)
 - **Started on**: 2026-04-28
 - **Last updated**: 2026-04-28
 - **Previous phase closure**: [`phase-3-release-readiness-checklist.md`](phase-3-release-readiness-checklist.md)
