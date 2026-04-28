@@ -73,6 +73,12 @@ Eigen-Lang deliverables:
 - topology annotations
 - cluster-aware execution policies
 
+Planning artifacts:
+
+- [phase-5-distributed-execution.md](phase-5-distributed-execution.md)
+- [phase-5-issue-pack.md](phase-5-issue-pack.md)
+- [phase-5-rfc-adr-gap-analysis.md](phase-5-rfc-adr-gap-analysis.md)
+
 ## Phase-6: Plugin Ecosystem
 
 Goal: make Eigen-OS a platform.
@@ -115,8 +121,8 @@ Deliverables:
 
 ## Immediate Next Steps
 
-1. Kick off Phase-4 scoring module implementation
-2. Add scheduling policy configuration surfaces
-3. Implement explanation APIs for backend selection/execution
-4. Expose first Eigen-Lang runtime-intelligence diagnostics
-5. Prepare demo-ready explainability workflow
+1. Kick off Phase-5 cluster control-plane implementation
+2. Add worker service registration/heartbeat/cancellation flows
+3. Introduce pluggable queue abstraction and delivery semantics gates
+4. Implement distributed topology metadata and trace continuity checks
+5. Prepare distributed submit/watch/results demo in cluster mode
