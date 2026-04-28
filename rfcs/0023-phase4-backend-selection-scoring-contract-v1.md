@@ -1,9 +1,10 @@
 # RFC 0023: Phase-4 Backend Selection Scoring Contract v1
 
-- **Status**: Accepted
+- **Status**: Implemented
 - **Authors**: Eigen OS maintainers
 - **Created**: 2026-04-28
-- **Accepted**: 2026-04-28
+- **Accepted on**: 2026-04-28
+- **Implemented on**: 2026-04-28
 - **Target Milestone**: Phase 4
 - **Tracking Issue**: P4-08 (docs/development/phase-4-issue-pack.md)
 - **Replaces / Related**: docs/development/phase-4-intelligent-runtime.md, docs/roadmap.md
