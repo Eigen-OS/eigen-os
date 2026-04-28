@@ -17,7 +17,7 @@ from google.protobuf.timestamp_pb2 import Timestamp
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from .errors import abort_invalid_argument
+from .errors import abort_invalid_argument, abort_with_error_info
 from .observability import log_request_end, log_request_start, new_request_context
 from .qfs_store import QFS_STORE
 from .security import enforce_authn, enforce_authz
@@ -516,6 +516,10 @@ class JobService:
                 backend_error_kind,
                 ("RUNTIME_BACKEND_EXECUTION_ERROR", "backend execution failed"),
             )
+        try:
+            run_duration_sec = max(float(metadata.get("simulate_runtime_sec", "0.0") or 0.0), 0.0)
+        except ValueError:
+            run_duration_sec = 0.0
 
         results_metadata = {
             "version": "0.2",
@@ -530,7 +534,7 @@ class JobService:
             "timeline_version": "2.0.0",
         }
         dispatch_rationale = {
-            "version": "2.0.0",
+            "version": "2.1.0",
             "policy_version": metadata.get("dispatch_policy_version", "2.1.0"),
             "reason_codes": ["WEIGHTED_FAIRNESS", "DEVICE_SCORE", "SINGLE_DISPATCH"],
             "selected_backend": request.target or "sim:local",
@@ -540,7 +544,33 @@ class JobService:
                 "target": request.target or "sim:local",
                 "job_name": request.name,
                 "batch_mode_enabled": str(self._batch_mode_enabled).lower(),
+                "policy_branch": "single_dispatch",
+                "fallback_reason": "NO_FALLBACK",
+                "artifact_version": "1.1.0",
             },
+            "lineage": [
+                {
+                    "step": 1,
+                    "event": "QUEUE_CLASSIFIED",
+                    "outcome": f"priority-{int(request.priority)}",
+                    "attributes": {
+                        "queue": f"priority-{int(request.priority)}",
+                        "target": request.target or "sim:local",
+                    },
+                },
+                {
+                    "step": 2,
+                    "event": "DISPATCH_MODE_SELECTED",
+                    "outcome": "single_dispatch",
+                    "attributes": {"batch_mode_enabled": str(self._batch_mode_enabled).lower()},
+                },
+                {
+                    "step": 3,
+                    "event": "BACKEND_SELECTED",
+                    "outcome": request.target or "sim:local",
+                    "attributes": {"reason_codes": "WEIGHTED_FAIRNESS,DEVICE_SCORE"},
+                },
+            ],
             "timeline_ref": f"qfs://jobs/{job_id}/timeline.json",
             "logs_ref": f"qfs://jobs/{job_id}/logs/dispatch.log",
             "trace_id": trace_id or "",
@@ -562,10 +592,6 @@ class JobService:
         
         if should_fail:
             error_details_ref = f"qfs://jobs/{job_id}/errors/runtime_error.json"
-        try:
-            run_duration_sec = max(float(metadata.get("simulate_runtime_sec", "0.0") or 0.0), 0.0)
-        except ValueError:
-            run_duration_sec = 0.0
         timeout_sec_raw = metadata.get("timeout_seconds", "").strip()
         timeout_at: datetime | None = None
         timeout_reason = "deadline exceeded"
@@ -670,10 +696,34 @@ class JobService:
             rec.queue_delay_sec = batch_delay_sec
             rec.dispatch_rationale["reason_codes"] = ["WEIGHTED_FAIRNESS", "DEVICE_SCORE", "BATCH_EXECUTION_V1"]
             attrs = dict(rec.dispatch_rationale["attributes"])
+            attrs["policy_branch"] = "batch_dispatch"
+            attrs["fallback_reason"] = "QUEUE_BATCHED"
             attrs["batch_id"] = batch_id
             attrs["batch_manifest_ref"] = manifest_ref
             attrs["batch_manifest_version"] = "1.0.0"
             attrs["batch_mode_enabled"] = "true"
+            rec.dispatch_rationale["attributes"] = attrs
+            lineage = [
+                {
+                    "step": 1,
+                    "event": "QUEUE_CLASSIFIED",
+                    "outcome": str(rec.dispatch_rationale["selected_queue"]),
+                    "attributes": {"queue_key": queue_key},
+                },
+                {
+                    "step": 2,
+                    "event": "BATCH_ELIGIBILITY",
+                    "outcome": "eligible",
+                    "attributes": {"batch_wait_window_sec": f"{self._batch_wait_window_sec:.3f}"},
+                },
+                {
+                    "step": 3,
+                    "event": "BATCH_ASSIGNED",
+                    "outcome": batch_id,
+                    "attributes": {"batch_manifest_ref": manifest_ref},
+                },
+            ]
+            attrs["decision_lineage"] = json.dumps(lineage, sort_keys=True, separators=(",", ":"))
             rec.dispatch_rationale["attributes"] = attrs
             rec.results_metadata["batch_manifest_ref"] = manifest_ref
             rec.results_metadata["batch_manifest_version"] = "1.0.0"
@@ -721,7 +771,14 @@ class JobService:
 
         violations = validate_submit_job(request)
         if violations:
-            abort_invalid_argument(context, "validation failed", violations)
+            abort_with_error_info(
+                context,
+                grpc_code=grpc.StatusCode.INVALID_ARGUMENT,
+                message="validation failed",
+                reason="EXPLAIN_INVALID_REQUEST",
+                domain="eigen.api.v1.explain",
+                metadata={"field_count": str(len(violations))},
+            )
 
         idem_key = self._idempotency_key(request)
         request_fingerprint = self._request_fingerprint(request)
@@ -790,7 +847,14 @@ class JobService:
 
         violations = validate_job_id(request)
         if violations:
-            abort_invalid_argument(context, "validation failed", violations)
+            abort_with_error_info(
+                context,
+                grpc_code=grpc.StatusCode.INVALID_ARGUMENT,
+                message="validation failed",
+                reason="EXPLAIN_INVALID_REQUEST",
+                domain="eigen.api.v1.explain",
+                metadata={"field_count": str(len(violations))},
+            )
 
         with self._lock:
             record = self._jobs.get(request.job_id)
@@ -931,9 +995,27 @@ class JobService:
         with self._lock:
             record = self._jobs.get(request.job_id)
             if record is None:
-                context.abort(grpc.StatusCode.NOT_FOUND, f"job_id not found: {request.job_id}")
+                abort_with_error_info(
+                    context,
+                    grpc_code=grpc.StatusCode.NOT_FOUND,
+                    message=f"job_id not found: {request.job_id}",
+                    reason="EXPLAIN_DECISION_NOT_FOUND",
+                    domain="eigen.api.v1.explain",
+                    metadata={"job_id": request.job_id},
+                )
             self._advance_job(record)
             rationale = dict(record.dispatch_rationale)
+            attrs = dict(rationale["attributes"])
+            attrs["queue_delay_ms"] = str(max(int(float(record.queue_delay_sec) * 1000), 0))
+            attrs["dispatch_latency_ms"] = attrs.get("dispatch_latency_ms", "150")
+            attrs["execution_time_ms"] = attrs.get("execution_time_ms", str(max(int(record.run_duration_sec * 1000), 0)))
+            if "decision_lineage" not in attrs:
+                attrs["decision_lineage"] = json.dumps(
+                    rationale.get("lineage", []),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+            rationale["attributes"] = attrs
 
         resp = self._job_pb.GetDispatchRationaleResponse(
             rationale=self._job_pb.DispatchRationale(
