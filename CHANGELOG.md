@@ -18,6 +18,7 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 
 ### Added
 
+- Phase-5 P5-02 worker node service and remote execution contract (`resource-manager` package `0.9.0`) with deterministic worker lifecycle API (`start`/`heartbeat`/`complete`/`cancel`), runtime artifact materialization metadata contract, timeout transitions, and idempotent duplicate-delivery handling.
 - Phase-5 P5-01 cluster runtime control-plane core (`resource-manager` package `0.8.0`) with deterministic `--cluster` bootstrap discovery artifact, worker registration/capability handshake DTOs, and assignment artifacts carrying explicit contract/version + lineage metadata.
 - Phase-4 P4-09 ADR synchronization and release meta package (`governance-docs` package `0.9.0`) with implemented RFC status updates for RFC 0023/0024/0025, synchronized ADR set (ADR 0011/0012/0013), and published Phase-4 release readiness + compatibility docs.
 - Phase-4 P4-08 RFC package for intelligent-runtime contracts accepted and indexed (`governance-docs` package `0.8.0`) covering RFC 0023/0024/0025 with explicit statuses, compatibility sections, and benchmark/test-plan sections.
@@ -46,6 +47,12 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 - **Version impact:** MINOR (new distributed control-plane artifact family; Rust workspace package advanced to `0.8.0`).
 - **Compatibility:** Additive; existing single-node scheduler/scoring/policy contracts remain unchanged while new cluster control-plane and assignment lineage contracts are introduced at `1.0.0`.
 - **Migration notes:** No mandatory migration for non-cluster deployments. Cluster consumers should pin `CLUSTER_CONTROL_PLANE_CONTRACT_VERSION` and `CLUSTER_ASSIGNMENT_LINEAGE_VERSION`, validate deterministic worker discovery ordering, and consume fallback metadata for node-loss reassignment diagnostics.
+
+### Phase-5: Worker Node Service and Remote Execution Contract (P5-02)
+
+- **Version impact:** MINOR (new worker-node distributed execution artifacts; Rust workspace package advanced to `0.9.0`).
+- **Compatibility:** Additive; existing cluster assignment and scheduler contracts remain unchanged while new worker lifecycle and artifact materialization contracts are introduced at `1.0.0`.
+- **Migration notes:** No mandatory migration. Distributed worker/queue integrations should pin `WORKER_NODE_EXECUTION_CONTRACT_VERSION` and `WORKER_RUNTIME_ARTIFACT_CONTRACT_VERSION`, treat duplicate `idempotency_key` deliveries as replay-safe, and honor deterministic timeout/cancellation terminalization.
 
 ### Phase-4: ADR Synchronization and Release Meta (P4-09)
 
