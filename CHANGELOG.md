@@ -18,7 +18,7 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 
 ### Added
 
-
+- Phase-4 P4-09 ADR synchronization and release meta package (`governance-docs` package `0.9.0`) with implemented RFC status updates for RFC 0023/0024/0025, synchronized ADR set (ADR 0011/0012/0013), and published Phase-4 release readiness + compatibility docs.
 - Phase-4 P4-08 RFC package for intelligent-runtime contracts accepted and indexed (`governance-docs` package `0.8.0`) covering RFC 0023/0024/0025 with explicit statuses, compatibility sections, and benchmark/test-plan sections.
 - Phase-4 P4-07 deterministic replay quality gate (`resource-manager` package `0.7.0`) with recorded decision-replay fixtures for scoring/policy/explain artifacts, drift-detection diagnostics, and CI gate script for deterministic runtime regression blocking.
 - Phase-4 P4-06 intelligent runtime observability pack (`runtime-observability` assets `0.1.0`) with stable `eigen_runtime_*` metrics contract (`1.0.0`), decision-flow dashboard, Prometheus alerts, and triage/rollback runbook.
@@ -39,6 +39,12 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 - **Version impact:** MINOR (governance package completion; benchmark-service package advanced to `0.8.0`).
 - **Compatibility:** No payload or behavior break; stable contract baselines remain `1.0.0` for run (`state/snapshot`), dataset ingestion (`manifest/ingestion`), compare (`comparison/methodology`), and history (`history_contract_version`).
 - **Migration notes:** No mandatory migration. Teams should pin and validate explicit version markers in run snapshots, ingestion artifacts, compare outputs, and history entries.
+
+### Phase-4: ADR Synchronization and Release Meta (P4-09)
+
+- **Version impact:** MINOR (governance package completion; governance-docs package advanced to `0.9.0`).
+- **Compatibility:** No contract breaking changes; Phase-4 stable contract baselines remain `1.0.0` for scoring, policy, and explainability surfaces with synchronized ADR records.
+- **Migration notes:** No mandatory migration. Teams should pin explicit version markers in decision artifacts and explain responses and follow the published Phase-4 readiness/compatibility package.
 
 ### Phase-4: Observability Pack for Intelligent Runtime (P4-06)
 
