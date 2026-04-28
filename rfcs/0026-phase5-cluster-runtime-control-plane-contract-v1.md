@@ -1,8 +1,9 @@
 # RFC 0026: Phase-5 Cluster Runtime Control-Plane Contract v1
 
-- **Status**: Draft
+- **Status**: Accepted
 - **Authors**: Eigen OS maintainers
 - **Created**: 2026-04-28
+- **Accepted on**: 2026-04-28
 - **Target Milestone**: Phase 5
 - **Tracking Issue**: P5-08 (docs/development/phase-5-issue-pack.md)
 - **Replaces / Related**: docs/development/phase-5-distributed-execution.md
