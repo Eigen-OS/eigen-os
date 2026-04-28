@@ -2,7 +2,7 @@
 
 > Canonical roadmap: [`../roadmap.md`](../roadmap.md)
 
-This document mirrors the current post-MVP plan and keeps implementation-focused wording for contributors.
+This document mirrors the current post-MVP plan for contributors.
 
 ## Current State
 
@@ -13,46 +13,32 @@ Completed:
 - MVP-3: Execution and results retrieval
 - Phase-1: Production runtime
 - Phase-2: Orchestration layer
+- Phase-3: Benchmarking platform
 
-Capabilities in place:
+## Eigen-Lang Track
 
-- JobSpec-based execution model
-- Compiler pipeline (AST → IR → execution artifacts)
-- QRTX kernel lifecycle management
-- DriverManager + simulator execution
-- Device-aware scheduling baseline
-- Observability (metrics + tracing)
-- Local developer environment
+Eigen-Lang is a first-class layer that evolves in parallel with runtime/orchestration.
 
-## Strategic Direction
+Current status:
 
-Eigen-OS evolves across three axes:
+- Python DSL
+- deterministic AST-based compilation
+- AQO mapping
+- versioning policy
+- restricted/validated execution model
 
-1. Execution → Orchestration → Intelligence
-2. Local → Distributed → Cloud-native
-3. Runtime → Benchmarking → Optimization
+Guidance:
 
-## Phase-3: Benchmarking Platform
-
-Goal: transform Eigen-OS into a reproducible benchmarking and analytics platform.
-
-Deliverables:
-
-- `benchmark-service`
-- dataset ingestion pipeline (QSBench-compatible)
-- CLI:
-  - `eigen benchmark run`
-  - `eigen benchmark compare`
-- APIs:
-  - `/benchmarks/run`
-  - `/benchmarks/compare`
-  - `/benchmarks/history`
+- RFC-first evolution
+- deterministic compilation
+- compatibility-aware versioning
+- conformance-driven implementation
 
 ## Phase-4: Intelligent Runtime (OSS Scope)
 
 Goal: data-driven and explainable runtime decisions without opaque proprietary ML.
 
-Deliverables:
+Runtime deliverables:
 
 - backend scoring module
 - configurable scheduling policy engine
@@ -60,26 +46,52 @@ Deliverables:
   - `/explain/backend-selection`
   - `/explain/execution`
 
+Eigen-Lang deliverables:
+
+- compile-time diagnostics
+- runtime-aware compiler hints
+- explainable backend-selection metadata
+- execution annotations
+- deterministic optimization recommendations
+
 ## Phase-5: Distributed Execution (OSS)
 
 Goal: transition from single-node runtime to distributed cluster execution.
 
-Deliverables:
+Runtime deliverables:
 
 - cluster mode (`--cluster`)
 - worker node service
 - pluggable queue layer
 - distributed tracing support
 
+Eigen-Lang deliverables:
+
+- distributed execution metadata
+- remote execution targets
+- workload partitioning support
+- topology annotations
+- cluster-aware execution policies
+
 ## Phase-6: Plugin Ecosystem
 
 Goal: make Eigen-OS a platform.
 
-Deliverables:
+Runtime deliverables:
 
 - plugin API specification
 - plugin loading system
 - validation and compatibility checks
+
+Eigen-Lang deliverables:
+
+- stable language specification
+- compatibility policy
+- formatter/linting support
+- language server support (future)
+- improved tutorials/examples
+- conformance test suite
+- migration documentation
 
 ## Phase-7: Stability & Developer Experience
 
@@ -103,8 +115,8 @@ Deliverables:
 
 ## Immediate Next Steps
 
-1. Implement minimal benchmark pipeline
-2. Integrate first QSBench dataset
-3. Add run tracking and comparison
-4. Expose benchmark API and CLI
-5. Prepare demo-ready workflow
+1. Kick off Phase-4 scoring module implementation
+2. Add scheduling policy configuration surfaces
+3. Implement explanation APIs for backend selection/execution
+4. Expose first Eigen-Lang runtime-intelligence diagnostics
+5. Prepare demo-ready explainability workflow
