@@ -101,6 +101,8 @@ git fetch origin main:main
 - Phase 5 distributed execution plan: [`phase-5-distributed-execution.md`](phase-5-distributed-execution.md)
 - Phase 5 issue pack: [`phase-5-issue-pack.md`](phase-5-issue-pack.md)
 - Phase 5 RFC/ADR gap analysis: [`phase-5-rfc-adr-gap-analysis.md`](phase-5-rfc-adr-gap-analysis.md)
+- Phase 5 release readiness checklist: [`phase-5-release-readiness-checklist.md`](phase-5-release-readiness-checklist.md)
+- Phase 5 compatibility report: [`phase-5-compatibility-report.md`](phase-5-compatibility-report.md)
 - Architecture decisions: [`../adr/README.md`](../adr/README.md)
 - RFC package: [`../../rfcs/`](../../rfcs/)
 

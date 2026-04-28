@@ -30,6 +30,8 @@ Eigen-OS evolves as:
 - Phase-1: Production runtime
 - Phase-2: Orchestration layer
 - Phase-3: Benchmarking platform
+- Phase-4: Intelligent runtime
+- Phase-5: Distributed execution
 
 ### Capabilities Today
 
@@ -75,7 +77,7 @@ The language layer evolves in parallel with runtime and orchestration.
 
 ---
 
-## 3. Phase-4: Intelligent Runtime (Open Source Scope)
+## 3. Phase-4: Intelligent Runtime (Completed)
 
 ### Goal
 
@@ -123,7 +125,7 @@ Compiler/runtime may explain:
 
 ---
 
-## 4. Phase-5: Distributed Execution (OSS)
+## 4. Phase-5: Distributed Execution (Completed)
 
 ### Goal
 
@@ -169,7 +171,7 @@ Future support:
 
 ---
 
-## 5. Phase-6: Plugin Ecosystem
+## 5. Next Milestone — Phase-6: Plugin Ecosystem
 
 ### Goal
 
