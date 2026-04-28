@@ -18,6 +18,10 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 pub const SCHEDULER_DECISION_VERSION: &str = "2.1.0";
 /// SemVer version for device score DTOs/contracts.
 pub const DEVICE_SCORE_VERSION: &str = "2.1.0";
+/// SemVer version for backend scoring contract artifacts (Phase-4 intelligent runtime).
+pub const BACKEND_SCORING_CONTRACT_VERSION: &str = "1.0.0";
+/// SemVer schema version for persisted backend scoring profiles.
+pub const BACKEND_SCORING_PROFILE_SCHEMA_VERSION: &str = "1.0.0";
 /// SemVer version for rebalancing/preemption safety artifacts.
 pub const REBALANCING_POLICY_VERSION: &str = "2.2.0";
 /// SemVer version for multi-device split/merge execution contract artifacts.
@@ -394,6 +398,133 @@ pub struct DeviceDispatchRecord {
     pub selected_device_id: String,
     pub reason_code: DispatchReasonCode,
     pub score_breakdown: Vec<DeviceScoreBreakdown>,
+}
+
+/// Workload descriptor features used by backend scoring v1.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BackendWorkloadDescriptor {
+    pub job_type: String,
+    pub priority: u8,
+    pub shots: u64,
+    pub circuit_depth: u64,
+    pub circuit_width: u64,
+    pub estimated_runtime_ms: u64,
+    pub noise_sensitivity: f64,
+    pub cost_sensitivity: f64,
+    pub required_features: Vec<String>,
+}
+
+/// Backend descriptor features used by backend scoring v1.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BackendCandidateDescriptor {
+    pub backend_id: String,
+    pub backend_type: String,
+    pub qubit_count: u32,
+    pub availability: f64,
+    pub queue_length: usize,
+    pub historical_latency_ms: u64,
+    pub historical_success_rate: f64,
+    pub historical_fidelity: f64,
+    pub error_rate: f64,
+    pub calibration_age_sec: u64,
+    pub policy_priority: i32,
+    pub capability_rank: i32,
+    pub supported_features: Vec<String>,
+}
+
+/// Runtime/context descriptor used by backend scoring v1.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BackendRuntimeDescriptor {
+    pub current_cluster_load: f64,
+    pub retry_count: u32,
+    pub warm_cache_hit: bool,
+}
+
+/// Persisted scoring profile for deterministic backend scoring.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BackendScoringProfile {
+    pub profile_id: String,
+    pub profile_version: String,
+    pub max_queue_length: usize,
+    pub target_latency_ms: u64,
+    pub calibration_ttl_sec: u64,
+    pub queue_weight: f64,
+    pub latency_weight: f64,
+    pub success_weight: f64,
+    pub fidelity_weight: f64,
+    pub availability_weight: f64,
+    pub calibration_weight: f64,
+    pub cost_weight: f64,
+}
+
+impl Default for BackendScoringProfile {
+    fn default() -> Self {
+        Self {
+            profile_id: "balanced".to_string(),
+            profile_version: "1.0.0".to_string(),
+            max_queue_length: 256,
+            target_latency_ms: 2_000,
+            calibration_ttl_sec: 7_200,
+            queue_weight: 0.2,
+            latency_weight: 0.2,
+            success_weight: 0.2,
+            fidelity_weight: 0.15,
+            availability_weight: 0.15,
+            calibration_weight: 0.05,
+            cost_weight: 0.05,
+        }
+    }
+}
+
+/// In-memory profile store keyed by `<profile_id>@<profile_version>`.
+#[derive(Debug, Clone, Default)]
+pub struct BackendScoringProfileStore {
+    profiles: BTreeMap<String, BackendScoringProfile>,
+}
+
+impl BackendScoringProfileStore {
+    pub fn save(&mut self, profile: BackendScoringProfile) {
+        let key = Self::make_key(&profile.profile_id, &profile.profile_version);
+        self.profiles.insert(key, profile);
+    }
+
+    pub fn load(&self, profile_id: &str, profile_version: &str) -> Option<BackendScoringProfile> {
+        let key = Self::make_key(profile_id, profile_version);
+        self.profiles.get(&key).cloned()
+    }
+
+    fn make_key(profile_id: &str, profile_version: &str) -> String {
+        format!("{profile_id}@{profile_version}")
+    }
+}
+
+/// Stable breakdown of backend feature contributions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BackendFeatureContribution {
+    pub feature: &'static str,
+    pub contribution_millis: u64,
+}
+
+/// Per-backend scoring result in decision artifacts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BackendScoreCandidate {
+    pub backend_id: String,
+    pub score_millis: u64,
+    pub eligible: bool,
+    pub ineligibility_reason: Option<&'static str>,
+    pub feature_contributions: Vec<BackendFeatureContribution>,
+}
+
+/// Versioned backend-scoring decision artifact.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BackendScoringDecisionArtifact {
+    pub scoring_contract_version: &'static str,
+    pub profile_schema_version: &'static str,
+    pub profile_version: String,
+    pub decision_id: String,
+    pub candidates: Vec<BackendScoreCandidate>,
+    pub selected_backend_id: Option<String>,
+    pub tie_break_trace: Vec<String>,
 }
 
 /// Job envelope tracked by scheduler queues.
@@ -1225,6 +1356,180 @@ fn score_candidate(
     }
 }
 
+/// Scores backend candidates using the Phase-4 deterministic scoring contract.
+pub fn score_backend_candidates(
+    decision_id: &str,
+    workload: &BackendWorkloadDescriptor,
+    runtime: &BackendRuntimeDescriptor,
+    candidates: &[BackendCandidateDescriptor],
+    profile: &BackendScoringProfile,
+) -> BackendScoringDecisionArtifact {
+    let mut candidate_scores: Vec<BackendScoreCandidate> = candidates
+        .iter()
+        .map(|candidate| {
+            let missing_feature = workload
+                .required_features
+                .iter()
+                .find(|required| !candidate.supported_features.contains(*required))
+                .cloned();
+            let unavailable = candidate.availability <= 0.0;
+            let ineligibility_reason = if unavailable {
+                Some("backend_unavailable")
+            } else if missing_feature.is_some() {
+                Some("missing_required_feature")
+            } else {
+                None
+            };
+
+            let queue_signal = bounded_ratio(
+                1.0 - (candidate.queue_length as f64 / profile.max_queue_length.max(1) as f64),
+            );
+            let latency_signal = bounded_ratio(
+                1.0 - (candidate.historical_latency_ms as f64
+                    / profile.target_latency_ms.max(1) as f64),
+            );
+            let success_signal = bounded_ratio(candidate.historical_success_rate);
+            let fidelity_signal = bounded_ratio(candidate.historical_fidelity);
+            let availability_signal = bounded_ratio(candidate.availability);
+            let calibration_signal = bounded_ratio(
+                1.0 - (candidate.calibration_age_sec as f64
+                    / profile.calibration_ttl_sec.max(1) as f64),
+            );
+            let cost_signal = bounded_ratio(
+                1.0 - ((workload.cost_sensitivity * candidate.queue_length as f64)
+                    / profile.max_queue_length.max(1) as f64),
+            );
+            let retry_penalty = (runtime.retry_count.min(3) as u64) * 5;
+            let warm_cache_bonus = if runtime.warm_cache_hit { 10 } else { 0 };
+
+            let mut contributions = vec![
+                BackendFeatureContribution {
+                    feature: "queue_length",
+                    contribution_millis: weighted_millis(queue_signal, profile.queue_weight),
+                },
+                BackendFeatureContribution {
+                    feature: "historical_latency",
+                    contribution_millis: weighted_millis(latency_signal, profile.latency_weight),
+                },
+                BackendFeatureContribution {
+                    feature: "historical_success_rate",
+                    contribution_millis: weighted_millis(success_signal, profile.success_weight),
+                },
+                BackendFeatureContribution {
+                    feature: "historical_fidelity",
+                    contribution_millis: weighted_millis(fidelity_signal, profile.fidelity_weight),
+                },
+                BackendFeatureContribution {
+                    feature: "availability",
+                    contribution_millis: weighted_millis(
+                        availability_signal,
+                        profile.availability_weight,
+                    ),
+                },
+                BackendFeatureContribution {
+                    feature: "calibration_age",
+                    contribution_millis: weighted_millis(
+                        calibration_signal,
+                        profile.calibration_weight,
+                    ),
+                },
+                BackendFeatureContribution {
+                    feature: "cost_sensitivity",
+                    contribution_millis: weighted_millis(cost_signal, profile.cost_weight),
+                },
+                BackendFeatureContribution {
+                    feature: "runtime_retry_penalty",
+                    contribution_millis: retry_penalty,
+                },
+                BackendFeatureContribution {
+                    feature: "runtime_warm_cache_bonus",
+                    contribution_millis: warm_cache_bonus,
+                },
+            ];
+
+            let mut score_millis = contributions
+                .iter()
+                .map(|item| item.contribution_millis)
+                .sum::<u64>();
+            if unavailable || missing_feature.is_some() {
+                score_millis = 0;
+                contributions.push(BackendFeatureContribution {
+                    feature: "ineligibility_zero_out",
+                    contribution_millis: 0,
+                });
+            }
+
+            BackendScoreCandidate {
+                backend_id: candidate.backend_id.clone(),
+                score_millis,
+                eligible: ineligibility_reason.is_none(),
+                ineligibility_reason,
+                feature_contributions: contributions,
+            }
+        })
+        .collect();
+
+    let candidate_priority: BTreeMap<&str, (i32, i32)> = candidates
+        .iter()
+        .map(|candidate| {
+            (
+                candidate.backend_id.as_str(),
+                (candidate.policy_priority, candidate.capability_rank),
+            )
+        })
+        .collect();
+    candidate_scores.sort_by(|left, right| {
+        let (left_policy, left_rank) = candidate_priority
+            .get(left.backend_id.as_str())
+            .copied()
+            .unwrap_or((i32::MAX, i32::MAX));
+        let (right_policy, right_rank) = candidate_priority
+            .get(right.backend_id.as_str())
+            .copied()
+            .unwrap_or((i32::MAX, i32::MAX));
+        right
+            .score_millis
+            .cmp(&left.score_millis)
+            .then_with(|| left_policy.cmp(&right_policy))
+            .then_with(|| left_rank.cmp(&right_rank))
+            .then_with(|| left.backend_id.cmp(&right.backend_id))
+    });
+
+    let top = candidate_scores
+        .iter()
+        .find(|candidate| candidate.eligible && candidate.score_millis > 0);
+    let tie_break_trace = if let Some(top_candidate) = top {
+        let tied: Vec<&BackendScoreCandidate> = candidate_scores
+            .iter()
+            .filter(|candidate| {
+                candidate.eligible && candidate.score_millis == top_candidate.score_millis
+            })
+            .collect();
+        if tied.len() <= 1 {
+            vec!["score-desc".to_string()]
+        } else {
+            vec![
+                "score-desc".to_string(),
+                "policy-priority-asc".to_string(),
+                "capability-rank-asc".to_string(),
+                "backend-id-lex-asc".to_string(),
+            ]
+        }
+    } else {
+        vec!["no-eligible-backend".to_string()]
+    };
+
+    BackendScoringDecisionArtifact {
+        scoring_contract_version: BACKEND_SCORING_CONTRACT_VERSION,
+        profile_schema_version: BACKEND_SCORING_PROFILE_SCHEMA_VERSION,
+        profile_version: profile.profile_version.clone(),
+        decision_id: decision_id.to_string(),
+        selected_backend_id: top.map(|candidate| candidate.backend_id.clone()),
+        candidates: candidate_scores,
+        tie_break_trace,
+    }
+}
+
 fn weighted_millis(signal: f64, weight: f64) -> u64 {
     let bounded_weight = bounded_ratio(weight);
     (bounded_ratio(signal) * bounded_weight * 1_000.0).round() as u64
@@ -1465,6 +1770,174 @@ mod tests {
             .expect("candidates must produce score");
         assert_eq!(record.reason_code, DispatchReasonCode::DeviceScoreTieBreak);
         assert_eq!(record.selected_device_id, "device-a");
+    }
+
+    fn backend_workload() -> BackendWorkloadDescriptor {
+        BackendWorkloadDescriptor {
+            job_type: "sampling".to_string(),
+            priority: 5,
+            shots: 8_000,
+            circuit_depth: 120,
+            circuit_width: 20,
+            estimated_runtime_ms: 900,
+            noise_sensitivity: 0.8,
+            cost_sensitivity: 0.3,
+            required_features: vec!["dynamic-circuits".to_string()],
+        }
+    }
+
+    fn backend_runtime() -> BackendRuntimeDescriptor {
+        BackendRuntimeDescriptor {
+            current_cluster_load: 0.4,
+            retry_count: 1,
+            warm_cache_hit: true,
+        }
+    }
+
+    #[test]
+    fn backend_scoring_is_deterministic_for_identical_input() {
+        let workload = backend_workload();
+        let runtime = backend_runtime();
+        let profile = BackendScoringProfile::default();
+        let candidates = vec![
+            BackendCandidateDescriptor {
+                backend_id: "backend-z".to_string(),
+                backend_type: "qpu".to_string(),
+                qubit_count: 32,
+                availability: 0.9,
+                queue_length: 40,
+                historical_latency_ms: 1_500,
+                historical_success_rate: 0.97,
+                historical_fidelity: 0.95,
+                error_rate: 0.03,
+                calibration_age_sec: 500,
+                policy_priority: 2,
+                capability_rank: 2,
+                supported_features: vec!["dynamic-circuits".to_string()],
+            },
+            BackendCandidateDescriptor {
+                backend_id: "backend-a".to_string(),
+                backend_type: "qpu".to_string(),
+                qubit_count: 24,
+                availability: 0.95,
+                queue_length: 20,
+                historical_latency_ms: 1_000,
+                historical_success_rate: 0.98,
+                historical_fidelity: 0.97,
+                error_rate: 0.02,
+                calibration_age_sec: 350,
+                policy_priority: 1,
+                capability_rank: 1,
+                supported_features: vec!["dynamic-circuits".to_string()],
+            },
+        ];
+
+        let first =
+            score_backend_candidates("decision-001", &workload, &runtime, &candidates, &profile);
+        let second =
+            score_backend_candidates("decision-001", &workload, &runtime, &candidates, &profile);
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn backend_scoring_tie_break_policy_is_explicit_and_stable() {
+        let workload = backend_workload();
+        let runtime = backend_runtime();
+        let profile = BackendScoringProfile::default();
+        let candidates = vec![
+            BackendCandidateDescriptor {
+                backend_id: "backend-b".to_string(),
+                backend_type: "qpu".to_string(),
+                qubit_count: 20,
+                availability: 1.0,
+                queue_length: 0,
+                historical_latency_ms: 0,
+                historical_success_rate: 1.0,
+                historical_fidelity: 1.0,
+                error_rate: 0.0,
+                calibration_age_sec: 0,
+                policy_priority: 2,
+                capability_rank: 3,
+                supported_features: vec!["dynamic-circuits".to_string()],
+            },
+            BackendCandidateDescriptor {
+                backend_id: "backend-a".to_string(),
+                backend_type: "qpu".to_string(),
+                qubit_count: 20,
+                availability: 1.0,
+                queue_length: 0,
+                historical_latency_ms: 0,
+                historical_success_rate: 1.0,
+                historical_fidelity: 1.0,
+                error_rate: 0.0,
+                calibration_age_sec: 0,
+                policy_priority: 1,
+                capability_rank: 1,
+                supported_features: vec!["dynamic-circuits".to_string()],
+            },
+        ];
+
+        let decision =
+            score_backend_candidates("decision-002", &workload, &runtime, &candidates, &profile);
+        assert_eq!(decision.selected_backend_id.as_deref(), Some("backend-a"));
+        assert_eq!(
+            decision.tie_break_trace,
+            vec![
+                "score-desc".to_string(),
+                "policy-priority-asc".to_string(),
+                "capability-rank-asc".to_string(),
+                "backend-id-lex-asc".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn backend_scoring_output_has_contract_and_profile_versions() {
+        let workload = backend_workload();
+        let runtime = backend_runtime();
+        let profile = BackendScoringProfile::default();
+        let candidates = vec![BackendCandidateDescriptor {
+            backend_id: "backend-a".to_string(),
+            backend_type: "qpu".to_string(),
+            qubit_count: 24,
+            availability: 0.9,
+            queue_length: 10,
+            historical_latency_ms: 1_100,
+            historical_success_rate: 0.98,
+            historical_fidelity: 0.96,
+            error_rate: 0.01,
+            calibration_age_sec: 100,
+            policy_priority: 1,
+            capability_rank: 1,
+            supported_features: vec!["dynamic-circuits".to_string()],
+        }];
+
+        let decision =
+            score_backend_candidates("decision-003", &workload, &runtime, &candidates, &profile);
+        assert_eq!(
+            decision.scoring_contract_version,
+            BACKEND_SCORING_CONTRACT_VERSION
+        );
+        assert_eq!(
+            decision.profile_schema_version,
+            BACKEND_SCORING_PROFILE_SCHEMA_VERSION
+        );
+        assert_eq!(decision.profile_version, "1.0.0");
+    }
+
+    #[test]
+    fn backend_scoring_profile_store_persists_versioned_profiles() {
+        let mut store = BackendScoringProfileStore::default();
+        let mut profile = BackendScoringProfile::default();
+        profile.profile_version = "1.1.0".to_string();
+        profile.queue_weight = 0.25;
+        store.save(profile.clone());
+
+        let loaded = store
+            .load("balanced", "1.1.0")
+            .expect("profile must load by id + version");
+        assert_eq!(loaded, profile);
+        assert!(store.load("balanced", "9.9.9").is_none());
     }
 
     #[test]
