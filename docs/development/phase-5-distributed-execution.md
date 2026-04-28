@@ -3,7 +3,7 @@
 ## Status
 
 - **Phase**: 5 (Post-MVP)
-- **Planning status**: Active (RFC package drafted and indexed)
+- **Planning status**: Active (RFC package accepted and indexed)
 - **Started on**: 2026-04-28
 - **Last updated**: 2026-04-28
 - **Previous phase closure**: [`phase-4-release-readiness-checklist.md`](phase-4-release-readiness-checklist.md)
@@ -84,7 +84,7 @@ Transition Eigen-OS from single-node execution to deterministic, observable, and
 ## Deliverables map
 
 1. Planning + backlog: this document + [`phase-5-issue-pack.md`](phase-5-issue-pack.md).
-2. Governance package: [`phase-5-rfc-adr-gap-analysis.md`](phase-5-rfc-adr-gap-analysis.md) + RFCs `0026/0027/0028` in `rfcs/`.
+2. Governance package: [`phase-5-rfc-adr-gap-analysis.md`](phase-5-rfc-adr-gap-analysis.md) + accepted RFCs [`0026`](../../rfcs/0026-phase5-cluster-runtime-control-plane-contract-v1.md), [`0027`](../../rfcs/0027-phase5-distributed-queue-and-delivery-semantics-v1.md), [`0028`](../../rfcs/0028-phase5-distributed-tracing-and-execution-topology-contract-v1.md).
 3. Implementation slices: control plane, worker service, queue abstraction, topology/tracing contract.
 4. Release closure package (to be completed during execution):
    - `phase-5-release-readiness-checklist.md`

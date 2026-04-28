@@ -135,6 +135,7 @@ Transition from single-node runtime to distributed cluster execution.
 - worker node service
 - pluggable queue layer
 - distributed tracing support
+- Phase-5 distributed contract RFC package: [`RFC 0026`](../rfcs/0026-phase5-cluster-runtime-control-plane-contract-v1.md), [`RFC 0027`](../rfcs/0027-phase5-distributed-queue-and-delivery-semantics-v1.md), [`RFC 0028`](../rfcs/0028-phase5-distributed-tracing-and-execution-topology-contract-v1.md)
 
 ### Eigen-Lang Integration
 
