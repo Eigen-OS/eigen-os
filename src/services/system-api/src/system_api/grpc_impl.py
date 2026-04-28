@@ -35,6 +35,9 @@ TERMINAL_JOB_STATES = {
     "JOB_STATE_TIMEOUT",
 }
 
+TOPOLOGY_CONTRACT_VERSION = "1.1.0"
+TOPOLOGY_LINEAGE_VERSION = "1.1.0"
+
 
 def _ts_now() -> Timestamp:
     ts = Timestamp()
@@ -91,6 +94,7 @@ class _JobRecord:
     trace_id: str | None
     max_iters: int
     dispatch_rationale: dict[str, object]
+    topology: dict[str, str]
     batch_manifest_ref: str
     batch_id: str
     queue_delay_sec: float
@@ -158,7 +162,17 @@ class JobService:
     def _msg_with_trace(self, message: str, trace_id: str | None) -> str:
         return f"{message} trace_id={trace_id}" if trace_id else message
 
-    def _mk_update(self, *, job_id: str, state: int, stage: str, progress: float, message: str, event_seq: int):
+    def _mk_update(
+        self,
+        *,
+        job_id: str,
+        state: int,
+        stage: str,
+        progress: float,
+        message: str,
+        event_seq: int,
+        topology: dict[str, str] | None = None,
+    ):
         return self._types_pb.JobUpdate(
             job_id=job_id,
             state=state,
@@ -167,9 +181,22 @@ class JobService:
             message=message,
             event_seq=event_seq,
             timestamp=_ts_now(),
+            topology=self._mk_topology_pb(topology),
         )
 
-    def _mk_default_updates(self, job_id: str, trace_id: str | None) -> list:
+    def _mk_topology_pb(self, topology: dict[str, str] | None):
+        if not topology:
+            return None
+        return self._types_pb.TopologyEnvelope(
+            contract_version=topology["contract_version"],
+            lineage_version=topology["lineage_version"],
+            cluster_id=topology["cluster_id"],
+            worker_id=topology["worker_id"],
+            partition_id=topology["partition_id"],
+            attempt=int(topology["attempt"]),
+        )
+
+    def _mk_default_updates(self, job_id: str, trace_id: str | None, topology: dict[str, str]) -> list:
         return [
             self._mk_update(
                 job_id=job_id,
@@ -178,6 +205,7 @@ class JobService:
                 progress=0.0,
                 message="pending",
                 event_seq=1,
+                topology=topology,
             ),
             self._mk_update(
                 job_id=job_id,
@@ -186,6 +214,7 @@ class JobService:
                 progress=0.25,
                 message=self._msg_with_trace("compiled", trace_id),
                 event_seq=2,
+                topology=topology,
             ),
             self._mk_update(
                 job_id=job_id,
@@ -194,6 +223,7 @@ class JobService:
                 progress=0.35,
                 message=self._msg_with_trace("dispatched", trace_id),
                 event_seq=3,
+                topology=topology,
             ),
             self._mk_update(
                 job_id=job_id,
@@ -202,6 +232,7 @@ class JobService:
                 progress=0.7,
                 message=self._msg_with_trace("running", trace_id),
                 event_seq=4,
+                topology=topology,
             ),
             self._mk_update(
                 job_id=job_id,
@@ -210,10 +241,11 @@ class JobService:
                 progress=1.0,
                 message="completed",
                 event_seq=5,
+                topology=topology,
             ),
         ]
     
-    def _mk_error_updates(self, *, job_id: str, summary: str, trace_id: str | None) -> list:
+    def _mk_error_updates(self, *, job_id: str, summary: str, trace_id: str | None, topology: dict[str, str]) -> list:
         return [
             self._mk_update(
                 job_id=job_id,
@@ -222,6 +254,7 @@ class JobService:
                 progress=0.0,
                 message=self._msg_with_trace("queued", trace_id),
                 event_seq=1,
+                topology=topology,
             ),
             self._mk_update(
                 job_id=job_id,
@@ -230,6 +263,7 @@ class JobService:
                 progress=0.25,
                 message=self._msg_with_trace("compiled", trace_id),
                 event_seq=2,
+                topology=topology,
             ),
             self._mk_update(
                 job_id=job_id,
@@ -238,6 +272,7 @@ class JobService:
                 progress=0.45,
                 message=self._msg_with_trace("dispatched", trace_id),
                 event_seq=3,
+                topology=topology,
             ),
             self._mk_update(
                 job_id=job_id,
@@ -246,6 +281,7 @@ class JobService:
                 progress=0.6,
                 message="dispatching_to_backend",
                 event_seq=4,
+                topology=topology,
             ),
             self._mk_update(
                 job_id=job_id,
@@ -254,10 +290,11 @@ class JobService:
                 progress=1.0,
                 message=summary,
                 event_seq=5,
+                topology=topology,
             ),
         ]
 
-    def _mk_vqe_updates(self, *, job_id: str, trace_id: str | None, max_iters: int) -> list:
+    def _mk_vqe_updates(self, *, job_id: str, trace_id: str | None, max_iters: int, topology: dict[str, str]) -> list:
         updates = [
             self._mk_update(
                 job_id=job_id,
@@ -266,6 +303,7 @@ class JobService:
                 progress=0.0,
                 message="pending",
                 event_seq=1,
+                topology=topology,
             ),
             self._mk_update(
                 job_id=job_id,
@@ -274,6 +312,7 @@ class JobService:
                 progress=0.2,
                 message="compiling",
                 event_seq=2,
+                topology=topology,
             ),
             self._mk_update(
                 job_id=job_id,
@@ -282,6 +321,7 @@ class JobService:
                 progress=0.35,
                 message=self._msg_with_trace("dispatched", trace_id),
                 event_seq=3,
+                topology=topology,
             ),
         ]
 
@@ -296,6 +336,7 @@ class JobService:
                     progress=progress,
                     message=self._msg_with_trace(f"vqe_iteration iteration={idx}", trace_id),
                     event_seq=len(updates) + 1,
+                    topology=topology,
                 )
             )
 
@@ -307,6 +348,7 @@ class JobService:
                 progress=1.0,
                 message=self._msg_with_trace("completed", trace_id),
                 event_seq=len(updates) + 1,
+                topology=topology,
             )
         )
         return updates
@@ -320,6 +362,7 @@ class JobService:
                 progress=progress,
                 message=self._msg_with_trace(message, record.trace_id),
                 event_seq=len(record.updates) + 1,
+                topology=topology,
             )
         )
 
@@ -407,15 +450,17 @@ class JobService:
                     job_id=record.job_id,
                     trace_id=record.trace_id,
                     max_iters=record.max_iters,
+                    topology=record.topology,
                 )
             elif record.should_fail:
                 record.updates = self._mk_error_updates(
                     job_id=record.job_id,
                     summary=record.error_summary,
                     trace_id=record.trace_id,
+                    topology=record.topology,
                 )
             else:
-                record.updates = self._mk_default_updates(record.job_id, record.trace_id)
+                record.updates = self._mk_default_updates(record.job_id, record.trace_id, record.topology)
             self._finalize_terminal_state(record)
             return
 
@@ -499,6 +544,19 @@ class JobService:
     def _build_job_record(self, request, *, job_id: str, created_at: Timestamp, trace_id: str | None) -> _JobRecord:
         metadata = dict(request.metadata)
         created_at_dt = created_at.ToDatetime().replace(tzinfo=timezone.utc)
+        attempt = 1
+        try:
+            attempt = max(int(metadata.get("topology_attempt", "1")), 1)
+        except ValueError:
+            attempt = 1
+        topology = {
+            "contract_version": TOPOLOGY_CONTRACT_VERSION,
+            "lineage_version": TOPOLOGY_LINEAGE_VERSION,
+            "cluster_id": metadata.get("topology_cluster_id", "cluster-local"),
+            "worker_id": metadata.get("topology_worker_id", f"worker-{job_id[-6:]}"),
+            "partition_id": metadata.get("topology_partition_id", "partition-0"),
+            "attempt": str(attempt),
+        }
 
         backend_error_kind = metadata.get("backend_error_kind", "").strip().lower()
         should_fail = request.target.startswith("emu:fail") or bool(backend_error_kind)
@@ -532,9 +590,16 @@ class JobService:
             "trace_id": trace_id or "",
             "trace_ref": f"trace://{trace_id}" if trace_id else "",
             "timeline_version": "2.0.0",
+            "topology_contract_version": topology["contract_version"],
+            "topology_lineage_version": topology["lineage_version"],
+            "topology_cluster_id": topology["cluster_id"],
+            "topology_worker_id": topology["worker_id"],
+            "topology_partition_id": topology["partition_id"],
+            "topology_attempt": topology["attempt"],
+            "topology_envelope_ref": f"qfs://jobs/{job_id}/topology/envelope.json",
         }
         dispatch_rationale = {
-            "version": "2.1.0",
+            "version": "2.2.0",
             "policy_version": metadata.get("dispatch_policy_version", "2.1.0"),
             "reason_codes": ["WEIGHTED_FAIRNESS", "DEVICE_SCORE", "SINGLE_DISPATCH"],
             "selected_backend": request.target or "sim:local",
@@ -547,6 +612,7 @@ class JobService:
                 "policy_branch": "single_dispatch",
                 "fallback_reason": "NO_FALLBACK",
                 "artifact_version": "1.1.0",
+                "topology_contract_version": topology["contract_version"],
             },
             "lineage": [
                 {
@@ -556,6 +622,8 @@ class JobService:
                     "attributes": {
                         "queue": f"priority-{int(request.priority)}",
                         "target": request.target or "sim:local",
+                        "cluster_id": topology["cluster_id"],
+                        "partition_id": topology["partition_id"],
                     },
                 },
                 {
@@ -563,12 +631,20 @@ class JobService:
                     "event": "DISPATCH_MODE_SELECTED",
                     "outcome": "single_dispatch",
                     "attributes": {"batch_mode_enabled": str(self._batch_mode_enabled).lower()},
+                    "attributes": {
+                        "batch_mode_enabled": str(self._batch_mode_enabled).lower(),
+                        "worker_id": topology["worker_id"],
+                    },
                 },
                 {
                     "step": 3,
                     "event": "BACKEND_SELECTED",
                     "outcome": request.target or "sim:local",
                     "attributes": {"reason_codes": "WEIGHTED_FAIRNESS,DEVICE_SCORE"},
+                    "attributes": {
+                        "reason_codes": "WEIGHTED_FAIRNESS,DEVICE_SCORE",
+                        "attempt": topology["attempt"],
+                    },
                 },
             ],
             "timeline_ref": f"qfs://jobs/{job_id}/timeline.json",
@@ -610,6 +686,7 @@ class JobService:
                 progress=0.0,
                 message=self._msg_with_trace("queued", trace_id),
                 event_seq=1,
+                topology=topology,
             )
         ]
 
@@ -635,11 +712,16 @@ class JobService:
             trace_id=trace_id,
             max_iters=max_iters,
             dispatch_rationale=dispatch_rationale,
+            topology=topology,
             batch_manifest_ref="",
             batch_id="",
             queue_delay_sec=0.0,
         )
         self._provision_temporary_artifacts(record)
+        QFS_STORE.atomic_write_bytes(
+            results_metadata["topology_envelope_ref"],
+            json.dumps(topology, sort_keys=True, separators=(",", ":")).encode("utf-8"),
+        )
         self._store_timeline(record)
         return record
     
@@ -800,6 +882,7 @@ class JobService:
                             message="accepted (idempotent replay)",
                             created_at=existing.created_at,
                             updated_at=latest.timestamp,
+                            topology=self._mk_topology_pb(existing.topology),
                         ),
                     )
 
@@ -825,6 +908,7 @@ class JobService:
                 message=record.updates[0].message,
                 created_at=now,
                 updated_at=now,
+                topology=self._mk_topology_pb(record.topology),
             ),
         )
 
@@ -864,6 +948,7 @@ class JobService:
                 error_code=record.error_code if latest.state == self._types_pb.JOB_STATE_ERROR else "",
                 error_summary=record.error_summary if latest.state == self._types_pb.JOB_STATE_ERROR else "",
                 error_details_ref=record.error_details_ref if latest.state == self._types_pb.JOB_STATE_ERROR else "",
+                topology=self._mk_topology_pb(record.topology),
             )
         )
 

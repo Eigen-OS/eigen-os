@@ -126,3 +126,49 @@ def test_timeout_transitions_to_terminal_state_without_hanging(grpc_addr: str):
 
     results = stub.GetJobResults(job_pb.GetJobResultsRequest(job_id=job_id))
     assert results.state == types_pb.JOB_STATE_TIMEOUT
+
+
+def test_trace_context_continuity_across_status_results_and_rationale(grpc_addr: str):
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = job_pb_grpc.JobServiceStub(channel)
+
+    traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+    trace_id = "4bf92f3577b34da6a3ce929d0e0e4736"
+    submit = job_pb.SubmitJobRequest(
+        name="e2e-trace-continuity",
+        target="emu:real-hifi",
+        metadata={
+            "trace_id": trace_id,
+            "topology_cluster_id": "cluster-e2e",
+            "topology_worker_id": "worker-e2e-01",
+            "topology_partition_id": "partition-e2e-7",
+            "topology_attempt": "2",
+        },
+        eigen_lang=types_pb.EigenLangSource(source=b"fn main() {}\n", entrypoint="main"),
+    )
+    job_id = stub.SubmitJob(submit, metadata=(("traceparent", traceparent),)).job_id
+
+    updates = [item.update for item in stub.StreamJobUpdates(job_pb.StreamJobUpdatesRequest(job_id=job_id))]
+    assert updates
+    assert all(update.topology.contract_version == "1.1.0" for update in updates)
+    assert all(update.topology.cluster_id == "cluster-e2e" for update in updates)
+
+    status = stub.GetJobStatus(job_pb.GetJobStatusRequest(job_id=job_id)).status
+    assert status.topology.contract_version == "1.1.0"
+    assert status.topology.worker_id == "worker-e2e-01"
+    assert status.topology.partition_id == "partition-e2e-7"
+    assert status.topology.attempt == 2
+    assert trace_id in status.message
+
+    results = stub.GetJobResults(job_pb.GetJobResultsRequest(job_id=job_id))
+    assert results.metadata["trace_id"] == trace_id
+    assert results.metadata["trace_ref"] == f"trace://{trace_id}"
+    assert results.metadata["topology_cluster_id"] == "cluster-e2e"
+    assert results.metadata["topology_worker_id"] == "worker-e2e-01"
+    assert results.metadata["topology_partition_id"] == "partition-e2e-7"
+    assert results.metadata["topology_attempt"] == "2"
+
+    rationale = stub.GetDispatchRationale(job_pb.GetDispatchRationaleRequest(job_id=job_id)).rationale
+    assert rationale.trace_id == trace_id
+    assert rationale.trace_ref == f"trace://{trace_id}"
+    
