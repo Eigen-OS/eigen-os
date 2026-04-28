@@ -74,6 +74,39 @@ def test_no_synthetic_gate_stub_is_emitted() -> None:
     assert compiled["operations"] == [{"op": "MEASURE", "q": [0], "c": [0]}]
 
 
+def test_distributed_metadata_contract_is_deterministic() -> None:
+    source = (
+        b"from eigen_lang import hybrid_program\n\n"
+        b"@hybrid_program()\n"
+        b"def main():\n"
+        b"    ry(0, theta=1.0)\n"
+    )
+    options = {
+        "distributed.enabled": "true",
+        "distributed.target": "cluster",
+        "distributed.partition_count": "4",
+        "distributed.queue_provider": "memory",
+        "distributed.topology_hint": "pipeline",
+    }
+
+    first = compile_eigen_lang(source, options=options)
+    second = compile_eigen_lang(source, options=options)
+
+    first_aqo = json.loads(first.aqo_json.decode("utf-8"))
+    second_aqo = json.loads(second.aqo_json.decode("utf-8"))
+
+    assert first_aqo == second_aqo
+    assert first_aqo["distributed_execution"] == {
+        "version": "1.0.0",
+        "target": "cluster",
+        "partition_count": 4,
+        "queue_provider": "memory",
+        "hints": {"version": "1.0.0", "topology_hint": "pipeline"},
+    }
+    assert first.metadata["distributed.execution_metadata_version"] == "1.0.0"
+    assert first.metadata["distributed.topology_hints_version"] == "1.0.0"
+
+    
 @pytest.mark.parametrize("case_file", sorted(NEGATIVE_ROOT.glob("*/request.json")), ids=lambda p: p.parent.name)
 def test_negative_cases_return_expected_validation_errors(grpc_addr: str, case_file: Path) -> None:
     case = json.loads(case_file.read_text(encoding="utf-8"))

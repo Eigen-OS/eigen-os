@@ -1,0 +1,15 @@
+{
+  "rpc": "CompileCircuit",
+  "request": {
+    "language": "eigen-lang",
+    "source": "from eigen_lang import hybrid_program\n\n@hybrid_program()\ndef main():\n    ry(0, theta=1.0)\n",
+    "options": {
+      "distributed.enabled": "true",
+      "distributed.target": "edge"
+    }
+  },
+  "expected": {
+    "code": "INVALID_ARGUMENT",
+    "fields": ["options.distributed.target"]
+  }
+}

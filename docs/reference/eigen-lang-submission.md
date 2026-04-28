@@ -46,6 +46,28 @@ Compiler AQO metadata includes deterministic runtime-intelligence fields:
 
 Compile-time diagnostics reject unsupported runtime targets and policy conflicts in a deterministic order, using `RUNTIME_INTELLIGENCE_DIAGNOSTIC` with field-level violations.
 
+### Distributed execution metadata and hints (Phase-5)
+
+Compiler metadata now carries explicit distributed-contract versions and compile-time hint surface:
+
+- `metadata.distributed.execution_metadata_version` = `1.0.0`
+- `metadata.distributed.topology_hints_version` = `1.0.0`
+- `metadata.distributed.enabled` = `true|false`
+- `metadata.distributed.target` (required when distributed mode is enabled)
+- `metadata.distributed.partition_count` (optional, defaults to `1` when enabled)
+- `metadata.distributed.queue_provider` (optional, currently `memory|redis|sqs`)
+- `metadata.distributed.topology_hint` (optional, currently `data_parallel|pipeline`)
+
+When `distributed.enabled=true`, AQO includes:
+
+- `distributed_execution.version` = `1.0.0`
+- `distributed_execution.target`
+- `distributed_execution.partition_count`
+- `distributed_execution.hints.version` = `1.0.0`
+- `distributed_execution.hints.topology_hint`
+
+Deterministic diagnostics reject unsupported distributed configurations using field-level violations in stable validation order (for example, invalid `distributed.target` or disabled distributed mode combined with distributed-only options).
+
 ## Storage contract (QFS)
 
 Per job, the pipeline persists source bundle and compiled artifacts in CircuitFS paths (`job.yaml`, `program.eigen.py`, `compiled.aqo.json`, results/metadata artifacts).
