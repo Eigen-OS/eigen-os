@@ -18,6 +18,7 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 
 ### Added
 
+- Phase-4 P4-02 scheduling policy engine and policy bundles (`resource-manager` package `0.5.0`) with versioned `PolicyBundle` schema (`1.0.0`), deterministic precedence-based resolution, and safe fallback artifacts for missing/invalid policy inputs.
 - Phase-3 P3-08 reproducibility and determinism quality gate (`benchmark-service` package `0.7.0`) with versioned reproducibility policy thresholds (`1.0.0`), deterministic snapshot consistency checks, bounded metric variance checks, and CI drift diagnostics.
 - Phase-3 P3-07 benchmark observability pack (`benchmark-service` package `0.6.0`) with stable `eigen_bench_*` metrics contract (`1.0.0`), benchmark lifecycle dashboard, Prometheus alerts, and triage runbook.
 - Phase-3 P3-06 CLI benchmark UX: `eigen benchmark run` and `eigen benchmark compare` (Rust CLI package `0.4.0`) with stable JSON/human output modes, explicit output version markers, and compatibility fixtures.
@@ -33,6 +34,12 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 - **Version impact:** MINOR (governance package completion; benchmark-service package advanced to `0.8.0`).
 - **Compatibility:** No payload or behavior break; stable contract baselines remain `1.0.0` for run (`state/snapshot`), dataset ingestion (`manifest/ingestion`), compare (`comparison/methodology`), and history (`history_contract_version`).
 - **Migration notes:** No mandatory migration. Teams should pin and validate explicit version markers in run snapshots, ingestion artifacts, compare outputs, and history entries.
+
+### Phase-4: Scheduling Policy Engine and Policy Bundles (P4-02)
+
+- **Version impact:** MINOR (new scheduling policy contract surface; Rust workspace package advanced to `0.5.0`).
+- **Compatibility:** Additive; existing scheduler admission/dispatch and backend scoring contracts remain unchanged.
+- **Migration notes:** No mandatory migration for default behavior. Policy adopters should pin `policy_bundle_version` and consume `SCHEDULING_POLICY_*` version markers in decision artifacts.
 
 ### Phase-3: Reproducibility and Determinism Gate (P3-08)
 
