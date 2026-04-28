@@ -976,7 +976,14 @@ class JobService:
 
         violations = validate_job_id(request)
         if violations:
-            abort_invalid_argument(context, "validation failed", violations)
+            abort_with_error_info(
+                context,
+                grpc_code=grpc.StatusCode.INVALID_ARGUMENT,
+                message="validation failed",
+                reason="EXPLAIN_INVALID_REQUEST",
+                domain="eigen.api.v1.explain",
+                metadata={"field": ",".join(v.field for v in violations)},
+            )
 
         with self._lock:
             record = self._jobs.get(request.job_id)
