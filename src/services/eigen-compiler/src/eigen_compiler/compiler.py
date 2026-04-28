@@ -20,6 +20,14 @@ class CompilationResult:
     aqo_json: bytes
     metadata: dict[str, str]
 
+@dataclass(frozen=True)
+class DistributedCompileConfig:
+    enabled: bool
+    target: str | None
+    partition_count: int | None
+    queue_provider: str | None
+    topology_hint: str | None
+
 
 @dataclass(frozen=True)
 class CompilerValidationError(Exception):
@@ -221,7 +229,32 @@ def _collect_operations(tree: ast.AST, params: dict[str, str]) -> tuple[list[dic
     return operations, qubit_count
 
 
-def compile_eigen_lang(source: bytes, *, source_ref: str | None = None) -> CompilationResult:
+def _distributed_compile_config(options: dict[str, str] | None) -> DistributedCompileConfig:
+    options = options or {}
+    enabled = options.get("distributed.enabled", "false").lower() == "true"
+    target = options.get("distributed.target") or None
+
+    partition_count: int | None = None
+    if "distributed.partition_count" in options:
+        partition_count = int(options["distributed.partition_count"])
+
+    queue_provider = options.get("distributed.queue_provider") or None
+    topology_hint = options.get("distributed.topology_hint") or None
+    return DistributedCompileConfig(
+        enabled=enabled,
+        target=target,
+        partition_count=partition_count,
+        queue_provider=queue_provider,
+        topology_hint=topology_hint,
+    )
+
+
+def compile_eigen_lang(
+    source: bytes,
+    *,
+    source_ref: str | None = None,
+    options: dict[str, str] | None = None,
+) -> CompilationResult:
     """Compile source bytes into a tiny AQO v0.1 payload."""
 
     source_digest = hashlib.sha256(source).hexdigest() if source else ""
@@ -244,6 +277,7 @@ def compile_eigen_lang(source: bytes, *, source_ref: str | None = None) -> Compi
         isinstance(node, ast.Call) and _call_name(node.func) == "ExpectationValue"
         for node in ast.walk(tree)
     )
+    distributed = _distributed_compile_config(options)
 
     aqo = {
         "version": "0.1",
@@ -256,6 +290,18 @@ def compile_eigen_lang(source: bytes, *, source_ref: str | None = None) -> Compi
         aqo["expectation"] = {"kind": "ExpectationValue"}
     if has_minimize:
         aqo["hybrid_plan_marker"] = {"kind": "minimize", "expanded_by": "kernel"}
+    if distributed.enabled:
+        aqo["distributed_execution"] = {
+            "version": "1.0.0",
+            "target": distributed.target or "cluster",
+            "partition_count": distributed.partition_count or 1,
+            "hints": {
+                "version": "1.0.0",
+                "topology_hint": distributed.topology_hint or "data_parallel",
+            },
+        }
+        if distributed.queue_provider:
+            aqo["distributed_execution"]["queue_provider"] = distributed.queue_provider
 
     aqo_bytes = json.dumps(aqo, sort_keys=True, separators=(",", ":")).encode("utf-8")
     
@@ -272,5 +318,14 @@ def compile_eigen_lang(source: bytes, *, source_ref: str | None = None) -> Compi
         metadata["hybrid_plan_marker"] = "minimize"
     if source_ref:
         metadata["source_ref"] = source_ref
+    metadata["distributed.execution_metadata_version"] = "1.0.0"
+    metadata["distributed.topology_hints_version"] = "1.0.0"
+    metadata["distributed.enabled"] = "true" if distributed.enabled else "false"
+    if distributed.enabled:
+        metadata["distributed.target"] = distributed.target or "cluster"
+        metadata["distributed.partition_count"] = str(distributed.partition_count or 1)
+        metadata["distributed.topology_hint"] = distributed.topology_hint or "data_parallel"
+        if distributed.queue_provider:
+            metadata["distributed.queue_provider"] = distributed.queue_provider
 
     return CompilationResult(aqo_json=aqo_bytes, metadata=metadata)

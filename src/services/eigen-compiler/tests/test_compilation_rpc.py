@@ -50,6 +50,40 @@ def test_compile_circuit_happy_path(grpc_addr: str) -> None:
     assert resp.circuit.format == _enum_value(types_pb, "CIRCUIT_FORMAT_AQO_JSON", "AQO_JSON")
     assert resp.metadata["aqo_version"] == "0.1"
     assert len(resp.circuit.data) > 0
+    assert resp.metadata["distributed.execution_metadata_version"] == "1.0.0"
+    assert resp.metadata["distributed.enabled"] == "false"
+
+
+def test_compile_circuit_emits_distributed_metadata_hints(grpc_addr: str) -> None:
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = comp_pb_grpc.CompilationServiceStub(channel)
+
+    resp = stub.CompileCircuit(
+        comp_pb.CompileCircuitRequest(
+            language="eigen-lang",
+            source=(
+                b"from eigen_lang import hybrid_program\n\n"
+                b"@hybrid_program()\n"
+                b"def main():\n"
+                b"    ry(0, theta=1.0)\n"
+            ),
+            options={
+                "distributed.enabled": "true",
+                "distributed.target": "cluster",
+                "distributed.partition_count": "8",
+                "distributed.queue_provider": "redis",
+                "distributed.topology_hint": "data_parallel",
+            },
+        )
+    )
+
+    assert resp.metadata["distributed.execution_metadata_version"] == "1.0.0"
+    assert resp.metadata["distributed.topology_hints_version"] == "1.0.0"
+    assert resp.metadata["distributed.enabled"] == "true"
+    assert resp.metadata["distributed.target"] == "cluster"
+    assert resp.metadata["distributed.partition_count"] == "8"
+    assert resp.metadata["distributed.queue_provider"] == "redis"
+    assert resp.metadata["distributed.topology_hint"] == "data_parallel"
 
 
 def test_compile_circuit_requires_input(grpc_addr: str) -> None:
@@ -185,3 +219,40 @@ def test_compile_circuit_returns_structured_violations(grpc_addr: str) -> None:
     assert any("import 'os'" in desc for desc in descriptions)
     assert any("call 'eval'" in desc for desc in descriptions)
     assert any("dynamic I/O call 'os.system'" in desc for desc in descriptions)
+
+
+def test_compile_circuit_rejects_unsupported_distributed_config(grpc_addr: str) -> None:
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = comp_pb_grpc.CompilationServiceStub(channel)
+
+    with pytest.raises(grpc.RpcError) as e:
+        stub.CompileCircuit(
+            comp_pb.CompileCircuitRequest(
+                language="eigen-lang",
+                source=(
+                    b"from eigen_lang import hybrid_program\n\n"
+                    b"@hybrid_program()\n"
+                    b"def main():\n"
+                    b"    ry(0, theta=1.0)\n"
+                ),
+                options={
+                    "distributed.enabled": "false",
+                    "distributed.target": "cluster",
+                    "distributed.partition_count": "0",
+                    "distributed.queue_provider": "unknown",
+                    "distributed.topology_hint": "mesh",
+                },
+            )
+        )
+
+    assert e.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+    bad = _extract_bad_request(e.value)
+    assert [v.field for v in bad.field_violations] == [
+        "options.distributed.partition_count",
+        "options.distributed.queue_provider",
+        "options.distributed.topology_hint",
+        "options.distributed.target",
+        "options.distributed.partition_count",
+        "options.distributed.queue_provider",
+        "options.distributed.topology_hint",
+    ]

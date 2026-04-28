@@ -18,6 +18,7 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 
 ### Added
 
+- Phase-5 P5-05 Eigen-Lang distributed execution metadata + topology hints (`eigen-compiler` package `0.4.0`) with deterministic distributed target validation, explicit distributed metadata version markers (`1.0.0`), AQO distributed execution envelope emission, and conformance fixtures for compatibility protection.
 - Phase-5 P5-03 pluggable distributed queue layer and delivery semantics v1 (`resource-manager` package `0.10.0`) with provider-neutral queue adapter contract (`enqueue`/`lease`/`ack`/`requeue`), deterministic lease-expiration redelivery, explicit dead-letter records, and compatibility fixtures for queue lease/dead-letter version markers.
 - Phase-5 P5-02 worker node service and remote execution contract (`resource-manager` package `0.9.0`) with deterministic worker lifecycle API (`start`/`heartbeat`/`complete`/`cancel`), runtime artifact materialization metadata contract, timeout transitions, and idempotent duplicate-delivery handling.
 - Phase-5 P5-01 cluster runtime control-plane core (`resource-manager` package `0.8.0`) with deterministic `--cluster` bootstrap discovery artifact, worker registration/capability handshake DTOs, and assignment artifacts carrying explicit contract/version + lineage metadata.
@@ -60,6 +61,12 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 - **Version impact:** MINOR (new provider-neutral distributed queue contract surface; Rust workspace package advanced to `0.10.0`).
 - **Compatibility:** Additive; existing scheduler, cluster control-plane assignment, and worker execution contracts remain unchanged while queue envelope (`1.0.0`), lease-event (`1.0.0`), and dead-letter (`1.0.0`) contracts are introduced.
 - **Migration notes:** No mandatory migration for single-node flows. Distributed deployments should pin `DISTRIBUTED_QUEUE_CONTRACT_VERSION`, `QUEUE_LEASE_EVENT_VERSION`, and `QUEUE_DEAD_LETTER_CONTRACT_VERSION`, and ensure external providers enforce visibility timeout + dead-letter policy aligned with retry budgets.
+
+### Phase-5: Eigen-Lang Distributed Execution Metadata and Hints (P5-05)
+
+- **Version impact:** MINOR (adds distributed compile metadata/hints and deterministic validation; `eigen-compiler` package advanced to `0.4.0`).
+- **Compatibility:** Additive; existing AQO core fields remain unchanged while distributed metadata and AQO `distributed_execution` envelope fields are added under explicit `1.0.0` markers.
+- **Migration notes:** No mandatory migration. Consumers should pin `metadata.distributed.execution_metadata_version`, `metadata.distributed.topology_hints_version`, and `aqo.distributed_execution.version` before relying on distributed-target/topology hint behavior.
 
 ### Phase-4: ADR Synchronization and Release Meta (P4-09)
 
