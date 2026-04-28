@@ -59,6 +59,29 @@ def abort_invalid_argument(
     context.abort_with_status(rpc_status.to_status(st))
 
 
+def abort_with_error_info(
+    context: grpc.ServicerContext,
+    *,
+    grpc_code: grpc.StatusCode,
+    message: str,
+    reason: str,
+    domain: str,
+    metadata: dict[str, str] | None = None,
+) -> None:
+    """Abort RPC with google.rpc.ErrorInfo details for stable machine parsing."""
+    info = error_details_pb2.ErrorInfo(
+        reason=reason,
+        domain=domain,
+        metadata=metadata or {},
+    )
+    st = status_pb2.Status(
+        code=_grpc_code_int(grpc_code),
+        message=message,
+    )
+    st.details.add().Pack(info)
+    context.abort_with_status(rpc_status.to_status(st))
+
+
 def required_string(value: str, field: str) -> Iterable[FieldViolation]:
     if not value:
         yield FieldViolation(field=field, description="field is required")
