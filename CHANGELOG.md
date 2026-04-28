@@ -18,6 +18,7 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 
 ### Added
 
+- Phase-5 P5-03 pluggable distributed queue layer and delivery semantics v1 (`resource-manager` package `0.10.0`) with provider-neutral queue adapter contract (`enqueue`/`lease`/`ack`/`requeue`), deterministic lease-expiration redelivery, explicit dead-letter records, and compatibility fixtures for queue lease/dead-letter version markers.
 - Phase-5 P5-02 worker node service and remote execution contract (`resource-manager` package `0.9.0`) with deterministic worker lifecycle API (`start`/`heartbeat`/`complete`/`cancel`), runtime artifact materialization metadata contract, timeout transitions, and idempotent duplicate-delivery handling.
 - Phase-5 P5-01 cluster runtime control-plane core (`resource-manager` package `0.8.0`) with deterministic `--cluster` bootstrap discovery artifact, worker registration/capability handshake DTOs, and assignment artifacts carrying explicit contract/version + lineage metadata.
 - Phase-4 P4-09 ADR synchronization and release meta package (`governance-docs` package `0.9.0`) with implemented RFC status updates for RFC 0023/0024/0025, synchronized ADR set (ADR 0011/0012/0013), and published Phase-4 release readiness + compatibility docs.
@@ -53,6 +54,12 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 - **Version impact:** MINOR (new worker-node distributed execution artifacts; Rust workspace package advanced to `0.9.0`).
 - **Compatibility:** Additive; existing cluster assignment and scheduler contracts remain unchanged while new worker lifecycle and artifact materialization contracts are introduced at `1.0.0`.
 - **Migration notes:** No mandatory migration. Distributed worker/queue integrations should pin `WORKER_NODE_EXECUTION_CONTRACT_VERSION` and `WORKER_RUNTIME_ARTIFACT_CONTRACT_VERSION`, treat duplicate `idempotency_key` deliveries as replay-safe, and honor deterministic timeout/cancellation terminalization.
+
+### Phase-5: Pluggable Queue Layer and Delivery Semantics v1 (P5-03)
+
+- **Version impact:** MINOR (new provider-neutral distributed queue contract surface; Rust workspace package advanced to `0.10.0`).
+- **Compatibility:** Additive; existing scheduler, cluster control-plane assignment, and worker execution contracts remain unchanged while queue envelope (`1.0.0`), lease-event (`1.0.0`), and dead-letter (`1.0.0`) contracts are introduced.
+- **Migration notes:** No mandatory migration for single-node flows. Distributed deployments should pin `DISTRIBUTED_QUEUE_CONTRACT_VERSION`, `QUEUE_LEASE_EVENT_VERSION`, and `QUEUE_DEAD_LETTER_CONTRACT_VERSION`, and ensure external providers enforce visibility timeout + dead-letter policy aligned with retry budgets.
 
 ### Phase-4: ADR Synchronization and Release Meta (P4-09)
 
