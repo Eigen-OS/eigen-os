@@ -42,6 +42,17 @@
   - [ADR 0009 — Phase-3 dataset ingestion contract v1](adr/0009-phase3-dataset-ingestion-contract-v1.md)
   - [ADR 0010 — Phase-3 comparison methodology and history contract v1](adr/0010-phase3-compare-history-contract-v1.md)
 
+## Phase-4 RFC set (draft)
+
+- Status on 2026-04-28: Phase-4 planning and issue pack are published; RFCs are in draft awaiting acceptance inputs.
+- Coverage check: [development/phase-4-rfc-adr-gap-analysis.md](development/phase-4-rfc-adr-gap-analysis.md)
+- Draft RFCs:
+  - [RFC 0023 — Phase-4 backend selection scoring contract v1](../rfcs/0023-phase4-backend-selection-scoring-contract-v1.md)
+  - [RFC 0024 — Phase-4 explainability API contract v1](../rfcs/0024-phase4-explainability-api-contract-v1.md)
+  - [RFC 0025 — Phase-4 scheduling policy engine contract v1](../rfcs/0025-phase4-scheduling-policy-engine-contract-v1.md)
+- ADR synchronization policy:
+  - When any Phase-4 RFC is marked `Implemented`, corresponding ADR record(s) must be added in `docs/adr/` before Phase-4 closure.
+
 ## Quick links
 
 - RFC directory: [`../rfcs/`](../rfcs/)
