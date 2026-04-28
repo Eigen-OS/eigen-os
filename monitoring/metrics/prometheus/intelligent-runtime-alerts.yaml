@@ -1,0 +1,53 @@
+groups:
+  - name: eigen-intelligent-runtime
+    interval: 30s
+    rules:
+      - alert: EigenRuntimeScoringFailuresSpike
+        expr: increase(eigen_runtime_scoring_failures_total[10m]) > 5
+        for: 10m
+        labels: { severity: critical, team: sre }
+        annotations:
+          summary: "Scoring failures exceed safe threshold over 10m"
+
+      - alert: EigenRuntimeScoringLatencyP95Degraded
+        expr: histogram_quantile(0.95, sum by (le) (rate(eigen_runtime_scoring_latency_ms_bucket[5m]))) > 150
+        for: 10m
+        labels: { severity: warning, team: runtime }
+        annotations:
+          summary: "Scoring latency p95 above 150ms"
+
+      - alert: EigenRuntimeFallbackRateHigh
+        expr: increase(eigen_runtime_fallback_total[15m]) / clamp_min(increase(eigen_runtime_decisions_total[15m]), 1) > 0.10
+        for: 15m
+        labels: { severity: warning, team: sre }
+        annotations:
+          summary: "Fallback rate above 10% in the last 15m"
+
+      - alert: EigenRuntimeExplainErrorRateCritical
+        expr: increase(eigen_runtime_explain_errors_total[10m]) / clamp_min(increase(eigen_runtime_explain_requests_total[10m]), 1) > 0.01
+        for: 10m
+        labels: { severity: critical, team: sre }
+        annotations:
+          summary: "Explain endpoint error rate exceeds 1% SLO budget"
+
+      - alert: EigenRuntimeExplainLatencyL1P95Critical
+        expr: histogram_quantile(0.95, sum by (le) (rate(eigen_runtime_explain_latency_ms_bucket{level="1"}[5m]))) > 100
+        for: 10m
+        labels: { severity: critical, team: sre }
+        annotations:
+          summary: "Explain L1_USER p95 latency above 100ms"
+
+      - alert: EigenRuntimeExplainLatencyL2P95Critical
+        expr: histogram_quantile(0.95, sum by (le) (rate(eigen_runtime_explain_latency_ms_bucket{level="2"}[5m]))) > 200
+        for: 10m
+        labels: { severity: critical, team: sre }
+        annotations:
+          summary: "Explain L2_ADMIN p95 latency above 200ms"
+
+      - alert: EigenRuntimeExplainLatencyL3P95Critical
+        expr: histogram_quantile(0.95, sum by (le) (rate(eigen_runtime_explain_latency_ms_bucket{level="3"}[5m]))) > 500
+        for: 10m
+        labels: { severity: critical, team: sre }
+        annotations:
+          summary: "Explain L3_FORENSIC p95 latency above 500ms"
+          

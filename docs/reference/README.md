@@ -16,6 +16,7 @@ They should stay precise, explicit, and implementation-agnostic.
 - Error mapping: [`error-mapping.md`](error-mapping.md)
 - Multi-device execution (split/merge): [`multi-device-execution-contract.md`](multi-device-execution-contract.md)
 - Orchestration observability contract: [`orchestration-observability-contract.md`](orchestration-observability-contract.md)
+- Intelligent runtime observability contract: [`intelligent-runtime-observability-contract.md`](intelligent-runtime-observability-contract.md)
 - Formats:
   - [`formats/aqo.md`](formats/aqo.md)
   - [`formats/qfs-layout.md`](formats/qfs-layout.md)

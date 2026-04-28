@@ -6,6 +6,7 @@ rule_files:
   - stage-slo-alerts.yaml
   - orchestrator-alerts.yaml
   - benchmark-alerts.yaml
+  - intelligent-runtime-alerts.yaml
 
 scrape_configs:
   - job_name: eigen-kernel-stage-metrics
