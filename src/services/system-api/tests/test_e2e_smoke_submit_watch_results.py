@@ -67,6 +67,11 @@ def test_e2e_smoke_submit_watch_results(grpc_addr: str):
     status = stub.GetJobStatus(job_pb.GetJobStatusRequest(job_id=job_id)).status
     assert status.job_id == job_id
     assert status.state == updates[-1].state
+    assert status.topology.contract_version == "1.1.0"
+    assert status.topology.lineage_version == "1.1.0"
+    assert status.topology.cluster_id == "cluster-local"
+    assert status.topology.partition_id == "partition-0"
+    assert status.topology.attempt >= 1
 
     # results endpoint must return counts map and metadata map
     results = stub.GetJobResults(job_pb.GetJobResultsRequest(job_id=job_id))
@@ -83,7 +88,7 @@ def test_e2e_smoke_submit_watch_results(grpc_addr: str):
         assert results.metadata.get(key) == template.format(job_id=job_id)
 
     rationale = stub.GetDispatchRationale(job_pb.GetDispatchRationaleRequest(job_id=job_id)).rationale
-    assert rationale.version == "2.1.0"
+    assert rationale.version == "2.2.0"
     assert rationale.policy_version
     assert "WEIGHTED_FAIRNESS" in rationale.reason_codes
     assert "DEVICE_SCORE" in rationale.reason_codes

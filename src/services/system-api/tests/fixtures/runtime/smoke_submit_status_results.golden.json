@@ -8,6 +8,10 @@
     "backend": "sim:local",
     "qfs_compiled_aqo": "qfs://jobs/{job_id}/compiled/circuit.aqo.json",
     "qfs_results_parquet": "qfs://jobs/{job_id}/results.parquet",
-    "qfs_metrics": "qfs://jobs/{job_id}/results/metrics.json"
+    "qfs_metrics": "qfs://jobs/{job_id}/results/metrics.json",
+    "topology_contract_version": "1.1.0",
+    "topology_lineage_version": "1.1.0",
+    "topology_cluster_id": "cluster-local",
+    "topology_partition_id": "partition-0"
   }
 }
