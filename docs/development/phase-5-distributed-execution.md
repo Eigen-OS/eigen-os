@@ -103,6 +103,7 @@ Transition Eigen-OS from single-node execution to deterministic, observable, and
 - Assignment order: hard constraints -> capability fitness -> load tie-break.
 - Retry strategy: bounded exponential backoff with attempt cap and deterministic jitter seed.
 - Cancellation is best-effort but must persist terminal cancellation intent.
+- Node-loss fallback (v1): exclude lost/offline/draining workers, retry deterministic selection on remaining `READY|DEGRADED` workers, and record explicit fallback reason in assignment artifact metadata.
 
 ### 3) Topology lineage baseline
 
