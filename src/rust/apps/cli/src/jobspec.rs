@@ -5,6 +5,9 @@ use std::path::{Path, PathBuf};
 
 pub const JOBSPEC_API_VERSION: &str = "eigen.os/v0.1";
 pub const JOBSPEC_KIND: &str = "QuantumJob";
+pub const EIGEN_LANG_RUNTIME_HINTS_VERSION: &str = "1.0.0";
+pub const EIGEN_LANG_RUNTIME_DIAGNOSTICS_VERSION: &str = "1.0.0";
+pub const EIGEN_LANG_EXECUTION_ANNOTATIONS_VERSION: &str = "1.0.0";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FieldViolation {
@@ -708,6 +711,8 @@ pub struct DispatchRationaleView {
 
 pub fn compile_job_to_aqo_json(job_path: &Path) -> Result<String, SubmitBuildError> {
     let req = build_submit_request_from_job_file(job_path)?;
+    let (runtime_hints, execution_annotations) =
+        runtime_intelligence_hints_for_compile(&req).map_err(SubmitBuildError::Validation)?;
     let ProgramSource::EigenLangSource {
         source,
         entrypoint,
@@ -726,14 +731,125 @@ pub fn compile_job_to_aqo_json(job_path: &Path) -> Result<String, SubmitBuildErr
             "  \"program_sha256\": \"{sha256}\",\n",
             "  \"source_bytes\": {source_bytes},\n",
             "  \"operations\": [],\n",
-            "  \"metadata\": {{\"compiled_by\": \"eigen-cli-local\"}}\n",
+            "  \"metadata\": {{\n",
+            "    \"compiled_by\": \"eigen-cli-local\",\n",
+            "    \"runtime_intelligence_hints\": {runtime_hints},\n",
+            "    \"execution_annotations\": {execution_annotations}\n",
+            "  }}\n",
             "}}"
         ),
         escaped_entrypoint = escaped_entrypoint,
         escaped_target = escaped_target,
         sha256 = sha256,
         source_bytes = source.len(),
+        runtime_hints = runtime_hints,
+        execution_annotations = execution_annotations,
     ))
+}
+
+fn runtime_intelligence_hints_for_compile(
+    req: &SubmitJobRequest,
+) -> Result<(String, String), JobSpecValidationError> {
+    let mut violations = Vec::new();
+    let target = req.target.trim();
+    if !is_supported_runtime_target(target) {
+        violations.push(FieldViolation {
+            field: "spec.target".to_string(),
+            description: format!(
+                "unsupported runtime target '{target}' (supported prefixes: sim:, qpu:, hw:)"
+            ),
+        });
+    }
+
+    let policy_from_option = req
+        .compiler_options
+        .get("runtime.policy")
+        .map(String::as_str);
+    let policy_from_metadata = req.metadata.get("runtime.policy").map(String::as_str);
+    if let (Some(option_value), Some(metadata_value)) = (policy_from_option, policy_from_metadata)
+        && option_value != metadata_value
+    {
+        violations.push(FieldViolation {
+            field: "spec.compiler_options.runtime.policy".to_string(),
+            description: format!(
+                "policy conflict with spec.metadata.runtime.policy ('{option_value}' != '{metadata_value}')"
+            ),
+        });
+    }
+
+    if let Some(required_backend) = req.compiler_options.get("runtime.require_backend")
+        && required_backend == "qpu"
+        && target.starts_with("sim:")
+    {
+        violations.push(FieldViolation {
+            field: "spec.compiler_options.runtime.require_backend".to_string(),
+            description: "policy conflict: runtime.require_backend=qpu cannot target simulator"
+                .to_string(),
+        });
+    }
+
+    if !violations.is_empty() {
+        return Err(JobSpecValidationError {
+            code: "RUNTIME_INTELLIGENCE_DIAGNOSTIC",
+            violations,
+        });
+    }
+
+    let scoring_profile = req
+        .compiler_options
+        .get("runtime.scoring_profile")
+        .cloned()
+        .unwrap_or_else(|| "balanced".to_string());
+    let preferred_backend = if target.starts_with("sim:") {
+        "simulator"
+    } else {
+        "hardware"
+    };
+
+    let runtime_hints = format!(
+        concat!(
+            "{{",
+            "\"version\":\"{version}\",",
+            "\"diagnostics_version\":\"{diagnostics_version}\",",
+            "\"target_family\":\"{target_family}\",",
+            "\"preferred_backend\":\"{preferred_backend}\",",
+            "\"scoring_profile\":\"{scoring_profile}\",",
+            "\"explainability_ref\":\"{explainability_ref}\"",
+            "}}"
+        ),
+        version = EIGEN_LANG_RUNTIME_HINTS_VERSION,
+        diagnostics_version = EIGEN_LANG_RUNTIME_DIAGNOSTICS_VERSION,
+        target_family = if target.starts_with("sim:") {
+            "simulator"
+        } else {
+            "quantum_device"
+        },
+        preferred_backend = preferred_backend,
+        scoring_profile = json_escape(&scoring_profile),
+        explainability_ref = json_escape(&format!("explain://compile/{}/{}", req.name, req.target)),
+    );
+
+    let execution_annotations = format!(
+        concat!(
+            "{{",
+            "\"version\":\"{version}\",",
+            "\"explainability_id\":\"{explainability_id}\",",
+            "\"traceability_key\":\"{traceability_key}\"",
+            "}}"
+        ),
+        version = EIGEN_LANG_EXECUTION_ANNOTATIONS_VERSION,
+        explainability_id = json_escape(&format!(
+            "explain-{}",
+            &sha256_hex(req.name.as_bytes())[0..12]
+        )),
+        traceability_key = json_escape(&format!("job:{}:target:{}", req.name, req.target)),
+    );
+
+    Ok((runtime_hints, execution_annotations))
+}
+
+fn is_supported_runtime_target(target: &str) -> bool {
+    target.starts_with("sim:") || target.starts_with("qpu:") || target.starts_with("hw:")
 }
 
 pub fn visualize_aqo_json(aqo_json: &str) -> String {
@@ -1233,11 +1349,76 @@ spec:
 
         let aqo = compile_job_to_aqo_json(&yaml_path).expect("compile");
         assert!(aqo.contains("\"aqo_version\": \"0.1\""));
+        assert!(aqo.contains("\"runtime_intelligence_hints\":"));
+        assert!(aqo.contains("\"version\":\"1.0.0\""));
+        assert!(aqo.contains("\"execution_annotations\":"));
+        assert!(aqo.contains("\"explainability_id\":"));
         let viz = visualize_aqo_json(&aqo);
         assert!(viz.contains("AQO Graph (MVP)"));
         assert!(viz.contains("program_sha256:"));
     }
     
+    #[test]
+    fn compile_rejects_unsupported_runtime_target_deterministically() {
+        let dir = temp_dir();
+        let yaml_path = dir.join("job.yaml");
+        fs::write(
+            dir.join("program.eigen.py"),
+            "@hybrid_program\ndef main():\n    return 1\n",
+        )
+        .unwrap();
+        fs::write(
+            &yaml_path,
+            "apiVersion: eigen.os/v0.1\nkind: QuantumJob\nmetadata:\n  name: bad-target\nspec:\n  target: edge:gpu\n",
+        )
+        .unwrap();
+
+        let err = compile_job_to_aqo_json(&yaml_path).unwrap_err();
+        match err {
+            SubmitBuildError::Validation(validation) => {
+                assert_eq!(validation.code, "RUNTIME_INTELLIGENCE_DIAGNOSTIC");
+                assert_eq!(
+                    validation.violations[0].description,
+                    "unsupported runtime target 'edge:gpu' (supported prefixes: sim:, qpu:, hw:)"
+                );
+            }
+            other => panic!("expected validation error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn compile_rejects_policy_conflicts_deterministically() {
+        let dir = temp_dir();
+        let yaml_path = dir.join("job.yaml");
+        fs::write(
+            dir.join("program.eigen.py"),
+            "@hybrid_program\ndef main():\n    return 1\n",
+        )
+        .unwrap();
+        fs::write(
+            &yaml_path,
+            "apiVersion: eigen.os/v0.1\nkind: QuantumJob\nmetadata:\n  name: policy-clash\nspec:\n  target: sim:local\n  compiler_options:\n    runtime.policy: latency\n    runtime.require_backend: qpu\n  metadata:\n    runtime.policy: throughput\n",
+        )
+        .unwrap();
+
+        let err = compile_job_to_aqo_json(&yaml_path).unwrap_err();
+        match err {
+            SubmitBuildError::Validation(validation) => {
+                assert_eq!(validation.code, "RUNTIME_INTELLIGENCE_DIAGNOSTIC");
+                assert_eq!(validation.violations.len(), 2);
+                assert!(validation.violations.iter().any(|v| {
+                    v.description
+                        .contains("policy conflict with spec.metadata.runtime.policy")
+                }));
+                assert!(validation.violations.iter().any(|v| {
+                    v.description
+                        .contains("runtime.require_backend=qpu cannot target simulator")
+                }));
+            }
+            other => panic!("expected validation error, got {other:?}"),
+        }
+    }
+
     #[test]
     fn dispatch_rationale_contains_version_and_reason_codes() {
         let rationale = get_dispatch_rationale_from_system_api("job-demo").expect("rationale");
