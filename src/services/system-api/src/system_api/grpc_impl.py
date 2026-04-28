@@ -239,7 +239,7 @@ class JobService:
                 state=self._types_pb.JOB_STATE_DONE,
                 stage="COMPLETED",
                 progress=1.0,
-                message="completed",
+                message=self._msg_with_trace("completed", trace_id),
                 event_seq=5,
                 topology=topology,
             ),
@@ -362,7 +362,7 @@ class JobService:
                 progress=progress,
                 message=self._msg_with_trace(message, record.trace_id),
                 event_seq=len(record.updates) + 1,
-                topology=topology,
+                topology=record.topology,
             )
         )
 
