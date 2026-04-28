@@ -35,6 +35,17 @@ Validation rejects:
 
 For the same input source and compiler config, output AQO JSON is stable via canonical serialization (`sort_keys=True`, compact separators), enabling repeatable hashes and golden tests.
 
+### Runtime-intelligence hints and diagnostics (Phase-4)
+
+Compiler AQO metadata includes deterministic runtime-intelligence fields:
+
+- `metadata.runtime_intelligence_hints.version` = `1.0.0`
+- `metadata.runtime_intelligence_hints.diagnostics_version` = `1.0.0`
+- `metadata.execution_annotations.version` = `1.0.0`
+- `metadata.execution_annotations.explainability_id` (stable explainability identifier for workflow linking)
+
+Compile-time diagnostics reject unsupported runtime targets and policy conflicts in a deterministic order, using `RUNTIME_INTELLIGENCE_DIAGNOSTIC` with field-level violations.
+
 ## Storage contract (QFS)
 
 Per job, the pipeline persists source bundle and compiled artifacts in CircuitFS paths (`job.yaml`, `program.eigen.py`, `compiled.aqo.json`, results/metadata artifacts).
