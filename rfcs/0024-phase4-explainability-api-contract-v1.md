@@ -62,6 +62,20 @@ A client can request why backend `X` was selected, or why execution followed a p
   - fallback/retry reasons,
   - timing annotations.
 
+### Explainability levels
+
+The API supports exactly three levels:
+
+- `L1_USER`: human-readable summary,
+- `L2_ADMIN`: structured rationale,
+- `L3_FORENSIC`: full trace.
+
+`L1_USER` required fields: `selected_backend`, `decision_summary`, `top_factors`, `rejected_backends`, `confidence`, `expected_latency`, `expected_fidelity`, `expected_cost_band`.
+
+`L2_ADMIN`/`L3_FORENSIC` required fields: `policy_version`, `feature_snapshot`, `candidate_rankings`, `score_breakdown`, `constraint_rejections`, `fallbacks_used`, `source_freshness`, `decision_hash`.
+
+`L3_FORENSIC` responses should be exportable as JSON, event-log records, and trace-span attributes.
+
 ### Error model
 
 - `EXPLAIN_INVALID_REQUEST`
@@ -97,8 +111,18 @@ Required metrics:
 
 ## Performance
 
-- p95 response latency SLO is pending final target definition.
+- Explain SLO targets:
+  - `L1_USER p95 < 100ms`
+  - `L2_ADMIN p95 < 200ms`
+  - `L3_FORENSIC p95 < 500ms`
 - Explain endpoints should use persisted decision artifacts when possible to avoid recomputation.
+
+If forensic payload size is too large, API may return immediate summary plus async export link/job id.
+
+## Availability and degradation behavior
+
+- Explain API availability target: `99.5%`.
+- If explain service is degraded/unavailable, scheduling path remains available via cached explanation, deferred explanation generation, or degraded-but-safe mode.
 
 ## Benchmarking/Test Plan
 
@@ -130,5 +154,4 @@ Migration notes:
 
 ## Open Questions
 
-- Final redaction-level taxonomy for end users vs operators.
-- Exact p95/p99 SLO targets for explain APIs.
+- Final redaction-level policy rules for tenant-specific visibility controls.
