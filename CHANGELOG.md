@@ -18,6 +18,8 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 
 ### Added
 
+- Phase-5 P5-09 ADR synchronization and release meta package (`governance-docs` package `0.10.1`) with implemented RFC status updates for RFC 0026/0027/0028, synchronized ADR set (ADR 0014/0015/0016), and published Phase-5 release readiness + compatibility docs.
+- README information architecture refresh for Phase-5 closure: clearer audience/value/status sections, updated milestone matrix through Phase-5, and direct links to closure artifacts.
 - Phase-5 P5-08 RFC package for distributed contracts accepted and indexed (`governance-docs` package `0.10.0`) covering RFC 0026/0027/0028 with explicit accepted statuses, compatibility + test-plan sections, and synchronized roadmap/development doc links.
 - Phase-5 P5-07 determinism and replay gate for distributed scheduling (`resource-manager` package `0.10.1`) with assignment + lease + retry replay fixture coverage, deterministic lease-expiry sweep ordering, drift-path diagnostics, and CI gating for distributed scheduling artifact regressions.
 - Phase-5 P5-06 SRE pack for cluster health and queue reliability (`runtime-observability` assets `0.2.0`) with stable `eigen_cluster_*` metrics contract (`1.0.0`), control-plane -> queue -> worker Grafana dashboard, Prometheus reliability alerts, and deterministic triage/rollback runbook.
@@ -165,6 +167,8 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 
 ### Added
 
+- Phase-5 P5-09 ADR synchronization and release meta package (`governance-docs` package `0.10.1`) with implemented RFC status updates for RFC 0026/0027/0028, synchronized ADR set (ADR 0014/0015/0016), and published Phase-5 release readiness + compatibility docs.
+- README information architecture refresh for Phase-5 closure: clearer audience/value/status sections, updated milestone matrix through Phase-5, and direct links to closure artifacts.
 - Phase-2 orchestration documentation baseline: execution plan and a ready-to-copy GitHub issue pack for scheduler/device-aware/multi-device/batch workstreams.
 - Phase-2 release readiness checklist with locked orchestration contract version matrix and signed compatibility/migration package.
 - Phase-2 migration notes and release notes template with mandatory `Version impact`, `Compatibility`, and `Migration notes` sections.
@@ -176,6 +180,8 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 
 ### Added
 
+- Phase-5 P5-09 ADR synchronization and release meta package (`governance-docs` package `0.10.1`) with implemented RFC status updates for RFC 0026/0027/0028, synchronized ADR set (ADR 0014/0015/0016), and published Phase-5 release readiness + compatibility docs.
+- README information architecture refresh for Phase-5 closure: clearer audience/value/status sections, updated milestone matrix through Phase-5, and direct links to closure artifacts.
 - Project health documentation baseline: `CONTRIBUTING.md`, `SECURITY.md`, and roadmap/project-health alignment.
 - Phase-1 release readiness checklist with consolidated security/performance/docs/upgrade gates and locked contract version matrix.
 - Contract compatibility runner script: `scripts/test/run-contract-compatibility-suite.sh`.

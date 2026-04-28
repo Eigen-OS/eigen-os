@@ -18,6 +18,7 @@ This document tracks core community and maintenance documents for Eigen OS.
 ## Documentation hygiene checks
 
 - MVP-2 RFC/ADR package is documented in `docs/rfcs-pointer.md`, `rfcs/0013`-`0015`, and `docs/adr/0003`-`0005`.
+- Phase-5 RFC/ADR closure package is documented in `docs/rfcs-pointer.md`, `rfcs/0026`-`0028`, and `docs/adr/0014`-`0016`.
 - Roadmap no longer contains placeholder content.
 - Project health status is tracked in this file instead of open checklist placeholders.
 
