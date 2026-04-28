@@ -36,6 +36,234 @@ pub const REBALANCING_POLICY_VERSION: &str = "2.2.0";
 ///
 /// Breaking changes to partial-result envelopes or merge semantics must bump MAJOR.
 pub const MULTI_DEVICE_EXECUTION_CONTRACT_VERSION: &str = "2.0.0";
+/// SemVer version for Phase-5 cluster runtime control-plane artifacts.
+///
+/// Breaking changes to assignment semantics or lineage field meaning must bump MAJOR.
+pub const CLUSTER_CONTROL_PLANE_CONTRACT_VERSION: &str = "1.0.0";
+/// SemVer version for cluster assignment lineage metadata envelopes.
+pub const CLUSTER_ASSIGNMENT_LINEAGE_VERSION: &str = "1.0.0";
+
+/// Runtime mode for control-plane bootstrap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClusterRuntimeMode {
+    SingleNode,
+    Cluster,
+}
+
+/// Worker lifecycle state in cluster control plane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClusterWorkerState {
+    Ready,
+    Degraded,
+    Draining,
+    Offline,
+}
+
+/// Worker registration and capability handshake record.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClusterWorkerRegistration {
+    pub worker_id: String,
+    pub state: ClusterWorkerState,
+    pub capability_tags: Vec<String>,
+    pub max_parallel_tasks: u32,
+    pub current_load: u32,
+}
+
+/// Control-plane bootstrap input for `--cluster` mode.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClusterBootstrapInput {
+    pub cluster_id: String,
+    pub control_plane_node_id: String,
+    pub runtime_mode: ClusterRuntimeMode,
+}
+
+/// Deterministic worker discovery output during bootstrap.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClusterBootstrapArtifact {
+    pub cluster_contract_version: &'static str,
+    pub cluster_id: String,
+    pub control_plane_node_id: String,
+    pub runtime_mode: ClusterRuntimeMode,
+    pub discovered_worker_ids: Vec<String>,
+}
+
+/// Stable lineage metadata for assignment artifacts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClusterAssignmentLineage {
+    pub lineage_version: &'static str,
+    pub cluster_id: String,
+    pub assignment_id: String,
+    pub assignment_sequence: u64,
+    pub assignment_epoch_ms: u64,
+}
+
+/// Deterministic assignment output consumed by queue/worker runtimes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClusterAssignmentArtifact {
+    pub cluster_contract_version: &'static str,
+    pub assignment_id: String,
+    pub job_id: String,
+    pub candidate_workers: Vec<String>,
+    pub selected_worker_id: String,
+    pub assignment_trace: Vec<String>,
+    pub lineage: ClusterAssignmentLineage,
+    pub fallback_applied: bool,
+    pub fallback_reason: Option<String>,
+}
+
+/// Cluster control-plane validation and assignment errors.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClusterControlPlaneError {
+    EmptyClusterId,
+    EmptyControlPlaneNodeId,
+    EmptyJobId,
+    NoWorkersRegistered,
+    NoEligibleWorkers,
+}
+
+/// Bootstraps control-plane state and deterministically discovers workers.
+pub fn bootstrap_cluster_control_plane(
+    input: &ClusterBootstrapInput,
+    workers: &[ClusterWorkerRegistration],
+) -> Result<ClusterBootstrapArtifact, ClusterControlPlaneError> {
+    if input.cluster_id.trim().is_empty() {
+        return Err(ClusterControlPlaneError::EmptyClusterId);
+    }
+    if input.control_plane_node_id.trim().is_empty() {
+        return Err(ClusterControlPlaneError::EmptyControlPlaneNodeId);
+    }
+    if input.runtime_mode == ClusterRuntimeMode::Cluster && workers.is_empty() {
+        return Err(ClusterControlPlaneError::NoWorkersRegistered);
+    }
+
+    let mut discovered_worker_ids: Vec<String> = workers
+        .iter()
+        .filter(|worker| worker.state != ClusterWorkerState::Offline)
+        .map(|worker| worker.worker_id.trim())
+        .filter(|worker_id| !worker_id.is_empty())
+        .map(ToOwned::to_owned)
+        .collect();
+    discovered_worker_ids.sort();
+    discovered_worker_ids.dedup();
+
+    Ok(ClusterBootstrapArtifact {
+        cluster_contract_version: CLUSTER_CONTROL_PLANE_CONTRACT_VERSION,
+        cluster_id: input.cluster_id.trim().to_string(),
+        control_plane_node_id: input.control_plane_node_id.trim().to_string(),
+        runtime_mode: input.runtime_mode,
+        discovered_worker_ids,
+    })
+}
+
+/// Deterministically assigns a job to a worker with node-loss fallback behavior.
+pub fn assign_cluster_job(
+    cluster_id: &str,
+    job_id: &str,
+    assignment_sequence: u64,
+    assignment_epoch_ms: u64,
+    workers: &[ClusterWorkerRegistration],
+    required_capability_tags: &[String],
+    lost_worker_ids: &[String],
+) -> Result<ClusterAssignmentArtifact, ClusterControlPlaneError> {
+    if cluster_id.trim().is_empty() {
+        return Err(ClusterControlPlaneError::EmptyClusterId);
+    }
+    if job_id.trim().is_empty() {
+        return Err(ClusterControlPlaneError::EmptyJobId);
+    }
+    if workers.is_empty() {
+        return Err(ClusterControlPlaneError::NoWorkersRegistered);
+    }
+
+    let lost: std::collections::HashSet<&str> = lost_worker_ids
+        .iter()
+        .map(String::as_str)
+        .filter(|worker_id| !worker_id.trim().is_empty())
+        .collect();
+
+    let required_tags: std::collections::HashSet<&str> = required_capability_tags
+        .iter()
+        .map(String::as_str)
+        .filter(|tag| !tag.trim().is_empty())
+        .collect();
+
+    let mut eligible: Vec<&ClusterWorkerRegistration> = workers
+        .iter()
+        .filter(|worker| !lost.contains(worker.worker_id.as_str()))
+        .filter(|worker| {
+            matches!(
+                worker.state,
+                ClusterWorkerState::Ready | ClusterWorkerState::Degraded
+            )
+        })
+        .collect();
+
+    eligible.sort_by(|left, right| {
+        left.current_load
+            .cmp(&right.current_load)
+            .then_with(|| left.worker_id.cmp(&right.worker_id))
+    });
+
+    let mut assignment_trace = vec![
+        "filter-offline-draining-and-lost".to_string(),
+        "sort-by-load-asc-worker-id-asc".to_string(),
+    ];
+
+    let mut fallback_applied = false;
+    let mut fallback_reason = None;
+
+    let mut primary_candidates: Vec<&ClusterWorkerRegistration> = eligible
+        .iter()
+        .copied()
+        .filter(|worker| {
+            if required_tags.is_empty() {
+                return true;
+            }
+            let worker_tags: std::collections::HashSet<&str> =
+                worker.capability_tags.iter().map(String::as_str).collect();
+            required_tags.iter().all(|tag| worker_tags.contains(tag))
+        })
+        .collect();
+
+    if primary_candidates.is_empty() && !eligible.is_empty() {
+        fallback_applied = true;
+        fallback_reason = Some(
+            "no-worker-satisfies-required-capabilities-after-node-loss-fallback-to-load-order"
+                .to_string(),
+        );
+        assignment_trace.push("fallback-any-ready-or-degraded-worker".to_string());
+        primary_candidates = eligible.clone();
+    }
+
+    if primary_candidates.is_empty() {
+        return Err(ClusterControlPlaneError::NoEligibleWorkers);
+    }
+
+    let selected = primary_candidates[0];
+    let candidate_workers: Vec<String> = primary_candidates
+        .iter()
+        .map(|worker| worker.worker_id.clone())
+        .collect();
+    let assignment_id = format!("{}-a-{:06}", job_id.trim(), assignment_sequence);
+
+    Ok(ClusterAssignmentArtifact {
+        cluster_contract_version: CLUSTER_CONTROL_PLANE_CONTRACT_VERSION,
+        assignment_id: assignment_id.clone(),
+        job_id: job_id.trim().to_string(),
+        candidate_workers,
+        selected_worker_id: selected.worker_id.clone(),
+        assignment_trace,
+        lineage: ClusterAssignmentLineage {
+            lineage_version: CLUSTER_ASSIGNMENT_LINEAGE_VERSION,
+            cluster_id: cluster_id.trim().to_string(),
+            assignment_id,
+            assignment_sequence,
+            assignment_epoch_ms,
+        },
+        fallback_applied,
+        fallback_reason,
+    })
+}
 
 /// Split planning input for a task that can run on multiple backends.
 #[derive(Debug, Clone, PartialEq, Eq)]
