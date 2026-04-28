@@ -8,6 +8,7 @@ They should stay precise, explicit, and implementation-agnostic.
 - JobSpec: [`jobspec.md`](jobspec.md)
 - Eigen-Lang submission: [`eigen-lang-submission.md`](eigen-lang-submission.md)
 - Public API: [`api/grpc-public.md`](api/grpc-public.md)
+- Explain API (backend selection): [`api/explain-backend-selection.md`](api/explain-backend-selection.md)
 - Benchmark Run API: [`api/benchmark-run.md`](api/benchmark-run.md)
 - Benchmark observability contract: [`benchmark-observability-contract.md`](benchmark-observability-contract.md)
 - Internal API: [`api/grpc-internal.md`](api/grpc-internal.md)

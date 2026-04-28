@@ -22,6 +22,10 @@ pub const DEVICE_SCORE_VERSION: &str = "2.1.0";
 pub const BACKEND_SCORING_CONTRACT_VERSION: &str = "1.0.0";
 /// SemVer schema version for persisted backend scoring profiles.
 pub const BACKEND_SCORING_PROFILE_SCHEMA_VERSION: &str = "1.0.0";
+/// SemVer schema version for backend-selection explain API request DTO.
+pub const BACKEND_SELECTION_EXPLAIN_REQUEST_VERSION: &str = "1.0.0";
+/// SemVer schema version for backend-selection explain API response envelope.
+pub const BACKEND_SELECTION_EXPLAIN_RESPONSE_VERSION: &str = "1.0.0";
 /// SemVer schema version for scheduling policy bundles (Phase-4 policy engine).
 pub const SCHEDULING_POLICY_BUNDLE_SCHEMA_VERSION: &str = "1.0.0";
 /// SemVer version for scheduling policy-resolution decision artifacts.
@@ -529,6 +533,49 @@ pub struct BackendScoringDecisionArtifact {
     pub candidates: Vec<BackendScoreCandidate>,
     pub selected_backend_id: Option<String>,
     pub tie_break_trace: Vec<String>,
+}
+
+/// Request DTO for `/explain/backend-selection`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExplainBackendSelectionRequest {
+    pub request_version: &'static str,
+    pub response_version: &'static str,
+    pub decision_id: String,
+    pub include_rejected_candidates: bool,
+}
+
+/// Ordered factor contribution in the explain response envelope.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExplainFactorContribution {
+    pub backend_id: String,
+    pub factor: &'static str,
+    pub contribution_millis: u64,
+}
+
+/// Confidence metadata in `/explain/backend-selection` responses.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExplainConfidenceMetadata {
+    pub score_margin_millis: u64,
+    pub selected_score_millis: u64,
+    pub runner_up_score_millis: u64,
+    pub confidence: f64,
+}
+
+/// Stable response envelope for `/explain/backend-selection`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExplainBackendSelectionResponse {
+    pub explain_contract_version: &'static str,
+    pub request_version: &'static str,
+    pub response_version: &'static str,
+    pub scoring_contract_version: &'static str,
+    pub profile_schema_version: &'static str,
+    pub profile_version: String,
+    pub decision_id: String,
+    pub selected_backend_id: Option<String>,
+    pub tie_break_trace: Vec<String>,
+    pub candidate_scores: Vec<BackendScoreCandidate>,
+    pub factor_contributions: Vec<ExplainFactorContribution>,
+    pub confidence: ExplainConfidenceMetadata,
 }
 
 /// Named policy operating mode for scheduling policy bundle resolution.
@@ -1765,6 +1812,74 @@ pub fn score_backend_candidates(
         selected_backend_id: top.map(|candidate| candidate.backend_id.clone()),
         candidates: candidate_scores,
         tie_break_trace,
+    }
+}
+
+/// Builds a stable `/explain/backend-selection` envelope from a scoring artifact.
+pub fn explain_backend_selection(
+    request: &ExplainBackendSelectionRequest,
+    decision: &BackendScoringDecisionArtifact,
+) -> ExplainBackendSelectionResponse {
+    let mut eligible_scores: Vec<u64> = decision
+        .candidates
+        .iter()
+        .filter(|candidate| candidate.eligible)
+        .map(|candidate| candidate.score_millis)
+        .collect();
+    eligible_scores.sort_by(|left, right| right.cmp(left));
+
+    let selected_score_millis = eligible_scores.first().copied().unwrap_or(0);
+    let runner_up_score_millis = eligible_scores.get(1).copied().unwrap_or(0);
+    let score_margin_millis = selected_score_millis.saturating_sub(runner_up_score_millis);
+    let confidence = if selected_score_millis == 0 {
+        0.0
+    } else {
+        score_margin_millis as f64 / selected_score_millis as f64
+    };
+
+    let mut candidate_scores = decision.candidates.clone();
+    if !request.include_rejected_candidates {
+        candidate_scores.retain(|candidate| candidate.eligible);
+    }
+
+    let mut factor_contributions: Vec<ExplainFactorContribution> = candidate_scores
+        .iter()
+        .flat_map(|candidate| {
+            candidate
+                .feature_contributions
+                .iter()
+                .map(|feature| ExplainFactorContribution {
+                    backend_id: candidate.backend_id.clone(),
+                    factor: feature.feature,
+                    contribution_millis: feature.contribution_millis,
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    factor_contributions.sort_by(|left, right| {
+        left.backend_id
+            .cmp(&right.backend_id)
+            .then_with(|| left.factor.cmp(right.factor))
+    });
+
+    ExplainBackendSelectionResponse {
+        explain_contract_version: BACKEND_SELECTION_EXPLAIN_RESPONSE_VERSION,
+        request_version: request.request_version,
+        response_version: request.response_version,
+        scoring_contract_version: decision.scoring_contract_version,
+        profile_schema_version: decision.profile_schema_version,
+        profile_version: decision.profile_version.clone(),
+        decision_id: decision.decision_id.clone(),
+        selected_backend_id: decision.selected_backend_id.clone(),
+        tie_break_trace: decision.tie_break_trace.clone(),
+        candidate_scores,
+        factor_contributions,
+        confidence: ExplainConfidenceMetadata {
+            score_margin_millis,
+            selected_score_millis,
+            runner_up_score_millis,
+            confidence,
+        },
     }
 }
 
