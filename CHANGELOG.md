@@ -18,6 +18,7 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 
 ### Added
 
+- Phase-5 P5-06 SRE pack for cluster health and queue reliability (`runtime-observability` assets `0.2.0`) with stable `eigen_cluster_*` metrics contract (`1.0.0`), control-plane -> queue -> worker Grafana dashboard, Prometheus reliability alerts, and deterministic triage/rollback runbook.
 - Phase-5 P5-05 Eigen-Lang distributed execution metadata + topology hints (`eigen-compiler` package `0.4.0`) with deterministic distributed target validation, explicit distributed metadata version markers (`1.0.0`), AQO distributed execution envelope emission, and conformance fixtures for compatibility protection.
 - Phase-5 P5-03 pluggable distributed queue layer and delivery semantics v1 (`resource-manager` package `0.10.0`) with provider-neutral queue adapter contract (`enqueue`/`lease`/`ack`/`requeue`), deterministic lease-expiration redelivery, explicit dead-letter records, and compatibility fixtures for queue lease/dead-letter version markers.
 - Phase-5 P5-02 worker node service and remote execution contract (`resource-manager` package `0.9.0`) with deterministic worker lifecycle API (`start`/`heartbeat`/`complete`/`cancel`), runtime artifact materialization metadata contract, timeout transitions, and idempotent duplicate-delivery handling.
@@ -61,6 +62,12 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 - **Version impact:** MINOR (new provider-neutral distributed queue contract surface; Rust workspace package advanced to `0.10.0`).
 - **Compatibility:** Additive; existing scheduler, cluster control-plane assignment, and worker execution contracts remain unchanged while queue envelope (`1.0.0`), lease-event (`1.0.0`), and dead-letter (`1.0.0`) contracts are introduced.
 - **Migration notes:** No mandatory migration for single-node flows. Distributed deployments should pin `DISTRIBUTED_QUEUE_CONTRACT_VERSION`, `QUEUE_LEASE_EVENT_VERSION`, and `QUEUE_DEAD_LETTER_CONTRACT_VERSION`, and ensure external providers enforce visibility timeout + dead-letter policy aligned with retry budgets.
+
+### Phase-5: SRE Pack for Cluster Health and Queue Reliability (P5-06)
+
+- **Version impact:** MINOR (adds distributed runtime observability contract/assets; observability asset pack advanced to `0.2.0`).
+- **Compatibility:** Additive; existing `eigen_orch_*`, `eigen_bench_*`, and `eigen_runtime_*` contracts remain unchanged while `eigen_cluster_*` metrics are introduced with explicit marker `eigen_cluster_runtime_contract_info{version="1.0.0"}`.
+- **Migration notes:** No mandatory migration. Operators should import `monitoring/dashboards/cluster_runtime_sre_dashboard.json`, load `monitoring/metrics/prometheus/cluster-runtime-alerts.yaml`, and adopt `docs/howto/cluster-runtime-observability-runbook.md`.
 
 ### Phase-5: Eigen-Lang Distributed Execution Metadata and Hints (P5-05)
 
