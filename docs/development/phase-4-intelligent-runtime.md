@@ -88,11 +88,249 @@ Deliver an explainable, deterministic, and policy-configurable intelligent runti
    - `phase-4-release-readiness-checklist.md`
    - `phase-4-compatibility-report.md`
 
-## Data required to finalize Phase-4 defaults
+## Phase-4 default decisions (locked for v1)
 
-The following decisions are still required from maintainers/product owners before implementation can be finalized:
+The following defaults are now fixed for the initial Phase-4 implementation and should be treated as normative across RFC 0023/0024/0025.
 
-1. **Policy priority order** between `latency`, `throughput`, `cost`, and `balanced` for shared cluster modes.
-2. **Allowed feature set** for backend scoring v1 (resource utilization inputs, calibration history, queue-depth limits).
-3. **SLO thresholds** for explain endpoint latency and decision-fallback alerting.
-4. **User-facing explainability granularity** (operator-only factors vs end-user visible factors).
+### 1) Backend scoring feature allowlist
+
+Scoring uses only features that are available pre-run or during orchestration, reproducible, user-explainable, and free from opaque-ML final-decision dependence.
+
+#### Allowed feature groups
+
+- **Job features**
+  - `job_type`
+  - `priority`
+  - `shots`
+  - `circuit_depth`
+  - `circuit_width`
+  - `estimated_runtime`
+  - `backend_requirements`
+  - `noise_sensitivity`
+  - `deadline`
+  - `cost_sensitivity`
+- **Backend features**
+  - `backend_type`
+  - `qubit_count`
+  - `availability`
+  - `queue_length`
+  - `historical_latency`
+  - `historical_success_rate`
+  - `historical_fidelity`
+  - `error_rate`
+  - `calibration_age`
+  - `region`
+  - `supported_features`
+- **Runtime/context features**
+  - `current_cluster_load`
+  - `tenant_quota_state`
+  - `retry_count`
+  - `warm_cache_hit`
+  - `previous_backend_attempts`
+  - `data_freshness`
+  - `observability_health`
+- **Benchmark-derived features**
+  - `benchmark_family`
+  - `benchmark_similarity_score`
+  - `expected_fidelity_delta`
+  - `expected_latency_delta`
+  - `transpilation_cost_estimate`
+
+#### Explicitly disallowed in default path
+
+- hidden embeddings without explanation mapping;
+- opaque model logits as final decision input;
+- features derived from private user data not required for execution;
+- unstable features that cannot be audited later;
+- any signal that cannot be persisted with the decision record.
+
+#### Feature policy rules
+
+Every feature must define:
+
+- source;
+- freshness window;
+- fallback value;
+- explanation text.
+
+Every score contribution must be:
+
+- bounded;
+- monotonic, or explicitly documented as non-monotonic with rationale;
+- visible in the decision trace.
+
+Missing features must:
+
+- use default fallback;
+- be marked in explanation;
+- never fail silently.
+
+### 2) Rule-based policy priority ladder
+
+Priority is rule-based and not a single unconstrained formula.
+
+#### Level order
+
+0. **Hard constraints** (reject candidate if violated)
+   - compatible qubit count;
+   - required backend type;
+   - security/isolation policy;
+   - tenant restrictions;
+   - region constraints;
+   - explicit user exclusions;
+   - backend health minimum.
+1. **Correctness / viability** (remove weak candidates)
+   - estimated success probability;
+   - supported gate set;
+   - acceptable calibration age;
+   - acceptable queue upper bound;
+   - required runtime budget;
+   - noise threshold.
+2. **User intent**
+   - latency, fidelity, cost, throughput, determinism, debuggability.
+3. **Operational optimization** (tie-breakers)
+   - queue length, cache-hit probability, backend locality, warm executor availability, batch compatibility.
+4. **Learning-derived hints** (advisory only)
+   - historical pattern match, benchmark similarity, previous run success on similar circuits.
+
+#### Default priority map
+
+```yaml
+policy_priority_map:
+  hard_constraints: 100
+  correctness: 90
+  user_intent: 70
+  operational_optimization: 50
+  learning_hints: 30
+
+user_intent_weights:
+  fidelity: 1.0
+  latency: 0.8
+  cost: 0.7
+  throughput: 0.6
+  determinism: 0.9
+  debuggability: 0.85
+```
+
+#### Default selection strategy
+
+1. filter by hard constraints;
+2. rank by correctness;
+3. apply user intent weights;
+4. use operational tie-breakers;
+5. apply learning hints only when they do not override levels above.
+
+### 3) Explainability depth model
+
+Three fixed explainability levels are required for testability:
+
+- `L1_USER`: human-readable summary;
+- `L2_ADMIN`: structured rationale;
+- `L3_FORENSIC`: full decision trace.
+
+#### User explainability (L1_USER)
+
+Goal: answer “why this happened?” in plain language with shallow-to-medium depth.
+
+Required fields:
+
+- `selected_backend`
+- `decision_summary`
+- `top_factors`
+- `rejected_backends`
+- `confidence`
+- `expected_latency`
+- `expected_fidelity`
+- `expected_cost_band`
+
+Payload content expectations:
+
+- chosen backend;
+- top 3 reasons;
+- rejected alternatives summary;
+- estimated outcome;
+- retry delta description;
+- one-line recommendation.
+
+L1_USER must avoid internal heuristics dumps, raw coefficient vectors (unless explicitly requested), and low-level trace noise.
+
+#### Operator explainability (L2_ADMIN / L3_FORENSIC)
+
+Goal: answer “what exactly did the engine do, and can we reproduce it?” with full detail.
+
+Required fields:
+
+- `policy_version`
+- `feature_snapshot`
+- `candidate_rankings`
+- `score_breakdown`
+- `constraint_rejections`
+- `fallbacks_used`
+- `source_freshness`
+- `decision_hash`
+
+Operator payload should include complete feature vector, normalized weights, candidate set, filtering reasons, scoring breakdown per backend, fallback usage, freshness status, trace ID, timestamp, and reproducibility hash.
+
+Export formats:
+
+- JSON;
+- event log;
+- trace span attributes.
+
+### 4) SLOs for decision + explain engine
+
+#### Latency SLOs
+
+- Decision engine: `p95 < 150ms`, `p99 < 300ms`.
+- Explain API:
+  - `L1_USER p95 < 100ms`
+  - `L2_ADMIN p95 < 200ms`
+  - `L3_FORENSIC p95 < 500ms`
+
+If full forensic output is too large, return immediate summary plus async export link/job id.
+
+#### Availability SLOs
+
+- Decision engine: `99.9%`
+- Explain API: `99.5%`
+
+If explainability is unavailable, scheduling continues via cached explanations, deferred generation, or degraded-but-safe mode.
+
+#### Freshness SLOs
+
+- backend telemetry freshness: `<= 30s`
+- queue length freshness: `<= 10s`
+- calibration freshness: `<= 5m`
+- benchmark-derived advisory freshness: `<= 24h`
+
+If data exceeds freshness window, it must be marked stale, confidence must be reduced, and stale advisory signals must not override hard constraints.
+
+#### Consistency SLOs
+
+- same input + same policy version + same feature snapshot => same decision;
+- explanation hash must match decision hash;
+- policy version must be embedded in every result.
+
+#### Observability SLOs
+
+Every decision emits:
+
+- trace span;
+- decision event;
+- metric increment;
+- policy version tag;
+- backend candidate count;
+- confidence score.
+
+### 5) Minimal Phase-4 implementation contract
+
+Phase-4 v1 must support:
+
+- backend scoring;
+- deterministic scoring function;
+- feature allowlist;
+- policy map;
+- candidate filtering;
+- explain APIs (`/explain/backend-selection`, `/explain/execution`);
+- explain depths (`user`, `operator`, `forensic`);
+- SLO monitoring for latency histogram, stale-data counter, fallback counter, and explanation-cache hit ratio.

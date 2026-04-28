@@ -38,6 +38,33 @@ The runtime computes a score per candidate backend from a normalized feature vec
 
 ## Reference-level Design
 
+### Feature allowlist (default scoring path)
+
+Only the following feature groups are allowed in v1 default scoring:
+
+- **Job**: `job_type`, `priority`, `shots`, `circuit_depth`, `circuit_width`, `estimated_runtime`, `backend_requirements`, `noise_sensitivity`, `deadline`, `cost_sensitivity`
+- **Backend**: `backend_type`, `qubit_count`, `availability`, `queue_length`, `historical_latency`, `historical_success_rate`, `historical_fidelity`, `error_rate`, `calibration_age`, `region`, `supported_features`
+- **Runtime/context**: `current_cluster_load`, `tenant_quota_state`, `retry_count`, `warm_cache_hit`, `previous_backend_attempts`, `data_freshness`, `observability_health`
+- **Benchmark-derived**: `benchmark_family`, `benchmark_similarity_score`, `expected_fidelity_delta`, `expected_latency_delta`, `transpilation_cost_estimate`
+
+### Explicitly disallowed features
+
+The default scoring path MUST reject:
+
+- hidden embeddings without explanation mapping;
+- opaque model logits used as final decision input;
+- features derived from private user data not required for execution;
+- unstable/non-auditable features;
+- any feature that cannot be persisted in the decision artifact.
+
+### Feature policy requirements
+
+Each feature must define `source`, `freshness_window`, `fallback_value`, and `explanation_text`.
+
+Each score contribution must be bounded, monotonic (or explicitly marked non-monotonic with rationale), and visible in decision trace output.
+
+When a feature is missing, scorer MUST use fallback, annotate explanation, and MUST NOT fail silently.
+
 ### Scoring output envelope (v1)
 
 - `scoring_contract_version: "1.0.0"`
@@ -90,7 +117,7 @@ Required metrics:
 ## Performance
 
 - Scoring complexity target: `O(num_candidates * num_features)`.
-- p95 scoring latency budget to be finalized during acceptance.
+- SLO target: `p95 < 150ms`, `p99 < 300ms`.
 
 ## Benchmarking/Test Plan
 
@@ -123,5 +150,4 @@ Migration notes:
 
 ## Open Questions
 
-- Final v1 feature allowlist is pending maintainer decision.
 - Precision/rounding policy for floating-point contributions is pending.

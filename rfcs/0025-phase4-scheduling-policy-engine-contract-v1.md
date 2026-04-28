@@ -48,8 +48,43 @@ The engine loads a versioned policy bundle and resolves an execution plan throug
 1. Validate policy schema and required constraints.
 2. Apply profile defaults.
 3. Apply allowed overrides in canonical order.
-4. Resolve conflicts using fixed precedence table.
+4. Resolve conflicts using fixed precedence ladder.
 5. Emit fallback branch if constraints unsatisfied.
+
+### Default priority ladder (v1)
+
+The engine MUST apply this level order:
+
+0. **Hard constraints**
+1. **Correctness / viability**
+2. **User intent**
+3. **Operational optimization**
+4. **Learning-derived hints (advisory only)**
+
+Default numeric map:
+
+```yaml
+policy_priority_map:
+  hard_constraints: 100
+  correctness: 90
+  user_intent: 70
+  operational_optimization: 50
+  learning_hints: 30
+```
+
+Default `user_intent_weights`:
+
+```yaml
+user_intent_weights:
+  fidelity: 1.0
+  latency: 0.8
+  cost: 0.7
+  throughput: 0.6
+  determinism: 0.9
+  debuggability: 0.85
+```
+
+Selection sequence MUST be: filter hard constraints -> rank correctness -> apply user intent weights -> apply operational tie-breakers -> apply advisory learning hints without overriding higher levels.
 
 ### Error model
 
@@ -82,10 +117,20 @@ Required metrics:
 - `policy_resolution_failures_total`
 - `policy_fallback_total`
 
+Every decision should also emit policy-version tag, candidate-count tag, and confidence score metric field.
+
 ## Performance
 
 - Policy resolution target complexity: `O(num_constraints + num_overrides)`.
 - Additional scheduling overhead should remain bounded by accepted latency budget.
+
+Decision-path SLO target: `p95 < 150ms`, `p99 < 300ms`.
+
+Consistency requirements:
+
+- same input + same policy version + same feature snapshot MUST yield same decision;
+- decision hash must match explanation hash;
+- policy version embedded in every persisted decision artifact.
 
 ## Benchmarking/Test Plan
 
@@ -117,5 +162,4 @@ Migration notes:
 
 ## Open Questions
 
-- Final precedence table across policy modes and overrides.
 - Guardrail set for tenant-level policy overrides.
