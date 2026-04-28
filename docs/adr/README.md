@@ -21,6 +21,9 @@ Architecture Decision Records (ADRs) capture decisions that are already adopted 
 - [0008 — Phase-3 benchmark run lifecycle core v1](0008-phase3-benchmark-run-lifecycle-core-v1.md)
 - [0009 — Phase-3 dataset ingestion contract v1](0009-phase3-dataset-ingestion-contract-v1.md)
 - [0010 — Phase-3 comparison methodology and history contract v1](0010-phase3-compare-history-contract-v1.md)
+- [0011 — Phase-4 backend selection scoring contract v1](0011-phase4-backend-selection-scoring-contract-v1.md)
+- [0012 — Phase-4 explainability API contract v1](0012-phase4-explainability-api-contract-v1.md)
+- [0013 — Phase-4 scheduling policy engine contract v1](0013-phase4-scheduling-policy-engine-contract-v1.md)
 
 ## Phase-3 status
 
@@ -28,3 +31,10 @@ Architecture Decision Records (ADRs) capture decisions that are already adopted 
 - Required coverage check: [`../development/phase-3-rfc-adr-gap-analysis.md`](../development/phase-3-rfc-adr-gap-analysis.md).
 - Phase-3 release package: [`../development/phase-3-release-readiness-checklist.md`](../development/phase-3-release-readiness-checklist.md), [`../development/phase-3-compatibility-report.md`](../development/phase-3-compatibility-report.md).
 - Policy reminder: once any Phase-3 RFC is implemented, its normative decisions must be mirrored in one or more ADRs before release closure.
+
+## Phase-4 status
+
+- As of 2026-04-28, implemented Phase-4 RFCs are synchronized with ADRs (ADR 0011/0012/0013).
+- Required coverage check: [`../development/phase-4-rfc-adr-gap-analysis.md`](../development/phase-4-rfc-adr-gap-analysis.md).
+- Phase-4 release package: [`../development/phase-4-release-readiness-checklist.md`](../development/phase-4-release-readiness-checklist.md), [`../development/phase-4-compatibility-report.md`](../development/phase-4-compatibility-report.md).
+- Policy reminder: when a Phase-4 RFC is marked `Implemented`, corresponding ADR record(s) must be synchronized before release closure.
