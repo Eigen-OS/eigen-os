@@ -4,9 +4,11 @@ use std::path::PathBuf;
 
 use resource_manager::{
     AdmissionPolicy, BACKEND_SCORING_CONTRACT_VERSION, BACKEND_SCORING_PROFILE_SCHEMA_VERSION,
-    DEVICE_SCORE_VERSION, DispatchReasonCode, FairnessPolicy,
+    CLUSTER_ASSIGNMENT_LINEAGE_VERSION, CLUSTER_CONTROL_PLANE_CONTRACT_VERSION,
+    ClusterWorkerRegistration, ClusterWorkerState, DEVICE_SCORE_VERSION, DispatchReasonCode,
+    FairnessPolicy,
     MULTI_DEVICE_EXECUTION_CONTRACT_VERSION, REBALANCING_POLICY_VERSION,
-    SCHEDULER_DECISION_VERSION, ScheduledJob, Scheduler, plan_split,
+    SCHEDULER_DECISION_VERSION, ScheduledJob, Scheduler, assign_cluster_job, plan_split,
 };
 use serde_json::{Value, json};
 
@@ -103,6 +105,62 @@ fn split_plan_manifest_contract_matches_golden_fixture() {
 }
 
 #[test]
+fn cluster_assignment_contract_matches_golden_fixture() {
+    let assignment = assign_cluster_job(
+        "cluster-contract-01",
+        "job-contract-cluster-01",
+        11,
+        1_746_200_000_000,
+        &[
+            ClusterWorkerRegistration {
+                worker_id: "worker-b".to_string(),
+                state: ClusterWorkerState::Ready,
+                capability_tags: vec!["qpu".to_string(), "gpu".to_string()],
+                max_parallel_tasks: 8,
+                current_load: 3,
+            },
+            ClusterWorkerRegistration {
+                worker_id: "worker-a".to_string(),
+                state: ClusterWorkerState::Ready,
+                capability_tags: vec!["qpu".to_string()],
+                max_parallel_tasks: 4,
+                current_load: 1,
+            },
+            ClusterWorkerRegistration {
+                worker_id: "worker-x".to_string(),
+                state: ClusterWorkerState::Offline,
+                capability_tags: vec!["qpu".to_string()],
+                max_parallel_tasks: 4,
+                current_load: 0,
+            },
+        ],
+        &["qpu".to_string()],
+        &[],
+    )
+    .expect("cluster assignment fixture scenario must be valid");
+
+    let snapshot = json!({
+        "cluster_contract_version": assignment.cluster_contract_version,
+        "assignment_id": assignment.assignment_id,
+        "job_id": assignment.job_id,
+        "candidate_workers": assignment.candidate_workers,
+        "selected_worker_id": assignment.selected_worker_id,
+        "assignment_trace": assignment.assignment_trace,
+        "lineage": {
+            "lineage_version": assignment.lineage.lineage_version,
+            "cluster_id": assignment.lineage.cluster_id,
+            "assignment_id": assignment.lineage.assignment_id,
+            "assignment_sequence": assignment.lineage.assignment_sequence,
+            "assignment_epoch_ms": assignment.lineage.assignment_epoch_ms,
+        },
+        "fallback_applied": assignment.fallback_applied,
+        "fallback_reason": assignment.fallback_reason,
+    });
+
+    assert_eq!(snapshot, fixture("cluster_assignment_v1_0_0.json"));
+}
+
+#[test]
 fn all_orchestration_contracts_keep_explicit_version_markers() {
     assert_eq!(SCHEDULER_DECISION_VERSION, "2.1.0");
     assert_eq!(DEVICE_SCORE_VERSION, "2.1.0");
@@ -110,4 +168,6 @@ fn all_orchestration_contracts_keep_explicit_version_markers() {
     assert_eq!(BACKEND_SCORING_PROFILE_SCHEMA_VERSION, "1.0.0");
     assert_eq!(REBALANCING_POLICY_VERSION, "2.2.0");
     assert_eq!(MULTI_DEVICE_EXECUTION_CONTRACT_VERSION, "2.0.0");
+    assert_eq!(CLUSTER_CONTROL_PLANE_CONTRACT_VERSION, "1.0.0");
+    assert_eq!(CLUSTER_ASSIGNMENT_LINEAGE_VERSION, "1.0.0");
 }
