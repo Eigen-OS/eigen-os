@@ -56,3 +56,11 @@ cargo test -p eigen-kernel integration_propagates_traceparent_to_compiler_and_dr
 - Runbook: `docs/howto/intelligent-runtime-observability-runbook.md`
 
 Prometheus must include `intelligent-runtime-alerts.yaml` in `rule_files` and scrape the intelligent runtime metrics target exposing `eigen_runtime_*` series.
+
+## Phase-5 cluster runtime SRE pack
+
+- Dashboard: `monitoring/dashboards/cluster_runtime_sre_dashboard.json`
+- Alerts: `monitoring/metrics/prometheus/cluster-runtime-alerts.yaml`
+- Runbook: `docs/howto/cluster-runtime-observability-runbook.md`
+
+Prometheus must include `cluster-runtime-alerts.yaml` in `rule_files` and scrape the cluster runtime target exposing `eigen_cluster_*` series (default `127.0.0.1:9096`).

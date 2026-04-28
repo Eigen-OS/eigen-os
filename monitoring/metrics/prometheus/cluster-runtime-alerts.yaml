@@ -1,0 +1,46 @@
+groups:
+  - name: eigen-cluster-runtime
+    interval: 30s
+    rules:
+      - alert: EigenClusterQueueStall
+        expr: eigen_cluster_queue_backlog_depth > 0 and increase(eigen_cluster_queue_deliveries_total[10m]) == 0
+        for: 10m
+        labels: { severity: critical, team: sre }
+        annotations:
+          summary: "Queue backlog is increasing with no delivery progress for 10m"
+
+      - alert: EigenClusterWorkerFlapRateHigh
+        expr: increase(eigen_cluster_worker_flaps_total[15m]) > 6
+        for: 15m
+        labels: { severity: warning, team: sre }
+        annotations:
+          summary: "Worker flap rate exceeds safe threshold"
+
+      - alert: EigenClusterRedeliveryRateCritical
+        expr: increase(eigen_cluster_queue_redeliveries_total[15m]) / clamp_min(increase(eigen_cluster_queue_deliveries_total[15m]), 1) > 0.20
+        for: 15m
+        labels: { severity: critical, team: sre }
+        annotations:
+          summary: "Queue redelivery rate above 20% over 15m"
+
+      - alert: EigenClusterDeadLetterVolumeHigh
+        expr: increase(eigen_cluster_dead_letter_total[15m]) > 20
+        for: 10m
+        labels: { severity: warning, team: sre }
+        annotations:
+          summary: "Dead-letter volume exceeds expected baseline"
+
+      - alert: EigenClusterAssignmentLatencyP95SLOBreach
+        expr: histogram_quantile(0.95, sum by (le) (rate(eigen_cluster_assignment_latency_ms_bucket[5m]))) > 200
+        for: 10m
+        labels: { severity: critical, team: runtime }
+        annotations:
+          summary: "Assignment latency p95 exceeds 200ms SLO"
+
+      - alert: EigenClusterTraceBreakageDetected
+        expr: increase(eigen_cluster_trace_breakage_total[10m]) > 0
+        for: 5m
+        labels: { severity: critical, team: sre }
+        annotations:
+          summary: "Trace continuity breakage detected across control-plane -> queue -> worker"
+          
