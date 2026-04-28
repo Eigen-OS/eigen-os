@@ -58,11 +58,11 @@
   - [development/phase-4-release-readiness-checklist.md](development/phase-4-release-readiness-checklist.md)
   - [development/phase-4-compatibility-report.md](development/phase-4-compatibility-report.md)
 
-## Phase-5 RFC set (draft)
+## Phase-5 RFC set (accepted)
 
-- Status on 2026-04-28: required Phase-5 distributed contract RFC package is drafted; ADR synchronization will start after implementation.
+- Status on 2026-04-28: required Phase-5 distributed contract RFC package is accepted and indexed; ADR synchronization will start after implementation milestones.
 - Coverage check: [development/phase-5-rfc-adr-gap-analysis.md](development/phase-5-rfc-adr-gap-analysis.md)
-- Draft RFCs:
+- Accepted RFCs:
   - [RFC 0026 — Phase-5 cluster runtime control-plane contract v1](../rfcs/0026-phase5-cluster-runtime-control-plane-contract-v1.md)
   - [RFC 0027 — Phase-5 distributed queue and delivery semantics v1](../rfcs/0027-phase5-distributed-queue-and-delivery-semantics-v1.md)
   - [RFC 0028 — Phase-5 distributed tracing and execution topology contract v1](../rfcs/0028-phase5-distributed-tracing-and-execution-topology-contract-v1.md)

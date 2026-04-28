@@ -18,6 +18,7 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 
 ### Added
 
+- Phase-5 P5-08 RFC package for distributed contracts accepted and indexed (`governance-docs` package `0.10.0`) covering RFC 0026/0027/0028 with explicit accepted statuses, compatibility + test-plan sections, and synchronized roadmap/development doc links.
 - Phase-5 P5-07 determinism and replay gate for distributed scheduling (`resource-manager` package `0.10.1`) with assignment + lease + retry replay fixture coverage, deterministic lease-expiry sweep ordering, drift-path diagnostics, and CI gating for distributed scheduling artifact regressions.
 - Phase-5 P5-06 SRE pack for cluster health and queue reliability (`runtime-observability` assets `0.2.0`) with stable `eigen_cluster_*` metrics contract (`1.0.0`), control-plane -> queue -> worker Grafana dashboard, Prometheus reliability alerts, and deterministic triage/rollback runbook.
 - Phase-5 P5-05 Eigen-Lang distributed execution metadata + topology hints (`eigen-compiler` package `0.4.0`) with deterministic distributed target validation, explicit distributed metadata version markers (`1.0.0`), AQO distributed execution envelope emission, and conformance fixtures for compatibility protection.
@@ -45,6 +46,12 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 - **Version impact:** MINOR (governance package completion; benchmark-service package advanced to `0.8.0`).
 - **Compatibility:** No payload or behavior break; stable contract baselines remain `1.0.0` for run (`state/snapshot`), dataset ingestion (`manifest/ingestion`), compare (`comparison/methodology`), and history (`history_contract_version`).
 - **Migration notes:** No mandatory migration. Teams should pin and validate explicit version markers in run snapshots, ingestion artifacts, compare outputs, and history entries.
+
+### Phase-5: RFC Package for Distributed Contracts (P5-08)
+
+- **Version impact:** MINOR (governance package advancement; governance-docs package advanced to `0.10.0`).
+- **Compatibility:** No contract payload break; distributed control-plane, queue/delivery, and topology/tracing artifacts remain at stable `1.0.0` baselines with explicit status transition from `Draft` to `Accepted`.
+- **Migration notes:** No mandatory migration. Teams should pin explicit version markers in assignment, lease, and topology artifacts and track ADR synchronization when RFCs move to `Implemented`.
 
 ### Phase-5: Cluster Runtime Control Plane Core v1 (P5-01)
 

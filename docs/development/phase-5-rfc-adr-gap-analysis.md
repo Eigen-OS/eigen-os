@@ -6,15 +6,15 @@
 
 ## Executive summary
 
-Phase-5 goals are documented and the initial RFC package is drafted (RFC 0026/0027/0028). The issue pack is ready for execution tracking. ADR synchronization is intentionally deferred until RFCs transition from `Draft` to `Implemented`.
+Phase-5 goals are documented and the required RFC package is accepted (RFC 0026/0027/0028). The issue pack is ready for execution tracking. ADR synchronization is intentionally deferred until RFCs transition from `Accepted` to `Implemented`.
 
 ## What exists today
 
 ### RFCs available
 
-- RFC 0026 (Draft): cluster runtime control plane contract v1.
-- RFC 0027 (Draft): distributed queue and delivery semantics contract v1.
-- RFC 0028 (Draft): distributed tracing and execution topology contract v1.
+- RFC 0026 (Accepted): cluster runtime control plane contract v1.
+- RFC 0027 (Accepted): distributed queue and delivery semantics contract v1.
+- RFC 0028 (Accepted): distributed tracing and execution topology contract v1.
 
 ### ADRs available
 
@@ -25,9 +25,9 @@ Phase-5 goals are documented and the initial RFC package is drafted (RFC 0026/00
 
 | Area | Needed for Phase-5 | Present now | Gap |
 | --- | --- | --- | --- |
-| Cluster control-plane contract | RFC + compatibility policy | RFC 0026 (Draft) | ADR + implemented status pending |
-| Queue and delivery semantics | RFC + deterministic lease/ack rules | RFC 0027 (Draft) | ADR + implemented status pending |
-| Topology and tracing contract | RFC + stable lineage envelope | RFC 0028 (Draft) | ADR + implemented status pending |
+| Cluster control-plane contract | RFC + compatibility policy | RFC 0026 (Accepted) | ADR + implemented status pending |
+| Queue and delivery semantics | RFC + deterministic lease/ack rules | RFC 0027 (Accepted) | ADR + implemented status pending |
+| Topology and tracing contract | RFC + stable lineage envelope | RFC 0028 (Accepted) | ADR + implemented status pending |
 | Implemented decisions mirrored in ADRs | ADR(s) after implementation | Not started | Open |
 | Release closure artifacts | compatibility report + readiness checklist | Not started | Open |
 | Index/pointer synchronization | docs links to Phase-5 package | Added | Baseline complete |
