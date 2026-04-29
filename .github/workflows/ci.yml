@@ -210,7 +210,18 @@ jobs:
               );
             }
   
+  
+  contract-drift-gate:
+    name: Contract drift gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
+      - name: Validate contract artifacts manifest
+        run: python3 scripts/ci/check-contract-drift.py
+
+        
   migration-notes-gate:
     name: Migration notes gate
     runs-on: ubuntu-latest

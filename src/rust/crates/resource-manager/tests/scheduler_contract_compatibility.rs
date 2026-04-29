@@ -229,6 +229,20 @@ fn queue_delivery_contract_matches_golden_fixture() {
 }
 
 #[test]
+fn queue_delivery_previous_minor_baseline_remains_compatible() {
+    let current: Value = fixture("queue_delivery_contract_v1_0_1.json");
+    let baseline: Value = fixture("queue_delivery_contract_v1_0_0.json");
+
+    assert_eq!(current["first_lease_attempt"], baseline["first_lease_attempt"]);
+    assert_eq!(current["redelivery_attempt"], baseline["redelivery_attempt"]);
+    assert_eq!(current["dead_letter"]["task_id"], baseline["dead_letter"]["task_id"]);
+    assert_eq!(current["dead_letter"]["attempt"], baseline["dead_letter"]["attempt"]);
+    assert_eq!(current["dead_letter"]["max_attempts"], baseline["dead_letter"]["max_attempts"]);
+    assert_eq!(current["dead_letter"]["reason"], baseline["dead_letter"]["reason"]);
+    assert_eq!(current["metrics"], baseline["metrics"]);
+}
+
+#[test]
 fn all_orchestration_contracts_keep_explicit_version_markers() {
     assert_eq!(SCHEDULER_DECISION_VERSION, "2.1.0");
     assert_eq!(DEVICE_SCORE_VERSION, "2.1.0");
