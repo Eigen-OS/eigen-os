@@ -9,6 +9,8 @@ use std::time::Duration;
 const EXIT_USER_ERROR: i32 = 2;
 const EXIT_NETWORK_ERROR: i32 = 3;
 const EXIT_SERVER_ERROR: i32 = 4;
+const PLUGIN_MANIFEST_SCHEMA_VERSION: &str = "1.0.0";
+const PLUGIN_API_VERSION: &str = "1.0.0";
 const BENCHMARK_RUN_CONTRACT_VERSION: &str = "1.0.0";
 const BENCHMARK_RUN_SNAPSHOT_VERSION: &str = "1.0.0";
 const BENCHMARK_COMPARISON_CONTRACT_VERSION: &str = "1.0.0";
@@ -24,7 +26,13 @@ fn main() {
 
     match args[1].as_str() {
         "help" | "--help" | "-h" => print_help(),
-        "version" | "--version" | "-V" => println!("eigen-cli 0.4.0"),
+        "version" | "--version" | "-V" => println!("eigen-cli 0.5.0"),
+        "plugin" => {
+            if let Err(err) = run_plugin(&args[2..]) {
+                eprintln!("plugin failed: {err}");
+                std::process::exit(EXIT_USER_ERROR);
+            }
+        },
         "benchmark" => {
             if let Err(err) = run_benchmark(&args[2..]) {
                 eprintln!("benchmark failed: {err}");
@@ -98,6 +106,105 @@ struct BenchmarkMetricComparison {
     delta: f64,
     delta_percent: f64,
     regression: bool,
+}
+
+
+fn run_plugin(args: &[String]) -> Result<(), String> {
+    let Some(subcommand) = args.first() else {
+        return Err("usage: eigen plugin <scaffold|validate|package> [args...]".to_string());
+    };
+    match subcommand.as_str() {
+        "scaffold" => run_plugin_scaffold(&args[1..]),
+        "validate" => run_plugin_validate(&args[1..]),
+        "package" => run_plugin_package(&args[1..]),
+        other => Err(format!(
+            "unknown plugin subcommand: {other}. expected scaffold|validate|package"
+        )),
+    }
+}
+
+fn run_plugin_scaffold(args: &[String]) -> Result<(), String> {
+    if args.len() != 2 {
+        return Err("usage: eigen plugin scaffold <plugin_dir> <driver|compiler_backend|optimizer>".to_string());
+    }
+    let plugin_dir = PathBuf::from(&args[0]);
+    let plugin_type = &args[1];
+    validate_plugin_type(plugin_type)?;
+    std::fs::create_dir_all(&plugin_dir)
+        .map_err(|e| format!("failed to create {}: {e}", plugin_dir.display()))?;
+    let plugin_id = format!("io.eigen.{}", plugin_dir.file_name().and_then(|n| n.to_str()).unwrap_or("plugin"));
+    let manifest = format!(
+        "manifest_schema_version = \"{PLUGIN_MANIFEST_SCHEMA_VERSION}\"\nplugin_id = \"{plugin_id}\"\nplugin_version = \"0.1.0\"\nplugin_type = \"{plugin_type}\"\nplugin_api_version = \"{PLUGIN_API_VERSION}\"\neigen_os_compatibility = \">=0.6.0,<1.0.0\"\n\n[capabilities]\nhooks = []\n"
+    );
+    std::fs::write(plugin_dir.join("plugin.toml"), manifest)
+        .map_err(|e| format!("failed to write plugin.toml: {e}"))?;
+    std::fs::write(plugin_dir.join("README.md"), "# Plugin\n")
+        .map_err(|e| format!("failed to write README.md: {e}"))?;
+    println!("scaffolded plugin at {}", plugin_dir.display());
+    Ok(())
+}
+
+fn run_plugin_validate(args: &[String]) -> Result<(), String> {
+    if args.len() != 1 {
+        return Err("usage: eigen plugin validate <plugin.toml>".to_string());
+    }
+    let content =
+        std::fs::read_to_string(&args[0]).map_err(|e| format!("failed to read manifest: {e}"))?;
+    validate_plugin_manifest(&content)?;
+    println!("manifest valid");
+    Ok(())
+}
+
+fn run_plugin_package(args: &[String]) -> Result<(), String> {
+    if args.len() != 2 {
+        return Err("usage: eigen plugin package <plugin_dir> <output_file>".to_string());
+    }
+    let plugin_dir = PathBuf::from(&args[0]);
+    let output = PathBuf::from(&args[1]);
+    let manifest_path = plugin_dir.join("plugin.toml");
+    let manifest =
+        std::fs::read_to_string(&manifest_path).map_err(|e| format!("failed to read manifest: {e}"))?;
+    validate_plugin_manifest(&manifest)?;
+    let payload = format!(
+        "{{\"format_version\":\"1.0.0\",\"manifest\":\"{}\"}}\n",
+        json_escape(&manifest.replace('\n', "\\n"))
+    );
+    std::fs::write(&output, payload).map_err(|e| format!("failed to write package: {e}"))?;
+    println!("packaged plugin: {}", output.display());
+    Ok(())
+}
+
+fn validate_plugin_manifest(manifest: &str) -> Result<(), String> {
+    for field in [
+        "manifest_schema_version",
+        "plugin_id",
+        "plugin_version",
+        "plugin_type",
+        "plugin_api_version",
+        "eigen_os_compatibility",
+    ] {
+        if extract_toml_string(manifest, field).is_none() {
+            return Err(format!("manifest validation failed: missing required field '{field}'"));
+        }
+    }
+    let plugin_type = extract_toml_string(manifest, "plugin_type").unwrap_or_default();
+    validate_plugin_type(&plugin_type)
+}
+
+fn validate_plugin_type(plugin_type: &str) -> Result<(), String> {
+    match plugin_type {
+        "driver" | "compiler_backend" | "optimizer" => Ok(()),
+        other => Err(format!(
+            "manifest validation failed: unsupported plugin_type '{other}', allowed: driver, compiler_backend, optimizer"
+        )),
+    }
+}
+
+fn extract_toml_string(doc: &str, key: &str) -> Option<String> {
+    let marker = format!("{key} = \"");
+    let start = doc.find(&marker)? + marker.len();
+    let end = doc[start..].find('\"')? + start;
+    Some(doc[start..end].to_string())
 }
 
 fn run_benchmark(args: &[String]) -> Result<(), String> {
@@ -800,7 +907,8 @@ fn format_seed_timestamp(seed: u64) -> String {
 
 fn print_help() {
     println!(
-        "Eigen CLI\n\nUsage:\n  eigen <command> [args...]\n\nCommands:\n  help        Show this message\n  version     Print version\n  submit      Submit job: eigen submit -f job.yaml\n  status      Get job status: eigen status <job_id>\n  watch       Stream progress: eigen watch <job_id>\n  results     Fetch results: eigen results <job_id>\n  explain     Dispatch rationale: eigen explain <job_id>\n  compile     Compile locally: eigen compile -f job.yaml --out circuit.aqo.json\n  visualize   Visualize AQO: eigen visualize -f circuit.aqo.json\n  benchmark   Run/compare benchmark snapshots\n\nBenchmark examples (reproducible):\n  eigen benchmark run --config bench.json --output json --output-file baseline.json\n  eigen benchmark run --config bench-candidate.json --output json --output-file candidate.json\n  eigen benchmark compare --baseline baseline.json --candidate candidate.json --output human\n"
+        "Eigen CLI\n\nUsage:\n  eigen <command> [args...]\n\nCommands:\n  help        Show this message\n  version     Print version\n  submit      Submit job: eigen submit -f job.yaml\n  status      Get job status: eigen status <job_id>\n  watch       Stream progress: eigen watch <job_id>\n  results     Fetch results: eigen results <job_id>\n  explain     Dispatch rationale: eigen explain <job_id>\n  compile     Compile locally: eigen compile -f job.yaml --out circuit.aqo.json\n  visualize   Visualize AQO: eigen visualize -f circuit.aqo.json\n  benchmark   Run/compare benchmark snapshots
+  plugin      Scaffold/validate/package plugin artifacts\n\nBenchmark examples (reproducible):\n  eigen benchmark run --config bench.json --output json --output-file baseline.json\n  eigen benchmark run --config bench-candidate.json --output json --output-file candidate.json\n  eigen benchmark compare --baseline baseline.json --candidate candidate.json --output human\n"
     );
 }
 
@@ -853,5 +961,12 @@ mod tests {
             comparisons.iter().any(|metric| metric.regression),
             "at least one regression marker should be visible in fixture",
         );
+    }
+
+    #[test]
+    fn plugin_manifest_rejects_non_ga_type() {
+        let manifest = "manifest_schema_version = \"1.0.0\"\nplugin_id = \"io.eigen.x\"\nplugin_version = \"0.1.0\"\nplugin_type = \"analyzer\"\nplugin_api_version = \"1.0.0\"\neigen_os_compatibility = \">=0.6.0,<1.0.0\"\n";
+        let err = validate_plugin_manifest(manifest).expect_err("should fail");
+        assert!(err.contains("unsupported plugin_type 'analyzer'"));
     }
 }
