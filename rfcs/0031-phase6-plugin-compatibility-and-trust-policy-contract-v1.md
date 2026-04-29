@@ -1,6 +1,6 @@
 # RFC 0031: Phase-6 Plugin Compatibility and Trust Policy Contract v1
 
-- **Status**: Draft
+- **Status**: Accepted
 - **Authors**: Eigen OS maintainers
 - **Created**: 2026-04-28
 - **Target Milestone**: Phase 6
@@ -135,9 +135,9 @@ Required logs:
 
 ## Compatibility and Versioning
 
-- **Version impact:** Introduces policy contract baseline at `1.0.0`.
-- **Compatibility:** Non-plugin runtime remains unaffected.
-- **Migration notes:** Existing ad hoc extension trust checks should be replaced by Sigstore/Cosign policy profiles.
+- **Version impact:** Contract baseline is `1.0.0` (stable) for compatibility/trust policy evaluation.
+- **Compatibility:** Trust-policy semantic changes and incompatible compatibility-envelope behavior require `MAJOR`; additive reason codes/diagnostics metadata are `MINOR`; `PATCH` is restricted to non-semantic fixes.
+- **Migration notes:** Existing ad hoc extension trust checks should be replaced by Sigstore/Cosign policy profiles, while plugin artifacts must carry `plugin_api_version` and `eigen_os_compatibility`.
 
 ## Considered Alternatives
 

@@ -27,6 +27,7 @@ Architecture Decision Records (ADRs) capture decisions that are already adopted 
 - [0014 — Phase-5 cluster runtime control-plane contract v1](0014-phase5-cluster-runtime-control-plane-contract-v1.md)
 - [0015 — Phase-5 distributed queue and delivery semantics v1](0015-phase5-distributed-queue-and-delivery-semantics-v1.md)
 - [0016 — Phase-5 distributed tracing and execution topology contract v1](0016-phase5-distributed-tracing-and-execution-topology-contract-v1.md)
+- [0017 — Phase-6 plugin contract RFC package acceptance baseline](0017-phase6-plugin-contract-rfc-package-acceptance.md)
 
 ## Phase-3 status
 
@@ -48,3 +49,10 @@ Architecture Decision Records (ADRs) capture decisions that are already adopted 
 - Required coverage check: [`../development/phase-5-rfc-adr-gap-analysis.md`](../development/phase-5-rfc-adr-gap-analysis.md).
 - Phase-5 release package: [`../development/phase-5-release-readiness-checklist.md`](../development/phase-5-release-readiness-checklist.md), [`../development/phase-5-compatibility-report.md`](../development/phase-5-compatibility-report.md).
 - Policy reminder: when a Phase-5 RFC is marked `Implemented`, corresponding ADR record(s) must be synchronized before release closure.
+
+## Phase-6 status
+
+- As of 2026-04-29, required Phase-6 plugin contract RFC package is accepted and indexed (RFC 0029/0030/0031; ADR 0017 governance baseline).
+- Required coverage check: [`../development/phase-6-rfc-adr-gap-analysis.md`](../development/phase-6-rfc-adr-gap-analysis.md).
+- Phase-6 planning package: [`../development/phase-6-plugin-ecosystem.md`](../development/phase-6-plugin-ecosystem.md), [`../development/phase-6-issue-pack.md`](../development/phase-6-issue-pack.md).
+- Policy reminder: as Phase-6 RFCs move to `Implemented`, normative outcomes must be synchronized into ADRs before release closure.

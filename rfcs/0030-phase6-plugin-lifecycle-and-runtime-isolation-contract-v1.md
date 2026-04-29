@@ -1,10 +1,10 @@
 # RFC 0030: Phase-6 Plugin Lifecycle and Runtime Isolation Contract v1
 
-- **Status**: Draft
+- **Status**: Accepted
 - **Authors**: Eigen OS maintainers
 - **Created**: 2026-04-28
 - **Target Milestone**: Phase 6
-- **Tracking Issue**: P6-03 (docs/development/phase-6-issue-pack.md)
+- **Tracking Issue**: P6-08 (docs/development/phase-6-issue-pack.md)
 - **Replaces / Related**: docs/development/phase-6-plugin-ecosystem.md
 
 ## Summary
@@ -150,8 +150,8 @@ Required trace attributes:
 
 ## Compatibility and Versioning
 
-- **Version impact:** Introduces sandbox-boundary enforcement update for plugin lifecycle contract `2.0.0`.
-- **Compatibility:** Core runtime behavior remains unchanged when plugins are disabled.
+- **Version impact:** Contract baseline is `1.0.0` (stable) for Phase-6 lifecycle/isolation semantics.
+- **Compatibility:** Load-order, compatibility gate, and trust-enforcement semantics are frozen for `PATCH`; incompatible lifecycle-hook or required-event-envelope changes require `MAJOR`; additive optional diagnostics/metadata use `MINOR`.
 - **Migration notes:** Existing extension bootstrap logic must remove in-process loading paths and package all loadable plugins as OCI artifacts runnable under `runsc`.
 
 ## Considered Alternatives
