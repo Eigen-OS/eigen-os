@@ -2,7 +2,7 @@
 
 mod jobspec;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -10,7 +10,7 @@ const EXIT_USER_ERROR: i32 = 2;
 const EXIT_NETWORK_ERROR: i32 = 3;
 const EXIT_SERVER_ERROR: i32 = 4;
 const PLUGIN_MANIFEST_SCHEMA_VERSION: &str = "1.0.0";
-const PLUGIN_API_VERSION: &str = "1.0.0";
+const PLUGIN_API_VERSION: &str = "1.1.0";
 const BENCHMARK_RUN_CONTRACT_VERSION: &str = "1.0.0";
 const BENCHMARK_RUN_SNAPSHOT_VERSION: &str = "1.0.0";
 const BENCHMARK_COMPARISON_CONTRACT_VERSION: &str = "1.0.0";
@@ -84,6 +84,7 @@ fn main() {
     }
 }
 
+
 #[derive(Debug, Clone, PartialEq)]
 struct BenchmarkRunSnapshot {
     contract_version: String,
@@ -111,14 +112,14 @@ struct BenchmarkMetricComparison {
 
 fn run_plugin(args: &[String]) -> Result<(), String> {
     let Some(subcommand) = args.first() else {
-        return Err("usage: eigen plugin <scaffold|validate|package> [args...]".to_string());
+        return Err("usage: eigen plugin <scaffold|validate|package|activate> [args...]".to_string()););
     };
     match subcommand.as_str() {
         "scaffold" => run_plugin_scaffold(&args[1..]),
         "validate" => run_plugin_validate(&args[1..]),
         "package" => run_plugin_package(&args[1..]),
         other => Err(format!(
-            "unknown plugin subcommand: {other}. expected scaffold|validate|package"
+            "unknown plugin subcommand: {other}. expected scaffold|validate|package|activate"
         )),
     }
 }
@@ -172,6 +173,86 @@ fn run_plugin_package(args: &[String]) -> Result<(), String> {
     std::fs::write(&output, payload).map_err(|e| format!("failed to write package: {e}"))?;
     println!("packaged plugin: {}", output.display());
     Ok(())
+}
+
+
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PluginLifecycleState {
+    Discovered,
+    Registered,
+    Validated,
+    Active,
+    Error,
+    Unloaded,
+}
+
+#[derive(Debug, Clone)]
+struct PluginRecord {
+    plugin_id: String,
+    plugin_type: String,
+    plugin_api_version: String,
+    eigen_os_compatibility: String,
+    lifecycle_state: PluginLifecycleState,
+    reason: Option<String>,
+}
+
+fn run_plugin_activate(args: &[String]) -> Result<(), String> {
+    if args.is_empty() {
+        return Err("usage: eigen plugin activate <plugin.toml> [plugin.toml ...]".to_string());
+    }
+    let manifests = args
+        .iter()
+        .map(|path| std::fs::read_to_string(path).map_err(|e| format!("failed to read {path}: {e}")))
+        .collect::<Result<Vec<_>, _>>()?;
+    let records = activate_plugins(&manifests);
+    for record in &records {
+        println!(
+            "{} {:?}{}",
+            record.plugin_id,
+            record.lifecycle_state,
+            record.reason.as_ref().map(|r| format!(": {r}")).unwrap_or_default()
+        );
+    }
+    if records.iter().any(|r| r.lifecycle_state == PluginLifecycleState::Error) {
+        return Err("plugin activation failed for one or more plugins".to_string());
+    }
+    Ok(())
+}
+
+fn activate_plugins(manifests: &[String]) -> Vec<PluginRecord> {
+    let mut discovered = Vec::new();
+    for manifest in manifests {
+        let plugin_id = extract_toml_string(manifest, "plugin_id").unwrap_or_else(|| "unknown".to_string());
+        let plugin_type = extract_toml_string(manifest, "plugin_type").unwrap_or_default();
+        let plugin_api_version = extract_toml_string(manifest, "plugin_api_version").unwrap_or_default();
+        let eigen_os_compatibility = extract_toml_string(manifest, "eigen_os_compatibility").unwrap_or_default();
+        discovered.push(PluginRecord { plugin_id, plugin_type, plugin_api_version, eigen_os_compatibility, lifecycle_state: PluginLifecycleState::Discovered, reason: None });
+    }
+
+    discovered.sort_by(|a,b| (&a.plugin_type, &a.plugin_id).cmp(&(&b.plugin_type, &b.plugin_id)));
+    let mut seen= BTreeSet::new();
+    for r in &mut discovered {
+        r.lifecycle_state = PluginLifecycleState::Registered;
+        if !seen.insert((r.plugin_type.clone(), r.plugin_id.clone())) {
+            r.lifecycle_state = PluginLifecycleState::Error;
+            r.reason = Some("PLUGIN_CONFLICT_DUPLICATE_ID".to_string());
+            continue;
+        }
+        if r.plugin_api_version != PLUGIN_API_VERSION {
+            r.lifecycle_state = PluginLifecycleState::Error;
+            r.reason = Some(format!("PLUGIN_API_VERSION_MISMATCH expected {} got {}", PLUGIN_API_VERSION, r.plugin_api_version));
+            continue;
+        }
+        if r.eigen_os_compatibility.is_empty() {
+            r.lifecycle_state = PluginLifecycleState::Error;
+            r.reason = Some("PLUGIN_COMPATIBILITY_MISSING".to_string());
+            continue;
+        }
+        r.lifecycle_state = PluginLifecycleState::Validated;
+        r.lifecycle_state = PluginLifecycleState::Active;
+    }
+    discovered
 }
 
 fn validate_plugin_manifest(manifest: &str) -> Result<(), String> {
@@ -908,7 +989,7 @@ fn format_seed_timestamp(seed: u64) -> String {
 fn print_help() {
     println!(
         "Eigen CLI\n\nUsage:\n  eigen <command> [args...]\n\nCommands:\n  help        Show this message\n  version     Print version\n  submit      Submit job: eigen submit -f job.yaml\n  status      Get job status: eigen status <job_id>\n  watch       Stream progress: eigen watch <job_id>\n  results     Fetch results: eigen results <job_id>\n  explain     Dispatch rationale: eigen explain <job_id>\n  compile     Compile locally: eigen compile -f job.yaml --out circuit.aqo.json\n  visualize   Visualize AQO: eigen visualize -f circuit.aqo.json\n  benchmark   Run/compare benchmark snapshots
-  plugin      Scaffold/validate/package plugin artifacts\n\nBenchmark examples (reproducible):\n  eigen benchmark run --config bench.json --output json --output-file baseline.json\n  eigen benchmark run --config bench-candidate.json --output json --output-file candidate.json\n  eigen benchmark compare --baseline baseline.json --candidate candidate.json --output human\n"
+  plugin      Scaffold/validate/package/activate plugin artifacts\n\nBenchmark examples (reproducible):\n  eigen benchmark run --config bench.json --output json --output-file baseline.json\n  eigen benchmark run --config bench-candidate.json --output json --output-file candidate.json\n  eigen benchmark compare --baseline baseline.json --candidate candidate.json --output human\n"
     );
 }
 
@@ -968,5 +1049,61 @@ mod tests {
         let manifest = "manifest_schema_version = \"1.0.0\"\nplugin_id = \"io.eigen.x\"\nplugin_version = \"0.1.0\"\nplugin_type = \"analyzer\"\nplugin_api_version = \"1.0.0\"\neigen_os_compatibility = \">=0.6.0,<1.0.0\"\n";
         let err = validate_plugin_manifest(manifest).expect_err("should fail");
         assert!(err.contains("unsupported plugin_type 'analyzer'"));
+    }
+
+    #[test]
+    fn plugin_activation_order_is_deterministic() {
+        let manifests = vec![
+            r#"manifest_schema_version = "1.0.0"
+plugin_id = "io.eigen.z"
+plugin_version = "0.1.0"
+plugin_type = "optimizer"
+plugin_api_version = "1.1.0"
+eigen_os_compatibility = ">=0.6.0,<1.0.0"
+"#
+            .to_string(),
+            r#"manifest_schema_version = "1.0.0"
+plugin_id = "io.eigen.a"
+plugin_version = "0.1.0"
+plugin_type = "driver"
+plugin_api_version = "1.1.0"
+eigen_os_compatibility = ">=0.6.0,<1.0.0"
+"#
+            .to_string(),
+        ];
+        let records = activate_plugins(&manifests);
+        assert_eq!(records[0].plugin_id, "io.eigen.a");
+        assert_eq!(records[0].lifecycle_state, PluginLifecycleState::Active);
+        assert_eq!(records[1].plugin_id, "io.eigen.z");
+    }
+
+    #[test]
+    fn plugin_conflicts_fail_closed_with_reason() {
+        let manifests = vec![
+            r#"manifest_schema_version = "1.0.0"
+plugin_id = "io.eigen.same"
+plugin_version = "0.1.0"
+plugin_type = "driver"
+plugin_api_version = "1.1.0"
+eigen_os_compatibility = ">=0.6.0,<1.0.0"
+"#
+            .to_string(),
+            r#"manifest_schema_version = "1.0.0"
+plugin_id = "io.eigen.same"
+plugin_version = "0.1.0"
+plugin_type = "driver"
+plugin_api_version = "1.1.0"
+eigen_os_compatibility = ">=0.6.0,<1.0.0"
+"#
+            .to_string(),
+        ];
+        let records = activate_plugins(&manifests);
+        assert_eq!(records[0].lifecycle_state, PluginLifecycleState::Active);
+        assert_eq!(records[1].lifecycle_state, PluginLifecycleState::Error);
+        assert!(records[1]
+            .reason
+            .as_deref()
+            .unwrap_or_default()
+            .contains("PLUGIN_CONFLICT_DUPLICATE_ID"));
     }
 }

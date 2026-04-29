@@ -18,6 +18,7 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 
 ### Added
 
+- Phase-6 P6-02 plugin discovery/registration/activation lifecycle (`cli` in Rust workspace `0.12.0`) with deterministic activation ordering, fail-closed conflict diagnostics, explicit lifecycle states (`DISCOVERED -> REGISTERED -> VALIDATED -> ACTIVE/ERROR`), and activation command surface (`eigen plugin activate`).
 - Phase-5 P5-09 ADR synchronization and release meta package (`governance-docs` package `0.10.1`) with implemented RFC status updates for RFC 0026/0027/0028, synchronized ADR set (ADR 0014/0015/0016), and published Phase-5 release readiness + compatibility docs.
 - README information architecture refresh for Phase-5 closure: clearer audience/value/status sections, updated milestone matrix through Phase-5, and direct links to closure artifacts.
 - Phase-5 P5-08 RFC package for distributed contracts accepted and indexed (`governance-docs` package `0.10.0`) covering RFC 0026/0027/0028 with explicit accepted statuses, compatibility + test-plan sections, and synchronized roadmap/development doc links.
@@ -42,6 +43,12 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 - RFC 0020 and ADR 0008 for benchmark run lifecycle contract governance.
 - Phase-3 P3-09 RFC package for benchmark contracts (run lifecycle, dataset ingestion, compare/history) with explicit statuses and indexed docs links (RFC 0020/0021/0022).
 - Phase-3 P3-02 QSBench-compatible dataset ingestion pipeline (`benchmark-service` package `0.2.0`) with manifest schema validation, checksum/provenance verification, and queryable dataset version catalog.
+
+### Phase-6: Plugin Discovery, Registration, and Activation Lifecycle (P6-02)
+
+- **Version impact:** MINOR (new plugin activation lifecycle capability; Rust workspace advanced to `0.12.0`).
+- **Compatibility:** Additive; existing plugin scaffold/validate/package flows remain supported while lifecycle activation orchestration is added.
+- **Migration notes:** Plugin artifacts must keep `plugin_api_version` and `eigen_os_compatibility` markers; activation now fails closed for duplicate `(plugin_type, plugin_id)` collisions and API-version mismatches.
 
 ### Phase-3: RFC Package for Contracts (P3-09)
 
