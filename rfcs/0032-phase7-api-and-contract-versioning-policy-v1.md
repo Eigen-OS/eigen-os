@@ -1,6 +1,6 @@
 # RFC 0032: Phase-7 API and Contract Versioning Policy v1
 
-- **Status**: Draft
+- **Status**: Accepted
 - **Authors**: Eigen OS maintainers
 - **Created**: 2026-04-29
 - **Target Milestone**: Phase 7
@@ -41,9 +41,15 @@ Deprecation support window:
 
 ## Compatibility and versioning
 
-- **Version impact:** baseline policy `1.0.0`.
+- **Version impact:** policy artifact `1.1.0` (adds explicit CI/pr-marker enforcement rules).
 - **Migration notes:** mandatory on every breaking change proposal.
 
 ## Open questions
 
 - Minimum supported window length by component tier (core vs auxiliary tooling).
+
+## Implementation status
+
+- PR template includes explicit `Breaking Marker` and contract interfaces taxonomy.
+- CI migration gate fails closed on undocumented breaking markers.
+- Dev/RFC pointers link to this policy as the normative source.

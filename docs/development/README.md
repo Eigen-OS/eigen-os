@@ -13,6 +13,7 @@ The GitHub CI workflow (`.github/workflows/ci.yml`) validates:
 5. Python component test matrix.
 6. Golden fixture review gate (label required when fixtures change).
 7. Protobuf contract checks (`buf lint` + `buf breaking`).
+8. PR versioning/migration gate for contract changes.
 
 From repository root:
 
@@ -60,6 +61,7 @@ Configure branch protection so the following CI jobs are **Required**:
 - `Green-to-Green smoke (sim:local + trace/metrics)`
 - `Golden fixture review gate`
 - `Protobuf lint + breaking checks`
+- `Migration notes gate`
 
 For fixture updates (`src/services/eigen-compiler/tests/golden/**`, `src/services/system-api/tests/fixtures/jobspec/**`, `src/services/system-api/tests/fixtures/runtime/**`, `src/rust/apps/cli/tests/fixtures/**`):
 
@@ -111,6 +113,7 @@ git fetch origin main:main
 - Phase 7 stability and developer experience plan: [`phase-7-stability-and-developer-experience.md`](phase-7-stability-and-developer-experience.md)
 - Phase 7 issue pack: [`phase-7-issue-pack.md`](phase-7-issue-pack.md)
 - Phase 7 RFC/ADR gap analysis: [`phase-7-rfc-adr-gap-analysis.md`](phase-7-rfc-adr-gap-analysis.md)
+- Phase 7 API & contract versioning policy (normative): [`../../rfcs/0032-phase7-api-and-contract-versioning-policy-v1.md`](../../rfcs/0032-phase7-api-and-contract-versioning-policy-v1.md)
 
 ## Related files
 
