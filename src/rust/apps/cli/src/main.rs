@@ -12,8 +12,10 @@ const EXIT_SERVER_ERROR: i32 = 4;
 const PLUGIN_MANIFEST_SCHEMA_VERSION: &str = "2.0.0";
 const PLUGIN_API_VERSION: &str = "2.0.0";
 const EIGEN_OS_VERSION: &str = "0.6.0";
-const CLI_VERSION: &str = "0.14.0";
+const CLI_VERSION: &str = "0.16.0";
 const EIGEN_LANG_VERSION: &str = "0.1.0";
+const COMPATIBILITY_MANIFEST_VERSION: &str = "1.0.0";
+const COMPATIBILITY_MANIFEST_JSON: &str = include_str!("../tests/fixtures/plugin_compatibility_matrix_v1.json");
 const BENCHMARK_RUN_CONTRACT_VERSION: &str = "1.0.0";
 const BENCHMARK_RUN_SNAPSHOT_VERSION: &str = "1.0.0";
 const BENCHMARK_COMPARISON_CONTRACT_VERSION: &str = "1.0.0";
@@ -272,8 +274,8 @@ fn evaluate_compatibility(
     eigen_os_compatibility: &str,
     eigen_lang_version: &str,
 ) -> Result<(), String> {
-    // core_major, plugin_api_major, eigen_lang_major
-    let matrix = [("0", "2", "0")];
+    // compatibility tuples are sourced from a versioned machine-readable manifest fixture.
+    let matrix = compatibility_tuples_from_manifest();
     let (core_major, _, _) = parse_semver(EIGEN_OS_VERSION).ok_or_else(|| "CORE_VERSION_INVALID".to_string())?;
     let (api_major, _, _) =
         parse_semver(plugin_api_version).ok_or_else(|| "PLUGIN_API_VERSION_INVALID expected semver".to_string())?;
@@ -284,7 +286,7 @@ fn evaluate_compatibility(
     });
     if !supported {
         return Err(format!(
-            "PLUGIN_COMPATIBILITY_MATRIX_UNSUPPORTED core={} plugin_api={} eigen_lang={} remediation=upgrade_or_rebuild_against_supported_contracts",
+            "PLUGIN_COMPATIBILITY_MATRIX_UNSUPPORTED core={} plugin_api={} eigen_lang={} hint=runtime->cli->plugin_api->eigen_lang remediation=upgrade_or_rebuild_against_supported_contracts",
             EIGEN_OS_VERSION, plugin_api_version, eigen_lang_version
         ));
     }
@@ -295,6 +297,29 @@ fn evaluate_compatibility(
         ));
     }
     Ok(())
+}
+
+fn compatibility_tuples_from_manifest() -> Vec<(String, String, String)> {
+    if !COMPATIBILITY_MANIFEST_JSON.contains(&format!("\"manifest_version\": \"{}\"", COMPATIBILITY_MANIFEST_VERSION)) {
+        return Vec::new();
+    }
+    let mut tuples = Vec::new();
+    for line in COMPATIBILITY_MANIFEST_JSON.lines() {
+        let l = line.trim();
+        if let Some(value) = l.strip_prefix("\"core_major\":") {
+            let core = value.trim().trim_end_matches(',').to_string();
+            tuples.push((core, String::new(), String::new()));
+        } else if let Some(value) = l.strip_prefix("\"plugin_api_major\":") {
+            if let Some(last) = tuples.last_mut() {
+                last.1 = value.trim().trim_end_matches(',').to_string();
+            }
+        } else if let Some(value) = l.strip_prefix("\"eigen_lang_major\":") {
+            if let Some(last) = tuples.last_mut() {
+                last.2 = value.trim().trim_end_matches(',').to_string();
+            }
+        }
+    }
+    tuples
 }
 
 fn evaluate_plugin_trust(trust_profile: &str, signature_bundle_ref: &str, signer_identity: &str, rekor_log_index: &str, trust_root_ref: &str) -> Result<(), String> {
@@ -1288,5 +1313,20 @@ eigen_lang_version = "0.1.0"
         let records = activate_plugins(&manifests);
         assert_eq!(records[0].lifecycle_state, PluginLifecycleState::Error);
         assert!(records[0].reason.as_deref().unwrap_or_default().contains("remediation="));
+    }
+
+
+    #[test]
+    fn compatibility_manifest_fixture_is_versioned() {
+        assert!(COMPATIBILITY_MANIFEST_JSON.contains("\"manifest_version\": \"1.0.0\""));
+        assert!(COMPATIBILITY_MANIFEST_JSON.contains("\"deprecation_days\": 90"));
+        assert!(COMPATIBILITY_MANIFEST_JSON.contains("\"deprecation_minors\": 2"));
+    }
+
+    #[test]
+    fn compatibility_rejection_has_stable_reason_and_hint() {
+        let err = evaluate_compatibility("3.0.0", ">=0.6.0,<1.0.0", "0.1.0").expect_err("unsupported combo");
+        assert!(err.contains("PLUGIN_COMPATIBILITY_MATRIX_UNSUPPORTED"));
+        assert!(err.contains("hint=runtime->cli->plugin_api->eigen_lang"));
     }
 }

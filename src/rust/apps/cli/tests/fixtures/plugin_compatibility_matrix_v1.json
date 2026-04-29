@@ -1,0 +1,17 @@
+{
+  "manifest_version": "1.0.0",
+  "updated_at": "2026-04-29",
+  "support_window": {
+    "deprecation_minors": 2,
+    "deprecation_days": 90
+  },
+  "upgrade_order": ["runtime", "cli", "plugin_api", "eigen_lang"],
+  "combinations": [
+    {
+      "core_major": 0,
+      "plugin_api_major": 2,
+      "eigen_lang_major": 0,
+      "reason_code": "COMPAT_OK"
+    }
+  ]
+}
