@@ -18,6 +18,7 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 
 ### Added
 
+- Phase-6 P6-06 GA plugin type implementation pack (`cli` in Rust workspace `0.15.0`) with fixture-backed contract tests for `driver`/`compiler_backend`/`optimizer`, explicit rejection of `scheduler` plugin manifests in Phase-6, and CLI help diagnostics that pin the fixed GA plugin type set.
 - Phase-6 P6-05 Sigstore/Cosign trust gate (`cli` in Rust workspace `0.14.0`) with default fail-closed unsigned-plugin rejection, keyless-public Fulcio identity + Rekor evidence enforcement, and private/air-gapped trust-profile support via explicit trust-root references.
 - Phase-6 P6-04 plugin compatibility matrix and load-time gate (`cli` in Rust workspace `0.13.0`) with deterministic core/plugin-api/eigen-lang evaluation, explicit remediation diagnostics for unsupported tuples, and manifest contract extension requiring `eigen_lang_version` plus `2.0.0` plugin API/schema markers.
 - Phase-6 P6-02 plugin discovery/registration/activation lifecycle (`cli` in Rust workspace `0.12.0`) with deterministic activation ordering, fail-closed conflict diagnostics, explicit lifecycle states (`DISCOVERED -> REGISTERED -> VALIDATED -> ACTIVE/ERROR`), and activation command surface (`eigen plugin activate`).
@@ -45,6 +46,12 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 - RFC 0020 and ADR 0008 for benchmark run lifecycle contract governance.
 - Phase-3 P3-09 RFC package for benchmark contracts (run lifecycle, dataset ingestion, compare/history) with explicit statuses and indexed docs links (RFC 0020/0021/0022).
 - Phase-3 P3-02 QSBench-compatible dataset ingestion pipeline (`benchmark-service` package `0.2.0`) with manifest schema validation, checksum/provenance verification, and queryable dataset version catalog.
+
+### Phase-6: GA Plugin Type Implementation Pack (P6-06)
+
+- **Version impact:** MINOR (new GA plugin type contract fixtures and diagnostics; Rust workspace advanced to `0.15.0`).
+- **Compatibility:** Additive and policy-tightening for plugin manifest validation; Phase-6 GA plugin type surface remains fixed to `driver`, `compiler_backend`, `optimizer`, and `scheduler` declarations are rejected.
+- **Migration notes:** Scheduler policy extensions must remain core-configurable (non-plugin) for Phase-6; plugin authors should keep `plugin_api_version` and `eigen_os_compatibility` markers and use only GA plugin types.
 
 ### Phase-6: Sigstore/Cosign Trust Gate (P6-05)
 
