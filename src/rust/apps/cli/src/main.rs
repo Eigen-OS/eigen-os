@@ -9,8 +9,10 @@ use std::time::Duration;
 const EXIT_USER_ERROR: i32 = 2;
 const EXIT_NETWORK_ERROR: i32 = 3;
 const EXIT_SERVER_ERROR: i32 = 4;
-const PLUGIN_MANIFEST_SCHEMA_VERSION: &str = "1.0.0";
-const PLUGIN_API_VERSION: &str = "1.1.0";
+const PLUGIN_MANIFEST_SCHEMA_VERSION: &str = "2.0.0";
+const PLUGIN_API_VERSION: &str = "2.0.0";
+const EIGEN_OS_VERSION: &str = "0.6.0";
+const EIGEN_LANG_VERSION: &str = "0.1.0";
 const BENCHMARK_RUN_CONTRACT_VERSION: &str = "1.0.0";
 const BENCHMARK_RUN_SNAPSHOT_VERSION: &str = "1.0.0";
 const BENCHMARK_COMPARISON_CONTRACT_VERSION: &str = "1.0.0";
@@ -26,7 +28,7 @@ fn main() {
 
     match args[1].as_str() {
         "help" | "--help" | "-h" => print_help(),
-        "version" | "--version" | "-V" => println!("eigen-cli 0.5.0"),
+        "version" | "--version" | "-V" => println!("eigen-cli 0.6.0"),
         "plugin" => {
             if let Err(err) = run_plugin(&args[2..]) {
                 eprintln!("plugin failed: {err}");
@@ -112,16 +114,17 @@ struct BenchmarkMetricComparison {
 
 fn run_plugin(args: &[String]) -> Result<(), String> {
     let Some(subcommand) = args.first() else {
-        return Err("usage: eigen plugin <scaffold|validate|package|activate> [args...]".to_string()););
-    };
+        return Err("usage: eigen plugin <scaffold|validate|package|activate> [args...]".to_string());
     match subcommand.as_str() {
         "scaffold" => run_plugin_scaffold(&args[1..]),
         "validate" => run_plugin_validate(&args[1..]),
         "package" => run_plugin_package(&args[1..]),
+        "activate" => run_plugin_activate(&args[1..]),
         other => Err(format!(
             "unknown plugin subcommand: {other}. expected scaffold|validate|package|activate"
         )),
     }
+}
 
 fn run_plugin_scaffold(args: &[String]) -> Result<(), String> {
     if args.len() != 2 {
@@ -134,7 +137,7 @@ fn run_plugin_scaffold(args: &[String]) -> Result<(), String> {
         .map_err(|e| format!("failed to create {}: {e}", plugin_dir.display()))?;
     let plugin_id = format!("io.eigen.{}", plugin_dir.file_name().and_then(|n| n.to_str()).unwrap_or("plugin"));
     let manifest = format!(
-        "manifest_schema_version = \"{PLUGIN_MANIFEST_SCHEMA_VERSION}\"\nplugin_id = \"{plugin_id}\"\nplugin_version = \"0.1.0\"\nplugin_type = \"{plugin_type}\"\nplugin_api_version = \"{PLUGIN_API_VERSION}\"\neigen_os_compatibility = \">=0.6.0,<1.0.0\"\n\n[capabilities]\nhooks = []\n"
+        "manifest_schema_version = \"{PLUGIN_MANIFEST_SCHEMA_VERSION}\"\nplugin_id = \"{plugin_id}\"\nplugin_version = \"0.1.0\"\nplugin_type = \"{plugin_type}\"\nplugin_api_version = \"{PLUGIN_API_VERSION}\"\neigen_os_compatibility = \">=0.6.0,<1.0.0\"\neigen_lang_version = \"{EIGEN_LANG_VERSION}\"\n\n[capabilities]\nhooks = []\n"
     );
     std::fs::write(plugin_dir.join("plugin.toml"), manifest)
         .map_err(|e| format!("failed to write plugin.toml: {e}"))?;
@@ -219,6 +222,79 @@ fn run_plugin_activate(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn parse_semver(version: &str) -> Option<(u64, u64, u64)> {
+    let mut parts = version.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    let patch = parts.next()?.parse().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((major, minor, patch))
+}
+
+fn matches_range(range: &str, version: &str) -> bool {
+    let Some(v) = parse_semver(version) else { return false; };
+    for rule in range.split(',').map(str::trim).filter(|r| !r.is_empty()) {
+        let (op, raw) = if let Some(rest) = rule.strip_prefix(">=") {
+            (">=", rest)
+        } else if let Some(rest) = rule.strip_prefix("<=") {
+            ("<=", rest)
+        } else if let Some(rest) = rule.strip_prefix(">") {
+            (">", rest)
+        } else if let Some(rest) = rule.strip_prefix("<") {
+            ("<", rest)
+        } else if let Some(rest) = rule.strip_prefix("=") {
+            ("=", rest)
+        } else {
+            return false;
+        };
+        let Some(bound) = parse_semver(raw.trim()) else { return false; };
+        let ok = match op {
+            ">=" => v >= bound,
+            "<=" => v <= bound,
+            ">" => v > bound,
+            "<" => v < bound,
+            "=" => v == bound,
+            _ => false,
+        };
+        if !ok {
+            return false;
+        }
+    }
+    true
+}
+
+fn evaluate_compatibility(
+    plugin_api_version: &str,
+    eigen_os_compatibility: &str,
+    eigen_lang_version: &str,
+) -> Result<(), String> {
+    // core_major, plugin_api_major, eigen_lang_major
+    let matrix = [("0", "2", "0")];
+    let (core_major, _, _) = parse_semver(EIGEN_OS_VERSION).ok_or_else(|| "CORE_VERSION_INVALID".to_string())?;
+    let (api_major, _, _) =
+        parse_semver(plugin_api_version).ok_or_else(|| "PLUGIN_API_VERSION_INVALID expected semver".to_string())?;
+    let (lang_major, _, _) = parse_semver(eigen_lang_version)
+        .ok_or_else(|| "PLUGIN_EIGEN_LANG_VERSION_INVALID expected semver".to_string())?;
+    let supported = matrix.iter().any(|(c, a, l)| {
+        *c == core_major.to_string() && *a == api_major.to_string() && *l == lang_major.to_string()
+    });
+    if !supported {
+        return Err(format!(
+            "PLUGIN_COMPATIBILITY_MATRIX_UNSUPPORTED core={} plugin_api={} eigen_lang={} remediation=upgrade_or_rebuild_against_supported_contracts",
+            EIGEN_OS_VERSION, plugin_api_version, eigen_lang_version
+        ));
+    }
+    if !matches_range(eigen_os_compatibility, EIGEN_OS_VERSION) {
+        return Err(format!(
+            "PLUGIN_EIGEN_OS_CONSTRAINT_MISMATCH core={} constraint={} remediation=adjust_eigen_os_compatibility_or_upgrade_core",
+            EIGEN_OS_VERSION, eigen_os_compatibility
+        ));
+    }
+    Ok(())
+}
+
 fn activate_plugins(manifests: &[String]) -> Vec<PluginRecord> {
     let mut discovered = Vec::new();
     for manifest in manifests {
@@ -226,7 +302,9 @@ fn activate_plugins(manifests: &[String]) -> Vec<PluginRecord> {
         let plugin_type = extract_toml_string(manifest, "plugin_type").unwrap_or_default();
         let plugin_api_version = extract_toml_string(manifest, "plugin_api_version").unwrap_or_default();
         let eigen_os_compatibility = extract_toml_string(manifest, "eigen_os_compatibility").unwrap_or_default();
-        discovered.push(PluginRecord { plugin_id, plugin_type, plugin_api_version, eigen_os_compatibility, lifecycle_state: PluginLifecycleState::Discovered, reason: None });
+        let eigen_lang_version = extract_toml_string(manifest, "eigen_lang_version").unwrap_or_default();
+        let combined = format!("{eigen_os_compatibility}|{eigen_lang_version}");
+        discovered.push(PluginRecord { plugin_id, plugin_type, plugin_api_version, eigen_os_compatibility: combined, lifecycle_state: PluginLifecycleState::Discovered, reason: None });
     }
 
     discovered.sort_by(|a,b| (&a.plugin_type, &a.plugin_id).cmp(&(&b.plugin_type, &b.plugin_id)));
@@ -238,14 +316,20 @@ fn activate_plugins(manifests: &[String]) -> Vec<PluginRecord> {
             r.reason = Some("PLUGIN_CONFLICT_DUPLICATE_ID".to_string());
             continue;
         }
-        if r.plugin_api_version != PLUGIN_API_VERSION {
-            r.lifecycle_state = PluginLifecycleState::Error;
-            r.reason = Some(format!("PLUGIN_API_VERSION_MISMATCH expected {} got {}", PLUGIN_API_VERSION, r.plugin_api_version));
-            continue;
-        }
-        if r.eigen_os_compatibility.is_empty() {
+        let (eigen_os_compatibility, eigen_lang_version) = r
+            .eigen_os_compatibility
+            .split_once('|')
+            .unwrap_or(("", ""));
+        if eigen_os_compatibility.is_empty() || eigen_lang_version.is_empty() {
             r.lifecycle_state = PluginLifecycleState::Error;
             r.reason = Some("PLUGIN_COMPATIBILITY_MISSING".to_string());
+            continue;
+        }
+        if let Err(reason) =
+            evaluate_compatibility(&r.plugin_api_version, eigen_os_compatibility, eigen_lang_version)
+        {
+            r.lifecycle_state = PluginLifecycleState::Error;
+            r.reason = Some(reason);
             continue;
         }
         r.lifecycle_state = PluginLifecycleState::Validated;
@@ -262,6 +346,7 @@ fn validate_plugin_manifest(manifest: &str) -> Result<(), String> {
         "plugin_type",
         "plugin_api_version",
         "eigen_os_compatibility",
+        "eigen_lang_version",
     ] {
         if extract_toml_string(manifest, field).is_none() {
             return Err(format!("manifest validation failed: missing required field '{field}'"));
@@ -1045,7 +1130,7 @@ mod tests {
 
     #[test]
     fn plugin_manifest_rejects_non_ga_type() {
-        let manifest = "manifest_schema_version = \"1.0.0\"\nplugin_id = \"io.eigen.x\"\nplugin_version = \"0.1.0\"\nplugin_type = \"analyzer\"\nplugin_api_version = \"1.0.0\"\neigen_os_compatibility = \">=0.6.0,<1.0.0\"\n";
+        let manifest = "manifest_schema_version = \"2.0.0\"\nplugin_id = \"io.eigen.x\"\nplugin_version = \"0.1.0\"\nplugin_type = \"analyzer\"\nplugin_api_version = \"2.0.0\"\neigen_os_compatibility = \">=0.6.0,<1.0.0\"\neigen_lang_version = \"0.1.0\"\n";
         let err = validate_plugin_manifest(manifest).expect_err("should fail");
         assert!(err.contains("unsupported plugin_type 'analyzer'"));
     }
@@ -1053,19 +1138,20 @@ mod tests {
     #[test]
     fn plugin_activation_order_is_deterministic() {
         let manifests = vec![
-            r#"manifest_schema_version = "1.0.0"
+            r#"manifest_schema_version = "2.0.0"
 plugin_id = "io.eigen.z"
 plugin_version = "0.1.0"
 plugin_type = "optimizer"
-plugin_api_version = "1.1.0"
+plugin_api_version = "2.0.0"
 eigen_os_compatibility = ">=0.6.0,<1.0.0"
+eigen_lang_version = "0.1.0"
 "#
             .to_string(),
-            r#"manifest_schema_version = "1.0.0"
+            r#"manifest_schema_version = "2.0.0"
 plugin_id = "io.eigen.a"
 plugin_version = "0.1.0"
 plugin_type = "driver"
-plugin_api_version = "1.1.0"
+plugin_api_version = "2.0.0"
 eigen_os_compatibility = ">=0.6.0,<1.0.0"
 "#
             .to_string(),
@@ -1079,20 +1165,22 @@ eigen_os_compatibility = ">=0.6.0,<1.0.0"
     #[test]
     fn plugin_conflicts_fail_closed_with_reason() {
         let manifests = vec![
-            r#"manifest_schema_version = "1.0.0"
+            r#"manifest_schema_version = "2.0.0"
 plugin_id = "io.eigen.same"
 plugin_version = "0.1.0"
 plugin_type = "driver"
-plugin_api_version = "1.1.0"
+plugin_api_version = "2.0.0"
 eigen_os_compatibility = ">=0.6.0,<1.0.0"
+eigen_lang_version = "0.1.0"
 "#
             .to_string(),
-            r#"manifest_schema_version = "1.0.0"
+            r#"manifest_schema_version = "2.0.0"
 plugin_id = "io.eigen.same"
 plugin_version = "0.1.0"
 plugin_type = "driver"
-plugin_api_version = "1.1.0"
+plugin_api_version = "2.0.0"
 eigen_os_compatibility = ">=0.6.0,<1.0.0"
+eigen_lang_version = "0.1.0"
 "#
             .to_string(),
         ];
@@ -1104,5 +1192,22 @@ eigen_os_compatibility = ">=0.6.0,<1.0.0"
             .as_deref()
             .unwrap_or_default()
             .contains("PLUGIN_CONFLICT_DUPLICATE_ID"));
+    }
+
+
+    #[test]
+    fn plugin_unsupported_matrix_is_blocked_with_remediation() {
+        let manifests = vec![r#"manifest_schema_version = "2.0.0"
+plugin_id = "io.eigen.bad"
+plugin_version = "0.1.0"
+plugin_type = "driver"
+plugin_api_version = "3.0.0"
+eigen_os_compatibility = ">=0.6.0,<1.0.0"
+eigen_lang_version = "0.1.0"
+"#
+            .to_string()];
+        let records = activate_plugins(&manifests);
+        assert_eq!(records[0].lifecycle_state, PluginLifecycleState::Error);
+        assert!(records[0].reason.as_deref().unwrap_or_default().contains("remediation="));
     }
 }
