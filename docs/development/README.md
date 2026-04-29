@@ -108,6 +108,9 @@ git fetch origin main:main
 - Phase 6 plugin ecosystem plan: [`phase-6-plugin-ecosystem.md`](phase-6-plugin-ecosystem.md)
 - Phase 6 issue pack: [`phase-6-issue-pack.md`](phase-6-issue-pack.md)
 - Phase 6 RFC/ADR gap analysis: [`phase-6-rfc-adr-gap-analysis.md`](phase-6-rfc-adr-gap-analysis.md)
+- Phase 7 stability and developer experience plan: [`phase-7-stability-and-developer-experience.md`](phase-7-stability-and-developer-experience.md)
+- Phase 7 issue pack: [`phase-7-issue-pack.md`](phase-7-issue-pack.md)
+- Phase 7 RFC/ADR gap analysis: [`phase-7-rfc-adr-gap-analysis.md`](phase-7-rfc-adr-gap-analysis.md)
 
 ## Related files
 

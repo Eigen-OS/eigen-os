@@ -85,6 +85,16 @@
 - ADR sync status:
   - Pending until Phase-6 RFCs move to Accepted/Implemented.
 
+## Phase-7 RFC set (draft)
+
+- Status on 2026-04-29: Phase-7 stability and DX planning package is prepared; RFCs are in Draft pending acceptance.
+- Coverage check: [development/phase-7-rfc-adr-gap-analysis.md](development/phase-7-rfc-adr-gap-analysis.md)
+- Draft RFCs:
+  - [RFC 0032 — Phase-7 API and contract versioning policy v1](../rfcs/0032-phase7-api-and-contract-versioning-policy-v1.md)
+  - [RFC 0033 — Phase-7 developer experience and conformance toolchain baseline v1](../rfcs/0033-phase7-developer-experience-and-conformance-toolchain-baseline-v1.md)
+- ADR sync status:
+  - Pending until Phase-7 RFCs move to Accepted/Implemented.
+
 ## Quick links
 
 - RFC directory: [`../rfcs/`](../rfcs/)
