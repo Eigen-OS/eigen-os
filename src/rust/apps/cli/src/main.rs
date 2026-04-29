@@ -12,6 +12,7 @@ const EXIT_SERVER_ERROR: i32 = 4;
 const PLUGIN_MANIFEST_SCHEMA_VERSION: &str = "2.0.0";
 const PLUGIN_API_VERSION: &str = "2.0.0";
 const EIGEN_OS_VERSION: &str = "0.6.0";
+const CLI_VERSION: &str = "0.14.0";
 const EIGEN_LANG_VERSION: &str = "0.1.0";
 const BENCHMARK_RUN_CONTRACT_VERSION: &str = "1.0.0";
 const BENCHMARK_RUN_SNAPSHOT_VERSION: &str = "1.0.0";
@@ -28,7 +29,7 @@ fn main() {
 
     match args[1].as_str() {
         "help" | "--help" | "-h" => print_help(),
-        "version" | "--version" | "-V" => println!("eigen-cli 0.6.0"),
+        "version" | "--version" | "-V" => println!("eigen-cli {CLI_VERSION}"),
         "plugin" => {
             if let Err(err) = run_plugin(&args[2..]) {
                 eprintln!("plugin failed: {err}");
@@ -115,6 +116,7 @@ struct BenchmarkMetricComparison {
 fn run_plugin(args: &[String]) -> Result<(), String> {
     let Some(subcommand) = args.first() else {
         return Err("usage: eigen plugin <scaffold|validate|package|activate> [args...]".to_string());
+    };
     match subcommand.as_str() {
         "scaffold" => run_plugin_scaffold(&args[1..]),
         "validate" => run_plugin_validate(&args[1..]),
@@ -295,6 +297,30 @@ fn evaluate_compatibility(
     Ok(())
 }
 
+fn evaluate_plugin_trust(trust_profile: &str, signature_bundle_ref: &str, signer_identity: &str, rekor_log_index: &str, trust_root_ref: &str) -> Result<(), String> {
+    if signature_bundle_ref.trim().is_empty() {
+        return Err("PLUGIN_TRUST_UNSIGNED_REJECTED default_policy=sigstore_cosign".to_string());
+    }
+    match trust_profile {
+        "keyless-public" => {
+            if signer_identity.trim().is_empty() {
+                return Err("PLUGIN_TRUST_FULCIO_IDENTITY_MISSING profile=keyless-public".to_string());
+            }
+            if rekor_log_index.trim().is_empty() {
+                return Err("PLUGIN_TRUST_REKOR_PROOF_MISSING profile=keyless-public".to_string());
+            }
+            Ok(())
+        }
+        "private" | "airgap" => {
+            if trust_root_ref.trim().is_empty() {
+                return Err(format!("PLUGIN_TRUST_ROOT_MISSING profile={trust_profile} remediation=configure_self_hosted_sigstore_or_byo_pki"));
+            }
+            Ok(())
+        }
+        other => Err(format!("PLUGIN_TRUST_PROFILE_UNSUPPORTED profile={other} expected=keyless-public|private|airgap")),
+    }
+}
+
 fn activate_plugins(manifests: &[String]) -> Vec<PluginRecord> {
     let mut discovered = Vec::new();
     for manifest in manifests {
@@ -303,7 +329,12 @@ fn activate_plugins(manifests: &[String]) -> Vec<PluginRecord> {
         let plugin_api_version = extract_toml_string(manifest, "plugin_api_version").unwrap_or_default();
         let eigen_os_compatibility = extract_toml_string(manifest, "eigen_os_compatibility").unwrap_or_default();
         let eigen_lang_version = extract_toml_string(manifest, "eigen_lang_version").unwrap_or_default();
-        let combined = format!("{eigen_os_compatibility}|{eigen_lang_version}");
+        let trust_profile = extract_toml_string(manifest, "trust_policy_profile").unwrap_or_else(|| "keyless-public".to_string());
+        let signature_bundle_ref = extract_toml_string(manifest, "signature_bundle_ref").unwrap_or_default();
+        let signer_identity = extract_toml_string(manifest, "signer_identity").unwrap_or_default();
+        let rekor_log_index = extract_toml_string(manifest, "rekor_log_index").unwrap_or_default();
+        let trust_root_ref = extract_toml_string(manifest, "trust_root_ref").unwrap_or_default();
+        let combined = format!("{eigen_os_compatibility}|{eigen_lang_version}|{trust_profile}|{signature_bundle_ref}|{signer_identity}|{rekor_log_index}|{trust_root_ref}");
         discovered.push(PluginRecord { plugin_id, plugin_type, plugin_api_version, eigen_os_compatibility: combined, lifecycle_state: PluginLifecycleState::Discovered, reason: None });
     }
 
@@ -316,10 +347,13 @@ fn activate_plugins(manifests: &[String]) -> Vec<PluginRecord> {
             r.reason = Some("PLUGIN_CONFLICT_DUPLICATE_ID".to_string());
             continue;
         }
-        let (eigen_os_compatibility, eigen_lang_version) = r
-            .eigen_os_compatibility
-            .split_once('|')
-            .unwrap_or(("", ""));
+        let parts = r.eigen_os_compatibility.split('|').collect::<Vec<_>>();
+        if parts.len() != 7 {
+            r.lifecycle_state = PluginLifecycleState::Error;
+            r.reason = Some("PLUGIN_COMPATIBILITY_MISSING".to_string());
+            continue;
+        }
+        let (eigen_os_compatibility, eigen_lang_version, trust_profile, signature_bundle_ref, signer_identity, rekor_log_index, trust_root_ref) = (parts[0],parts[1],parts[2],parts[3],parts[4],parts[5],parts[6]);
         if eigen_os_compatibility.is_empty() || eigen_lang_version.is_empty() {
             r.lifecycle_state = PluginLifecycleState::Error;
             r.reason = Some("PLUGIN_COMPATIBILITY_MISSING".to_string());
@@ -328,6 +362,11 @@ fn activate_plugins(manifests: &[String]) -> Vec<PluginRecord> {
         if let Err(reason) =
             evaluate_compatibility(&r.plugin_api_version, eigen_os_compatibility, eigen_lang_version)
         {
+            r.lifecycle_state = PluginLifecycleState::Error;
+            r.reason = Some(reason);
+            continue;
+        }
+        if let Err(reason)=evaluate_plugin_trust(trust_profile, signature_bundle_ref, signer_identity, rekor_log_index, trust_root_ref){
             r.lifecycle_state = PluginLifecycleState::Error;
             r.reason = Some(reason);
             continue;
@@ -347,6 +386,7 @@ fn validate_plugin_manifest(manifest: &str) -> Result<(), String> {
         "plugin_api_version",
         "eigen_os_compatibility",
         "eigen_lang_version",
+        "signature_bundle_ref",
     ] {
         if extract_toml_string(manifest, field).is_none() {
             return Err(format!("manifest validation failed: missing required field '{field}'"));
@@ -1130,7 +1170,7 @@ mod tests {
 
     #[test]
     fn plugin_manifest_rejects_non_ga_type() {
-        let manifest = "manifest_schema_version = \"2.0.0\"\nplugin_id = \"io.eigen.x\"\nplugin_version = \"0.1.0\"\nplugin_type = \"analyzer\"\nplugin_api_version = \"2.0.0\"\neigen_os_compatibility = \">=0.6.0,<1.0.0\"\neigen_lang_version = \"0.1.0\"\n";
+        let manifest = "manifest_schema_version = \"2.0.0\"\nplugin_id = \"io.eigen.x\"\nplugin_version = \"0.1.0\"\nplugin_type = \"analyzer\"\nplugin_api_version = \"2.0.0\"\neigen_os_compatibility = \">=0.6.0,<1.0.0\"\neigen_lang_version = \"0.1.0\"\nsignature_bundle_ref = \"oci://sig\"\n";
         let err = validate_plugin_manifest(manifest).expect_err("should fail");
         assert!(err.contains("unsupported plugin_type 'analyzer'"));
     }
@@ -1145,6 +1185,9 @@ plugin_type = "optimizer"
 plugin_api_version = "2.0.0"
 eigen_os_compatibility = ">=0.6.0,<1.0.0"
 eigen_lang_version = "0.1.0"
+signature_bundle_ref = "oci://sig"
+signer_identity = "https://github.com/org/repo/.github/workflows/release.yml@refs/tags/v0.1.0"
+rekor_log_index = "42"
 "#
             .to_string(),
             r#"manifest_schema_version = "2.0.0"
@@ -1153,6 +1196,10 @@ plugin_version = "0.1.0"
 plugin_type = "driver"
 plugin_api_version = "2.0.0"
 eigen_os_compatibility = ">=0.6.0,<1.0.0"
+eigen_lang_version = "0.1.0"
+signature_bundle_ref = "oci://sig"
+signer_identity = "https://github.com/org/repo/.github/workflows/release.yml@refs/tags/v0.1.0"
+rekor_log_index = "42"
 "#
             .to_string(),
         ];
@@ -1172,6 +1219,9 @@ plugin_type = "driver"
 plugin_api_version = "2.0.0"
 eigen_os_compatibility = ">=0.6.0,<1.0.0"
 eigen_lang_version = "0.1.0"
+signature_bundle_ref = "oci://sig"
+signer_identity = "https://github.com/org/repo/.github/workflows/release.yml@refs/tags/v0.1.0"
+rekor_log_index = "42"
 "#
             .to_string(),
             r#"manifest_schema_version = "2.0.0"
@@ -1181,6 +1231,9 @@ plugin_type = "driver"
 plugin_api_version = "2.0.0"
 eigen_os_compatibility = ">=0.6.0,<1.0.0"
 eigen_lang_version = "0.1.0"
+signature_bundle_ref = "oci://sig"
+signer_identity = "https://github.com/org/repo/.github/workflows/release.yml@refs/tags/v0.1.0"
+rekor_log_index = "42"
 "#
             .to_string(),
         ];
