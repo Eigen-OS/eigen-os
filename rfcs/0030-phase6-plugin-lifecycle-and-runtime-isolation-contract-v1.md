@@ -19,17 +19,18 @@ A plugin ecosystem requires predictable load behavior and strict isolation contr
 
 - Define lifecycle state machine and transition invariants.
 - Define deterministic load-order and conflict handling semantics.
-- Define isolation requirements and capability enforcement gates.
+- Define mandatory sandbox boundary for GA: out-of-process OCI plugins under gVisor `runsc`.
 
 ## Non-Goals
 
+- In-process Python/Rust plugin imports in GA.
 - Hot patching running plugin code in production.
 - Multi-tenant billing/quotas for plugin resources.
 - Cross-cluster plugin orchestration protocols.
 
 ## Guide-level Explanation
 
-At startup, Eigen-OS discovers plugin artifacts, validates manifests/signatures/compatibility, computes deterministic load order, and activates eligible plugins. Failed plugins are isolated with explicit reason codes while core runtime remains healthy.
+At startup, Eigen-OS discovers OCI plugin artifacts, validates manifests/signatures/compatibility, computes deterministic load order, and activates eligible plugins in isolated gVisor sandboxes. Failed plugins are isolated with explicit reason codes while core runtime remains healthy.
 
 ## Reference-level Design
 
@@ -40,7 +41,7 @@ At startup, Eigen-OS discovers plugin artifacts, validates manifests/signatures/
 Required behavior:
 
 - `VALIDATED` requires successful schema + trust + compatibility checks.
-- `ACTIVE` requires capability grant resolution.
+- `ACTIVE` requires capability grant resolution and sandbox profile validation.
 - `ERROR` plugins cannot execute hooks until explicit operator action.
 - `QUARANTINED` is mandatory for security-policy violations.
 
@@ -57,10 +58,16 @@ Conflicts:
 - unresolved capability conflicts fail closed;
 - optional override policy must be explicit and auditable.
 
-### Isolation contract
+### Isolation contract (mandatory GA profile)
 
-- Plugin execution profile must restrict filesystem/network/process privileges according to declared capabilities.
-- Runtime must enforce per-plugin timeout and memory budget defaults.
+- Only OCI artifacts are loadable plugin runtime units.
+- Runtime boundary is mandatory: gVisor `runsc`.
+- Baseline sandbox profile:
+  - rootless execution,
+  - read-only filesystem,
+  - network disabled by default,
+  - dropped capabilities,
+  - explicit CPU/memory/pid limits.
 - Plugin panic/exception isolation must not crash core orchestration loop.
 
 ## Interfaces / APIs
@@ -89,7 +96,7 @@ Versioning:
 
 - Deny-by-default capability model.
 - Mandatory audit logs for activation, deactivation, quarantine, and override actions.
-- Security violations produce immutable event records.
+- Sandbox policy violations produce immutable event records.
 
 ## Observability
 
@@ -99,6 +106,7 @@ Required metrics:
 - `plugin_activation_failures_total`
 - `plugin_quarantine_total`
 - `plugin_activation_latency_ms`
+- `plugin_sandbox_policy_reject_total`
 
 Required trace attributes:
 
@@ -116,11 +124,12 @@ Required trace attributes:
 - State-machine conformance tests for legal/illegal transitions.
 - Failure injection tests (timeout/crash/policy violations).
 - Determinism tests for load ordering and conflict resolution.
+- Sandbox profile conformance tests against baseline hardening policy.
 
 ## Implementation / Migration
 
 1. Implement lifecycle state machine + persistence.
-2. Implement isolation profile executor and capability checker.
+2. Implement OCI runtime executor on `runsc` and baseline sandbox profile.
 3. Integrate with plugin loader and operator CLI diagnostics.
 4. Add regression fixtures for lifecycle and security reason codes.
 
@@ -128,14 +137,14 @@ Required trace attributes:
 
 - **Version impact:** Introduces plugin lifecycle contract `1.0.0`.
 - **Compatibility:** Core runtime behavior remains unchanged when plugins are disabled.
-- **Migration notes:** Existing extension bootstrap logic should map to lifecycle state transitions.
+- **Migration notes:** Existing extension bootstrap logic should map to lifecycle state transitions and OCI runtime packaging.
 
 ## Considered Alternatives
 
+- In-process imports: rejected due to isolation risk.
 - Best-effort activation without quarantine state: rejected for weak security posture.
 - Non-deterministic parallel activation by default: rejected due to startup reproducibility risks.
 
 ## Open Questions
 
-- Preferred sandbox implementation per runtime (Python subprocess, WASI, or container profile).
-- Default policy for network access in `observability_exporter` plugin type.
+- Exact default resource limits per plugin type for GA environments.
