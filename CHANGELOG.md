@@ -18,6 +18,7 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 
 ### Added
 
+- Phase-6 P6-07 SRE pack for plugin health/trust/sandbox visibility (`runtime-observability` assets `0.3.0`) with stable `eigen_plugin_*` metrics contract (`1.0.0`), plugin runtime Grafana dashboard, Prometheus failure/SLO/trust/sandbox alerts, and deterministic triage + rollback runbook.
 - Phase-6 P6-06 GA plugin type implementation pack (`cli` in Rust workspace `0.15.0`) with fixture-backed contract tests for `driver`/`compiler_backend`/`optimizer`, explicit rejection of `scheduler` plugin manifests in Phase-6, and CLI help diagnostics that pin the fixed GA plugin type set.
 - Phase-6 P6-05 Sigstore/Cosign trust gate (`cli` in Rust workspace `0.14.0`) with default fail-closed unsigned-plugin rejection, keyless-public Fulcio identity + Rekor evidence enforcement, and private/air-gapped trust-profile support via explicit trust-root references.
 - Phase-6 P6-04 plugin compatibility matrix and load-time gate (`cli` in Rust workspace `0.13.0`) with deterministic core/plugin-api/eigen-lang evaluation, explicit remediation diagnostics for unsupported tuples, and manifest contract extension requiring `eigen_lang_version` plus `2.0.0` plugin API/schema markers.
@@ -46,6 +47,12 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 - RFC 0020 and ADR 0008 for benchmark run lifecycle contract governance.
 - Phase-3 P3-09 RFC package for benchmark contracts (run lifecycle, dataset ingestion, compare/history) with explicit statuses and indexed docs links (RFC 0020/0021/0022).
 - Phase-3 P3-02 QSBench-compatible dataset ingestion pipeline (`benchmark-service` package `0.2.0`) with manifest schema validation, checksum/provenance verification, and queryable dataset version catalog.
+
+### Phase-6: SRE Pack for Plugin Health, Trust, and Sandbox Violations (P6-07)
+
+- **Version impact:** MINOR (adds Phase-6 plugin observability contract/assets; observability asset pack advanced to `0.3.0`).
+- **Compatibility:** Additive; plugin lifecycle/trust/sandbox semantics remain unchanged while `eigen_plugin_*` metrics are introduced with explicit marker `eigen_plugin_observability_contract_info{version="1.0.0"}`.
+- **Migration notes:** No mandatory migration. Operators should import `monitoring/dashboards/plugin_runtime_sre_dashboard.json`, load `monitoring/metrics/prometheus/plugin-runtime-alerts.yaml`, and adopt `docs/howto/plugin-runtime-observability-runbook.md`.
 
 ### Phase-6: GA Plugin Type Implementation Pack (P6-06)
 
