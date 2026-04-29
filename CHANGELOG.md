@@ -18,6 +18,7 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 
 ### Added
 
+- Phase-6 P6-05 Sigstore/Cosign trust gate (`cli` in Rust workspace `0.14.0`) with default fail-closed unsigned-plugin rejection, keyless-public Fulcio identity + Rekor evidence enforcement, and private/air-gapped trust-profile support via explicit trust-root references.
 - Phase-6 P6-04 plugin compatibility matrix and load-time gate (`cli` in Rust workspace `0.13.0`) with deterministic core/plugin-api/eigen-lang evaluation, explicit remediation diagnostics for unsupported tuples, and manifest contract extension requiring `eigen_lang_version` plus `2.0.0` plugin API/schema markers.
 - Phase-6 P6-02 plugin discovery/registration/activation lifecycle (`cli` in Rust workspace `0.12.0`) with deterministic activation ordering, fail-closed conflict diagnostics, explicit lifecycle states (`DISCOVERED -> REGISTERED -> VALIDATED -> ACTIVE/ERROR`), and activation command surface (`eigen plugin activate`).
 - Phase-5 P5-09 ADR synchronization and release meta package (`governance-docs` package `0.10.1`) with implemented RFC status updates for RFC 0026/0027/0028, synchronized ADR set (ADR 0014/0015/0016), and published Phase-5 release readiness + compatibility docs.
@@ -45,13 +46,19 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 - Phase-3 P3-09 RFC package for benchmark contracts (run lifecycle, dataset ingestion, compare/history) with explicit statuses and indexed docs links (RFC 0020/0021/0022).
 - Phase-3 P3-02 QSBench-compatible dataset ingestion pipeline (`benchmark-service` package `0.2.0`) with manifest schema validation, checksum/provenance verification, and queryable dataset version catalog.
 
-### Phase-6: Plugin Discovery, Registration, and Activation Lifecycle (P6-02)
+### Phase-6: Sigstore/Cosign Trust Gate (P6-05)
+
+- **Version impact:** MINOR (new trust-policy enforcement capability; Rust workspace advanced to `0.14.0`).
+- **Compatibility:** Additive for signed artifacts; default policy now rejects unsigned plugins and validates profile-specific trust evidence (`keyless-public`, `private`, `airgap`).
+- **Migration notes:** Plugin manifests must include `signature_bundle_ref`; `keyless-public` artifacts must include `signer_identity` + `rekor_log_index`; `private`/`airgap` profiles must include `trust_root_ref`.
 
 ### Phase-6: Plugin Compatibility Matrix and Load-Time Gate (P6-04)
 
 - **Version impact:** MAJOR for plugin contract (`plugin_api_version` and `manifest_schema_version` moved to `2.0.0`); MINOR for CLI package (`0.13.0`).
 - **Compatibility:** Runtime now enforces deterministic compatibility across `(core_version, plugin_api_version, eigen_lang_version)` and blocks unsupported tuples with actionable remediation hints.
 - **Migration notes:** Update plugin manifests to include `eigen_lang_version`, bump `plugin_api_version` to `2.0.0`, and keep `eigen_os_compatibility` aligned with supported core ranges.
+
+### Phase-6: Plugin Discovery, Registration, and Activation Lifecycle (P6-02)
 
 - **Version impact:** MINOR (new plugin activation lifecycle capability; Rust workspace advanced to `0.12.0`).
 - **Compatibility:** Additive; existing plugin scaffold/validate/package flows remain supported while lifecycle activation orchestration is added.
