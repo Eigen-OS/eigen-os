@@ -15,12 +15,34 @@ class RegisteredDriver:
     capabilities: DriverCapabilities
 
 
+@dataclass(frozen=True)
+class PluginRuntimeSpec:
+    artifact_type: str
+    runtime: str
+    rootless: bool
+    read_only_fs: bool
+    network_disabled: bool
+    dropped_capabilities: bool
+    cpu_limit: str
+    memory_limit: str
+    pid_limit: int
+
+
 class DriverRegistry:
     """Manage registered drivers and reverse index device_id -> driver."""
 
     def __init__(self) -> None:
         self._drivers: dict[str, RegisteredDriver] = {}
         self._device_to_driver: dict[str, str] = {}
+        self._policy_reject_counters: dict[str, int] = {
+            "plugin_runtime_boundary_reject_total": 0,
+            "plugin_in_process_reject_total": 0,
+            "plugin_sandbox_policy_reject_total": 0,
+        }
+
+    def add_plugin_driver(self, name: str, driver: BaseDriver, runtime_spec: PluginRuntimeSpec) -> None:
+        self._enforce_plugin_runtime_policy(runtime_spec)
+        self.add_driver(name=name, driver=driver)
 
     def add_driver(self, name: str, driver: BaseDriver) -> None:
         if not name:
@@ -54,6 +76,27 @@ class DriverRegistry:
             capabilities=capabilities,
         )
 
+    def _enforce_plugin_runtime_policy(self, runtime_spec: PluginRuntimeSpec) -> None:
+        if runtime_spec.runtime == "in_process":
+            self._policy_reject_counters["plugin_in_process_reject_total"] += 1
+            raise ValueError("PLUGIN_RUNTIME_IN_PROCESS_FORBIDDEN: in-process plugin runtime is not allowed")
+        if runtime_spec.artifact_type != "oci" or runtime_spec.runtime != "runsc":
+            self._policy_reject_counters["plugin_runtime_boundary_reject_total"] += 1
+            raise ValueError("PLUGIN_RUNTIME_BOUNDARY_REQUIRED: only OCI artifacts under runsc are allowed")
+
+        baseline_ok = (
+            runtime_spec.rootless
+            and runtime_spec.read_only_fs
+            and runtime_spec.network_disabled
+            and runtime_spec.dropped_capabilities
+            and bool(runtime_spec.cpu_limit)
+            and bool(runtime_spec.memory_limit)
+            and runtime_spec.pid_limit > 0
+        )
+        if not baseline_ok:
+            self._policy_reject_counters["plugin_sandbox_policy_reject_total"] += 1
+            raise ValueError("PLUGIN_SANDBOX_PROFILE_VIOLATION: plugin runtime spec violates baseline profile")
+
     def remove_driver(self, name: str) -> bool:
         registered = self._drivers.pop(name, None)
         if registered is None:
@@ -85,3 +128,6 @@ class DriverRegistry:
 
     def capability_snapshot(self) -> dict[str, DriverCapabilities]:
         return {name: registered.capabilities for name, registered in self._drivers.items()}
+
+    def policy_reject_snapshot(self) -> dict[str, int]:
+        return dict(self._policy_reject_counters)
