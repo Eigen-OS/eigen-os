@@ -1168,6 +1168,32 @@ mod tests {
         );
     }
 
+
+    #[test]
+    fn plugin_ga_types_contract_fixtures_are_accepted() {
+        let fixture_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("plugins");
+
+        for file in ["driver.toml", "compiler_backend.toml", "optimizer.toml"] {
+            let manifest = std::fs::read_to_string(fixture_dir.join(file)).expect("fixture manifest");
+            validate_plugin_manifest(&manifest).expect("ga type should validate");
+        }
+    }
+
+    #[test]
+    fn plugin_scheduler_type_is_rejected_for_phase6() {
+        let fixture_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("plugins");
+        let manifest = std::fs::read_to_string(fixture_dir.join("scheduler.toml")).expect("fixture manifest");
+        let err = validate_plugin_manifest(&manifest).expect_err("scheduler type must be rejected");
+        assert!(err.contains("unsupported plugin_type 'scheduler'"));
+        assert!(err.contains("driver, compiler_backend, optimizer"));
+    }
+
     #[test]
     fn plugin_manifest_rejects_non_ga_type() {
         let manifest = "manifest_schema_version = \"2.0.0\"\nplugin_id = \"io.eigen.x\"\nplugin_version = \"0.1.0\"\nplugin_type = \"analyzer\"\nplugin_api_version = \"2.0.0\"\neigen_os_compatibility = \">=0.6.0,<1.0.0\"\neigen_lang_version = \"0.1.0\"\nsignature_bundle_ref = \"oci://sig\"\n";

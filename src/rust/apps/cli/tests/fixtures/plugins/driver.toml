@@ -1,0 +1,8 @@
+manifest_schema_version = "2.0.0"
+plugin_id = "io.eigen.fixture.driver"
+plugin_version = "0.1.0"
+plugin_type = "driver"
+plugin_api_version = "2.0.0"
+eigen_os_compatibility = ">=0.6.0,<1.0.0"
+eigen_lang_version = "0.1.0"
+signature_bundle_ref = "oci://fixtures/driver.sig"
