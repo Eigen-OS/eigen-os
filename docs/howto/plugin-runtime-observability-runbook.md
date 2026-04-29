@@ -82,3 +82,10 @@ Record in the incident report:
 - compatibility matrix/version tuple changes before/after,
 - sandbox profile revision before/after,
 - deterministic validation evidence for restored startup/activation path.
+
+## Compatibility matrix and upgrade order (Phase-7)
+
+- Canonical machine-readable manifest: `src/rust/apps/cli/tests/fixtures/plugin_compatibility_matrix_v1.json`.
+- Support window policy: deprecated interfaces stay supported for **2 minor releases or 90 days** (whichever is longer).
+- Deterministic upgrade order for multi-component deployments: **runtime -> cli -> plugin_api -> eigen_lang**.
+- Unsupported version combinations are rejected with stable reason code `PLUGIN_COMPATIBILITY_MATRIX_UNSUPPORTED` and actionable remediation hints.
