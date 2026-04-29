@@ -1,5 +1,7 @@
 # First job in Eigen-Lang
 
+- **Tutorial pack version:** `v1.1.0`
+
 ## Goal
 
 Run a minimal submit → status → watch → results cycle using the MVP-3 runtime CLI contract:
@@ -68,3 +70,9 @@ eigen results <job_id>
 - `apiVersion` mismatch → use exactly `eigen.os/v0.1`.
 - `spec.program_path` path traversal / missing file → keep a safe relative path and ensure file exists.
 - invalid entrypoint → keep one `@hybrid_program` and match `spec.entrypoint`.
+
+## Smoke-check mapping
+
+- Canonical example directory: `examples/basic/vqe_cycle/`.
+- JobSpec fixture alignment: `src/rust/apps/cli/tests/fixtures/jobspec-valid-minimal.yaml`.
+- CI validation entrypoint: `scripts/ci/check-docs-smoke.sh`.

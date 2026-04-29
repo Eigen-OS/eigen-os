@@ -1,10 +1,12 @@
 # Quickstart (local simulator)
 
+- **Tutorial pack version:** `v1.1.0`
+
 ## Goal
 
 Run a local end-to-end flow (`submit -> status -> watch -> results`) with a minimal 2-qubit VQE example.
 
-Reference example: `examples/basic/vqe_cycle/`.
+Reference example: `examples/basic/vqe_cycle/` (canonical fixture-backed tutorial asset).
 
 ## What this quickstart validates
 
@@ -107,3 +109,10 @@ Example qualitative sanity checks for this VQE sample:
 For common failures and copy/paste fixes, see:
 
 - `docs/howto/troubleshooting.md`
+
+## Smoke-check mapping
+
+- CI gate: `docs-tutorial-smoke` (`.github/workflows/ci.yml`).
+- Script: `scripts/ci/check-docs-smoke.sh`.
+- Runtime fixture path: `examples/basic/vqe_cycle/{job.yaml,program.eigen.py}`.
+- Executable checks: `test_e2e_smoke_submit_watch_results.py`, `test_observability_smoke.py`.
