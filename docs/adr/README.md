@@ -28,6 +28,8 @@ Architecture Decision Records (ADRs) capture decisions that are already adopted 
 - [0015 — Phase-5 distributed queue and delivery semantics v1](0015-phase5-distributed-queue-and-delivery-semantics-v1.md)
 - [0016 — Phase-5 distributed tracing and execution topology contract v1](0016-phase5-distributed-tracing-and-execution-topology-contract-v1.md)
 - [0017 — Phase-6 plugin contract RFC package acceptance baseline](0017-phase6-plugin-contract-rfc-package-acceptance.md)
+- [0018 — Phase-7 API and contract versioning policy v1](0018-phase7-api-and-contract-versioning-policy-v1.md)
+- [0019 — Phase-7 developer experience and conformance toolchain baseline v1](0019-phase7-developer-experience-and-conformance-toolchain-baseline-v1.md)
 
 ## Phase-3 status
 
@@ -56,3 +58,10 @@ Architecture Decision Records (ADRs) capture decisions that are already adopted 
 - Required coverage check: [`../development/phase-6-rfc-adr-gap-analysis.md`](../development/phase-6-rfc-adr-gap-analysis.md).
 - Phase-6 planning package: [`../development/phase-6-plugin-ecosystem.md`](../development/phase-6-plugin-ecosystem.md), [`../development/phase-6-issue-pack.md`](../development/phase-6-issue-pack.md).
 - Policy reminder: as Phase-6 RFCs move to `Implemented`, normative outcomes must be synchronized into ADRs before release closure.
+
+## Phase-7 status
+
+- As of 2026-04-29, required Phase-7 RFC package is accepted and synchronized with ADRs (ADR 0018/0019).
+- Required coverage check: [`../development/phase-7-rfc-adr-gap-analysis.md`](../development/phase-7-rfc-adr-gap-analysis.md).
+- Phase-7 closure package: [`../development/phase-7-release-readiness-checklist.md`](../development/phase-7-release-readiness-checklist.md), [`../development/phase-7-compatibility-report.md`](../development/phase-7-compatibility-report.md).
+- Policy reminder: when Phase-7 contracts evolve, SemVer policy and migration-note gates from RFC 0032/0033 remain mandatory.

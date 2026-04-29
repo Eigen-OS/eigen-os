@@ -1,6 +1,6 @@
 # RFC 0033: Phase-7 Developer Experience and Conformance Toolchain Baseline v1
 
-- **Status**: Draft
+- **Status**: Accepted
 - **Authors**: Eigen OS maintainers
 - **Created**: 2026-04-29
 - **Target Milestone**: Phase 7

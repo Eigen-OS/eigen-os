@@ -134,7 +134,10 @@ git fetch origin main:main
 - Phase 7 stability and developer experience plan: [`phase-7-stability-and-developer-experience.md`](phase-7-stability-and-developer-experience.md)
 - Phase 7 issue pack: [`phase-7-issue-pack.md`](phase-7-issue-pack.md)
 - Phase 7 RFC/ADR gap analysis: [`phase-7-rfc-adr-gap-analysis.md`](phase-7-rfc-adr-gap-analysis.md)
+- Phase 7 release readiness checklist: [`phase-7-release-readiness-checklist.md`](phase-7-release-readiness-checklist.md)
+- Phase 7 compatibility report: [`phase-7-compatibility-report.md`](phase-7-compatibility-report.md)
 - Phase 7 API & contract versioning policy (normative): [`../../rfcs/0032-phase7-api-and-contract-versioning-policy-v1.md`](../../rfcs/0032-phase7-api-and-contract-versioning-policy-v1.md)
+- Phase 7 DX & conformance baseline (normative): [`../../rfcs/0033-phase7-developer-experience-and-conformance-toolchain-baseline-v1.md`](../../rfcs/0033-phase7-developer-experience-and-conformance-toolchain-baseline-v1.md)
 
 ## Related files
 
