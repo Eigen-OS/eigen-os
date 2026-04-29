@@ -180,7 +180,19 @@ jobs:
                 `Golden fixtures changed. A maintainer must add the '${requiredLabel}' label to acknowledge and approve the update.`
               );
             }
+  
 
+  migration-notes-gate:
+    name: Migration notes gate
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate PR versioning/migration section
+        run: python3 scripts/ci/check-migration-notes.py
+        
   proto-contract-checks:
     name: Protobuf lint + breaking checks
     runs-on: ubuntu-latest
