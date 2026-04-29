@@ -74,6 +74,16 @@
   - [development/phase-5-release-readiness-checklist.md](development/phase-5-release-readiness-checklist.md)
   - [development/phase-5-compatibility-report.md](development/phase-5-compatibility-report.md)
 
+## Phase-6 RFC set (draft)
+
+- Status on 2026-04-28: Phase-6 plugin ecosystem planning package is prepared; RFCs are in Draft and pending acceptance.
+- Coverage check: [development/phase-6-rfc-adr-gap-analysis.md](development/phase-6-rfc-adr-gap-analysis.md)
+- Draft RFCs:
+  - [RFC 0029 — Phase-6 plugin SDK and manifest contract v1](../rfcs/0029-phase6-plugin-sdk-and-manifest-contract-v1.md)
+  - [RFC 0030 — Phase-6 plugin lifecycle and runtime isolation contract v1](../rfcs/0030-phase6-plugin-lifecycle-and-runtime-isolation-contract-v1.md)
+  - [RFC 0031 — Phase-6 plugin compatibility and trust policy contract v1](../rfcs/0031-phase6-plugin-compatibility-and-trust-policy-contract-v1.md)
+- ADR sync status:
+  - Pending until Phase-6 RFCs move to Accepted/Implemented.
 
 ## Quick links
 
