@@ -101,6 +101,11 @@ This document is a ready-to-use set of GitHub issues for the **Phase-6** stage o
 - `runsc` runtime boundary is required in activation path.
 - Isolation profile violations are observable in logs/metrics and covered by security tests.
 
+**Changelog discipline (for implementation PRs)**
+- **Version impact:** Plugin lifecycle/runtime isolation contract bumped to `2.0.0` due mandatory activation-path enforcement semantics.
+- **Compatibility:** Non-plugin runtime paths remain unchanged; only plugin activation policy is tightened.
+- **Migration notes:** Any in-process plugin activation path must be removed; deploy OCI artifacts that run only under `runsc`.
+
 **RFC link**
 - `rfcs/0030-phase6-plugin-lifecycle-and-runtime-isolation-contract-v1.md`
 
