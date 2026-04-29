@@ -18,6 +18,7 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 
 ### Added
 
+- Phase-7 P7-05 tooling baseline integration (`cli` in Rust workspace `0.17.0`) with single-command formatter/linter/unit-test workflow (`scripts/dev/run-tooling-baseline.sh`), CI lint entrypoint (`scripts/ci/lint.sh`), and richer plugin scaffold templates (`README.md`, `src/lib.rs`, `tests/manifest_contract.rs`) that validate by default.
 - Phase-6 P6-07 SRE pack for plugin health/trust/sandbox visibility (`runtime-observability` assets `0.3.0`) with stable `eigen_plugin_*` metrics contract (`1.0.0`), plugin runtime Grafana dashboard, Prometheus failure/SLO/trust/sandbox alerts, and deterministic triage + rollback runbook.
 - Phase-6 P6-06 GA plugin type implementation pack (`cli` in Rust workspace `0.15.0`) with fixture-backed contract tests for `driver`/`compiler_backend`/`optimizer`, explicit rejection of `scheduler` plugin manifests in Phase-6, and CLI help diagnostics that pin the fixed GA plugin type set.
 - Phase-6 P6-05 Sigstore/Cosign trust gate (`cli` in Rust workspace `0.14.0`) with default fail-closed unsigned-plugin rejection, keyless-public Fulcio identity + Rekor evidence enforcement, and private/air-gapped trust-profile support via explicit trust-root references.
@@ -202,6 +203,7 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 
 ### Added
 
+- Phase-7 P7-05 tooling baseline integration (`cli` in Rust workspace `0.17.0`) with single-command formatter/linter/unit-test workflow (`scripts/dev/run-tooling-baseline.sh`), CI lint entrypoint (`scripts/ci/lint.sh`), and richer plugin scaffold templates (`README.md`, `src/lib.rs`, `tests/manifest_contract.rs`) that validate by default.
 - Phase-5 P5-09 ADR synchronization and release meta package (`governance-docs` package `0.10.1`) with implemented RFC status updates for RFC 0026/0027/0028, synchronized ADR set (ADR 0014/0015/0016), and published Phase-5 release readiness + compatibility docs.
 - README information architecture refresh for Phase-5 closure: clearer audience/value/status sections, updated milestone matrix through Phase-5, and direct links to closure artifacts.
 - Phase-2 orchestration documentation baseline: execution plan and a ready-to-copy GitHub issue pack for scheduler/device-aware/multi-device/batch workstreams.
@@ -215,6 +217,7 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 
 ### Added
 
+- Phase-7 P7-05 tooling baseline integration (`cli` in Rust workspace `0.17.0`) with single-command formatter/linter/unit-test workflow (`scripts/dev/run-tooling-baseline.sh`), CI lint entrypoint (`scripts/ci/lint.sh`), and richer plugin scaffold templates (`README.md`, `src/lib.rs`, `tests/manifest_contract.rs`) that validate by default.
 - Phase-5 P5-09 ADR synchronization and release meta package (`governance-docs` package `0.10.1`) with implemented RFC status updates for RFC 0026/0027/0028, synchronized ADR set (ADR 0014/0015/0016), and published Phase-5 release readiness + compatibility docs.
 - README information architecture refresh for Phase-5 closure: clearer audience/value/status sections, updated milestone matrix through Phase-5, and direct links to closure artifacts.
 - Project health documentation baseline: `CONTRIBUTING.md`, `SECURITY.md`, and roadmap/project-health alignment.

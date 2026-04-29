@@ -15,7 +15,8 @@ const EIGEN_OS_VERSION: &str = "0.6.0";
 const CLI_VERSION: &str = "0.16.0";
 const EIGEN_LANG_VERSION: &str = "0.1.0";
 const COMPATIBILITY_MANIFEST_VERSION: &str = "1.0.0";
-const COMPATIBILITY_MANIFEST_JSON: &str = include_str!("../tests/fixtures/plugin_compatibility_matrix_v1.json");
+const COMPATIBILITY_MANIFEST_JSON: &str =
+    include_str!("../tests/fixtures/plugin_compatibility_matrix_v1.json");
 const BENCHMARK_RUN_CONTRACT_VERSION: &str = "1.0.0";
 const BENCHMARK_RUN_SNAPSHOT_VERSION: &str = "1.0.0";
 const BENCHMARK_COMPARISON_CONTRACT_VERSION: &str = "1.0.0";
@@ -37,7 +38,7 @@ fn main() {
                 eprintln!("plugin failed: {err}");
                 std::process::exit(EXIT_USER_ERROR);
             }
-        },
+        }
         "benchmark" => {
             if let Err(err) = run_benchmark(&args[2..]) {
                 eprintln!("benchmark failed: {err}");
@@ -89,7 +90,6 @@ fn main() {
     }
 }
 
-
 #[derive(Debug, Clone, PartialEq)]
 struct BenchmarkRunSnapshot {
     contract_version: String,
@@ -114,10 +114,11 @@ struct BenchmarkMetricComparison {
     regression: bool,
 }
 
-
 fn run_plugin(args: &[String]) -> Result<(), String> {
     let Some(subcommand) = args.first() else {
-        return Err("usage: eigen plugin <scaffold|validate|package|activate> [args...]".to_string());
+        return Err(
+            "usage: eigen plugin <scaffold|validate|package|activate> [args...]".to_string(),
+        );
     };
     match subcommand.as_str() {
         "scaffold" => run_plugin_scaffold(&args[1..]),
@@ -132,21 +133,49 @@ fn run_plugin(args: &[String]) -> Result<(), String> {
 
 fn run_plugin_scaffold(args: &[String]) -> Result<(), String> {
     if args.len() != 2 {
-        return Err("usage: eigen plugin scaffold <plugin_dir> <driver|compiler_backend|optimizer>".to_string());
+        return Err(
+            "usage: eigen plugin scaffold <plugin_dir> <driver|compiler_backend|optimizer>"
+                .to_string(),
+        );
     }
     let plugin_dir = PathBuf::from(&args[0]);
     let plugin_type = &args[1];
     validate_plugin_type(plugin_type)?;
     std::fs::create_dir_all(&plugin_dir)
         .map_err(|e| format!("failed to create {}: {e}", plugin_dir.display()))?;
-    let plugin_id = format!("io.eigen.{}", plugin_dir.file_name().and_then(|n| n.to_str()).unwrap_or("plugin"));
+    let plugin_id = format!(
+        "io.eigen.{}",
+        plugin_dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("plugin")
+    );
     let manifest = format!(
         "manifest_schema_version = \"{PLUGIN_MANIFEST_SCHEMA_VERSION}\"\nplugin_id = \"{plugin_id}\"\nplugin_version = \"0.1.0\"\nplugin_type = \"{plugin_type}\"\nplugin_api_version = \"{PLUGIN_API_VERSION}\"\neigen_os_compatibility = \">=0.6.0,<1.0.0\"\neigen_lang_version = \"{EIGEN_LANG_VERSION}\"\n\n[capabilities]\nhooks = []\n"
     );
     std::fs::write(plugin_dir.join("plugin.toml"), manifest)
         .map_err(|e| format!("failed to write plugin.toml: {e}"))?;
-    std::fs::write(plugin_dir.join("README.md"), "# Plugin\n")
+    let readme = format!(
+        "# {plugin_id}\n\nGenerated via `eigen plugin scaffold`.\n\n## Quick checks\n\n```bash\neigen plugin validate plugin.toml\n```\n"
+    );
+    std::fs::write(plugin_dir.join("README.md"), readme)
         .map_err(|e| format!("failed to write README.md: {e}"))?;
+    let src_dir = plugin_dir.join("src");
+    std::fs::create_dir_all(&src_dir)
+        .map_err(|e| format!("failed to create {}: {e}", src_dir.display()))?;
+    std::fs::write(
+        src_dir.join("lib.rs"),
+        "// Plugin entrypoint scaffold. Implement hooks declared in plugin.toml.\n",
+    )
+    .map_err(|e| format!("failed to write src/lib.rs: {e}"))?;
+    let tests_dir = plugin_dir.join("tests");
+    std::fs::create_dir_all(&tests_dir)
+        .map_err(|e| format!("failed to create {}: {e}", tests_dir.display()))?;
+    std::fs::write(
+        tests_dir.join("manifest_contract.rs"),
+        "#[test]\nfn manifest_file_exists() {\n    assert!(std::path::Path::new(\"plugin.toml\").exists());\n}\n",
+    )
+    .map_err(|e| format!("failed to write tests/manifest_contract.rs: {e}"))?;
     println!("scaffolded plugin at {}", plugin_dir.display());
     Ok(())
 }
@@ -169,8 +198,8 @@ fn run_plugin_package(args: &[String]) -> Result<(), String> {
     let plugin_dir = PathBuf::from(&args[0]);
     let output = PathBuf::from(&args[1]);
     let manifest_path = plugin_dir.join("plugin.toml");
-    let manifest =
-        std::fs::read_to_string(&manifest_path).map_err(|e| format!("failed to read manifest: {e}"))?;
+    let manifest = std::fs::read_to_string(&manifest_path)
+        .map_err(|e| format!("failed to read manifest: {e}"))?;
     validate_plugin_manifest(&manifest)?;
     let payload = format!(
         "{{\"format_version\":\"1.0.0\",\"manifest\":\"{}\"}}\n",
@@ -180,8 +209,6 @@ fn run_plugin_package(args: &[String]) -> Result<(), String> {
     println!("packaged plugin: {}", output.display());
     Ok(())
 }
-
-
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum PluginLifecycleState {
@@ -209,7 +236,9 @@ fn run_plugin_activate(args: &[String]) -> Result<(), String> {
     }
     let manifests = args
         .iter()
-        .map(|path| std::fs::read_to_string(path).map_err(|e| format!("failed to read {path}: {e}")))
+        .map(|path| {
+            std::fs::read_to_string(path).map_err(|e| format!("failed to read {path}: {e}"))
+        })
         .collect::<Result<Vec<_>, _>>()?;
     let records = activate_plugins(&manifests);
     for record in &records {
@@ -217,10 +246,17 @@ fn run_plugin_activate(args: &[String]) -> Result<(), String> {
             "{} {:?}{}",
             record.plugin_id,
             record.lifecycle_state,
-            record.reason.as_ref().map(|r| format!(": {r}")).unwrap_or_default()
+            record
+                .reason
+                .as_ref()
+                .map(|r| format!(": {r}"))
+                .unwrap_or_default()
         );
     }
-    if records.iter().any(|r| r.lifecycle_state == PluginLifecycleState::Error) {
+    if records
+        .iter()
+        .any(|r| r.lifecycle_state == PluginLifecycleState::Error)
+    {
         return Err("plugin activation failed for one or more plugins".to_string());
     }
     Ok(())
@@ -238,7 +274,9 @@ fn parse_semver(version: &str) -> Option<(u64, u64, u64)> {
 }
 
 fn matches_range(range: &str, version: &str) -> bool {
-    let Some(v) = parse_semver(version) else { return false; };
+    let Some(v) = parse_semver(version) else {
+        return false;
+    };
     for rule in range.split(',').map(str::trim).filter(|r| !r.is_empty()) {
         let (op, raw) = if let Some(rest) = rule.strip_prefix(">=") {
             (">=", rest)
@@ -253,7 +291,9 @@ fn matches_range(range: &str, version: &str) -> bool {
         } else {
             return false;
         };
-        let Some(bound) = parse_semver(raw.trim()) else { return false; };
+        let Some(bound) = parse_semver(raw.trim()) else {
+            return false;
+        };
         let ok = match op {
             ">=" => v >= bound,
             "<=" => v <= bound,
@@ -276,9 +316,10 @@ fn evaluate_compatibility(
 ) -> Result<(), String> {
     // compatibility tuples are sourced from a versioned machine-readable manifest fixture.
     let matrix = compatibility_tuples_from_manifest();
-    let (core_major, _, _) = parse_semver(EIGEN_OS_VERSION).ok_or_else(|| "CORE_VERSION_INVALID".to_string())?;
-    let (api_major, _, _) =
-        parse_semver(plugin_api_version).ok_or_else(|| "PLUGIN_API_VERSION_INVALID expected semver".to_string())?;
+    let (core_major, _, _) =
+        parse_semver(EIGEN_OS_VERSION).ok_or_else(|| "CORE_VERSION_INVALID".to_string())?;
+    let (api_major, _, _) = parse_semver(plugin_api_version)
+        .ok_or_else(|| "PLUGIN_API_VERSION_INVALID expected semver".to_string())?;
     let (lang_major, _, _) = parse_semver(eigen_lang_version)
         .ok_or_else(|| "PLUGIN_EIGEN_LANG_VERSION_INVALID expected semver".to_string())?;
     let supported = matrix.iter().any(|(c, a, l)| {
@@ -300,7 +341,10 @@ fn evaluate_compatibility(
 }
 
 fn compatibility_tuples_from_manifest() -> Vec<(String, String, String)> {
-    if !COMPATIBILITY_MANIFEST_JSON.contains(&format!("\"manifest_version\": \"{}\"", COMPATIBILITY_MANIFEST_VERSION)) {
+    if !COMPATIBILITY_MANIFEST_JSON.contains(&format!(
+        "\"manifest_version\": \"{}\"",
+        COMPATIBILITY_MANIFEST_VERSION
+    )) {
         return Vec::new();
     }
     let mut tuples = Vec::new();
@@ -322,14 +366,22 @@ fn compatibility_tuples_from_manifest() -> Vec<(String, String, String)> {
     tuples
 }
 
-fn evaluate_plugin_trust(trust_profile: &str, signature_bundle_ref: &str, signer_identity: &str, rekor_log_index: &str, trust_root_ref: &str) -> Result<(), String> {
+fn evaluate_plugin_trust(
+    trust_profile: &str,
+    signature_bundle_ref: &str,
+    signer_identity: &str,
+    rekor_log_index: &str,
+    trust_root_ref: &str,
+) -> Result<(), String> {
     if signature_bundle_ref.trim().is_empty() {
         return Err("PLUGIN_TRUST_UNSIGNED_REJECTED default_policy=sigstore_cosign".to_string());
     }
     match trust_profile {
         "keyless-public" => {
             if signer_identity.trim().is_empty() {
-                return Err("PLUGIN_TRUST_FULCIO_IDENTITY_MISSING profile=keyless-public".to_string());
+                return Err(
+                    "PLUGIN_TRUST_FULCIO_IDENTITY_MISSING profile=keyless-public".to_string(),
+                );
             }
             if rekor_log_index.trim().is_empty() {
                 return Err("PLUGIN_TRUST_REKOR_PROOF_MISSING profile=keyless-public".to_string());
@@ -338,33 +390,52 @@ fn evaluate_plugin_trust(trust_profile: &str, signature_bundle_ref: &str, signer
         }
         "private" | "airgap" => {
             if trust_root_ref.trim().is_empty() {
-                return Err(format!("PLUGIN_TRUST_ROOT_MISSING profile={trust_profile} remediation=configure_self_hosted_sigstore_or_byo_pki"));
+                return Err(format!(
+                    "PLUGIN_TRUST_ROOT_MISSING profile={trust_profile} remediation=configure_self_hosted_sigstore_or_byo_pki"
+                ));
             }
             Ok(())
         }
-        other => Err(format!("PLUGIN_TRUST_PROFILE_UNSUPPORTED profile={other} expected=keyless-public|private|airgap")),
+        other => Err(format!(
+            "PLUGIN_TRUST_PROFILE_UNSUPPORTED profile={other} expected=keyless-public|private|airgap"
+        )),
     }
 }
 
 fn activate_plugins(manifests: &[String]) -> Vec<PluginRecord> {
     let mut discovered = Vec::new();
     for manifest in manifests {
-        let plugin_id = extract_toml_string(manifest, "plugin_id").unwrap_or_else(|| "unknown".to_string());
+        let plugin_id =
+            extract_toml_string(manifest, "plugin_id").unwrap_or_else(|| "unknown".to_string());
         let plugin_type = extract_toml_string(manifest, "plugin_type").unwrap_or_default();
-        let plugin_api_version = extract_toml_string(manifest, "plugin_api_version").unwrap_or_default();
-        let eigen_os_compatibility = extract_toml_string(manifest, "eigen_os_compatibility").unwrap_or_default();
-        let eigen_lang_version = extract_toml_string(manifest, "eigen_lang_version").unwrap_or_default();
-        let trust_profile = extract_toml_string(manifest, "trust_policy_profile").unwrap_or_else(|| "keyless-public".to_string());
-        let signature_bundle_ref = extract_toml_string(manifest, "signature_bundle_ref").unwrap_or_default();
+        let plugin_api_version =
+            extract_toml_string(manifest, "plugin_api_version").unwrap_or_default();
+        let eigen_os_compatibility =
+            extract_toml_string(manifest, "eigen_os_compatibility").unwrap_or_default();
+        let eigen_lang_version =
+            extract_toml_string(manifest, "eigen_lang_version").unwrap_or_default();
+        let trust_profile = extract_toml_string(manifest, "trust_policy_profile")
+            .unwrap_or_else(|| "keyless-public".to_string());
+        let signature_bundle_ref =
+            extract_toml_string(manifest, "signature_bundle_ref").unwrap_or_default();
         let signer_identity = extract_toml_string(manifest, "signer_identity").unwrap_or_default();
         let rekor_log_index = extract_toml_string(manifest, "rekor_log_index").unwrap_or_default();
         let trust_root_ref = extract_toml_string(manifest, "trust_root_ref").unwrap_or_default();
-        let combined = format!("{eigen_os_compatibility}|{eigen_lang_version}|{trust_profile}|{signature_bundle_ref}|{signer_identity}|{rekor_log_index}|{trust_root_ref}");
-        discovered.push(PluginRecord { plugin_id, plugin_type, plugin_api_version, eigen_os_compatibility: combined, lifecycle_state: PluginLifecycleState::Discovered, reason: None });
+        let combined = format!(
+            "{eigen_os_compatibility}|{eigen_lang_version}|{trust_profile}|{signature_bundle_ref}|{signer_identity}|{rekor_log_index}|{trust_root_ref}"
+        );
+        discovered.push(PluginRecord {
+            plugin_id,
+            plugin_type,
+            plugin_api_version,
+            eigen_os_compatibility: combined,
+            lifecycle_state: PluginLifecycleState::Discovered,
+            reason: None,
+        });
     }
 
-    discovered.sort_by(|a,b| (&a.plugin_type, &a.plugin_id).cmp(&(&b.plugin_type, &b.plugin_id)));
-    let mut seen= BTreeSet::new();
+    discovered.sort_by(|a, b| (&a.plugin_type, &a.plugin_id).cmp(&(&b.plugin_type, &b.plugin_id)));
+    let mut seen = BTreeSet::new();
     for r in &mut discovered {
         r.lifecycle_state = PluginLifecycleState::Registered;
         if !seen.insert((r.plugin_type.clone(), r.plugin_id.clone())) {
@@ -378,20 +449,38 @@ fn activate_plugins(manifests: &[String]) -> Vec<PluginRecord> {
             r.reason = Some("PLUGIN_COMPATIBILITY_MISSING".to_string());
             continue;
         }
-        let (eigen_os_compatibility, eigen_lang_version, trust_profile, signature_bundle_ref, signer_identity, rekor_log_index, trust_root_ref) = (parts[0],parts[1],parts[2],parts[3],parts[4],parts[5],parts[6]);
+        let (
+            eigen_os_compatibility,
+            eigen_lang_version,
+            trust_profile,
+            signature_bundle_ref,
+            signer_identity,
+            rekor_log_index,
+            trust_root_ref,
+        ) = (
+            parts[0], parts[1], parts[2], parts[3], parts[4], parts[5], parts[6],
+        );
         if eigen_os_compatibility.is_empty() || eigen_lang_version.is_empty() {
             r.lifecycle_state = PluginLifecycleState::Error;
             r.reason = Some("PLUGIN_COMPATIBILITY_MISSING".to_string());
             continue;
         }
-        if let Err(reason) =
-            evaluate_compatibility(&r.plugin_api_version, eigen_os_compatibility, eigen_lang_version)
-        {
+        if let Err(reason) = evaluate_compatibility(
+            &r.plugin_api_version,
+            eigen_os_compatibility,
+            eigen_lang_version,
+        ) {
             r.lifecycle_state = PluginLifecycleState::Error;
             r.reason = Some(reason);
             continue;
         }
-        if let Err(reason)=evaluate_plugin_trust(trust_profile, signature_bundle_ref, signer_identity, rekor_log_index, trust_root_ref){
+        if let Err(reason) = evaluate_plugin_trust(
+            trust_profile,
+            signature_bundle_ref,
+            signer_identity,
+            rekor_log_index,
+            trust_root_ref,
+        ) {
             r.lifecycle_state = PluginLifecycleState::Error;
             r.reason = Some(reason);
             continue;
@@ -414,7 +503,9 @@ fn validate_plugin_manifest(manifest: &str) -> Result<(), String> {
         "signature_bundle_ref",
     ] {
         if extract_toml_string(manifest, field).is_none() {
-            return Err(format!("manifest validation failed: missing required field '{field}'"));
+            return Err(format!(
+                "manifest validation failed: missing required field '{field}'"
+            ));
         }
     }
     let plugin_type = extract_toml_string(manifest, "plugin_type").unwrap_or_default();
@@ -1193,7 +1284,6 @@ mod tests {
         );
     }
 
-
     #[test]
     fn plugin_ga_types_contract_fixtures_are_accepted() {
         let fixture_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -1202,7 +1292,8 @@ mod tests {
             .join("plugins");
 
         for file in ["driver.toml", "compiler_backend.toml", "optimizer.toml"] {
-            let manifest = std::fs::read_to_string(fixture_dir.join(file)).expect("fixture manifest");
+            let manifest =
+                std::fs::read_to_string(fixture_dir.join(file)).expect("fixture manifest");
             validate_plugin_manifest(&manifest).expect("ga type should validate");
         }
     }
@@ -1213,7 +1304,8 @@ mod tests {
             .join("tests")
             .join("fixtures")
             .join("plugins");
-        let manifest = std::fs::read_to_string(fixture_dir.join("scheduler.toml")).expect("fixture manifest");
+        let manifest =
+            std::fs::read_to_string(fixture_dir.join("scheduler.toml")).expect("fixture manifest");
         let err = validate_plugin_manifest(&manifest).expect_err("scheduler type must be rejected");
         assert!(err.contains("unsupported plugin_type 'scheduler'"));
         assert!(err.contains("driver, compiler_backend, optimizer"));
@@ -1291,17 +1383,19 @@ rekor_log_index = "42"
         let records = activate_plugins(&manifests);
         assert_eq!(records[0].lifecycle_state, PluginLifecycleState::Active);
         assert_eq!(records[1].lifecycle_state, PluginLifecycleState::Error);
-        assert!(records[1]
-            .reason
-            .as_deref()
-            .unwrap_or_default()
-            .contains("PLUGIN_CONFLICT_DUPLICATE_ID"));
+        assert!(
+            records[1]
+                .reason
+                .as_deref()
+                .unwrap_or_default()
+                .contains("PLUGIN_CONFLICT_DUPLICATE_ID")
+        );
     }
-
 
     #[test]
     fn plugin_unsupported_matrix_is_blocked_with_remediation() {
-        let manifests = vec![r#"manifest_schema_version = "2.0.0"
+        let manifests = vec![
+            r#"manifest_schema_version = "2.0.0"
 plugin_id = "io.eigen.bad"
 plugin_version = "0.1.0"
 plugin_type = "driver"
@@ -1309,12 +1403,18 @@ plugin_api_version = "3.0.0"
 eigen_os_compatibility = ">=0.6.0,<1.0.0"
 eigen_lang_version = "0.1.0"
 "#
-            .to_string()];
+            .to_string(),
+        ];
         let records = activate_plugins(&manifests);
         assert_eq!(records[0].lifecycle_state, PluginLifecycleState::Error);
-        assert!(records[0].reason.as_deref().unwrap_or_default().contains("remediation="));
+        assert!(
+            records[0]
+                .reason
+                .as_deref()
+                .unwrap_or_default()
+                .contains("remediation=")
+        );
     }
-
 
     #[test]
     fn compatibility_manifest_fixture_is_versioned() {
@@ -1325,7 +1425,8 @@ eigen_lang_version = "0.1.0"
 
     #[test]
     fn compatibility_rejection_has_stable_reason_and_hint() {
-        let err = evaluate_compatibility("3.0.0", ">=0.6.0,<1.0.0", "0.1.0").expect_err("unsupported combo");
+        let err = evaluate_compatibility("3.0.0", ">=0.6.0,<1.0.0", "0.1.0")
+            .expect_err("unsupported combo");
         assert!(err.contains("PLUGIN_COMPATIBILITY_MATRIX_UNSUPPORTED"));
         assert!(err.contains("hint=runtime->cli->plugin_api->eigen_lang"));
     }
