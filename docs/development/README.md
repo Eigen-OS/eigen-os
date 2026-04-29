@@ -105,6 +105,9 @@ git fetch origin main:main
 - Phase 5 compatibility report: [`phase-5-compatibility-report.md`](phase-5-compatibility-report.md)
 - Architecture decisions: [`../adr/README.md`](../adr/README.md)
 - RFC package: [`../../rfcs/`](../../rfcs/)
+- Phase 6 plugin ecosystem plan: [`phase-6-plugin-ecosystem.md`](phase-6-plugin-ecosystem.md)
+- Phase 6 issue pack: [`phase-6-issue-pack.md`](phase-6-issue-pack.md)
+- Phase 6 RFC/ADR gap analysis: [`phase-6-rfc-adr-gap-analysis.md`](phase-6-rfc-adr-gap-analysis.md)
 
 ## Related files
 

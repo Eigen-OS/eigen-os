@@ -14,6 +14,8 @@ Completed:
 - Phase-1: Production runtime
 - Phase-2: Orchestration layer
 - Phase-3: Benchmarking platform
+- Phase-4: Intelligent runtime
+- Phase-5: Distributed execution
 
 ## Eigen-Lang Track
 
@@ -73,7 +75,7 @@ Eigen-Lang deliverables:
 - topology annotations
 - cluster-aware execution policies
 
-Planning artifacts:
+Planning artifacts (completed):
 
 - [phase-5-distributed-execution.md](phase-5-distributed-execution.md)
 - [phase-5-issue-pack.md](phase-5-issue-pack.md)
@@ -99,6 +101,15 @@ Eigen-Lang deliverables:
 - conformance test suite
 - migration documentation
 
+Planning artifacts:
+
+- [phase-6-plugin-ecosystem.md](phase-6-plugin-ecosystem.md)
+- [phase-6-issue-pack.md](phase-6-issue-pack.md)
+- [phase-6-rfc-adr-gap-analysis.md](phase-6-rfc-adr-gap-analysis.md)
+- [../../rfcs/0029-phase6-plugin-sdk-and-manifest-contract-v1.md](../../rfcs/0029-phase6-plugin-sdk-and-manifest-contract-v1.md)
+- [../../rfcs/0030-phase6-plugin-lifecycle-and-runtime-isolation-contract-v1.md](../../rfcs/0030-phase6-plugin-lifecycle-and-runtime-isolation-contract-v1.md)
+- [../../rfcs/0031-phase6-plugin-compatibility-and-trust-policy-contract-v1.md](../../rfcs/0031-phase6-plugin-compatibility-and-trust-policy-contract-v1.md)
+
 ## Phase-7: Stability & Developer Experience
 
 Goal: make adoption and contribution easier.
@@ -121,8 +132,8 @@ Deliverables:
 
 ## Immediate Next Steps
 
-1. Kick off Phase-5 cluster control-plane implementation
-2. Add worker service registration/heartbeat/cancellation flows
-3. Introduce pluggable queue abstraction and delivery semantics gates
-4. Implement distributed topology metadata and trace continuity checks
-5. Prepare distributed submit/watch/results demo in cluster mode
+1. Finalize signing/trust-root strategy for plugin packages
+2. Land manifest schema validator and plugin SDK scaffolding commands
+3. Implement lifecycle state machine with deterministic activation ordering
+4. Add compatibility + trust load-time gates and reason-code fixtures
+5. Publish Phase-6 release-readiness and compatibility closure artifacts
