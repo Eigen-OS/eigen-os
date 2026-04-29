@@ -18,6 +18,7 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 
 ### Added
 
+- Phase-7 P7-06 RFC package and ADR synchronization closure (`governance-docs` package `0.11.0`) with RFC 0032/0033 accepted status alignment, new ADR 0018/0019 records, synchronized RFC/development pointers, and published Phase-7 readiness + compatibility reports.
 - Phase-7 P7-05 tooling baseline integration (`cli` in Rust workspace `0.17.0`) with single-command formatter/linter/unit-test workflow (`scripts/dev/run-tooling-baseline.sh`), CI lint entrypoint (`scripts/ci/lint.sh`), and richer plugin scaffold templates (`README.md`, `src/lib.rs`, `tests/manifest_contract.rs`) that validate by default.
 - Phase-6 P6-07 SRE pack for plugin health/trust/sandbox visibility (`runtime-observability` assets `0.3.0`) with stable `eigen_plugin_*` metrics contract (`1.0.0`), plugin runtime Grafana dashboard, Prometheus failure/SLO/trust/sandbox alerts, and deterministic triage + rollback runbook.
 - Phase-6 P6-06 GA plugin type implementation pack (`cli` in Rust workspace `0.15.0`) with fixture-backed contract tests for `driver`/`compiler_backend`/`optimizer`, explicit rejection of `scheduler` plugin manifests in Phase-6, and CLI help diagnostics that pin the fixed GA plugin type set.
