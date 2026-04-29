@@ -19,6 +19,7 @@ Phase-6 introduces extension points beyond built-in runtime/compiler functionali
 
 - Define canonical plugin package format and required manifest fields.
 - Define plugin capability declaration model and schema validation.
+- Fix Phase-6 GA plugin type set to `driver`, `compiler_backend`, `optimizer`.
 - Standardize SDK developer workflows and contract fixtures.
 
 ## Non-Goals
@@ -26,6 +27,7 @@ Phase-6 introduces extension points beyond built-in runtime/compiler functionali
 - Hosted plugin marketplace.
 - Dynamic remote plugin distribution protocol.
 - Commercial licensing/subscription workflows.
+- Additional GA plugin type families in Phase-6.
 
 ## Guide-level Explanation
 
@@ -40,9 +42,7 @@ my-plugin/
   plugin.toml
   README.md
   LICENSE
-  plugin/
-    __init__.py
-    hooks.py
+  plugin.oci.image.reference
   metadata/
     capabilities.json
 ```
@@ -52,19 +52,22 @@ my-plugin/
 - `plugin_id` (reverse-DNS style)
 - `name`
 - `version` (SemVer)
+- `plugin_type` (`driver | compiler_backend | optimizer`)
 - `plugin_api_version`
 - `eigen_os_compatibility`
-- `eigen_lang_compatibility` (optional but recommended)
+- `eigen_lang_compatibility` (optional)
 - `capabilities` (explicit declared permissions)
 - `entrypoints` (hook registration map)
-- `signature` (required in trusted profiles)
+- `artifact_digest` (mandatory immutable digest)
+- `signature_bundle_ref` (Cosign/Sigstore verification payload reference)
 
-### Plugin types (v1)
+### Plugin types (Phase-6 GA)
 
-- `compiler_pass`
-- `runtime_backend_adapter`
-- `observability_exporter`
-- `eigen_lang_extension`
+- `driver` — simulators and hardware adapters.
+- `compiler_backend` — transpilation/IR backends.
+- `optimizer` — circuit/backend optimization passes.
+
+`plugin_type` values outside this set are invalid for Phase-6.
 
 ## Interfaces / APIs
 
@@ -92,7 +95,7 @@ Versioning strategy:
 ## Security and Privacy
 
 - Capabilities are deny-by-default.
-- Plugin package hash and signature verification are evaluated before activation.
+- Plugin package digest and Cosign/Sigstore verification payload are evaluated before activation.
 - Manifest must not include secrets; use runtime-managed secret stores.
 
 ## Observability
@@ -105,7 +108,7 @@ Required metrics:
 
 Required logs:
 
-- plugin ID/version
+- plugin ID/version/type
 - validation outcome
 - explicit reason codes for failures
 
@@ -119,12 +122,13 @@ Required logs:
 - Schema fixture tests (positive + negative).
 - Backward/forward compatibility tests for manifest versions.
 - CLI golden tests for scaffold/validate/package workflow.
+- Type-enum conformance tests for GA type set.
 
 ## Implementation / Migration
 
 1. Publish `PluginManifestV1` schema and validator.
 2. Add CLI/SDK commands for scaffold/validate/package.
-3. Add CI contract fixtures for supported plugin types.
+3. Add CI contract fixtures for each GA plugin type.
 4. Document migration from built-in extension configs.
 
 ## Compatibility and Versioning
@@ -137,8 +141,8 @@ Required logs:
 
 - Unstructured YAML manifests: rejected due to schema drift risk.
 - Code-only registration without manifest: rejected due to weak governance and auditability.
+- Broad plugin type surface in Phase-6: rejected to keep GA contract small and stable.
 
 ## Open Questions
 
-- Final manifest format choice (`TOML` vs `YAML`) if toolchain constraints arise.
-- Minimum required metadata for security scanning integration.
+- Exact mandatory/optional capability groups per GA plugin type.

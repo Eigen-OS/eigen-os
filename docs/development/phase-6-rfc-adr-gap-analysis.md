@@ -60,6 +60,8 @@ Phase-6 planning is prepared with implementation backlog and contract-oriented R
 The following defaults are fixed for initial Phase-6 planning:
 
 1. plugin artifact compatibility and manifest fields are SemVer-governed;
-2. unsigned plugin loading is disabled by default for production profiles;
+2. Sigstore/Cosign is fixed as default trust stack (Fulcio/Rekor for public/community plugins);
 3. plugin lifecycle semantics require deterministic load ordering and fail-closed conflict behavior;
-4. Phase-6 work is blocked from closure until RFC acceptance and ADR synchronization are complete.
+4. gVisor `runsc` OCI sandbox is fixed as mandatory runtime boundary for GA;
+5. Phase-6 GA plugin type set is fixed to `driver`, `compiler_backend`, `optimizer`;
+6. Phase-6 work is blocked from closure until RFC acceptance and ADR synchronization are complete.

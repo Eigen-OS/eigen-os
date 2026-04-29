@@ -8,7 +8,7 @@ This document is a ready-to-use set of GitHub issues for the **Phase-6** stage o
 
 ---
 
-## Versioning Rules (Mandatory for every Phase-6 issue)
+## Versioning & Security Rules (Mandatory for every Phase-6 issue)
 
 > Include this block in the description of every issue (as "Definition of Done / Constraints").
 
@@ -19,29 +19,28 @@ This document is a ready-to-use set of GitHub issues for the **Phase-6** stage o
 3. **Backward-compatible additions via `MINOR`:**
    - Optional capability flags, diagnostics metadata, and non-breaking extension points use `MINOR`.
 4. **`PATCH` for fixes only:**
-   - No plugin load-order, compatibility gate, or trust enforcement semantic changes in `PATCH` releases.
-5. **Mandatory version markers in plugin artifacts:**
-   - Every plugin package must include `plugin_api_version` and `eigen_os_compatibility` metadata.
-6. **Deprecation policy:**
-   - Plugin API/manifest fields cannot be removed before at least one `MINOR` release marks them deprecated.
-7. **Changelog discipline:**
-   - Every Phase-6 PR includes:
-     - `Version impact`
-     - `Compatibility`
-     - `Migration notes` (if applicable).
+   - No plugin load-order, compatibility gate, trust enforcement, or sandbox semantic changes in `PATCH` releases.
+5. **Mandatory version and trust markers in plugin artifacts:**
+   - Every plugin package must include `plugin_api_version`, `eigen_os_compatibility`, signature payload, and transparency evidence references.
+6. **Signing default is fixed:**
+   - Sigstore/Cosign is the only default stack; public/community plugins use keyless Fulcio + Rekor.
+7. **Sandbox default is fixed:**
+   - Only out-of-process OCI plugins under gVisor `runsc`; no in-process Python/Rust plugin imports in GA.
+8. **GA plugin types are fixed for Phase-6:**
+   - `driver`, `compiler_backend`, `optimizer`.
 
 ---
 
 ## Milestone
 
 - **Milestone:** `Phase-6 Plugin Ecosystem`
-- **Suggested labels:** `phase-6`, `plugins`, `runtime`, `eigen-lang`, `security`, `quality`, `rfc`
+- **Suggested labels:** `phase-6`, `plugins`, `runtime`, `security`, `quality`, `rfc`
 
 ---
 
 ## Issues
 
-### P6-01 — Plugin SDK and Manifest Contract v1
+### P6-01 — Plugin SDK and Manifest Contract v1 (GA types only)
 
 **Type:** Feature  
 **Labels:** `phase-6`, `plugins`, `runtime`
@@ -50,13 +49,13 @@ This document is a ready-to-use set of GitHub issues for the **Phase-6** stage o
 
 **Scope**
 - Manifest schema (`plugin.toml`) with identity, versioning, capabilities, and compatibility constraints.
-- Plugin SDK baseline for scaffold/validate/package workflows.
-- Contract fixtures for manifest validation across plugin types.
+- GA plugin type enum is fixed to `driver`, `compiler_backend`, `optimizer`.
+- SDK baseline for scaffold/validate/package workflows and schema fixtures.
 
 **Acceptance Criteria**
 - Manifest schema is versioned and lintable in CI.
-- SDK can scaffold and validate a minimal plugin end-to-end.
-- Incompatible manifest versions fail with deterministic diagnostics.
+- SDK can scaffold and validate a minimal plugin for each GA type.
+- Non-GA type declarations fail with deterministic diagnostics.
 
 **RFC link**
 - `rfcs/0029-phase6-plugin-sdk-and-manifest-contract-v1.md`
@@ -85,22 +84,22 @@ This document is a ready-to-use set of GitHub issues for the **Phase-6** stage o
 
 ---
 
-### P6-03 — Runtime Isolation and Capability Enforcement for Plugins
+### P6-03 — Mandatory OCI + gVisor Sandbox Boundary
 
 **Type:** Security / Platform  
 **Labels:** `phase-6`, `security`, `plugins`
 
-**Problem** Third-party plugins increase attack surface unless strict isolation and capability checks are enforced.
+**Problem** Third-party plugins increase attack surface unless strict isolation is enforced by runtime boundary.
 
 **Scope**
-- Isolation profile for plugin execution environment.
-- Capability declaration/verification at activation time.
-- Policy guardrails for forbidden API or filesystem/network access.
+- Execute plugins only as out-of-process OCI artifacts under gVisor `runsc`.
+- Enforce baseline profile: rootless, read-only fs, no network default, dropped capabilities, resource limits.
+- Block in-process plugin loading paths in GA.
 
 **Acceptance Criteria**
-- Unauthorized capability requests are blocked before activation.
-- Isolation policy violations are observable in logs/metrics.
-- Security regression tests cover privilege-escalation attempts.
+- In-process plugin activation attempts are rejected by policy.
+- `runsc` runtime boundary is required in activation path.
+- Isolation profile violations are observable in logs/metrics and covered by security tests.
 
 **RFC link**
 - `rfcs/0030-phase6-plugin-lifecycle-and-runtime-isolation-contract-v1.md`
@@ -129,7 +128,7 @@ This document is a ready-to-use set of GitHub issues for the **Phase-6** stage o
 
 ---
 
-### P6-05 — Plugin Trust Policy and Signature Verification
+### P6-05 — Sigstore/Cosign Trust Gate (Fulcio + Rekor)
 
 **Type:** Security / Governance  
 **Labels:** `phase-6`, `security`, `rfc`
@@ -137,53 +136,53 @@ This document is a ready-to-use set of GitHub issues for the **Phase-6** stage o
 **Problem** Operators need verifiable trust controls for plugin supply-chain safety.
 
 **Scope**
-- Signature verification and trust profile policy (`prod`, `staging`, `dev`).
-- Allowlist/denylist policy inputs.
-- Audit trail for trust decisions and override actions.
+- Sigstore/Cosign verification as mandatory default.
+- Keyless signing requirements for public/community plugins (Fulcio + Rekor evidence).
+- Private/air-gapped support via self-hosted Sigstore or KMS/BYO PKI with same verification contract.
 
 **Acceptance Criteria**
-- Production profile blocks unsigned plugins by default.
-- Policy overrides are explicit, logged, and observable.
-- Signature verification failures include deterministic reason codes.
+- Unsigned plugins are rejected in default policy.
+- Fulcio/Rekor evidence is validated and auditable.
+- Air-gapped/private policy profile keeps compatible artifact and verification format.
 
 **RFC link**
 - `rfcs/0031-phase6-plugin-compatibility-and-trust-policy-contract-v1.md`
 
 ---
 
-### P6-06 — Eigen-Lang Plugin Extension Hooks v1
+### P6-06 — GA Plugin Type Implementation Pack
 
-**Type:** Compiler / Language  
-**Labels:** `phase-6`, `eigen-lang`, `compiler`
+**Type:** Platform / Compiler  
+**Labels:** `phase-6`, `plugins`, `compiler`, `runtime`
 
-**Problem** Language-level extension points are required for ecosystem growth beyond core built-ins.
+**Problem** Phase-6 needs a strict minimal plugin surface aligned with roadmap extension areas.
 
 **Scope**
-- Pluggable standard-library module registration.
-- Compiler hooks for plugin-based analysis/transformation passes.
-- Deterministic diagnostics for unsupported extension patterns.
+- `driver` plugin contract (simulators + hardware adapters).
+- `compiler_backend` plugin contract (transpilation / IR backends).
+- `optimizer` plugin contract (circuit/backend optimization passes).
+- Keep scheduler policy extension in core-configurable path (no GA plugin type in Phase-6).
 
 **Acceptance Criteria**
-- Plugin-provided modules can be imported under explicit namespace policy.
-- Compiler hook order is deterministic and test-covered.
-- Unsupported hooks fail with actionable and reproducible errors.
+- All three GA plugin types have fixture-backed contract tests.
+- Scheduler plugin type declarations are rejected for Phase-6.
+- Docs and CLI diagnostics explicitly mention the fixed GA type set.
 
 **RFC link**
 - `rfcs/0029-phase6-plugin-sdk-and-manifest-contract-v1.md`
-- `rfcs/0030-phase6-plugin-lifecycle-and-runtime-isolation-contract-v1.md`
 
 ---
 
-### P6-07 — SRE Pack for Plugin Health, Failures, and Drift
+### P6-07 — SRE Pack for Plugin Health, Trust, and Sandbox Violations
 
 **Type:** Observability  
 **Labels:** `phase-6`, `observability`, `plugins`
 
-**Problem** Plugin failures and compatibility drift must be visible to operators.
+**Problem** Plugin failures and trust/sandbox rejects must be visible to operators.
 
 **Scope**
-- Metrics for discovery/activation failures, compatibility rejects, and trust-policy rejects.
-- Dashboards for plugin inventory, health, and activation latency.
+- Metrics for discovery/activation failures, compatibility rejects, signature rejects, sandbox rejects.
+- Dashboards for plugin inventory, health, activation latency, and rejection reasons.
 - Alerts + runbook for startup degradation due to plugin failures.
 
 **Acceptance Criteria**
