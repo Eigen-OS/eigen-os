@@ -52,6 +52,25 @@ buf lint
 buf breaking --against '../.git#branch=main'
 ```
 
+## Tooling baseline command
+
+Use one command for the default formatter/lint/unit-test baseline:
+
+```bash
+scripts/dev/run-tooling-baseline.sh
+```
+
+Minimal workflow:
+
+- `scripts/dev/run-tooling-baseline.sh`
+
+Full workflow:
+
+- `scripts/dev/run-tooling-baseline.sh`
+- `scripts/test/run-integration-tests.sh`
+- `scripts/test/run-contract-compatibility-suite.sh`
+- `scripts/ci/check-contract-drift.py`
+
 ## Required gates for `main`
 
 Configure branch protection so the following CI jobs are **Required**:
