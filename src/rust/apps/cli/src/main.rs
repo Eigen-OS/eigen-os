@@ -122,7 +122,6 @@ fn run_plugin(args: &[String]) -> Result<(), String> {
             "unknown plugin subcommand: {other}. expected scaffold|validate|package|activate"
         )),
     }
-}
 
 fn run_plugin_scaffold(args: &[String]) -> Result<(), String> {
     if args.len() != 2 {

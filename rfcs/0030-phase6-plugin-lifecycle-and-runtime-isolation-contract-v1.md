@@ -4,7 +4,7 @@
 - **Authors**: Eigen OS maintainers
 - **Created**: 2026-04-28
 - **Target Milestone**: Phase 6
-- **Tracking Issue**: P6-08 (docs/development/phase-6-issue-pack.md)
+- **Tracking Issue**: P6-03 (docs/development/phase-6-issue-pack.md)
 - **Replaces / Related**: docs/development/phase-6-plugin-ecosystem.md
 
 ## Summary
@@ -62,6 +62,7 @@ Conflicts:
 
 - Only OCI artifacts are loadable plugin runtime units.
 - Runtime boundary is mandatory: gVisor `runsc`.
+- Any activation request that resolves to an in-process runtime is rejected with reason code `PLUGIN_RUNTIME_IN_PROCESS_FORBIDDEN`.
 - Baseline sandbox profile:
   - rootless execution,
   - read-only filesystem,
@@ -69,6 +70,16 @@ Conflicts:
   - dropped capabilities,
   - explicit CPU/memory/pid limits.
 - Plugin panic/exception isolation must not crash core orchestration loop.
+
+### Activation policy enforcement (GA hard requirement)
+
+Activation is fail-closed and MUST enforce runtime boundary before hook execution:
+
+1. Resolve artifact type; non-OCI artifacts are rejected with `PLUGIN_ARTIFACT_TYPE_UNSUPPORTED`.
+2. Resolve runtime implementation; any runtime other than `runsc` is rejected with `PLUGIN_RUNTIME_BOUNDARY_REQUIRED`.
+3. Validate sandbox profile; profile violations are rejected with `PLUGIN_SANDBOX_PROFILE_VIOLATION`.
+4. Emit structured audit event + metrics for every rejection.
+5. Transition plugin lifecycle state to `QUARANTINED` for security-policy violations.
 
 ## Interfaces / APIs
 
@@ -107,12 +118,16 @@ Required metrics:
 - `plugin_quarantine_total`
 - `plugin_activation_latency_ms`
 - `plugin_sandbox_policy_reject_total`
+- `plugin_runtime_boundary_reject_total`
+- `plugin_in_process_reject_total`
 
 Required trace attributes:
 
 - `plugin.id`
 - `plugin.version`
 - `plugin.lifecycle_state`
+- `plugin.runtime`
+- `plugin.reject_reason`
 
 ## Performance
 
@@ -135,9 +150,9 @@ Required trace attributes:
 
 ## Compatibility and Versioning
 
-- **Version impact:** Introduces plugin lifecycle contract `1.0.0`.
+- **Version impact:** Introduces sandbox-boundary enforcement update for plugin lifecycle contract `2.0.0`.
 - **Compatibility:** Core runtime behavior remains unchanged when plugins are disabled.
-- **Migration notes:** Existing extension bootstrap logic should map to lifecycle state transitions and OCI runtime packaging.
+- **Migration notes:** Existing extension bootstrap logic must remove in-process loading paths and package all loadable plugins as OCI artifacts runnable under `runsc`.
 
 ## Considered Alternatives
 
