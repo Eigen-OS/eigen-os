@@ -1,0 +1,45 @@
+{
+  "manifest_version": "1.1.0",
+  "artifacts": [
+    {
+      "path": "proto/eigen/api/v1/device_service.proto",
+      "sha256": "920eb60915a1edb4117ca6bf98d25bd7193d664870e48d6b00cb0a88d10f27b3"
+    },
+    {
+      "path": "proto/eigen/api/v1/job_service.proto",
+      "sha256": "1966cca61a0de1d492cebcecaccf04c674d8e16e36262f5f5d599bde6b00992e"
+    },
+    {
+      "path": "proto/eigen/api/v1/types.proto",
+      "sha256": "dba9f4a88037d8e079716e8352001ea41e2de28c55463d8be93128180673e9d8"
+    },
+    {
+      "path": "proto/eigen/internal/v1/compilation_service.proto",
+      "sha256": "31379b1300caf22c0738ee1315f9cf1eeded6548789dcb1af198f3aa8f06efbc"
+    },
+    {
+      "path": "proto/eigen/internal/v1/driver_manager_service.proto",
+      "sha256": "d34151466bcde68ed2a0b7688e245c8bd547701b3b64e1c32e19ccecb5197b0a"
+    },
+    {
+      "path": "proto/eigen/internal/v1/kernel_gateway.proto",
+      "sha256": "15fae6245ed0c6d5dd27f379629895410da2ff9122d05e3d641e01c160ed5eb3"
+    },
+    {
+      "path": "proto/eigen/internal/v1/types.proto",
+      "sha256": "e6afd3fb3bcb2ea4c5093df9453a7b917add8c93b8d75967bac89359572262c0"
+    },
+    {
+      "path": "src/rust/apps/cli/tests/fixtures/plugin_compatibility_matrix_v1.json",
+      "sha256": "70c8606d6017d06a8ae78fc306b48cd84817b8d50686fcc31797e14ce1dcef89"
+    },
+    {
+      "path": "src/rust/crates/resource-manager/tests/fixtures/scheduler_contracts/queue_delivery_contract_v1_0_0.json",
+      "sha256": "efc8b8ff1cb1b064a6248c111ed0b2332571c908d23ca241b20c22ac1f02bad5"
+    },
+    {
+      "path": "src/rust/crates/resource-manager/tests/fixtures/scheduler_contracts/queue_delivery_contract_v1_0_1.json",
+      "sha256": "7530003ad5dcd5a1c77434c04843fc91c52fed7ef81899fc0825fa02f4a88207"
+    }
+  ]
+}
