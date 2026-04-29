@@ -1,20 +1,20 @@
 # Phase-6 RFC/ADR Coverage Check (Plugin Ecosystem)
 
-- **Date:** 2026-04-28
+- **Date:** 2026-04-29
 - **Scope checked:** `rfcs/`, `docs/adr/`, `docs/rfcs-pointer.md`, `docs/roadmap.md`, `docs/development/`
-- **Result:** ⚠️ **Phase-6 planning package is ready, RFC baseline is drafted, ADR synchronization is pending implementation acceptance.**
+- **Result:** ✅ **Required Phase-6 RFC package is accepted and indexed; ADR synchronization remains the next governance checkpoint.**
 
 ## Executive summary
 
-Phase-6 planning is prepared with implementation backlog and contract-oriented RFC package for plugin ecosystem work. Required RFC documents now exist in draft form (RFC 0029/0030/0031), but matching ADRs should be created only after RFCs are accepted and implementation is stabilized.
+Phase-6 planning is prepared with implementation backlog and contract-oriented RFC package for plugin ecosystem work. Required RFC documents are now accepted (RFC 0029/0030/0031) and indexed in roadmap/development docs; matching ADRs should now be created during implementation stabilization.
 
 ## What exists today
 
 ### RFCs available
 
-- RFC 0029 (Draft): plugin SDK and manifest contract v1.
-- RFC 0030 (Draft): plugin lifecycle and runtime isolation contract v1.
-- RFC 0031 (Draft): plugin compatibility and trust policy contract v1.
+- RFC 0029 (Accepted): plugin SDK and manifest contract v1.
+- RFC 0030 (Accepted): plugin lifecycle and runtime isolation contract v1.
+- RFC 0031 (Accepted): plugin compatibility and trust policy contract v1.
 
 ### ADRs available
 
@@ -24,9 +24,9 @@ Phase-6 planning is prepared with implementation backlog and contract-oriented R
 
 | Area | Needed for Phase-6 | Present now | Gap |
 | --- | --- | --- | --- |
-| Plugin SDK + manifest contract | RFC + compatibility policy | RFC 0029 (Draft) | Partially closed (needs acceptance + implementation) |
-| Plugin lifecycle + isolation contract | RFC + security constraints + deterministic loading semantics | RFC 0030 (Draft) | Partially closed (needs acceptance + implementation) |
-| Plugin compatibility + trust policy | RFC + version/trust governance | RFC 0031 (Draft) | Partially closed (needs acceptance + implementation) |
+| Plugin SDK + manifest contract | RFC + compatibility policy | RFC 0029 (Accepted) | Closed for RFC package; implementation pending |
+| Plugin lifecycle + isolation contract | RFC + security constraints + deterministic loading semantics | RFC 0030 (Accepted) | Closed for RFC package; implementation pending |
+| Plugin compatibility + trust policy | RFC + version/trust governance | RFC 0031 (Accepted) | Closed for RFC package; implementation pending |
 | Implemented decisions mirrored in ADRs | ADR(s) after implementation | No Phase-6 ADRs yet | Open |
 | Release closure artifacts | compatibility report + readiness checklist | Not started | Open |
 | Index/pointer synchronization | docs links to Phase-6 package | Updated in planning docs | Closed for planning stage |

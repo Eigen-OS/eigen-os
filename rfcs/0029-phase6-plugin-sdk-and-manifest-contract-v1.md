@@ -1,6 +1,6 @@
 # RFC 0029: Phase-6 Plugin SDK and Manifest Contract v1
 
-- **Status**: Draft
+- **Status**: Accepted
 - **Authors**: Eigen OS maintainers
 - **Created**: 2026-04-28
 - **Target Milestone**: Phase 6
@@ -133,9 +133,9 @@ Required logs:
 
 ## Compatibility and Versioning
 
-- **Version impact:** Introduces new plugin API baseline at `1.0.0`.
-- **Compatibility:** Does not break non-plugin deployments.
-- **Migration notes:** Existing bespoke extension configs should be translated into `plugin.toml`.
+- **Version impact:** Contract baseline is `1.0.0` (stable) for Phase-6 plugin SDK/manifest artifacts.
+- **Compatibility:** Required-field removals/renames require `MAJOR`; additive optional metadata and extension points use `MINOR`; bugfix clarifications only use `PATCH`.
+- **Migration notes:** Existing bespoke extension configs should be translated into `plugin.toml`; every plugin artifact must include `plugin_api_version` and `eigen_os_compatibility`.
 
 ## Considered Alternatives
 

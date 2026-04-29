@@ -9,7 +9,7 @@
 - **Previous phase closure**: [`phase-5-release-readiness-checklist.md`](phase-5-release-readiness-checklist.md), [`phase-5-compatibility-report.md`](phase-5-compatibility-report.md)
 - **Execution backlog**: [`phase-6-issue-pack.md`](phase-6-issue-pack.md)
 - **RFC/ADR coverage check**: [`phase-6-rfc-adr-gap-analysis.md`](phase-6-rfc-adr-gap-analysis.md)
-- **RFC package (Draft)**: [`RFC 0029`](../../rfcs/0029-phase6-plugin-sdk-and-manifest-contract-v1.md), [`RFC 0030`](../../rfcs/0030-phase6-plugin-lifecycle-and-runtime-isolation-contract-v1.md), [`RFC 0031`](../../rfcs/0031-phase6-plugin-compatibility-and-trust-policy-contract-v1.md)
+- **RFC package (Accepted)**: [`RFC 0029`](../../rfcs/0029-phase6-plugin-sdk-and-manifest-contract-v1.md), [`RFC 0030`](../../rfcs/0030-phase6-plugin-lifecycle-and-runtime-isolation-contract-v1.md), [`RFC 0031`](../../rfcs/0031-phase6-plugin-compatibility-and-trust-policy-contract-v1.md)
 
 ## Goal
 
@@ -115,7 +115,7 @@ Rationale: matches OSS roadmap extension areas (hardware drivers, compiler backe
 ## Deliverables map
 
 1. Planning + backlog: this document + [`phase-6-issue-pack.md`](phase-6-issue-pack.md).
-2. Governance package: [`phase-6-rfc-adr-gap-analysis.md`](phase-6-rfc-adr-gap-analysis.md) + draft RFCs [`0029`](../../rfcs/0029-phase6-plugin-sdk-and-manifest-contract-v1.md), [`0030`](../../rfcs/0030-phase6-plugin-lifecycle-and-runtime-isolation-contract-v1.md), [`0031`](../../rfcs/0031-phase6-plugin-compatibility-and-trust-policy-contract-v1.md).
+2. Governance package: [`phase-6-rfc-adr-gap-analysis.md`](phase-6-rfc-adr-gap-analysis.md) + accepted RFCs [`0029`](../../rfcs/0029-phase6-plugin-sdk-and-manifest-contract-v1.md), [`0030`](../../rfcs/0030-phase6-plugin-lifecycle-and-runtime-isolation-contract-v1.md), [`0031`](../../rfcs/0031-phase6-plugin-compatibility-and-trust-policy-contract-v1.md).
 3. Implementation slices: SDK/manifest, lifecycle/isolation, compatibility/trust.
 4. Release closure package (to publish during execution):
    - `phase-6-release-readiness-checklist.md`
