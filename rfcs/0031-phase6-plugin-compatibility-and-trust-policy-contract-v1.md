@@ -9,7 +9,7 @@
 
 ## Summary
 
-This RFC defines the load-time compatibility policy and trust-evaluation contract for plugins, including version matrix rules, signature policy profiles, and deterministic failure diagnostics.
+This RFC defines the load-time compatibility policy and trust-evaluation contract for plugins, including version matrix rules, Sigstore/Cosign verification defaults, and deterministic failure diagnostics.
 
 ## Motivation
 
@@ -18,12 +18,12 @@ Plugin ecosystems fail in production when version compatibility and trust checks
 ## Goals
 
 - Define compatibility matrix semantics for core/plugin/language versions.
-- Define trust-policy profiles and signature verification requirements.
+- Define Sigstore/Cosign trust policy as the default verification stack.
 - Define deterministic rejection reason codes and operator remediation paths.
 
 ## Non-Goals
 
-- Public key infrastructure ownership decisions.
+- Public key infrastructure ownership decisions beyond supported profiles.
 - End-user marketplace trust ratings.
 - Commercial/legal plugin vetting workflows.
 
@@ -32,7 +32,7 @@ Plugin ecosystems fail in production when version compatibility and trust checks
 Before activation, each plugin is evaluated against two gates:
 
 1. **Compatibility gate:** confirms plugin API and Eigen-OS/Eigen-Lang version constraints.
-2. **Trust gate:** confirms signature and policy profile requirements.
+2. **Trust gate:** confirms Cosign/Sigstore signature and policy profile requirements.
 
 If either gate fails, plugin is blocked with a stable reason code and recommended remediation.
 
@@ -55,9 +55,13 @@ Output:
 
 ### Trust policy profiles
 
-- `prod`: signed plugins only, allowlist required for privileged capabilities.
-- `staging`: signed preferred, explicit override allowed.
-- `dev`: unsigned local plugins allowed with CLI flag and warning.
+- `public/community`:
+  - keyless signing with Fulcio short-lived certificate,
+  - Rekor transparency log inclusion proof,
+  - Cosign verification at load-time.
+- `private/air-gapped`:
+  - same artifact/signature contract and verification flow,
+  - trust roots from self-hosted Sigstore or KMS/BYO PKI.
 
 ### Rejection reason code families
 
@@ -65,6 +69,8 @@ Output:
 - `COMPAT_UNSUPPORTED_PLUGIN_API`
 - `TRUST_SIGNATURE_MISSING`
 - `TRUST_SIGNATURE_INVALID`
+- `TRUST_FULCIO_IDENTITY_MISMATCH`
+- `TRUST_REKOR_PROOF_MISSING`
 - `TRUST_POLICY_DENIED`
 
 ## Interfaces / APIs
@@ -88,9 +94,9 @@ Versioning:
 
 ## Security and Privacy
 
-- Signature verification uses configured trust roots and immutable audit logs.
-- Policy overrides require explicit operator identity and timestamp.
-- Trust decisions must be reproducible from logged inputs.
+- Signature verification uses Sigstore/Cosign evidence and configured trust roots.
+- Keyless verification binds signature to issuer/subject identity constraints.
+- Trust decisions and policy overrides must be reproducible from immutable logs.
 
 ## Observability
 
@@ -99,6 +105,7 @@ Required metrics:
 - `plugin_compatibility_reject_total`
 - `plugin_trust_reject_total`
 - `plugin_signature_verification_latency_ms`
+- `plugin_rekor_verification_failures_total`
 
 Required logs:
 
@@ -110,18 +117,19 @@ Required logs:
 ## Performance
 
 - Compatibility gate target: `p95 < 50ms` per plugin.
-- Trust gate target: `p95 < 100ms` per plugin (excluding remote key-fetch operations).
+- Trust gate target: `p95 < 100ms` per plugin (excluding external trust-root refresh operations).
 
 ## Benchmarking/Test Plan
 
 - Matrix fixtures for supported/unsupported version combinations.
 - Signature verification success/failure test suite.
+- Fulcio identity and Rekor proof validation fixtures.
 - Deterministic snapshot tests for reason-code outputs.
 
 ## Implementation / Migration
 
 1. Introduce compatibility evaluator with fixture-driven tests.
-2. Introduce trust-policy evaluator with profile-based behavior.
+2. Introduce Sigstore/Cosign trust evaluator with profile-based behavior.
 3. Add operator CLI diagnostics and remediation hints.
 4. Integrate gates into plugin loader activation path.
 
@@ -129,14 +137,13 @@ Required logs:
 
 - **Version impact:** Introduces policy contract baseline at `1.0.0`.
 - **Compatibility:** Non-plugin runtime remains unaffected.
-- **Migration notes:** Existing ad hoc extension trust checks should be replaced by policy profiles.
+- **Migration notes:** Existing ad hoc extension trust checks should be replaced by Sigstore/Cosign policy profiles.
 
 ## Considered Alternatives
 
 - Warning-only compatibility policy: rejected due to production safety risk.
-- Implicit trust via local filesystem ownership only: rejected due to supply-chain risk.
+- Unsigned local-plugin default: rejected due to supply-chain risk.
 
 ## Open Questions
 
-- Final signing stack choice for official releases.
-- Policy for offline signature verification when trust-root refresh fails.
+- Minimal issuer/subject policy template shipped by default for community plugins.

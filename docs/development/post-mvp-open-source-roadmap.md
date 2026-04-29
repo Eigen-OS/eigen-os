@@ -90,13 +90,13 @@ Runtime deliverables:
 - plugin API specification
 - plugin loading system
 - validation and compatibility checks
+- Sigstore/Cosign default trust stack (keyless Fulcio + Rekor for public/community plugins)
+- mandatory out-of-process OCI sandbox via gVisor (`runsc`)
 
 Eigen-Lang deliverables:
 
-- stable language specification
-- compatibility policy
-- formatter/linting support
-- language server support (future)
+- GA plugin type set: `driver`, `compiler_backend`, `optimizer`
+- scheduler policies stay core-configurable (not a GA plugin type in Phase-6)
 - improved tutorials/examples
 - conformance test suite
 - migration documentation
@@ -132,8 +132,8 @@ Deliverables:
 
 ## Immediate Next Steps
 
-1. Finalize signing/trust-root strategy for plugin packages
+1. Finalize default issuer/subject policy templates for Sigstore keyless verification
 2. Land manifest schema validator and plugin SDK scaffolding commands
 3. Implement lifecycle state machine with deterministic activation ordering
-4. Add compatibility + trust load-time gates and reason-code fixtures
+4. Enforce `runsc` sandbox profile + compatibility/trust load-time gates
 5. Publish Phase-6 release-readiness and compatibility closure artifacts

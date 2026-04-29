@@ -182,6 +182,10 @@ Make Eigen-OS a platform.
 - plugin API specification
 - plugin loading system
 - validation and compatibility checks
+- Sigstore/Cosign default trust stack (keyless Fulcio + Rekor for public/community plugins)
+- mandatory out-of-process OCI sandbox via gVisor (`runsc`)
+- Phase-6 GA plugin types: `driver`, `compiler_backend`, `optimizer`
+- Phase-6 plugin contract RFC package (Draft): [`RFC 0029`](../rfcs/0029-phase6-plugin-sdk-and-manifest-contract-v1.md), [`RFC 0030`](../rfcs/0030-phase6-plugin-lifecycle-and-runtime-isolation-contract-v1.md), [`RFC 0031`](../rfcs/0031-phase6-plugin-compatibility-and-trust-policy-contract-v1.md)
 - Phase-6 plugin contract RFC package (Draft): [`RFC 0029`](../rfcs/0029-phase6-plugin-sdk-and-manifest-contract-v1.md), [`RFC 0030`](../rfcs/0030-phase6-plugin-lifecycle-and-runtime-isolation-contract-v1.md), [`RFC 0031`](../rfcs/0031-phase6-plugin-compatibility-and-trust-policy-contract-v1.md)
 
 ### Eigen-Lang Integration
