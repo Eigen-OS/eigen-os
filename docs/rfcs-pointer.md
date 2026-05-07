@@ -78,12 +78,26 @@
 
 - Status on 2026-04-28: Phase-6 plugin ecosystem planning package is prepared; RFCs are in Draft and pending acceptance.
 - Coverage check: [development/phase-6-rfc-adr-gap-analysis.md](development/phase-6-rfc-adr-gap-analysis.md)
-- Draft RFCs:
+- Accepted RFCs:
   - [RFC 0029 — Phase-6 plugin SDK and manifest contract v1](../rfcs/0029-phase6-plugin-sdk-and-manifest-contract-v1.md)
   - [RFC 0030 — Phase-6 plugin lifecycle and runtime isolation contract v1](../rfcs/0030-phase6-plugin-lifecycle-and-runtime-isolation-contract-v1.md)
   - [RFC 0031 — Phase-6 plugin compatibility and trust policy contract v1](../rfcs/0031-phase6-plugin-compatibility-and-trust-policy-contract-v1.md)
 - ADR sync status:
   - Pending until Phase-6 RFCs move to Accepted/Implemented.
+
+## Phase-7 RFC set (accepted)
+
+- Status on 2026-04-29: required Phase-7 RFC package is accepted and indexed with synchronized ADRs for implementation checkpoint closure.
+- Coverage check: [development/phase-7-rfc-adr-gap-analysis.md](development/phase-7-rfc-adr-gap-analysis.md)
+- Accepted RFCs:
+  - [RFC 0032 — Phase-7 API and contract versioning policy v1](../rfcs/0032-phase7-api-and-contract-versioning-policy-v1.md)
+  - [RFC 0033 — Phase-7 developer experience and conformance toolchain baseline v1](../rfcs/0033-phase7-developer-experience-and-conformance-toolchain-baseline-v1.md)
+- Synchronized ADRs:
+  - [ADR 0018 — Phase-7 API and contract versioning policy v1](adr/0018-phase7-api-and-contract-versioning-policy-v1.md)
+  - [ADR 0019 — Phase-7 developer experience and conformance toolchain baseline v1](adr/0019-phase7-developer-experience-and-conformance-toolchain-baseline-v1.md)
+- Release closure artifacts:
+  - [development/phase-7-release-readiness-checklist.md](development/phase-7-release-readiness-checklist.md)
+  - [development/phase-7-compatibility-report.md](development/phase-7-compatibility-report.md)
 
 ## Quick links
 
