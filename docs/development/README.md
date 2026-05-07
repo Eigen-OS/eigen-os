@@ -13,6 +13,8 @@ The GitHub CI workflow (`.github/workflows/ci.yml`) validates:
 5. Python component test matrix.
 6. Golden fixture review gate (label required when fixtures change).
 7. Protobuf contract checks (`buf lint` + `buf breaking`).
+8. PR versioning/migration gate for contract changes.
+9. Docs tutorial smoke checks for canonical onboarding tutorials.
 
 From repository root:
 
@@ -50,6 +52,25 @@ buf lint
 buf breaking --against '../.git#branch=main'
 ```
 
+## Tooling baseline command
+
+Use one command for the default formatter/lint/unit-test baseline:
+
+```bash
+scripts/dev/run-tooling-baseline.sh
+```
+
+Minimal workflow:
+
+- `scripts/dev/run-tooling-baseline.sh`
+
+Full workflow:
+
+- `scripts/dev/run-tooling-baseline.sh`
+- `scripts/test/run-integration-tests.sh`
+- `scripts/test/run-contract-compatibility-suite.sh`
+- `scripts/ci/check-contract-drift.py`
+
 ## Required gates for `main`
 
 Configure branch protection so the following CI jobs are **Required**:
@@ -60,6 +81,8 @@ Configure branch protection so the following CI jobs are **Required**:
 - `Green-to-Green smoke (sim:local + trace/metrics)`
 - `Golden fixture review gate`
 - `Protobuf lint + breaking checks`
+- `Migration notes gate`
+- `Docs tutorial smoke checks`
 
 For fixture updates (`src/services/eigen-compiler/tests/golden/**`, `src/services/system-api/tests/fixtures/jobspec/**`, `src/services/system-api/tests/fixtures/runtime/**`, `src/rust/apps/cli/tests/fixtures/**`):
 
@@ -108,6 +131,13 @@ git fetch origin main:main
 - Phase 6 plugin ecosystem plan: [`phase-6-plugin-ecosystem.md`](phase-6-plugin-ecosystem.md)
 - Phase 6 issue pack: [`phase-6-issue-pack.md`](phase-6-issue-pack.md)
 - Phase 6 RFC/ADR gap analysis: [`phase-6-rfc-adr-gap-analysis.md`](phase-6-rfc-adr-gap-analysis.md)
+- Phase 7 stability and developer experience plan: [`phase-7-stability-and-developer-experience.md`](phase-7-stability-and-developer-experience.md)
+- Phase 7 issue pack: [`phase-7-issue-pack.md`](phase-7-issue-pack.md)
+- Phase 7 RFC/ADR gap analysis: [`phase-7-rfc-adr-gap-analysis.md`](phase-7-rfc-adr-gap-analysis.md)
+- Phase 7 release readiness checklist: [`phase-7-release-readiness-checklist.md`](phase-7-release-readiness-checklist.md)
+- Phase 7 compatibility report: [`phase-7-compatibility-report.md`](phase-7-compatibility-report.md)
+- Phase 7 API & contract versioning policy (normative): [`../../rfcs/0032-phase7-api-and-contract-versioning-policy-v1.md`](../../rfcs/0032-phase7-api-and-contract-versioning-policy-v1.md)
+- Phase 7 DX & conformance baseline (normative): [`../../rfcs/0033-phase7-developer-experience-and-conformance-toolchain-baseline-v1.md`](../../rfcs/0033-phase7-developer-experience-and-conformance-toolchain-baseline-v1.md)
 
 ## Related files
 
