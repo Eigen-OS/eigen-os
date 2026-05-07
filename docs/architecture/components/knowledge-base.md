@@ -1,27 +1,28 @@
 # Knowledge Base
 
-- **Phase:** Post‑MVP
+- **Phase:** Post-MVP (not implemented in current codebase)
+- **Implementation state (2026-05-07):** Placeholder architecture record only.
 
 ## Responsibility
 
-> TODO
+Planned long-term component for reusable knowledge artifacts (for optimization, recommendations, or policy support). Not active in current runtime.
 
 ## Interfaces
 
-> TODO (RPC/traits/files). Link to `docs/reference/`.
+No RPC, crate API, or service endpoint is implemented yet.
 
 ## Inputs / Outputs
 
-> TODO
+Not defined in executable contracts for current releases.
 
 ## Storage / State
 
-> TODO (QFS paths, caches, etc.)
+No persistent state contract is defined for this component.
 
 ## Failure modes
 
-> TODO
+No runtime failure modes exist because the component is not part of the execution path.
 
 ## Observability
 
-> TODO (metrics/logs/traces)
+No component-specific metrics/logs/traces are implemented.

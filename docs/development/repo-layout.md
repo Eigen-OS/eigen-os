@@ -1,6 +1,6 @@
 # Repository layout
 
-> TODO: port from ` `.
+> Status (2026-05-07): normative target layout for repository evolution; some directories are future-facing and may be absent in the current tree.
 
 This document defines the **recommended repository structure** for the Eigen OS monorepo.
 
