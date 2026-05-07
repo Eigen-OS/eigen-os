@@ -110,6 +110,35 @@ jobs:
         working-directory: ${{ matrix.component.path }}
         run: ${{ matrix.component.test_cmd }}
 
+  
+  docs-tutorial-smoke:
+    name: Docs tutorial smoke checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install system-api with test deps
+        working-directory: src/services/system-api
+        run: pip install -e .[dev]
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src/rust
+
+      - name: Run docs tutorial smoke checks
+        run: bash scripts/ci/check-docs-smoke.sh
+        
+
   green-to-green-smoke:
     name: Green-to-Green smoke (sim:local + trace/metrics)
     runs-on: ubuntu-latest
@@ -180,7 +209,30 @@ jobs:
                 `Golden fixtures changed. A maintainer must add the '${requiredLabel}' label to acknowledge and approve the update.`
               );
             }
+  
+  
+  contract-drift-gate:
+    name: Contract drift gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
+      - name: Validate contract artifacts manifest
+        run: python3 scripts/ci/check-contract-drift.py
+
+        
+  migration-notes-gate:
+    name: Migration notes gate
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate PR versioning/migration section
+        run: python3 scripts/ci/check-migration-notes.py
+        
   proto-contract-checks:
     name: Protobuf lint + breaking checks
     runs-on: ubuntu-latest

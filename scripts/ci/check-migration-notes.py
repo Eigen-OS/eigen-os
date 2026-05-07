@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import pathlib
 import re
 
 
@@ -14,6 +15,18 @@ def _extract_section(body: str, heading: str) -> str:
     if not match:
         return ""
     return match.group(1).strip()
+
+
+def _is_placeholder(value: str) -> bool:
+    normalized = value.strip().lower()
+    return normalized in {
+        "",
+        "<!-- major | minor | patch | none -->",
+        "<!-- backward-compatible | breaking (requires major) -->",
+        "<!-- true | false -->",
+        "<!-- required when breaking marker=true (or version impact=major); otherwise \"none\" is allowed -->",
+        "<!-- required actions for operators/clients, or \"none\" -->",
+    }
 
 
 def main() -> int:
@@ -29,33 +42,38 @@ def main() -> int:
         return 0
 
     body = pr.get("body") or ""
-    migration_notes = _extract_section(body, "Migration Notes")
     version_impact = _extract_section(body, "Version Impact")
+    compatibility = _extract_section(body, "Compatibility")
+    breaking_marker = _extract_section(body, "Breaking Marker")
+    migration_notes = _extract_section(body, "Migration Notes")
 
-    if not version_impact:
-        print("[migration-gate] Missing '**Version Impact**' in PR body.")
+    if _is_placeholder(version_impact):
+        print("[migration-gate] Missing '**Version Impact**' value in PR body.")
         return 1
 
-    placeholders = {
-        "",
-        "<!-- Required actions for operators/clients, or \"None\" -->",
-        "<!-- required actions for operators/clients, or \"none\" -->",
-    }
-    normalized = migration_notes.strip()
+    if _is_placeholder(compatibility):
+        print("[migration-gate] Missing '**Compatibility**' value in PR body.")
+        return 1
 
-    if normalized in placeholders:
+    requires_migration = (
+        version_impact.strip().upper() == "MAJOR"
+        or compatibility.strip().lower().startswith("breaking")
+        or breaking_marker.strip().lower() == "true"
+    )
+
+    if _is_placeholder(migration_notes):
         print("[migration-gate] Missing '**Migration Notes**' value in PR body.")
         return 1
 
-    if normalized.lower() == "none":
-        print("[migration-gate] Migration Notes explicitly marked as None.")
-        return 0
-
-    if len(normalized) < 8:
-        print("[migration-gate] Migration Notes are too short; provide actionable details or 'None'.")
+    if requires_migration and migration_notes.strip().lower() == "none":
+        print("[migration-gate] Breaking changes require non-empty migration notes.")
         return 1
 
-    print("[migration-gate] Migration Notes present.")
+    if requires_migration and len(migration_notes.strip()) < 8:
+        print("[migration-gate] Migration Notes are too short for breaking changes.")
+        return 1
+
+    print("[migration-gate] Versioning section is valid.")
     return 0
 
 
