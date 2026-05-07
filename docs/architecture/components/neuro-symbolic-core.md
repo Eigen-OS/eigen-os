@@ -1,27 +1,28 @@
-# Neuro Symbolic Core
+# Neuro-Symbolic Core
 
-- **Phase:** Post‑MVP
+- **Phase:** Post-MVP (not implemented in current codebase)
+- **Implementation state (2026-05-07):** Placeholder architecture record only.
 
 ## Responsibility
 
-> TODO
+Planned future component for neuro-symbolic optimization/control capabilities. Not part of the released runtime path.
 
 ## Interfaces
 
-> TODO (RPC/traits/files). Link to `docs/reference/`.
+No RPC, crate API, or service endpoint is implemented yet.
 
 ## Inputs / Outputs
 
-> TODO
+Not defined in executable contracts for current releases.
 
 ## Storage / State
 
-> TODO (QFS paths, caches, etc.)
+No persistent state/schema is defined.
 
 ## Failure modes
 
-> TODO
+No runtime failure modes exist because the component is not active.
 
 ## Observability
 
-> TODO (metrics/logs/traces)
+No metrics/logs/traces are emitted by this component in current releases.

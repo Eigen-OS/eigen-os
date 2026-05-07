@@ -309,6 +309,6 @@ Telemetry data flows in parallel to the main business logic, providing insights 
 ---
 
 **Version**: 1.0
-**Status**: Draft
+**Status**: MVP reference baseline (maintained)
 **Compatibility**: Eigen OS MVP (Phase 0)
 **Related Documents**: [RFC 0002: Architecture Boundaries](https://github.com/Eigen-OS/eigen-os/blob/main/rfcs/0002-%20architecture-boundaries.md), [RFC 0007: QRTX MVP](https://github.com/Eigen-OS/eigen-os/blob/main/rfcs/0007-qrtx-mvp.md), [MVP Contract Map](https://github.com/Eigen-OS/eigen-os/blob/main/docs/architecture/contract-map.md)
