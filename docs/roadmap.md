@@ -303,3 +303,19 @@ Eigen-OS becomes:
 - an explainable orchestration system
 - a distributed execution layer
 - a programmable ecosystem centered around Eigen-Lang
+
+## 12. Documentation Alignment Track (New)
+
+### Goal
+Bring component documentation to strict implementation parity and explicitly separate current MVP behavior from target architecture.
+
+### Not completed yet (planned)
+- Rewrite component docs with dual sections: **Implemented now** vs **Planned target**.
+- Reconcile major drift for: System API, Eigen Compiler, Resource Manager, QFS, Security/Isolation, Observability.
+- Add dedicated architecture component page for Benchmark Service.
+- Introduce docs drift CI check for present-tense implementation claims.
+- Add component status badges (`implemented` / `partial` / `target`).
+
+### Delivery plan
+- **Phase-7 (current)**: complete doc normalization and add CI drift gate.
+- **Phase-8 (future)**: generate architecture pages from contract metadata and test fixtures to minimize manual drift.
