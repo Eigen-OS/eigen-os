@@ -9,6 +9,7 @@ This page is an index of component descriptions (**Explanation**). Contracts (RP
 - [Driver Manager](components/driver-manager.md)
 - [QFS](components/qfs.md)
 - [Resource Manager](components/resource-manager.md)
+- [Benchmark Service](components/observability.md) *(contract-focused benchmark runtime; see `src/services/benchmark-service/README.md`)*s
 - [Security & Isolation](components/security-isolation.md)
 - [Observability](components/observability.md)
 
