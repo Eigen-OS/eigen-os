@@ -2,6 +2,8 @@
 
 ## 1. Overview
 
+> **Status snapshot (as of 2026-05-08):** this document is aligned with the current repository implementation. Each section explicitly marks gaps as `TODO` without removing target architecture details.
+
 This document describes the end-to-end data flow within Eigen OS for the Minimum Viable Product (MVP). It details how data moves through the system, transforming from high-level user intent into executable quantum operations and, ultimately, computed results.
 
 The primary focus is on two critical workflows:
@@ -54,8 +56,8 @@ Before detailing the flows, here are the key components and data formats they ex
 
 | **Component** | **Primary Responsibility** | **Key Inputs** | **Key Outputs** | **Relevant RFC** |
 |---|---|---|---|---|
-| `eigen-cli` | User interaction, local file packaging. | `job.yaml`, `program.eigen.py` | `SubmitJobRequest` (gRPC) | RFC 0010, RFC 0003 |
-| **System API** | Public gateway, auth, routing. | `SubmitJobRequest` | `KernelJob` (internal gRPC) | RFC 0004 |
+| `eigen-cli` | User interaction, local file packaging, local compile/visualize helpers. | `job.yaml`, `program.eigen.py` | `SubmitJobRequest` (gRPC envelope), local artifacts | RFC 0010, RFC 0003 |
+| **System API** | Public gateway, auth mode checks, validation, routing to kernel. | `SubmitJobRequest` | `EnqueueJobRequest` (internal gRPC) | RFC 0004 |
 | **Kernel (QRTX)** | Central orchestrator, state machine, storage. | `KernelJob` | Calls to Compiler & Driver Manager | RFC 0007 |
 | **Compiler Service** | Source parsing, circuit generation. | Eigen-Lang source | `AQO` (Abstract Quantum Operations) | RFC 0011, RFC 0005 |
 | **Driver Manager** | Driver lifecycle, backend abstraction. | `CircuitPayload` (contains AQO) | `ExecutionResult` (counts) | RFC 0006 |
@@ -75,6 +77,10 @@ Before detailing the flows, here are the key components and data formats they ex
 ## 3. Primary Flow: Linear Job Execution
 
 ### 3.1. Step-by-Step Sequence
+
+> Implemented now: end-to-end `SubmitJob -> Kernel -> Compiler -> Driver Manager -> Results` path, including status polling and result retrieval.
+>
+> TODO: richer API capabilities described in long-term docs (full REST adapter, multi-provider auth, advanced scheduling policies) remain post-MVP.
 ```text
 sequenceDiagram
     actor User
@@ -151,13 +157,13 @@ spec:
 
 3. **System API**: Validates the request, performs authentication, and forwards it as a `KernelJob` message to the Kernel. The auth context (`x-eigen-sub`) is added to the metadata.
 
-4. **Kernel (QRTX)**: Creates a job record with state `PENDING` and stores the original source files in QFS under `circuit_fs/job_123/`.
+4. **Kernel (QRTX)**: Creates a job record with state `PENDING` and stores source bundle + compiled/result artifacts in QFS under `circuit_fs/{job_id}/` (including `results.parquet`, `results/result.json`, `results/manifest.json`)
 
 #### Step 2: Compilation (Eigen-Lang → AQO)
 
 1. **Kernel** transitions the job state to `COMPILING` and calls the **Compiler Service** via gRPC.
 
-2. **Compiler** receives the source. Its workflow is strictly **AST-based (no execution)**:
+2. **Compiler** receives the source. Its workflow is strictly **AST-based (no execution)** and currently enforces source/AST safety limits:
 
 - **Parse**: Uses Python's `ast.parse()` on the source code.
 
@@ -182,7 +188,7 @@ spec:
 
 #### Step 3: Execution (AQO → Results)
 
-1. **Kernel** transitions the job to `QUEUED`, then to `RUNNING`. It resolves the target `sim:local` to a device ID and calls the **Driver Manager**.
+1. **Kernel** transitions the job through `QUEUED` and `RUNNING`, resolves target/device, and calls the **Driver Manager**.
 
 2. **Driver Manager** receives a `CircuitPayload` message containing the AQO bytes and a format enum (`AQO_JSON`). It loads the appropriate driver plugin (e.g., `SimulatorDriver`).
 
@@ -190,7 +196,9 @@ spec:
 
 4. **Backend** (Simulator) runs the circuit for the specified number of shots and returns raw data (e.g., a dictionary of bitstrings).
 
-5. **Driver Manager** normalizes this data into a structured `ExecutionResult` with a `counts` map, execution time, and metadata.
+5. **Driver Manager** normalizes this data into a structured `ExecutionResult` with a `counts` map and metadata.
+
+   TODO: unify and enforce a stable execution-time field naming contract across all drivers/backends (currently backend metadata is partially driver-specific).
 ```json
 {
   "counts": {"00": 512, "11": 512},
@@ -228,9 +236,9 @@ flowchart TD
 
 ### 4.2. Eigen OS Orchestration of a VQE Loop
 
-The system does not interpret or manage the classical optimization loop internally in MVP. Instead, it provides the mechanism for the loop to run. There are two primary patterns:
+Current codebase supports **both** external orchestration and a kernel-managed MVP VQE loop path for recognized hybrid programs. There are two active/target patterns:
 
-#### Pattern A: External Orchestration (MVP Default)
+#### Pattern A: External Orchestration (Implemented and supported)
 
 - **Description**: A classical script (e.g., in Python, running on the user's machine) acts as the "orchestrator". It uses the Eigen OS SDK (`eigen-cli` or a gRPC client) to submit each iteration as a separate job.
 
@@ -250,7 +258,7 @@ The system does not interpret or manage the classical optimization loop internal
 
 **System Role**: Eigen OS is treated as a **stateless job execution service**. Each iteration is independent.
 
-#### Pattern B: Parametrized Job with Callback (Future)
+#### Pattern B: Kernel-managed Hybrid Loop (Partially implemented in MVP, expanded post-MVP)
 
 - **Description (Post-MVP)**: A single "parent" job is submitted, which defines the variational ansatz and optimizer. The Kernel manages the iteration loop, submitting "child" quantum execution jobs internally.
 
@@ -272,7 +280,7 @@ The system does not interpret or manage the classical optimization loop internal
 
 4. Final energy and parameters are stored as the job result.
 
-**MVP Implementation Note**: For Phase 0 (MVP), **Pattern A (External Orchestration) is the supported and expected model**. This keeps the Kernel's responsibility focused and well-defined. Pattern B is a target for Phase 1+.
+**Implementation Note (current state)**: Pattern A is fully supported and remains the safest integration contract for clients. Pattern B has an MVP implementation path for VQE-like loops (kernel persists VQE metrics and final parameter metadata), but broader hybrid-loop generalization is still `TODO` for Phase 1+ (multi-algorithm loop planner, child-job lineage model, optimizer plugin framework).
 
 ## 5. Observability Data Flow
 
@@ -300,9 +308,13 @@ Telemetry data flows in parallel to the main business logic, providing insights 
 
 - **Trace Propagation**: A unique `trace_id` (via the `traceparent` header) is generated at the first API call and passed through all gRPC calls (RFC 0008). This allows linking all logs and events related to a single user request (`job_id`).
 
-- **Logging**: Each service emits structured JSON logs containing `trace_id`, `job_id`, `service`, and event-specific data. These are aggregated for search and analysis.
+- **Logging**: Structured logs and trace propagation are implemented for the core pipeline (System API → Kernel → Compiler → Driver Manager).
 
-- **Metrics**: System components expose Prometheus metrics (e.g., `eigen_api_request_duration_seconds`, `eigen_kernel_job_state_transitions_total`). These are scraped periodically to monitor throughput, latency, and error rates.
+  TODO: standardize full production log shipping/retention topology (Loki/OTel deployment profile is environment-dependent and not fully hardwired by MVP code).
+
+- **Metrics**: `/metrics` endpoints and Prometheus-oriented metrics are implemented across services.
+
+  TODO: finalize a single canonical metric catalog and SLO alert set for all services (some runtime/cluster metrics are still evolving).
 
 - **Correlation**: In Grafana dashboards, a user can start from a high-level job error, use the `trace_id` to find the corresponding logs from the Kernel, Compiler, and Driver Manager, and pinpoint the exact failure stage.
 
