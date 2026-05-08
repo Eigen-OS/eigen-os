@@ -1,185 +1,185 @@
 # Driver Manager
 
-- **Phase**: MVP
-
-- **Source**: RFC 0006
+- **Phase**: MVP (current implementation baseline: MVP-3 runtime package)
+- **Source**: RFC 0006 (`rfcs/0006-qdriver-api-v0.1.md`), RFC 0016 (`rfcs/0016-mvp3-kernel-driver-execution-contract.md`), ADR 0006, ADR 0007
 
 ## Responsibility
 
-The Driver Manager is a core component of Eigen OS responsible for unified management of quantum device and simulator drivers. Its primary purpose is to abstract the hardware specifics of various quantum platforms (e.g., IBM Qiskit, Google Cirq, AWS Braket) through a single software interface (QDriver API).
+The Driver Manager is a core Eigen OS component that provides the internal `kernel -> driver-manager` runtime boundary via gRPC and normalizes backend execution responses.
 
-**Key Responsibilities:**
+**Implemented now:**
 
-- **Dynamic loading and unloading of drivers** as plugins at runtime.
+- gRPC `DriverManagerService` with `ListDevices`, `GetDeviceStatus`, `ExecuteCircuit`; `CalibrateDevice` is explicitly `UNIMPLEMENTED`.
+- In-memory driver registry with device-to-driver ownership mapping.
+- Base driver contract (`BaseDriver` / `QDriver`) with capability handshake and healthcheck.
+- Request validation and backend error mapping to normalized gRPC status/details.
+- Structured RPC start/end logging with `trace_id` extraction from gRPC metadata.
+- Health and metrics HTTP endpoints exposed by service runtime.
 
-- **Connection pool management** with quantum devices for efficient reuse.
+**TODO (not fully implemented yet):**
 
-- **Ensuring fault tolerance** through retry mechanisms, Circuit Breaker patterns, and failover strategies.
-
-- **Caching** of device metadata, execution results, and compiled circuits.
-
-- **Monitoring** of driver and device health, and collection of performance metrics.
-
-In the context of MVP (Phase 0), Driver Manager functions as an internal service that interacts with the **Kernel (QRTX)** via gRPC (``DriverManagerService``), while the service itself loads and uses Python driver plugins.
+- Dynamic runtime plugin discovery/loading/unloading from filesystem directories.
+- Connection pooling abstraction for vendor SDK sessions.
+- Built-in retry / circuit-breaker / failover orchestration in manager layer.
+- Dedicated caches for metadata/results/compiled circuits with TTL policy controls.
+- Full production SLO evidence for 99.9% availability target.
 
 ## Interfaces
 
-### 1. External RPC Interface (for Kernel):
+### 1) External RPC interface (Kernel-facing)
 
-- Defined in `driver-manager.proto` (RFC 0006).
+**Implemented now:**
 
-- `DriverManagerService`:
+- Contract is generated from internal protobuf (`eigen_internal/v1/driver_manager_service.proto`).
+- `DriverManagerService` methods:
+  - `ListDevices()`
+  - `GetDeviceStatus()`
+  - `ExecuteCircuit()`
+  - `CalibrateDevice()` (present in proto, returns `UNIMPLEMENTED` in service implementation)
+- `ExecuteCircuitRequest` includes `job_id`, `device_id`, `payload`, `shots`, `options`.
+- `ExecuteCircuitResponse` includes normalized `counts`, `execution_time_sec`, `metadata`.
 
-    - `ListDevices()` – list available devices.
+**TODO:**
 
-    - `GetDeviceStatus()` – status of a specific device.
+- Support additional `CircuitPayload.format` variants from RFC 0006 data model beyond current MVP path.
+- Define/ship streaming or async execution API for long-running backend jobs (RFC 0006 open question, post-MVP).
 
-    - `ExecuteCircuit()` – execute a quantum circuit on a target device.
+### 2) Internal software interface (driver plugins)
 
-    - `CalibrateDevice()` – initiate device calibration.
+ **Implemented now:**
 
-- **Circuit payload format**: `CircuitPayload` containing `bytes` and `format` (e.g., `AQO_JSON`, `QASM3_TEXT`). The exact format for MVP is clarified in RFC 0006 open questions.
+- `BaseDriver` protocol methods present:
+  - `initialize(config)`
+  - `capability_handshake()`
+  - `healthcheck()`
+  - `get_devices()`
+  - `execute_circuit(device_id, circuit, shots, options)`
+  - `get_device_status(device_id)`
+  - `calibrate_device(device_id, options)`
 
-### 2. Internal Software Interface (for driver plugins):
+**TODO:**
 
-- **Base class**: `BaseDriver` (from `src/plugins/base_driver.py`).
+- Enforce strict conformance suite for every plugin implementation (beyond current service tests).
+- Freeze and version plugin capability feature schema across driver ecosystem phases.
 
-- **Required methods for driver implementation:**
+### 3) Internal components and interfaces
 
-    - `initialize(config)`
+**Implemented now:**
 
-    - `get_devices()`
+- `DriverRegistry`:
+  - driver registration/removal,
+  - duplicate-device ownership protection,
+  - plugin runtime policy checks (`add_plugin_driver`) and reject counters,
+  - capability and health snapshots.
 
-    - `execute_circuit(device_id, circuit, shots, options)`
+**TODO:**
 
-    - `get_device_status(device_id)`
-
-    - `calibrate_device(device_id)`
-
-### 3. Internal Components and Their Interfaces:
-
-- **Driver Registry** (`DriverRegistry`): Manages plugin lifecycle (loading, unloading, validation).
-
-- **Connection Pool** (`ConnectionPool`): Manages reuse and timeout of device connections.
-
-- **Resilience Manager** (`ResilienceManager`): Implements retry (with exponential backoff) and Circuit Breaker pattern.
-
-- **Caching System** (`MetadataCache`, `ResultsCache`): Caches data with TTL.
-
-- **Monitoring System** (`MetricsCollector`): Collects and exports metrics (Prometheus).
+- `ConnectionPool` component (not yet present as standalone manager module).
+- `ResilienceManager` (retry/backoff/circuit-breaker) as first-class shared component.
+- `MetadataCache` / `ResultsCache` modules with configurable TTL/eviction.
+- Prometheus metric families from architecture target list are not fully materialized yet.
 
 ## Inputs / Outputs
 
-### Inputs:
+### Inputs
 
-1. **Requests from Kernel (via gRPC)**:
+**Implemented now:**
 
-    - `ExecuteCircuitRequest`: Contains `job_id`, `device_id`, `CircuitPayload` (circuit in one of the formats), `shots` count, execution `options`.
+1. Kernel gRPC requests:
+   - `ListDevicesRequest`
+   - `DeviceStatusRequest`
+   - `ExecuteCircuitRequest`
+   - `CalibrateDeviceRequest` (method currently unimplemented)
+2. Driver objects registered during service bootstrap.
+3. gRPC metadata used for trace context propagation (`traceparent`, `trace_id`).
 
-    - ListDevicesRequest / GetDeviceStatusRequest: Driver or device identifier.
+**TODO:**
 
-2. **Configuration**: YAML file (`driver_manager.yaml`) defining driver load paths, connection pool parameters, resilience strategies, caching, and monitoring settings.
+1. Externalized `driver_manager.yaml` config described by target architecture is not wired as normative source.
+2. Filesystem plugin directory loading (`/usr/lib/eigen/drivers`, `./plugins`) is not active in current baseline.
 
-3. **Driver Plugins**: Python modules located in specified directories (`/usr/lib/eigen/drivers, ./plugins`) that implement the `BaseDriver` interface.
+### Outputs
 
-### Outputs:
+**Implemented now:**
 
-1. **Responses to Kernel (via gRPC):**
+1. gRPC responses for list/status/execute flows with normalized result fields.
+2. gRPC status/error details for validation and backend-mapped failures.
+3. Service logs (`rpc_start`/`rpc_end`) including job/trace context fields.
+4. Runtime HTTP `/metrics` and `/healthz` endpoints.
 
-    - `ExecuteCircuitResponse`: Normalized results (`counts` — dictionary of "bitstring → count"), execution time, metadata.
+**TODO:**
 
-    - `ListDevicesResponse` / `DeviceStatusResponse`: List of devices or detailed status, including availability, queue depth, estimated wait time.
-
-2. **Metrics and Logs**: Exports metrics in Prometheus format to a separate HTTP endpoint, structured logs with `trace_id`, `job_id`, `device_id`.
+- Expand response metadata conventions for queue-time/provider diagnostics across all drivers.
+- Align logs with full target field set (`driver_name`, `device_id` for every path, standardized event taxonomy).
 
 ## Storage / State
 
-### Internal State:
-
-1. **Driver Registry**: In-memory storage of loaded driver classes, their instances, and metadata.
-
-2. **Connection Pool**: In-memory management of active and idle connections to devices, tracking their state and last used time.
-
-3. **Cache**:
-
-    - **In-memory cache (default in MVP)**: For device metadata, statuses, topology, and execution results. Uses TTL.
-
-    - **Optional distributed cache**: Configuration for Redis/Memcached (Phase 2+).
-
-4. **Circuit Breaker State**: Tracks error counters and state ("closed"/"open"/"half-open") for each driver or device.
+### Internal state
 
 ### External Storage (QFS — Quantum File System):
 
-- Driver Manager **does not** manage long-term artifact storage.
+**Implemented now:**
 
-- Compiled circuits (`AQO`) and execution results are persisted to QFS by the **Kernel** under paths like `circuit_fs/<job_id>/`.
+1. In-memory registry of drivers and device reverse index.
+2. In-memory policy reject counters for plugin runtime guardrails.
 
-- Driver Manager may cache this data short-term for performance.
+**TODO:**
 
-## Failure Modes
+1. In-memory caches (metadata/status/results/topology) with TTL are not implemented as dedicated subsystems.
+2. Optional distributed cache (Redis/Memcached) is not implemented.
+3. Circuit-breaker state machine (`closed/open/half-open`) is not implemented.
+4. Connection pool state is not implemented.
 
-### Common Failure Scenarios and Handling Strategies:
+### External storage (QFS)
 
-1. **Driver or Device Failure:**
+**Implemented now:**
 
-    - **Retry**: Automatic retries with exponential backoff (configurable).
+- Contractually, long-term artifacts are owned outside driver-manager (`kernel`/QFS flows per runtime RFC package).
 
-    - **Circuit Breaker**: Temporarily blocks calls to problematic driver/device when error threshold is exceeded, allowing recovery.
+**TODO:**
 
-    - **Failover**: Switching to a fallback device (e.g., simulator) according to configured strategy (`fallback_devices`).
+- Add explicit integration notes/tests proving artifact lifecycle boundaries for all supported execution modes.
 
-2. **Network Connection Loss:**
+## Failure modes
 
-    - Connection pool detects and closes idle connections via timeout.
+### Implemented now
 
-    - Health-check periodically verifies device availability.
+1. **Invalid request data**
+   - required-field validation in `ExecuteCircuit`/`GetDeviceStatus`.
+   - returns `INVALID_ARGUMENT` with structured violations.
+2. **Unknown device**
+   - mapped to normalized gRPC error response (`INVALID_ARGUMENT`).
+3. **Unsupported payload format**
+   - returns `UNIMPLEMENTED`.
+4. **Driver execution failure**
+   - mapped via backend error mapper into gRPC status/details.
 
-3. **Invalid Input Data (Circuit):**
+### TODO
 
-    - Driver or manager validates `CircuitPayload`. Returns gRPC status `INVALID_ARGUMENT` on error.
-
-4. **External Service Unavailability (Provider Backend):**
-
-    - Mapped to gRPC status `UNAVAILABLE`.
-
-    - Activation of graceful degradation strategy.
-
-5. **Resource Exhaustion (Memory, Connections):**
-
-    - Maximum connection pool size limit.
-
-    - Driver isolation in separate processes with memory and CPU limits (Phase 1+).
-
-**Guarantees**: Within MVP, Driver Manager aims to provide high availability (99.9%) and automatic recovery from failures.
+1. Automated retries with exponential backoff at manager layer.
+2. Circuit-breaker state transitions and controlled recovery probing.
+3. Fallback device routing strategy.
+4. Connection-level health checking/timeout-based pool eviction.
+5. Resource isolation limits for driver processes as a general runtime mechanism.
+6. Formal availability SLO enforcement with objective evidence.
 
 ## Observability
 
-### Metrics (Prometheus):
+### Implemented now
 
-- **Core Metrics**: `eigen_driver_requests_total{driver, operation, status}`, `eigen_driver_request_duration_seconds{driver, operation}`.
+- Structured logging for gRPC lifecycle events in driver-manager.
+- Trace context acceptance from gRPC metadata (`traceparent` + derived `trace_id`).
+- Service-level `/metrics` and `/healthz` endpoints.
 
-- **Connection Metrics**: `eigen_driver_connections{driver, state}` (active, idle).
+### TODO
 
-- **Device Metrics**: `eigen_available_devices{driver, provider}`, `eigen_device_queue_depth{driver, device_id}`.
-
-- **Error Metrics**: `eigen_driver_connection_errors_total{driver, error_type}`.
-
-- **Endpoint**: HTTP (e.g., `:9092/metrics`).
-
-### Logs (Structured, JSON):
-
-- Required fields: `timestamp`, `level`, `service="driver-manager"`, `trace_id`, `job_id`, `driver_name`, `device_id`, `message`.
-
-- Key events logged: driver load/unload, connection create/close, retry/Circuit Breaker triggers, execution errors.
-
-### Tracing (Distributed Tracing):
-
-- Integration with OpenTelemetry. Trace context (`traceparent`) is propagated via gRPC metadata from System API through Kernel to Driver Manager.
-
-- Enables end-to-end request tracing across all services.
-
-### Health Monitoring:
-
-- Health-check endpoints for monitoring Driver Manager and loaded driver status.
-
-- Integration with stack monitoring system (e.g., Grafana).
+1. Full Prometheus metric contract from architecture target state:
+   - `eigen_driver_requests_total{driver,operation,status}`
+   - `eigen_driver_request_duration_seconds{driver,operation}`
+   - `eigen_driver_connections{driver,state}`
+   - `eigen_available_devices{driver,provider}`
+   - `eigen_device_queue_depth{driver,device_id}`
+   - `eigen_driver_connection_errors_total{driver,error_type}`
+2. OpenTelemetry spans emitted directly by driver-manager (current state is trace-context logging, not full tracing pipeline).
+3. Complete health model exposing per-driver readiness/degradation in standardized endpoint payload.
+4. Grafana-ready dashboards and alerting runbooks tied to driver-manager-specific SLO/SLI targets.
