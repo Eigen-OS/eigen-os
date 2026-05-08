@@ -1,5 +1,8 @@
 # Eigen OS Client SDKs
 
+> **Implementation status snapshot (as of 2026-05-08):**
+> This document is aligned with the current repository state, RFCs, and ADRs. Implemented items are marked as current behavior; missing items are explicitly captured as **TODO** so nothing is lost.
+
 ## 1. Overview and Purpose
 
 **Client SDK** is a set of client libraries and utilities that provide a unified, consistent interface for interacting with Eigen OS. The SDK offers high-level abstractions for quantum computing tasks, hiding the complexities of protocols and serialization.
@@ -47,6 +50,13 @@ All language implementations follow consistent principles:
 - **Fallback Transport**: REST for compatibility
 
 - **Streaming Transport**: WebSocket for real-time updates
+
+### 2.4 What is actually implemented now
+
+- **Implemented now**: gRPC is the primary implemented transport across public/internal APIs.
+- **Implemented now**: server-streaming updates are available via `StreamJobUpdates` over gRPC.
+- **TODO**: REST fallback transport implementation and compatibility layer.
+- **TODO**: WebSocket transport for real-time updates outside gRPC streaming.
 
 ## 3. Responsibility
 
@@ -104,6 +114,12 @@ SDKs implement client interfaces for the following services:
 
 - `ValidateCircuit(ValidateCircuitRequest) → ValidateCircuitResponse`
 
+**Status clarification against RFC 0004 and implementation:**
+
+- **Implemented now (public)**: `JobService` and `DeviceService` in `eigen.api.v1`.
+- **Implemented now (internal only)**: `CompilationService` in `eigen.internal.v1`.
+- **TODO**: If product direction requires public compile endpoints, promote/bridge compilation APIs in a future API version (explicitly deferred in RFCs).
+
 ### 4.2 Authentication Interfaces
 
 - **JWT Authentication**: JSON Web Tokens for stateless authentication
@@ -116,6 +132,11 @@ SDKs implement client interfaces for the following services:
 
 - **Token Management**: Automatic token refresh and storage
 
+**Status:**
+
+- **Implemented now**: Authentication baseline and enforcement exist on service methods.
+- **TODO**: Documented multi-method client auth stack (full JWT/API key/OAuth2/mTLS abstraction inside SDKs) as reusable SDK components.
+
 ### 4.3 Transport Interfaces
 
 - **gRPC Transport**: Primary transport using Protocol Buffers v3
@@ -123,6 +144,12 @@ SDKs implement client interfaces for the following services:
 - **REST Transport**: Fallback transport with JSON serialization
 
 - **WebSocket Transport**: Streaming updates and real-time notifications
+
+**Status:**
+
+- **Implemented now**: gRPC.
+- **TODO**: REST transport.
+- **TODO**: WebSocket transport.
 
 ## 5. Inputs / Outputs
 
@@ -203,6 +230,10 @@ spec:
 
 - **Cache Storage**: Multi-level cache (memory, Redis, disk)
 
+**Status:**
+
+- **TODO**: Standardized SDK-side filesystem config/credential/cache layout is not yet delivered as a unified SDK implementation artifact.
+
 ### 6.2 Caching Strategy
 
 **Multi-level Cache:**
@@ -221,6 +252,10 @@ spec:
 
 - Manual invalidation via API
 
+**Status:**
+
+- **TODO**: Multi-level SDK cache (L1/L2/L3), invalidation strategies, and API controls are not yet implemented as a shipped SDK capability.
+
 ### 6.3 State Management
 
 - **Job State Tracking**: Local tracking of submitted jobs
@@ -228,6 +263,11 @@ spec:
 - **Connection State**: Management of gRPC channel health
 
 - **Authentication State**: Token lifecycle management
+
+**Status:**
+
+- **Implemented now**: Server-side job lifecycle and channel behaviors are implemented.
+- **TODO**: Unified client-side SDK state manager for job tracking, transport health, and credential lifecycle.
 
 ## 7. Failure Modes
 
@@ -279,6 +319,11 @@ class RetryPolicy:
 
 - **Connection Pooling**: Maintain healthy connections and replace failed ones
 
+**Status:**
+
+- **Implemented now**: Server and tests exercise structured status/error contracts.
+- **TODO**: Productized SDK retry/circuit-breaker/fallback implementations across languages.
+
 ## 8. Observability
 
 ### 8.1 Metrics
@@ -294,6 +339,11 @@ class RetryPolicy:
 - **eigen_sdk_retries_total{method}**: Retry attempt counters
 
 - **eigen_sdk_circuit_breaker_state{service}**: Circuit breaker state gauges
+
+**Status:**
+
+- **Implemented now**: Service-level observability is present across runtime components and docs/runbooks.
+- **TODO**: Dedicated SDK-emitted telemetry namespace and cross-language parity for the exact `eigen_sdk_*` metric set.
 
 ### 8.2 Logging
 
@@ -314,6 +364,11 @@ class RetryPolicy:
 }
 ```
 
+**Status:**
+
+- **Implemented now**: Service-side structured logging with request correlation context.
+- **TODO**: Unified SDK log schema guarantees across published client libraries.
+
 ### 8.3 Tracing
 
 **OpenTelemetry Integration:**
@@ -323,6 +378,11 @@ class RetryPolicy:
 - End-to-end trace correlation with Eigen OS services
 
 - Span creation for SDK operations (submission, compilation, execution)
+
+**Status:**
+
+- **Implemented now**: Tracing capabilities are documented and used in service ecosystem.
+- **TODO**: First-class SDK trace instrumentation package(s) with stable semantic conventions.
 
 ### 8.4 Performance Monitoring
 
@@ -358,6 +418,10 @@ class RetryPolicy:
 
 - **Key Management**: Integration with system keychains where available
 
+**Status:**
+
+- **TODO**: SDK credential vault/keychain integrations are not yet implemented as a released SDK feature set.
+
 ## 9.3 Input Validation
 
 - **Program Source Validation**: AST parsing and restricted import checking
@@ -367,6 +431,11 @@ class RetryPolicy:
 - **Parameter Validation**: Type and range checking for all inputs
 
 - **Size Limits**: Rejection of oversized payloads to prevent DoS
+
+**Status:**
+
+- **Implemented now**: Core validation contracts exist (JobSpec parsing/validation, Eigen-Lang constraints, service-side request validation).
+- **TODO**: Consistent pre-flight validation wrappers in each public SDK package.
 
 ## 10. Integration with External Systems
 
@@ -409,6 +478,10 @@ class QuantumLayer(torch.nn.Module):
         return self.postprocess(results)
 ```
 
+**Status:**
+
+- **TODO**: Qiskit and PyTorch integrations shown below are target examples; they are not currently delivered as maintained SDK adapters in-repo.
+
 ### 10.2 IDE Integration
 
 - **Jupyter Notebook:** Magic commands and cell integration
@@ -416,6 +489,10 @@ class QuantumLayer(torch.nn.Module):
 - **VS Code Extension**: Syntax highlighting, IntelliSense, job submission
 
 - **PyCharm Plugin**: Code completion, debugging tools
+
+**Status:**
+
+- **TODO**: Jupyter magics and IDE plugins/extensions are planned but not implemented in this repository.
 
 ## 11. Testing
 
@@ -453,6 +530,11 @@ class MockEigenServer:
     def set_response(self, method, response):
         self.responses[method] = response
 ```
+
+**Status:**
+
+- **Implemented now**: Extensive service-level unit/integration/e2e tests for gRPC APIs and contracts.
+- **TODO**: Dedicated SDK test harnesses per language, including reusable mock server package for SDK consumer testing.
 
 ## 12. Configuration
 
@@ -494,6 +576,11 @@ port = 9090
 level = "INFO"
 format = "json"
 ```
+
+**Status:**
+
+- **Implemented now**: Runtime/services support environment-driven configuration patterns.
+- **TODO**: Canonical end-user SDK config loader/merging implementation matching this exact precedence and schema across all SDK languages.
 
 ## 13. Examples
 
@@ -595,6 +682,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+**Status:**
+
+- **TODO**: Python/Rust snippets describe intended SDK ergonomics; formal SDK crates/packages with these interfaces are not yet published from this repository.
+
 ## 14. Performance Characteristics
 
 ### 14.1 Expected Performance (MVP)
@@ -632,6 +723,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 - **Feature Detection**: Runtime capability negotiation
 
 - **Fallback Behavior**: Graceful degradation for missing features
+
+**Status:**
+
+- **Implemented now**: API and contract versioning policy is defined at architecture/process level.
+- **TODO**: SDK-specific compatibility matrix and automated capability negotiation layer in released SDK clients.
 
 ## 16. Conclusion
 
