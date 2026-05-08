@@ -1,5 +1,7 @@
 # Eigen OS Architecture Overview
 
+> Status snapshot: updated on 2026-05-08 based on repository implementation, component audit (`docs/development/component-docs-audit-2026-05-07.md`), RFC index (`docs/rfcs-pointer.md`), and ADR index (`docs/adr/README.md`).
+
 ## 1. Introduction
 
 **Eigen OS** is an open, modular operating system designed for managing resources and orchestrating computations in hybrid quantum-classical computing environments. It serves as a semantic bridge between high-level task descriptions using a declarative language and heterogeneous, unstable quantum hardware.
@@ -20,6 +22,14 @@
 
 ### Level 1: Abstraction Layer (Eigen-Lang & System API)
 
+**Implemented now**
+- Eigen-Lang safety subset and deterministic AQO pipeline are implemented as contract baseline (MVP-2 / ADR 0004).
+- System API public contract (`SubmitJob`, `GetJobStatus`, `CancelJob`, `ListDevices`) is implemented in MVP shape with gRPC-first surface.
+
+**TODO / Not fully implemented yet**
+- TODO: complete full DSL surface listed below as stable runtime API (decorators/factories/utilities parity and conformance coverage).
+- TODO: complete production-grade REST parity and harden API authn/authz model beyond MVP modes.
+
 - **Eigen-Lang**: A declarative domain-specific language (DSL) based on Python, featuring:
 
     - Basic types: `QubitRegister`, `ClassicalRegister`, `Param`, `Observable`, `Ansatz`
@@ -36,6 +46,16 @@
 
 ### Level 2: OS Kernel (Eigen Kernel)
 
+**Implemented now**
+- QRTX MVP runtime state machine and execution pipeline are implemented and aligned with MVP-3 contracts.
+- QFS Level 3 (artifacts/metadata persistence) is implemented as the current baseline.
+- Core observability hooks and correlation IDs exist for runtime flows (per MVP-3 and later phase contracts).
+
+**TODO / Not fully implemented yet**
+- TODO: implement QFS Level 2 serialized quantum state checkpoint/restore as production feature.
+- TODO: implement QFS Level 1 live qubit manager and hardware feed-forward lifecycle.
+- TODO: evolve scheduler from MVP pipeline baseline to full advanced multi-program/noise-aware policies across all backends.
+
 - **Quantum Real-Time Executive (QRTX)**: Scheduler core managing tasks as directed acyclic graphs (DAGs). Handles task states (PENDING → COMPILING → QUEUED → RUNNING → DONE/ERROR), queues, and dependency resolution.
 
 - **Three-Level Quantum File System (QFS)**:
@@ -49,6 +69,17 @@
 - **Monitoring and Telemetry**: Event-driven system for metrics, logs, and tracing via Prometheus/Grafana and OpenTelemetry.
 
 ### Level 3: Runtime Services
+
+**Implemented now**
+- Compiler service baseline for parse/validate/deterministic AQO is implemented.
+- Driver-manager baseline service contracts are implemented and integrated with kernel runtime flow.
+- Phase-3/4/5 intelligent-runtime and distributed contracts are documented as implemented and ADR-synchronized.
+
+**TODO / Not fully implemented yet**
+- TODO: implement full neuro-symbolic compiler internals (advanced neuro-DPDA/transformer path) as production default.
+- TODO: implement production Knowledge Base loop (pattern reuse + continuous learning) end-to-end.
+- TODO: implement full GNN hardware optimizer in the execution path for automatic placement/routing optimization.
+- TODO: complete advanced driver-manager resilience features (pooling/failover policies) where still documented as target state.
 
 - **Neuro-Symbolic Compiler (Eigen-Compiler)**:
 
@@ -66,6 +97,14 @@
 
 ### Level 4: Hardware Abstraction Layer
 
+**Implemented now**
+- Stable driver abstraction contract exists and is used by runtime execution flow.
+- Simulator-first backend coverage is available for MVP/runtime workflows.
+
+**TODO / Not fully implemented yet**
+- TODO: expand and certify production-grade real-hardware driver coverage under unified conformance gates.
+- TODO: finalize advanced per-vendor capability negotiation and policy-based backend selection coverage in all drivers.
+
 - **QDriver API**: Key stabilizing interface abstracting quantum processor implementations (superconductors, ions, photons).
 
 - **Drivers**: Concrete implementations for simulators (Qiskit Aer, Cirq) and real hardware from various vendors.
@@ -73,6 +112,12 @@
 ## 3. Service Boundaries and Graph (MVP)
 
 ### MVP Service Decomposition
+
+**Implemented now**
+- `system-api`, `eigen-kernel`, `eigen-compiler`, and `driver-manager` decomposition is in place as current architectural baseline.
+
+**TODO / Not fully implemented yet**
+- TODO: enforce docs drift gating so each service page explicitly separates implemented behavior from target architecture.
 
 - `system-api` (**Python**): Public gRPC/REST interface, authentication/authorization, request validation, observability boundary.
 
@@ -97,6 +142,13 @@
 **Artifacts/results** are persisted by the kernel into QFS and served back through system-api.
 
 ## 4. Key Interfaces and Data Models
+
+**Implemented now**
+- JobSpec parsing/mapping, AST safety, deterministic AQO, and conformance gates are implemented and frozen by MVP-2 ADRs (0003/0004/0005).
+- Runtime execution/results and observability contracts are implemented at MVP-3+ phase baselines with ADR synchronization.
+
+**TODO / Not fully implemented yet**
+- TODO: keep API/data-model prose here continuously synchronized with phase contracts and compatibility reports to avoid future drift.
 
 ### Public APIs (RFC 0004)
 
@@ -132,6 +184,12 @@
 
 ## 5. Technology Stack
 
+**Implemented now**
+- Rust + Python + gRPC/Protobuf stack is active and forms the current runtime baseline.
+
+**TODO / Not fully implemented yet**
+- TODO: explicitly track which listed technologies are active in production paths vs planned options (e.g., storage/serialization variants) and keep this section status-marked.
+
 | **Component** | **Technology/Language** | **Justification** |
 |---|---|---|
 | Kernel (QRTX, QFS) | Rust | Memory safety, performance, concurrency, no GC |
@@ -144,6 +202,11 @@
 | Dependency Management | Poetry (Python), Cargo (Rust) | Modern, predictable tools |
 
 ## 6. Implementation Roadmap
+
+**Implementation checkpoint against RFC/ADR**
+- Implemented and ADR-synchronized: MVP-2, Phase-3, Phase-4, Phase-5 contracts.
+- Accepted + ADR-synchronized checkpoint: Phase-7 policy/toolchain contracts.
+- Phase-6 plugin ecosystem remains in transition (accepted planning package with further implementation closure pending).
 
 ### Phase 0: Foundation and Proof of Concept
 
@@ -197,6 +260,12 @@
 
 ## 7. Key Architectural Invariants
 
+**Status**
+- Invariants remain normative; not all are fully enforced by automated checks across every component yet.
+
+**TODO / Not fully implemented yet**
+- TODO: add explicit conformance checks per invariant (abstraction, determinism, observability, security, extensibility) with CI visibility.
+
 1. **Abstraction Invariant**: The same Eigen-Lang code must execute on any simulator or quantum processor with a compatible driver, without modification.
 
 2. **Safety Invariant**: User code is never executed on the server; only AST parsing and transformation are permitted.
@@ -210,6 +279,12 @@
 6. **Extensibility Invariant**: New compilers, optimizers, and drivers can be added without modifying core system components.
 
 ## 8. Acceptance Criteria
+
+**Status**
+- These criteria are target acceptance goals; they are not all recorded as achieved in a single closure artifact for the full system scope.
+
+**TODO / Not fully implemented yet**
+- TODO: convert each criterion into measurable release gates with references to compatibility reports and phase readiness checklists.
 
 - **Performance**:
 
