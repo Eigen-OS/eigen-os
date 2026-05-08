@@ -4,6 +4,11 @@
 
 ## 0) Boundaries and Versions (MVP Contracts)
 
+**Implementation status (as of 2026-05-08):**
+- ✅ Public proto package uses `eigen.api.v1`; internal packages use `eigen.internal.v1`.
+- ✅ Core service boundaries (System API, Kernel, Compiler, Driver Manager, QFS) are present in repository.
+- TODO: Align legacy naming mentions (`kernel_api.v1/compiler_api.v1/driver_api.v1`) with actual internal package `eigen.internal.v1` everywhere in this document and related diagrams.
+
 ### Services/Layers (MVP)
 - **User / SDK / eigen-cli** → **System API** (public entry point, gRPC).
 - **System API** → **Kernel (QRTX)** (internal workflow/DAG orchestrator).
@@ -25,6 +30,10 @@
 ---
 
 ## 1) Component Diagram (UML / PlantUML)
+
+**Implementation status (as of 2026-05-08):**
+- ✅ Components from the diagram are implemented as modules/services in `src/services/*` and `src/rust/crates/*`.
+- TODO: Keep diagram labels synchronized with concrete proto/service names (`KernelGatewayService`, `CompilationService`, `DriverManagerService`) and current runtime topology.
 
 ```plantuml
 @startuml
@@ -59,6 +68,11 @@ DM --> OBS : metrics/traces/logs
 ---
 
 ## 2) E2E Flow (sequence) "from user to qubit and back"
+
+**Implementation status (as of 2026-05-08):**
+- ✅ Submit → status/watch → results flow is covered by System API E2E tests.
+- ✅ Poll-based update streaming is implemented by `StreamJobUpdates`.
+- TODO: Clarify in this section which steps are synchronous vs queued/asynchronous in production deployment profile.
 
 ```plantuml
 @startuml
@@ -115,7 +129,13 @@ Detailed kernel state machine is defined in RFC 0007.
 
 ---
 
-## 3) Public API Contracts (System API) — eigen_api.v0.1
+## 3) Public API Contracts (System API) — eigen_api.v1
+
+**Implementation status (as of 2026-05-08):**
+- ✅ `JobService` and `DeviceService` are implemented in `proto/eigen/api/v1/*` and System API server code.
+- ✅ Public RPCs include `SubmitJob`, `GetJobStatus`, `CancelJob`, `StreamJobUpdates`, `GetJobResults`, `ListDevices`, `GetDeviceStatus`, `ReserveDevice`.
+- ✅ Additional implemented public RPCs beyond original MVP text: `GetDispatchRationale` and `GetDeviceDetails`.
+- TODO: Add explicit contract text for `GetDispatchRationale` and `GetDeviceDetails` in this section to avoid undocumented surface area.
 
 Below is the **"MVP freeze" level contract:** fields, errors, idempotency, side effects.
 (The implementation may proxy to Kernel/Compiler, but the external contract is the same.)
@@ -159,12 +179,19 @@ Below is the **"MVP freeze" level contract:** fields, errors, idempotency, side 
 **RPC: ReserveDevice(device_id, ttl)**
 - Clear semantics: reserves a scheduler slot in the Kernel Resource Manager, not hardware-wide exclusive lock. (RFC 0004).
 
-### 3.3 CompilationService (eigen_api.v0.1)
+### 3.3 CompilationService (eigen_api.v1)
+- ✅ Not exposed as public gRPC service in MVP public proto package (matches current architecture intent).
+- TODO: Keep explicit note that local CLI compile path and internal compilation RPC are the supported paths.
 - **Note for MVP**: The `CompilationService` **is not part of the public MVP API**. The `eigen-cli compile` command performs **local compilation**. (RFC 0010, RFC 0004).
 
 ---
 
 ## 4) Internal Contracts (Inter-service gRPC)
+
+**Implementation status (as of 2026-05-08):**
+- ✅ Internal gRPC contracts are defined under `proto/eigen/internal/v1`.
+- ✅ `KernelGatewayService`, `CompilationService`, `DriverManagerService` are present in proto and service implementations.
+- TODO: Replace historical API labels (`kernel_api.v1`, `compiler_api.v1`, `driver_api.v1`) in this section with `eigen.internal.v1` service names to match code.
 
 ### 4.1 System API ↔ Kernel: KernelGateway (kernel_api.v1)
 **RPC: EnqueueJob**
@@ -190,6 +217,12 @@ Required minimum (MVP):
 ---
 
 ## 5) Cross-Cutting Rules: Errors, Timeouts, Tracing, Compatibility
+
+**Implementation status (as of 2026-05-08):**
+- ✅ gRPC status-based error handling is implemented in service layers; validation failures map to canonical status codes.
+- ✅ Trace context propagation (`traceparent`) exists in the request flow.
+- TODO: Consolidate a single referenced source for timeout defaults and retry budgets (currently spread across docs/code).
+- TODO: Enforce/verify `buf lint` + `buf breaking` in CI if not already mandatory for all proto changes.
 
 ### 5.1 Unified Error Policy
 In gRPC, **an error must be returned as a status code + message**, not as `success=false` in the response.
@@ -231,6 +264,11 @@ Buf can detect breaking changes and fits well into CI. (RFC 0004).
 
 ## 6) "Interface Matrix" (Contract Map) — Who Calls Whom and With What
 
+**Implementation status (as of 2026-05-08):**
+- ✅ Matrix relationships generally reflect implemented call paths.
+- TODO: Update matrix naming to exact proto services (`eigen.internal.v1.*`) and include currently implemented extra public methods (`GetDispatchRationale`, `GetDeviceDetails`).
+- TODO: Add explicit note that QFS artifact exchange uses refs and may include multiple backend storage implementations.
+
 ### 6.1 External Layer
 | **Caller** | **Callee** | **Proto/package** | **RPC** | **Type** | **Data** |
 |---|---|---|---|---|---|
@@ -257,7 +295,12 @@ Buf can detect breaking changes and fits well into CI. (RFC 0004).
 
 ---
 
-## 7) Final Action Plan (Before Coding Starts)
+## 7) Final Action Plan (State Fixation and Forward TODOs)
+
+**Implementation status (as of 2026-05-08):**
+- ✅ System is already in active implementation; this section is reframed from “before coding” to “what remains to close gaps”.
+
+Open TODOs for next iterations:
 
 The RFCs have resolved the architectural misalignments. The final steps are:
 
