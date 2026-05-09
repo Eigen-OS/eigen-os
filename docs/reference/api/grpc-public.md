@@ -1,16 +1,29 @@
-# Public gRPC API — eigen.api.v1 (MVP contract freeze)
+# Public gRPC API — `eigen.api.v1`
 
-## Summary
+## Purpose
 
-Defines the stable public gRPC surface used by CLI/SDKs in MVP.
+This document fixes the **current public gRPC contract state** for Eigen OS and highlights what is missing relative to the target architecture.
 
-Contract source of truth: `proto/eigen/api/v1/*.proto`.
+**Normative source of truth:** `proto/eigen/api/v1/*.proto`.
 
-## Services & Methods
+---
 
-### 1. JobService
+## Package and proto layout
 
-Manages quantum job lifecycle.
+- Proto package: `eigen.api.v1`.
+- Public API files:
+  - `proto/eigen/api/v1/job_service.proto`
+  - `proto/eigen/api/v1/device_service.proto`
+  - `proto/eigen/api/v1/types.proto`
+
+> Note: older references to `eigen_api.v1` are stale; the current package name in proto is `eigen.api.v1`.
+
+---
+
+## Public services (implemented contract surface)
+
+### 1) `JobService`
+
 ```proto
 service JobService {
   rpc SubmitJob(SubmitJobRequest) returns (SubmitJobResponse);
@@ -22,9 +35,8 @@ service JobService {
 }
 ```
 
-### 2. DeviceService
+### 2) `DeviceService`
 
-Queries and reserves quantum devices.
 ```proto
 service DeviceService {
   rpc ListDevices(ListDevicesRequest) returns (ListDevicesResponse);
@@ -34,287 +46,147 @@ service DeviceService {
 }
 ```
 
-### 3. CompilationService
+### 3) Compilation API status
 
-For MVP, compilation is exposed as **internal API** (`eigen.internal.v1.CompilationService`) and is not part of the frozen public boundary.
+Compilation is **not** part of the public frozen contract for `eigen.api.v1` and remains an internal surface.
 
-## Key Data Types
+---
 
-### SubmitJobRequest
+## Key request/response shapes (current)
+
+### `SubmitJobRequest`
+
 ```proto
 message SubmitJobRequest {
-  string name = 1;  // User‑provided job name
+  string name = 1;
   oneof program {
     EigenLangSource eigen_lang = 2;
     QasmSource qasm = 3;
     AqoRef aqo_ref = 4;
   }
-  string target = 5;  // e.g., "sim:local", "ibmq:quito"
-  int32 priority = 6;  // 0–100, default 50
+  string target = 5;
+  int32 priority = 6;
   map<string, string> compiler_options = 7;
-  map<string, string> metadata = 8;  // Free‑form runtime settings
-  repeated string dependencies = 9;  // Input artifact URIs
-}
-
-message EigenLangSource {
-  bytes source = 1;
-  string entrypoint = 2;  // Function name (default "main")
-  string sha256 = 3;  // Optional idempotency fallback key
+  map<string, string> metadata = 8;
+  repeated string dependencies = 9;
 }
 ```
 
-### JobUpdate (Streaming)
+### `SubmitJobResponse`
+
 ```proto
-message JobUpdate {
+message SubmitJobResponse {
   string job_id = 1;
-  JobState state = 2;
-  string stage = 3;  // e.g., "COMPILING", "EXECUTING"
-  float progress = 4;  // 0.0–1.0
-  string message = 5;
-  uint64 event_seq = 6;  // Monotonic, starts at 1
-  google.protobuf.Timestamp timestamp = 7;
-}
-
-enum JobState {
-  PENDING = 0;
-  COMPILING = 1;
-  QUEUED = 2;
-  RUNNING = 3;
-  DONE = 4;
-  ERROR = 5;
-  CANCELLED = 6;
-  TIMEOUT = 7;
+  JobStatus status = 2;
 }
 ```
 
-### DeviceInfo
-```proto
-message DeviceInfo {
-  string device_id = 1;
-  string name = 2;
-  string backend_type = 3;  // "simulator", "ibmq", "rigetti", etc.
-  DeviceStatus status = 4;
-  int32 queue_depth = 5;
-  int32 estimated_wait_sec = 6;
-  map<string, string> capabilities = 7;
-}
+### `JobStatus` and `JobUpdate`
 
-enum DeviceStatus {
-  ONLINE = 0;
-  OFFLINE = 1;
-  CALIBRATING = 2;
-  MAINTENANCE = 3;
-  ERROR = 4;
-}
-```
+- `JobStatus` contains lifecycle fields (`state`, `stage`, `progress`, `message`), timestamps, error envelope fields (`error_code`, `error_summary`, `error_details_ref`) and topology lineage (`topology`).
+- `JobUpdate` carries streaming event data with `event_seq`, `timestamp`, and `topology`.
 
-## Semantics & Behavior
+### Enums (important naming detail)
 
-### 1. Job Lifecycle
+In proto, enum values are prefixed and include explicit UNSPECIFIED variants:
 
-1. **SubmitJob** → returns `job_id`
+- `JobState`: `JOB_STATE_UNSPECIFIED`, `JOB_STATE_PENDING`, …, `JOB_STATE_TIMEOUT`
+- `DeviceStatus`: `DEVICE_STATUS_UNSPECIFIED`, `DEVICE_STATUS_ONLINE`, …, `DEVICE_STATUS_ERROR_STATUS`
 
-2. Client may:
-
-    - Poll **GetJobStatus**
-
-    - Subscribe to **StreamJobUpdates** (preferred)
-
-3.  When state reaches **DONE**, call **GetJobResults**
-
-4. **CancelJob** may be called while job is in any non‑terminal state
-
-### 1.1 SubmitJob idempotency (MVP freeze rule)
-
-- Preferred idempotency key: `metadata["client_request_id"]`.
-- Fallback key for EigenLang submissions: `eigen_lang.sha256 + entrypoint + target`.
-- If the same idempotency key is reused with the same payload, server returns the same `job_id`.
-- If the same idempotency key is reused with a different payload, server returns `INVALID_ARGUMENT`.
-
-### 2. StreamJobUpdates Rules
-
-- Events are **ordered** per `job_id`
-
-- Terminal events (DONE, ERROR, CANCELLED, TIMEOUT) are emitted exactly once; after terminal event, stream closes
-
-- While RUNNING, server may send periodic heartbeats (progress/message updates)
-
-- Reconnection support: client resumes from `last_event_seq` (server replays events with `event_seq > last_event_seq`)
-
-- **MVP Implementation Note**: Uses polling internally; true event‑driven streaming in Phase 1
-
-### 3. ReserveDevice Semantics
-
-- Reserves a **scheduler slot** in kernel, not hardware‑wide exclusive lock
-
-- Reservation expires after `ttl_seconds`
-
-- Returns `reservation_id` for use in SubmitJob (future enhancement)
-
-- Errors:
-
-    - `FAILED_PRECONDITION`: device offline
-
-    - `RESOURCE_EXHAUSTED`: no slots available
-
-    - `NOT_FOUND`: invalid device_id
-
-### 4. Error Model
-
-- **Success**: gRPC status `OK`
-
-- **Failure**: Non‑OK gRPC status code with optional structured details using `google.rpc.Status`
-
- - **Never** use `success=false` fields in response messages
-
-Common error mappings:
-
-- `INVALID_ARGUMENT`: malformed request, unsupported program format
-
-- `NOT_FOUND`: job/device doesn't exist
-
-- `FAILED_PRECONDITION`: job not in cancellable state, device offline
-
-- `RESOURCE_EXHAUSTED`: quota exceeded, no device slots
-
-- `UNAVAILABLE`: service temporarily unavailable
-
-### 5. Dispatch Explainability (Phase-2)
-
-- `GetDispatchRationale(job_id)` returns an explainability payload for dispatched jobs.
-- Payload includes:
-  - `version` (explainability schema version)
-  - `policy_version` (scheduler/device policy SemVer)
-  - `reason_codes` (stable reason-code contract)
-  - correlation pointers (`timeline_ref`, `logs_ref`, `trace_id`, `trace_ref`)
-
-#### Troubleshooting use cases
-
-1. **Why was this backend selected?**  
-   Inspect `reason_codes`, `selected_backend`, and `selected_queue`.
-2. **Correlate with timeline/logs/traces**  
-   Use `timeline_ref` + `logs_ref` + `trace_ref` to pivot from API response into runtime artifacts.
-3. **Policy rollback/regression checks**  
-   Compare `policy_version` across successful and failing jobs to detect policy rollout impact.
-
-## Authentication & Authorization
-
-### MVP Auth Model
-
-- **API keys** or **static tokens** passed via gRPC metadata header
-
-- Header: `authorization: Bearer <token>`
-
-- System‑api validates token and extracts subject/roles
-
-- **No** public auth RPC methods in MVP
-
-### Permissions
-
-- `jobs:submit` → SubmitJob
-
-- `jobs:read` → GetJobStatus, GetJobResults, StreamJobUpdates
-
-- `jobs:cancel` → CancelJob
-
-- `devices:list` → ListDevices, GetDeviceDetails, GetDeviceStatus
-
-- `devices:reserve` → ReserveDevice
-
-## Versioning & Compatibility
-
-### API Version
-
-- Product API version (MVP): `0.1` (fixed)
-
-- Protobuf package namespace: `eigen_api.v1` (transport namespace)
-
-- JobSpec version for CLI/YAML: `apiVersion: eigen.os/v0.1`
-
-- Version included in typed payloads where applicable (for example, envelope/meta fields)
-
-- Backward‑compatible changes only (add optional fields, new methods)
-
-- Breaking changes require new major version (v2)
-
-### MVP Freeze
-
-- Method signatures and semantics frozen for MVP
-
-- New optional fields may be added post‑MVP
-
-- Deprecated fields/methods must follow 3‑month sunset period
-
-## Observability
-
-### Metrics
-
-- Prometheus metrics at `/metrics` endpoint (HTTP, not gRPC)
-
-- Counters: `eigen_api_requests_total{method,status}`
-
-- Histograms: `eigen_api_request_duration_seconds{method}`
-
-### Tracing
-
-    W3C TraceContext (`traceparent`) passed via gRPC metadata
-
-    All logs include `trace_id` and `job_id` (when applicable)
-
-## Examples
-
-### Submit a Job
-```python
-request = SubmitJobRequest(
-    name="vqe-h2",
-    program=EigenLangSource(
-        source=open("program.eigen.py").read().encode(),
-        entrypoint="main"
-    ),
-    target="sim:local",
-    metadata={"shots": "1024", "max_iters": "50"}
-)
-response = stub.SubmitJob(request)
-job_id = response.job_id
-```
-
-### Stream Updates
-```python
-for update in stub.StreamJobUpdates(JobUpdatesRequest(job_id=job_id)):
-    print(f"[{update.state}] {update.message}")
-    if update.state in [JobState.DONE, JobState.ERROR]:
-        break
-```
-
-## Open Questions (MVP)
-
-1. **CompilationService public?** Decision: Internal‑only for MVP
-
-2. **Should** `shots` **be a top‑level field?** Decision: Keep in metadata for v0.1, typed in v0.2
-
-3. **Device reservation in SubmitJob?** Decision: Post‑MVP feature
-
-## Future Enhancements (Post‑MVP)
-
-1. Async/long‑running job submission
-
-2. Batch job operations
-
-3. Device reservation integration with SubmitJob
-
-4. Public calibration API
-
-5. WebSocket streaming alternative
+> Any docs/SDK examples using short forms like `PENDING` or `ONLINE` should treat them as display aliases, not canonical wire names.
 
 ---
 
-**References:**
+## Behavioral contract (MVP)
 
-    RFC 0003: JobSpec v0.1 (maps to SubmitJobRequest)
+## 1) Job lifecycle
 
-    RFC 0005: AQO format (compiler output)
+1. `SubmitJob` returns `job_id` and initial `status`.
+2. Client either polls `GetJobStatus` or subscribes to `StreamJobUpdates`.
+3. On terminal success state, client fetches payload via `GetJobResults`.
+4. `CancelJob` is accepted only for cancellable states.
 
-    RFC 0008: Observability (metrics, tracing)
+## 2) Streaming semantics
 
-    RFC 0009: Security (authz model)
+- Ordering is per `job_id`.
+- `last_event_seq` is a **best-effort resume point**.
+- Terminal transition should be emitted once in stream semantics.
+
+## 3) Device reservation
+
+- `ReserveDevice` reserves scheduling capacity, not global hardware lock.
+- Response contains `reservation_id` and `expires_at`.
+
+## 4) Error signaling
+
+- Success = gRPC `OK`.
+- Failure = non-`OK` status (optionally enriched with structured details).
+- Response bodies should not introduce ad-hoc `success=false` wrappers.
+
+---
+
+## Authentication and authorization (MVP)
+
+- Bearer token expected in metadata header: `authorization: Bearer <token>`.
+- No public auth management RPC is part of `eigen.api.v1`.
+
+Permission model by method group:
+
+- Jobs: `jobs:submit`, `jobs:read`, `jobs:cancel`
+- Devices: `devices:list`, `devices:reserve`
+
+---
+
+## Versioning and compatibility
+
+- Product/API line: MVP `0.1`.
+- gRPC transport namespace: `eigen.api.v1`.
+- JobSpec YAML/API versioning remains `eigen.os/v0.1` for the spec side.
+- Additive changes only inside v1 (new optional fields, new RPC methods).
+- Breaking changes require v2.
+
+---
+
+## Current gaps and missing pieces (we fix what's missing)
+
+The proto contract is present, but several system-level guarantees are still underspecified or intentionally MVP-limited.
+
+### A) Contract clarity gaps
+
+1. **Idempotency key contract is not explicit in proto fields**
+   - Convention exists via metadata (`client_request_id`) and source hash fallback, but not encoded as first-class field.
+2. **Terminal-state matrix for `CancelJob` is not formalized in proto comments**
+   - Needs explicit allowed/forbidden state table in API contract tests/docs.
+3. **`GetDispatchRationale` availability conditions are not normalized**
+   - Need clear behavior when rationale is unavailable (`NOT_FOUND` vs empty payload policy).
+
+### B) Interoperability gaps
+
+1. **Public error detail schema is not pinned in this document**
+   - Need fixed mapping to `docs/reference/error-model.md` + examples per RPC.
+2. **Streaming replay durability bounds are not specified**
+   - `last_event_seq` is best-effort, but retention window/replay guarantees are missing.
+3. **Reservation-to-submit binding is not standardized**
+   - `reservation_id` is returned, but public submit path does not yet define a canonical request field for hard binding.
+
+### C) Operational readiness gaps
+
+1. **No documented SLA/SLO by RPC**
+   - Timeouts, expected latency bands, and retry budgets are not fixed in public contract.
+2. **Auth claims/roles schema is not documented as a stable contract**
+   - Header format is defined, claim semantics are not.
+3. **No public conformance profile for SDK generators**
+   - Need a minimal compliance matrix for CLI/Python/Go clients.
+
+---
+
+## Required follow-up artifacts
+
+1. Add API conformance examples for each RPC (request/response + error cases).
+2. Add an explicit “state machine and cancellation legality” appendix.
+3. Add a replay/retention policy note for `StreamJobUpdates`.
+4. Add dispatch rationale error behavior matrix.
+5. Add security appendix for token claim requirements.
+
+These follow-ups should be tracked as contract hardening tasks before any post-MVP freeze widening of public API.
     
