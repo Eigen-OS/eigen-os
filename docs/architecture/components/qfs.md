@@ -1,100 +1,99 @@
-# QFS (Quantum Data Fabric) – MVP Summary
+# QFS (Quantum Data Fabric) – Current State (as of 2026-05-09)
 
 - Phase: MVP (Phase 0)
 
-- Status: Architectural blueprint for future phases; MVP implements a minimal subset.
+- Status: **Partially implemented** (CircuitFS + System API QFS store are implemented; several blueprint items are not yet implemented).
 
 ## Responsibility
 
-**MVP Scope**: QFS in MVP is a **simplified CircuitFS** (Level 3) only, focusing on static artifact storage for job execution.
-**StateStore (Level 2)** and **LiveQubitManager** (Level 1) **are no-op or stubbed** in MVP (RFC 0007).
+### Implemented now
 
-### MVP Responsibilities:
+- QFS is implemented as a **simplified CircuitFS (Level 3)** in Rust (`CircuitFsLocal`) for deterministic job artifact persistence on local filesystem paths rooted at `/var/lib/eigen/circuit_fs` (override via env in kernel wiring). 
+- System API also provides a **QFS blob facade** (`QFSStore`) with local in-memory and optional S3-compatible backend, retry, and failover logic for `qfs://...` references.
+- Artifacts are used as a source of truth between runtime/kernel-facing flows and API result retrieval flows.
 
-- Store and version job artifacts: `program.eigen.py`, `job.yaml`, compiled AQO/QASM, results, metadata.
+### TODO / not implemented yet
 
-- Provide deterministic artifact paths: `circuit_fs/<job_id>/<artifact_name>`.
+- **TODO:** `StateStore` (Level 2) remains not implemented as a production component.
+- **TODO:** `LiveQubitManager` (Level 1) remains not implemented as a production component.
+- **TODO:** Unified “full QFS” orchestration across all levels (L1/L2/L3) is not available.
 
-- Serve as the **single source of truth** for compiled circuits and results between kernel, compiler, and system-api.
-
-- Ensure artifact integrity via SHA-256 hashing (optional deduplication).
+> RFC cross-check: RFC `0007-qrtx-mvp` states that StateStore/LiveQubitManager are no-op or stubs in MVP; this remains true.
 
 ## Interfaces
 
-- **Internal gRPC API**: `QfsService` (defined in `proto/qfs/service.proto`).
+### Implemented now
 
-    - `StoreArtifact(StoreArtifactRequest) → ArtifactHandle`
+- Rust in-process API via `CircuitFsLocal` methods (`store_*`, `load_*`, layout/path helpers).
+- Python System API storage facade via `QFSStore` (`put/get/list/delete/atomic_write`) over pluggable backends.
+- Kernel integration initializes `CircuitFsLocal` using `EIGEN_QFS_ROOT` (fallback `/var/lib/eigen/circuit_fs`).
 
-    - `RetrieveArtifact(RetrieveArtifactRequest) → ArtifactResponse`
+### TODO / not implemented yet
 
-    - `ListArtifacts(ListArtifactsRequest) → ListArtifactsResponse`
-
-- **Kernel integration**: Kernel calls QFS client library to persist/retrieve artifacts at pipeline stages.
-
-- **File system layout**: Local directory structure with convention:
-```text
-circuit_fs/
-  <job_id>/
-    program.eigen.py
-    job.yaml
-    compiled.aqo.json
-    compiled.qasm
-    results.json
-    meta.json
-```
+- **TODO:** Internal gRPC `QfsService` (`proto/qfs/service.proto`) is not present in repository; no standalone QFS gRPC service contract is implemented.
+- **TODO:** Dedicated QFS client library over gRPC is not implemented.
 
 ## Inputs / Outputs
 
-- **Inputs:**
+### Implemented now
 
-    - Job artifacts (bytes + metadata) from kernel pipeline stages.
+- Inputs: source/job artifacts, compiled artifacts, results artifacts, metadata bytes.
+- Outputs: persisted artifacts retrievable by deterministic paths/refs and in-memory bytes retrieval.
+- Formats in active use include JSON/YAML/Parquet and optional binary payloads.
 
-    - `job_id` as namespace.
+### TODO / not implemented yet
 
-- **Outputs:**
-
-    - `ArtifactHandle` with `hash`, `size`, `path`.
-
-    - Retrieved artifact bytes on read.
-
-- **Data formats**: JSON (AQO), YAML (JobSpec), binary (optional).
+- **TODO:** A single cross-language `ArtifactHandle { hash, size, path }` contract is not standardized as an enforced interface across all entry points.
 
 ## Storage / State
 
-- **Backend**: Local filesystem (MVP default). May support S3/minio later.
+### Implemented now
 
-- **Caching**: Optional in-memory cache for hot artifacts (e.g., compiled circuits).
+- Local filesystem CircuitFS layout per job (`input/`, `compiled/`, `results/`, `logs/`, `meta/`) with canonical filenames like `compiled/circuit.aqo.json`, `compiled/circuit.qasm`, `results.parquet`, `results/result.json`, `results/manifest.json`.
+- System API supports optional S3-compatible backend (`EIGEN_QFS_BACKEND=s3`) with local fallback.
+- Atomic write helpers exist in both Rust and Python paths.
 
-- **Versioning**: Immutable artifacts per job; no overwrite.
-
-- **State**: Stateless service; persistence is delegated to storage backend.
+### TODO / not implemented yet
+- **TODO:** Global immutable/no-overwrite policy is not uniformly enforced across all write paths.
+- **TODO:** Content-addressed deduplication is not implemented as a formal feature.
+- **TODO:** Shared hot-artifact cache policy is not implemented as a documented/enforced subsystem.
 
 ## Failure Modes
 
-- **Storage backend unavailable**: Returns UNAVAILABLE; kernel retries.
+### Implemented now
 
-- **Disk full**: Returns RESOURCE_EXHAUSTED.
+- Retry/failover behavior exists in `QFSStore` facade.
+- Not-found and invalid job-id style errors are explicitly modeled in CircuitFS.
 
-- **Corrupt artifact**: Integrity check fails (hash mismatch) → INVALID_ARGUMENT.
+### TODO / not implemented yet
 
-- **Network partition (future distributed storage**): Read-your-writes consistency best-effort in MVP.
+- **TODO:** Formal gRPC status mapping (`UNAVAILABLE`, `RESOURCE_EXHAUSTED`, `INVALID_ARGUMENT`) is not implemented because `QfsService` is absent.
+- **TODO:** Distributed-storage consistency semantics (e.g., read-your-writes guarantees) are not specified in executable conformance tests.
 
 ## Observability
 
-- **Metrics**:
+### Implemented now
 
-    - `qfs_artifact_store_total{type, status}`
+- QFS refs are surfaced in runtime/API metadata (for example compiled AQO, results parquet, timeline refs) and used by tests.
 
-    - `qfs_artifact_retrieve_total{type, status}`
+### TODO / not implemented yet
 
-    - `qfs_artifact_size_bytes{type}`
+- **TODO:** Dedicated QFS metric family documented previously (`qfs_artifact_store_total`, `qfs_artifact_retrieve_total`, `qfs_artifact_size_bytes`, `qfs_operation_duration_seconds`) is not implemented as a verified metric contract.
+- **TODO:** Dedicated QFS service tracing spans/log schema are not implemented as an independently versioned contract.
 
-    - `qfs_operation_duration_seconds{operation}`
+## RFC / ADR reconciliation
 
-- **Logs**: Include `job_id`, `artifact_hash`, `path`, `size`.
+### RFCs checked
 
-- **Traces**: Span per store/retrieve operation, linked to job trace.
+- `rfcs/0007-qrtx-mvp.md`: MVP QFS scope and stubbed L1/L2 components align with current state.
+- `rfcs/0011-eigen-lang-submission-v0.1.md`: artifact persistence intent aligns, but concrete path shape has evolved to nested directories like `compiled/` and `results/` in implementation.
+- `rfcs/0017-mvp3-results-retrieval-and-cli-runtime-ux.md`: runtime results layout and stable retrieval behavior are reflected in current artifacts and tests.
 
----
+### ADRs checked
 
-**Note**: This MVP summary reflects only the **CircuitFS** component of the full QFS vision. StateStore and LiveQubitManager are planned for Phase 2+.
+- No ADR currently defines a standalone QFS service contract equivalent to the `QfsService` blueprint in this document.
+
+### TODO / follow-up
+
+- **TODO:** Add/approve ADR for current QFS architecture split (Rust CircuitFS + System API QFSStore facade + optional S3 backend).
+- **TODO:** Add/approve ADR (or RFC amendment) for canonical artifact layout/versioning as implemented (`input/`, `compiled/`, `results/`, `meta/`) to avoid divergence from older flat examples.
