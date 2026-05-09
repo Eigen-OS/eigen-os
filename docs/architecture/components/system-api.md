@@ -1,145 +1,170 @@
 # System API
 
-- Phase: MVP
+- Phase: MVP (срез состояния на 2026-05-09)
 
 ## Responsibility
 
-The **System API** is the **sole public ingress** for Eigen OS in MVP. It provides:
+The **System API** remains the **sole public ingress** for Eigen OS in MVP and currently provides:
 
-1. **Public gRPC & REST Interfaces**: Exposes the core Job and Device services to clients.
+1. **Public gRPC interface (implemented)**: exposes `JobService` and `DeviceService` and runs on `SYSTEM_API_GRPC_BIND` (default `0.0.0.0:50051`).
+2. **Authentication & Authorization (implemented in MVP form)**: supports `allow_all` and `static_token` modes, plus coarse RBAC/permission checks.
+3. **Request validation (implemented)**: validates job/device requests and returns canonical gRPC errors.
+4. **Forwarding/execution shim (partially implemented)**: public API behavior is implemented, but direct forwarding to a real Kernel gRPC gateway is not the active path in this service implementation (current behavior is in-process simulated runtime state machine).
+5. **Observability boundary (implemented)**: structured logs, request tracing context extraction, and Prometheus `/metrics` endpoint.
+6. **Security context propagation (partially implemented)**: `x-eigen-*` and `traceparent` are consumed at boundary; full mandatory propagation contract to all downstream internal gRPC hops is defined by RFC/ADR, but this component currently does not yet act as a strict proxy to internal services for every request path.
 
-2. **Authentication & Authorization**: Validates API keys/tokens and enforces role-based access control (RBAC).
+### TODO (Responsibility)
 
-3. **Request Validation & Sanitization**: Validates incoming JobSpecs and input payloads for safety and correctness.
-
-4. **Protocol Translation & Forwarding**: Converts public requests to internal gRPC calls (to Kernel, Compiler) and streams/polls for results.
-
-5. **Observability Boundary**: Collects metrics, logs, and traces for all client interactions.
-
-6. **Security Context Propagation**: Injects authenticated user identity (`x-eigen-sub`, `x-eigen-roles`) into all downstream internal calls.
+- [ ] Replace in-process runtime emulation with strict gateway behavior to Kernel/Compiler for job lifecycle paths while preserving current public contract.
+- [ ] Enforce end-to-end propagation guarantees for `x-eigen-sub`, `x-eigen-roles`, `x-eigen-tenant`, `traceparent` on all internal calls, not only at ingress parsing level.
 
 ## Interfaces
 
-### Public gRPC API (proto/eigen_api/v1/service.proto)
+### Public gRPC API (implemented)
 
-- **JobService**: `SubmitJob`, `GetJobStatus`, `CancelJob`, `StreamJobUpdates`, `GetJobResults`
+Defined in `proto/eigen/api/v1/*.proto` and served by `system-api`:
 
-- **DeviceService**: `ListDevices`, `GetDeviceDetails`, `GetDeviceStatus`, `ReserveDevice`
+- **JobService**: `SubmitJob`, `GetJobStatus`, `CancelJob`, `StreamJobUpdates`, `GetJobResults`, `GetDispatchRationale`.
+- **DeviceService**: `ListDevices`, `GetDeviceDetails`, `GetDeviceStatus`, `ReserveDevice`.
 
-- **CompilationService**: `CompileCircuit`, `OptimizeCircuit`, `ValidateCircuit` (*optional in MVP; may be internal-only*)
+Notes:
+- `GetDispatchRationale` is additive relative to the original MVP RFC 0004 surface.
+- `StreamJobUpdates` currently streams from local job update state (poll/advance model), matching MVP semantics directionally.
 
-### Public REST API (Optional, via FastAPI/Flask adapter)
+### Public REST API (not implemented)
 
-- **Endpoints**: `/api/v1/jobs`, `/api/v1/devices`
+- **Status**: No production REST adapter (FastAPI/Flask public `/api/v1/*`) is wired in current service runtime.
 
-- **Content-Type**: JSON
+### TODO (Public REST API)
 
-- **Adapter**: Translates REST ↔ gRPC using generated converters.
+- [ ] Implement REST adapter (`/api/v1/jobs`, `/api/v1/devices`) with generated gRPC translation and keep parity tests against gRPC responses.
 
-### Internal gRPC Clients
+### Internal gRPC clients (partially implemented vs RFC target)
 
-- **Kernel Gateway**: Internal service defined in RFC 0004 Appendix A (`KernelGateway.EnqueueJob`, etc.)
+RFC 0004 and architecture docs define System API as thin gateway to Kernel/Compiler internal gRPC.
 
-- **Compiler Service**: Direct calls to `eigen-compiler` for compilation requests.
+Current state:
+- **Kernel Gateway client**: not used as universal execution path by current `system-api` service implementation.
+- **Compiler client**: not exposed as dedicated public `CompilationService`; compile flow is represented in lifecycle simulation and broader platform contracts.
+- **Metrics endpoint**: implemented via HTTP `/metrics`.
 
-- **Metrics Endpoint**: `/metrics` (Prometheus format) for scraping.
+### TODO (Internal clients)
+
+- [ ] Complete universal forwarding path to internal `KernelGateway` RPCs per RFC 0004 Appendix A.
+- [ ] Reconcile/document the exact split of responsibilities between `system-api`, `kernel`, and `eigen-compiler` once forwarding is primary path.
 
 ### Configuration File (`config/server.yaml`)
 
-- Defines server ports, auth providers, rate limits, backend connection endpoints.
+- **Status**: Not the active canonical configuration mechanism for current implementation.
+- Runtime configuration is currently environment-variable based (`SYSTEM_API_*`).
+
+### TODO (Configuration)
+
+- [ ] Introduce and adopt `config/server.yaml` (or update architecture docs to a finalized env-only contract) to avoid configuration drift.
 
 ## Inputs / Outputs
 
-| **Input** | **Source** | **Description** |
-|-------------------|-------------------|-------------------|
-| Client gRPC/REST Request | External client | Job submission, status queries, device reservations. |
-| API Key / JWT Token | HTTP/gRPC Header | Provided via `Authorization` header. |
-| JobSpec (YAML/JSON) | Client payload | Validated and forwarded to Kernel. |
-| Security Context | Internal (from Auth) | User ID, roles, tenant for downstream propagation. |
+| **Input** | **Source** | **Current status** |
+|---|---|---|
+| Client gRPC Request | External client | Implemented. |
+| API Key / Token | gRPC metadata (`authorization`) | Implemented in `static_token` mode; `allow_all` remains supported for local/dev. |
+| JobSpec payload | Client request fields (`jobspec_yaml`, program fields) | Implemented validation + mapping checks. |
+| Security Context | gRPC metadata (`x-eigen-*`, `traceparent`) | Parsed at ingress; partial downstream propagation enforcement in current direct service behavior. |
 
 ---
-
-| **Output** | **Destination** | **Description** |
-|-------------------|-------------------|-------------------|
-| gRPC/REST Response | Client | Job ID, status, results, or error. |
-| Internal gRPC Request | Kernel/Compiler / stdout | Translated and enriched client request. |
-| Security Metadata | gRPC Headers | `x-eigen-sub`, `x-eigen-roles`, `traceparent` |
-| Metrics & Logs | Prometheus/Log Aggregator | Request counts, latency, errors, audit trails. |
+| **Output** | **Destination** | **Current status** |
+|---|---|---|
+| gRPC Response | Client | Implemented. |
+| Internal gRPC Request | Kernel/Compiler | Partially implemented relative to RFC target; not universal path in current runtime. |
+| Security Metadata | Internal headers | RFC/ADR-required, but currently only partially represented in active `system-api` execution model. |
+| Metrics & Logs | Prometheus / log sink | Implemented (`/metrics`, structured logs). |
 
 ## Storage / State
 
-- **API Key / Token Cache**: In-memory cache (e.g., Redis) for validated tokens (optional, TTL-based).
+Current implementation is **not fully stateless**:
 
-- **Rate Limit Counters**: Stored in-memory or Redis for request throttling.
+- In-memory job registry and lifecycle updates are maintained in service process.
+- In-memory idempotency map is maintained.
+- No durable persistence in `system-api` for these records.
 
-- **Device List Cache**: Short-lived cache (seconds) for `ListDevices` responses to reduce load on Kernel/Driver Manager.
+This differs from the long-term target where Kernel/QFS own authoritative state.
 
-- **No Persistent State**: System API is stateless; all job/device state is maintained by Kernel and QFS.
+### TODO (Storage/State)
+
+- [ ] Remove authoritative runtime state ownership from `system-api`; move to strict stateless API gateway behavior backed by Kernel/QFS.
+- [ ] If temporary caches remain (token/device/rate-limit), document explicit TTLs and consistency guarantees.
 
 ## Failure Modes
 
-| **Failure** | **Detection** | **Mitigation** |
-|-------------------|-------------------|-------------------|
-| Invalid/Malformed Request | Input validation | Return `INVALID_ARGUMENT` (gRPC status `3`) with details. |
-| Authentication Failure | Auth interceptor | Return `UNAUTHENTICATED` (gRPC status `16`). |
-| Authorization Failure | RBAC check | Return `PERMISSION_DENIED` (gRPC status `7`). |
-| Kernel/Compiler Unavailable | Health check / gRPC timeout | Return `UNAVAILABLE` (gRPC status `14`); retry logic (if applicable). |
-| Rate Limit Exceeded | Rate limiter | Return `RESOURCE_EXHAUSTED` (gRPC status `8`) with retry-after hint. |
-| Payload Too Large | Request size check | Reject with `INVALID_ARGUMENT` before processing. |
+Implemented and aligned behaviors:
+
+| **Failure** | **Detection** | **Current handling** |
+|---|---|---|
+| Invalid/Malformed Request | Field validation | `INVALID_ARGUMENT` with structured details. |
+| Authentication Failure | Auth check | `UNAUTHENTICATED`. |
+| Authorization Failure | RBAC/permission check | `PERMISSION_DENIED`. |
+| Payload/size issues | Validation limits | Rejected as `INVALID_ARGUMENT`. |
+| Missing job/device | Lookup | `NOT_FOUND`. |
+| Results requested too early | Lifecycle state check | `FAILED_PRECONDITION`. |
+
+### TODO (Failure Modes)
+
+- [ ] Reintroduce/confirm `UNAVAILABLE` and retry behavior against real downstream Kernel/Compiler outages when forwarding path is primary.
+- [ ] Add explicit rate limiter implementation and `RESOURCE_EXHAUSTED` behavior (currently documented target, not fully enforced runtime contract).
 
 ## Observability
 
-### Metrics (Prometheus)
+### Metrics (implemented)
 
-- `eigen_api_requests_total{method,endpoint,status}`
+- `/metrics` endpoint is implemented.
+- Request/latency/in-flight/authz-denied style instrumentation is present in service observability module.
 
-- `eigen_api_request_duration_seconds{method,endpoint}`
+### Logs (implemented)
 
-- `eigen_api_active_requests`
+- Structured logs include `service=system-api`, method, request context, and trace correlation fields.
 
-- `eigen_api_authentication_failures_total{reason}`
+### Traces (implemented at ingress, partial end-to-end by architecture intent)
 
-- `eigen_api_rate_limit_exceeded_total`
+- `traceparent` and trace identifiers are parsed/extracted at boundary and logged.
 
-### Logs (Structured JSON)
-```json
-{
-  "timestamp": "2026-01-10T10:30:00Z",
-  "level": "INFO",
-  "service": "system-api",
-  "trace_id": "abc123",
-  "span_id": "def456",
-  "method": "SubmitJob",
-  "endpoint": "/eigen_api.v1.JobService/SubmitJob",
-  "user": "user@example.com",
-  "job_id": "job-xyz",
-  "duration_ms": 150,
-  "status_code": "OK"
-}
-```
+### TODO (Observability)
 
-### Traces (OpenTelemetry/W3C TraceContext)
+- [ ] Publish and freeze exact metric names/label schema used in code as normative contract in `docs/reference/*`.
+- [ ] Add explicit conformance tests that assert end-to-end trace/security-header propagation through real system-api → kernel → downstream calls.
 
-- Injects/extracts `traceparent` header in all gRPC/REST requests.
+## RFC / ADR cross-check
 
-- Spans cover: request handling, auth, validation, forwarding, response.
+Checked against:
 
----
+- RFC 0002 (architecture boundaries)
+- RFC 0004 (public gRPC API)
+- RFC 0008 (observability MVP)
+- RFC 0009 (security/isolation MVP)
+- ADR 0002 (MVP1 contract baseline)
+- ADR 0012 (explainability API contract)
+- ADR 0018 (API/contract versioning policy)
 
-## Implementation Notes for MVP
+Alignment summary:
 
-1. **gRPC Server**: Primary interface. Use async gRPC (grpc.aio) with interceptors for auth, logging, metrics.
+- Public gRPC surface and error-model direction are implemented and extended safely.
+- Explainability endpoint exists (post-RFC0004 additive evolution).
+- Observability boundary exists (`/metrics`, structured logs, trace context parsing).
+- Main gap to RFC architecture target: System API still contains in-process lifecycle/state behavior instead of being a thin, always-forwarding gateway.
 
-2. **REST Adapter**: Optional but recommended for ease of testing. Use FastAPI with auto-generated OpenAPI docs.
+### TODO (RFC/ADR closure)
 
-3. **Authentication**: Simple API-key validation (symmetric tokens) or JWT. OIDC is post-MVP.
+- [ ] Add explicit matrix table (`RFC/ADR requirement` → `implemented in code` → `gap/todo`) and keep it versioned per release phase.
+- [ ] For each non-implemented RFC/ADR item, track corresponding issue IDs directly in this document.
 
-4. **Authorization**: Static RBAC roles (`admin`, `user`, `readonly`) defined in configuration.
+## Implementation Notes for MVP (actual as-is)
 
-5. **Streaming**: `StreamJobUpdates` is implemented via polling Kernel (as per RFC 0004) to keep Kernel simple.
+1. gRPC server is the primary and implemented interface.
+2. Auth modes are intentionally lightweight (`allow_all`, `static_token`) for MVP/dev ergonomics.
+3. Validation and gRPC status mapping are implemented.
+4. Device APIs are functional but still minimal/stub-like in returned inventory semantics.
+5. Job lifecycle APIs are functionally implemented with in-memory modeled execution progression.
 
-6. **Error Handling**: All errors mapped to standard gRPC status codes; structured details in `google.rpc.Status`.
+### TODO (Implementation notes)
 
-7. **Configuration**: YAML-based; environment variables for secrets (API keys, JWT secret).
-
-8. **Deployment**: Single container; scaled horizontally via load balancer if needed.
+- [ ] Deliver production-grade device inventory/reservation integration with real Resource Manager/Kernel state.
+- [ ] Eliminate skeleton/stub wording and implementation debt once internal forwarding architecture is fully enforced.
