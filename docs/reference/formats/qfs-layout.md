@@ -1,390 +1,137 @@
-# QFS Layout — MVP (CircuitFS)
+# QFS Layout — Current MVP Contract (CircuitFS)
+
+- Phase: MVP
+- Status date: **2026-05-09**
+- Scope: stable artifact layout used by runtime/kernel and System API result retrieval.
 
 ## Summary
 
-Defines the stable directory structure and file layout for CircuitFS (Level 3 QFS) in MVP. This provides predictable paths for job artifacts, enabling consistent access by kernel, compiler, and driver‑manager services.
+This document fixes the **actual** QFS Level-3 (CircuitFS) layout contract currently used in the repository and highlights the gaps that are still open. It supersedes older flat-layout examples and aligns with current architecture/component docs.
 
 ## Motivation
-
-Without a standardized artifact layout:
-
-- Services cannot reliably locate input/output files
-
-- Debugging and artifact inspection becomes ad‑hoc
-
-- Future upgrades may break existing job references
-
-- Data migration and backup strategies become complex
+Without a frozen, implementation-aligned layout:
+- services cannot reliably find artifacts across pipeline stages;
+- API compatibility (especially `GetJobResults`) drifts from runtime outputs;
+- migration and cleanup logic become brittle;
+- RFC/ADR reconciliation becomes hard to audit.
 
 ## Goals
 
-- Define canonical paths for all job artifacts
+- Define canonical per-job paths and required files for MVP.
+- Document which files are **required vs optional**.
+- Capture current compatibility behavior for legacy artifacts.
+- Explicitly list what is still missing from a full QFS vision.
 
-- Ensure deterministic naming based on `job_id`
+## Non-Goals
 
-- Support both flat and hierarchical storage backends
+- Level-1 (`LiveQubitManager`) and Level-2 (`StateStore`) runtime semantics.
+- Full standalone QFS gRPC service design/contract.
+- Content-addressed storage and dedup policy design.
 
-- Enable easy artifact discovery and cleanup
+## Canonical Root and Job Scope
 
-## Non‑Goals
-
-- Advanced QFS features (replication, tiered storage, compression)
-
-- StateStore (Level 2) or LiveQubitManager (Level 1) layouts
-
-- Multi‑version artifact retention policies
-
-## Directory Structure
-
-### Root Path Convention
 ```text
-/circuit_fs/{job_id}/
+{qfs_root}/{job_id}/
 ```
 
-**Where**:
+Where:
 
-- `circuit_fs` is the mount point or bucket name
+- `{qfs_root}` defaults to `/var/lib/eigen/circuit_fs` in kernel wiring (override via `EIGEN_QFS_ROOT`);
+- `{job_id}` is a UUID-like unique job identifier;
+- all artifact paths are case-sensitive and job-scoped.
 
-- `{job_id}` is the globally unique job identifier (UUID v4 format)
+## Canonical MVP Artifact Layout (as implemented)
 
-- All paths are case‑sensitive
-
-### MVP Artifact Layout (with durable result versioning)
 ```text
-/circuit_fs/{job_id}/
+{qfs_root}/{job_id}/
 ├── input/
-│   ├── job.yaml                    # Resolved JobSpec (without inline program)
-│   └── program.eigen.py            # Original Eigen‑Lang source
-│   └── metadata.json               # Source artifact hashes + schema version
+│   ├── job.yaml                    # resolved JobSpec (required)
+│   ├── program.eigen.py            # submitted Eigen-Lang source (required)
+│   └── metadata.json               # source hashes/schema (optional but expected)
 ├── compiled/
-│   ├── circuit.aqo.json           # Canonical AQO JSON (required)
-│   ├── circuit.aqo.pb             # Optional: AQO Protobuf binary
-│   └── circuit.qasm               # Optional: QASM3 representation
-│   ├── circuit.qasm               # Optional: QASM3 representation
-│   └── metadata.json              # Compiled artifact hashes + compiler version
+│   ├── circuit.aqo.json            # canonical AQO JSON (required)
+│   ├── circuit.aqo.pb              # protobuf AQO (optional)
+│   ├── circuit.qasm                # OpenQASM representation (optional)
+│   └── metadata.json               # compile-stage metadata (optional)
 ├── results/
-│   ├── result.json                # Versioned result envelope (artifact_version + producer_version)
-│   ├── manifest.json              # Durable artifact manifest (hashes + producer versioning)
-│   └── error.json                 # Optional: structured job error details (MVP helper)
-├── results.parquet                # Canonical result payload consumed by APIs
+│   ├── result.json                 # result envelope with refs/versioning (optional in legacy)
+│   ├── manifest.json               # artifact manifest/checksums (optional in legacy)
+│   └── error.json                  # structured execution error payload (optional)
+├── results.parquet                 # canonical result payload for APIs (required for completed jobs)
 ├── logs/
-│   ├── kernel.log                 # Kernel pipeline logs
-│   ├── compiler.log               # Compilation logs
-│   └── driver.log                 # Driver‑manager execution logs
-└── meta.json                      # Job metadata and manifest
+│   ├── kernel.log                  # optional runtime logs
+│   ├── compiler.log                # optional compile logs
+│   └── driver.log                  # optional backend/driver logs
+└── meta/
+    └── job.json                    # optional job metadata summary
 ```
 
-## File Specifications
+> Note: historical `meta.json` (at root) appears in older docs/examples. Current component docs describe a `meta/` directory. Consumers should treat `meta/` as canonical for new artifacts and remain tolerant to legacy root-level metadata naming.
 
-### 1. `input/job.yaml`
+## File-Level Contract
 
-The resolved JobSpec after CLI processing, with the following transformations:
+### Required for successful compile/execute flow
 
-- `spec.program` field removed (source moved to separate file)
+1. `input/job.yaml`
+2. `input/program.eigen.py`
+3. `compiled/circuit.aqo.json`
+4. `results.parquet` (for successful jobs with retrievable results)
 
-- Defaults applied for optional fields
+### Optional / versioned helpers
 
-- CLI flags merged into appropriate sections
+- `input/metadata.json`, `compiled/metadata.json`
+- `compiled/circuit.aqo.pb`, `compiled/circuit.qasm`
+- `results/result.json`, `results/manifest.json`, `results/error.json`
+- `logs/*`, `meta/job.json`
 
-- All paths resolved to absolute or well‑formed URIs
+## Access Patterns (Current Pipeline)
 
-**Example:**
-```yaml
-apiVersion: eigen.os/v0.1
-kind: QuantumJob
-metadata:
-  name: vqe-h2
-  labels:
-    example: "true"
-spec:
-  target: sim:local
-  priority: 50
-  compiler_options:
-    optimization_level: "1"
-  metadata:
-    shots: "1024"
-    max_iters: "50"
-  dependencies: []
-```
-
-### 2. `input/program.eigen.py`
-
-Original Eigen‑Lang source bytes, exactly as submitted.
-
-**Note**: Even if submitted inline in JobSpec, the kernel extracts and stores as separate file.
-
-### 3. `compiled/circuit.aqo.json`
-
-Canonical AQO v0.1 JSON representation (RFC 0005). This is the primary compiled artifact.
-
-**Validation**: Must pass AQO v0.1 schema validation.
-
-### 4. `compiled/circuit.qasm` (optional)
-
-OpenQASM 3.0 representation for debugging and interoperability.
-
-### 5. `input/metadata.json`
-
-Source artifact metadata generated at submit stage:
-```json
-{
-  "version": "0.1",
-  "schema_version": "source_artifacts.v1",
-  "job_yaml_hash": "a1b2c3...",
-  "program_hash": "d4e5f6..."
-}
-```
-
-### 6. `compiled/metadata.json`
-
-Compilation artifact metadata generated at compile stage:
-```json
-{
-  "version": "0.1",
-  "schema_version": "compiled_artifacts.v1",
-  "compiler_version": "eigen-lang@0.1.0",
-  "aqo_hash": "112233...",
-  "qasm_hash": "445566..."
-}
-```
-
-### 7. `results/result.json`
-
-Versioned result envelope:
-```json
-{
-  "artifact_version": "1.0.0",
-  "producer_version": "0.1.0",
-  "job_id": "550e8400-e29b-41d4-a716-446655440000",
-  "result_ref": "results.parquet",
-  "manifest_ref": "results/manifest.json"
-}
-```
-
-### 8. `results/manifest.json`
-
-Durable manifest with checksums and producer versioning:
-```json
-{
-  "artifact_version": "1.0.0",
-  "producer_version": "0.1.0",
-  "schema_version": "result_manifest.v1",
-  "artifacts": [
-    {
-      "path": "results.parquet",
-      "content_hash": "ab12cd34...",
-      "size_bytes": 1024
-    }
-  ]
-}
-```
-
-### 9. `results.parquet`
-
-Normalized measurement counts in standard format:
-```json
-{
-  "version": "0.1",
-  "format": "bitstring_counts",
-  "qubits": 4,
-  "shots": 1024,
-  "counts": {
-    "0000": 245,
-    "0001": 127,
-    "0010": 98,
-    // ... other bitstrings
-  },
-  "timestamp": "2026-01-10T10:30:00Z"
-}
-```
-
-**Bitstring ordering**: Most‑significant qubit first (q[0] is leftmost bit).
-
-Job manifest and integrity information:
-```json
-{
-  "version": "0.1",
-  "job_id": "550e8400-e29b-41d4-a716-446655440000",
-  "user_id": "user-123",
-  "created": "2026-01-10T10:00:00Z",
-  "status": "COMPLETED",
-  "artifacts": [
-    {
-      "path": "input/job.yaml",
-      "sha256": "a1b2c3...",
-      "size_bytes": 1024,
-      "mime_type": "application/x-yaml"
-    },
-    {
-      "path": "compiled/circuit.aqo.json",
-      "sha256": "d4e5f6...",
-      "size_bytes": 2048,
-      "mime_type": "application/json"
-    }
-  ],
-  "hashes": {
-    "program_sha256": "a1b2c3...",  # From SubmitJobRequest
-    "aqo_sha256": "d4e5f6...",      # AQO JSON hash
-    "results_sha256": "g7h8i9..."   # Combined results hash
-  }
-}
-```
-
-## Access Patterns
-
-### 1. Kernel Pipeline Stages
 ```text
-Validation   → Reads: input/job.yaml, input/program.eigen.py
-Compilation  → Writes: compiled/circuit.aqo.json, compiled/circuit.qasm, compiled/metadata.json
-Execution    → Reads: compiled/circuit.aqo.json
-              Writes: results.parquet, results/result.json, results/manifest.json
-Completion   → Writes: meta.json, logs/*.log
+Validation  -> reads input/job.yaml + input/program.eigen.py
+Compile     -> writes compiled/circuit.aqo.json (+ optional compiled/*)
+Execute     -> reads compiled/circuit.aqo.json
+               writes results.parquet (+ optional results/result.json, results/manifest.json, results/error.json)
+Finalize    -> may write logs/* and meta/job.json
 ```
 
-### 2. System‑API Serving
+System API result retrieval consumes `results.parquet` as canonical payload and may surface envelope/manifest references when present.
 
-- `GetJobResults` → Returns counts/metadata from `results.parquet` and exposes
-  metadata refs to `results/result.json` and `results/manifest.json`
+## Compatibility and Migration
 
-## Compatibility & Migration
+Current behavior should preserve read compatibility for legacy jobs where only `results.parquet` exists:
 
-- Legacy jobs with only `results.parquet` remain readable.
-- Reader fallback synthesizes envelope/manifest defaults for legacy artifacts.
-- For breaking envelope changes, bump `artifact_version` MAJOR and provide migration notes.
-- Current policy guarantees read compatibility for at least two previous MINOR versions.
+- `GetJobResults` remains usable from `results.parquet` alone;
+- envelope/manifest can be absent for older artifacts;
+- readers should not fail solely due to missing optional metadata files.
 
-- Future debugging endpoints → Serve any artifact by path
+## Validation Rules (MVP minimum)
 
-## Implementation Notes
+- `job_id` path segment must be validated before filesystem operations.
+- Writes should be atomic where helper APIs provide atomic semantics.
+- `compiled/circuit.aqo.json` must remain schema-compatible with current AQO reference.
+- Missing optional files must not break result retrieval when required files exist.
 
-### 1. Storage Backends
+## Gaps / What Is Missing
 
-**MVP supports:**
+The following are not yet fully specified or uniformly enforced and should be tracked as system gaps:
 
-- **Local filesystem**: `/var/lib/eigen/circuit_fs/{job_id}/`
+1. No standalone internal `QfsService` gRPC contract in-repo.
+2. No unified cross-language `ArtifactHandle { hash, size, path }` contract.
+3. No global immutable/no-overwrite write policy enforced on every write path.
+4. No formal content-addressed deduplication feature.
+5. No frozen QFS metrics/tracing contract dedicated to artifact operations.
+6. No conformance suite that verifies distributed consistency semantics.
 
-- **S3‑compatible**: `s3://eigen-circuit-fs/{job_id}/`
+## RFC / ADR Reconciliation Notes
 
-- **In‑memory (testing)**: Temporary directory
+- MVP scope remains aligned with RFC positioning where Level-1/Level-2 QFS parts are stubbed/not production.
+- The concrete path layout has evolved from older flat examples to nested directories (`input/`, `compiled/`, `results/`, `meta/`).
+- A dedicated ADR for the current split architecture (Rust CircuitFS + System API QFS store facade) is still needed for closure.
 
-### 2. Atomic Writes
+## Change Control
 
-To prevent partial reads:
-```python
-# Write to temporary file, then rename
-with tempfile.NamedTemporaryFile(dir=job_dir, delete=False) as tmp:
-    json.dump(data, tmp)
-    tmp.flush()
-    os.fsync(tmp.fileno)
-os.rename(tmp.name, "results/counts.json")
-```
+Any breaking layout change must:
 
-### 3. Cleanup Policy
-
-- **MVP**: Manual cleanup only
-
-- **Phase 1**: TTL‑based automatic cleanup (configurable per job)
-
-- **Retention**: `meta.json` preserved after artifact cleanup for audit
-
-### 4. Security
-
-- Artifacts are user‑scoped: `/circuit_fs/{user_id}/{job_id}/` (future)
-
-- No sensitive data in artifact names or contents
-
-- Logs redact tokens, credentials, PII
-
-## Error Handling
-
-### Missing Artifacts
-
-- Kernel must validate required artifacts exist before pipeline transition
-
-- Missing `circuit.aqo.json` → `COMPILE_ERROR`
-
-- Missing `results/counts.json` → `EXECUTION_ERROR`
-
-### Corruption Detection
-
-- Store SHA‑256 hashes in `meta.json`
-
-- Optional verification on read (configurable)
-
-- Corrupted files trigger job retry or failure
-
-## Testing Plan
-
-### Unit Tests
-
-- Path generation from `job_id`
-
-- Atomic write/rename operations
-
-- JSON schema validation for all artifact types
-
-### Integration Tests
-
-1. Submit job → verify all artifacts created
-
-2. Simulate partial write → verify job fails cleanly
-
-3. Artifact round‑trip: write → read → verify equality
-
-### Performance Tests
-
-- Concurrent job artifact creation (10+ jobs)
-
-- Large circuit storage (>1MB AQO)
-
-- Directory listing performance (1000+ jobs)
-
-## Future Extensions
-
-### Phase 1
-
-- Symbolic links for common access patterns
-
-- Artifact compression (gzip for JSON files)
-
-- Streaming large results (>100MB)
-
-## Phase 2
-
-- Multi‑part artifacts for very large circuits
-
-- Cross‑job artifact deduplication
-
-- Read‑only snapshot exports
-
-## Phase 3
-
-- Integration with StateStore (checkpoint migration)
-
-- Qubit‑mapped artifact variants
-
-- Federated storage across multiple QFS instances
-
-## Migration Strategy
-
-### v0.1 to v0.2
-
-- Add new optional artifacts in new directories
-
-- Never rename or remove existing artifact paths
-
-- Use `meta.json` version to detect layout version
-
-- Backward compatibility: v0.2 services must read v0.1 layouts
-
----
-
-**References:**
-
-- RFC 0005: AQO format (defines `circuit.aqo.json` schema)
-
-- RFC 0011: Eigen‑Lang submission (defines `program.eigen.py` format)
-
-- RFC 0007: QRTX MVP (references QFS paths)
-
-- QFS Architecture: Three‑level storage model
+1. update this document and component architecture docs in the same change;
+2. define backward-compatibility behavior for previously persisted jobs;
+3. include conformance tests for read compatibility.
