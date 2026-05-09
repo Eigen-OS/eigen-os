@@ -1,247 +1,243 @@
 # Observability
 
 - Phase: MVP
+- Status snapshot date: 2026-05-09
 
 ## Responsibility
 
-Observability Core provides centralized monitoring, tracing, and event processing for Eigen OS. It enables visibility into system health, performance, and quantum workflow execution across all components. Key responsibilities include:
+Observability in the current codebase is **distributed across services** (System API, Kernel, Driver Manager, Compiler, benchmark/runtime packs) rather than a single fully implemented "Observability Core" service.
 
-- **Metrics Collection & Export**: Gather system, quantum hardware, and business metrics, exporting them to Prometheus.
+### Implemented now
 
-- **Distributed Tracing**: Implement end-to-end trace propagation across hybrid quantum-classical workflows.
+- Structured JSON logging with correlation fields in System API (`trace_id`, `job_id`, `traceparent`, `request_id`, etc.).
+- Basic Prometheus-compatible `/metrics` endpoint in System API.
+- W3C TraceContext (`traceparent`) propagation is part of MVP observability contracts and tested in runtime/integration flow.
+- Runtime observability and release gates are formalized via RFC/ADR package (RFC 0018 + ADR 0007).
 
-- **Event-Driven Architecture**: Publish and subscribe to system events (hardware changes, job lifecycle, security alerts).
+### TODO (not fully implemented as a standalone component)
 
-- **Health Monitoring**: Provide health check endpoints for system components.
-
-- **Real-time Monitoring**: Support WebSocket streams for live event monitoring.
+- [ ] Centralized Observability Core service with unified ownership of metrics/traces/events.
+- [ ] Unified cross-component observability control plane for all Eigen OS components.
+- [ ] Full quantum-specific metric model (T1/T2/fidelity) exposed consistently by runtime services.
 
 ## Interfaces
 
-### 1. gRPC API:
+### 1. gRPC API
 
-- Defined in `proto/observability/service.proto`
+### Implemented now
 
-- `ObservabilityService` with methods:
+- No dedicated `ObservabilityService` gRPC API is implemented as an independent service in this repository state.
 
-    - `PushMetrics()`: Stream metrics to central collector
+### TODO
 
-    - `QueryMetrics()`: Query historical metrics
+- [ ] Define and implement `proto/observability/service.proto`.
+- [ ] Implement `ObservabilityService` methods:
+  - [ ] `PushMetrics()`
+  - [ ] `QueryMetrics()`
+  - [ ] `ExportSpans()`
+  - [ ] `SubscribeToEvents()`
+  - [ ] `PublishEvent()`
+  - [ ] `HealthCheck()`
 
-    - `ExportSpans()`: Send trace spans for storage
+### 2. REST API endpoints
 
-    - `SubscribeToEvents()`: Stream real-time events
+### Implemented now
 
-    - `PublishEvent()`: Publish new events
+- `GET /metrics` exists in System API observability helper server.
 
-    - `HealthCheck()`: System health status
+### TODO
 
-### 2. REST API Endpoints:
+- [ ] Standardize and document a single service-level `GET /health` for observability subsystem.
+- [ ] `GET /metrics/quantum/{device}` endpoint.
+- [ ] `GET /traces/{trace_id}` endpoint.
+- [ ] `WS /events/stream` endpoint for live event monitoring.
 
-- `GET /health`: Service health status
+### 3. Event bus interface
 
-- `GET /metrics`: Prometheus-formatted metrics
+### Implemented now
 
-- `GET /metrics/quantum/{device}`: Quantum-specific metrics
+- Event-bus architecture exists at contract/architecture intent level only for this component.
 
-- `GET /traces/{trace_id}`: Retrieve specific trace
+### TODO
 
-- `WS /events/stream`: WebSocket for real-time events
+- [ ] Implement publisher/subscriber event bus abstraction for observability events.
+- [ ] Implement/select production backends (Kafka, Redis, in-memory, NATS) for this component.
+- [ ] Formalize event schemas for `HardwareEvents`, `JobEvents`, `SystemEvents`, `SecurityEvents`.
 
-### 3. Event Bus Interface:
+### 4. Integration points
 
-- Publisher/Subscriber pattern for system events
+### Implemented now
+- System API instrumentation exists (logs + basic metrics).
+- Runtime observability requirements across `system-api -> kernel -> driver-manager` are codified in RFC 0018 and ADR 0007.
 
-- Multiple backend support: Kafka, Redis, in-memory, NATS
-
-- Event types: HardwareEvents, JobEvents, SystemEvents, SecurityEvents
-
-### 4. Integration Points:
-
-- **Kernel (QRTX) Integration**: Automatic instrumentation of job lifecycle
-
-- **Driver Integration**: Quantum hardware metrics collection
-
-- **System Components**: Standardized metrics and trace collection
+### TODO
+- [ ] Automatic job lifecycle instrumentation in a dedicated kernel-observability integration layer.
+- [ ] Dedicated driver-level quantum hardware metric ingestion pipeline for central observability component.
+- [ ] Unified SDK/helpers for standardized metrics+trace emission by all services.
 
 ## Inputs / Outputs
 
-### Inputs:
+### Inputs
 
-1. **Metrics Data:**
+### Implemented now
 
-    - Quantum hardware metrics (T1, T2, gate fidelity, readout fidelity)
+- Request lifecycle timing/counts from System API.
+- Authorization denial counters from System API.
+- Trace context headers (`traceparent`) and derived `trace_id` in request context.
 
-    - System metrics (queue size, active jobs, compilation/execution time)
+### TODO
 
-    - Resource metrics (CPU, memory, network usage)
+- [ ] Full ingestion of quantum hardware metrics (T1, T2, gate/readout fidelity).
+- [ ] Unified ingestion of distributed span payloads for storage/query.
+- [ ] Unified ingestion of hardware/job/system/security events.
+- [ ] Centralized YAML-driven configuration for collection intervals/exporters/event bus settings.
 
-2. **Trace Data:**
+### Outputs
 
-    - Span data from distributed workflow execution
+### Implemented now
 
-    - Quantum operation instrumentation
+- Prometheus text payload from System API `/metrics`.
+- Structured JSON logs for request lifecycle and authz denials.
 
-    - gRPC/HTTP request tracing
+### TODO
 
-3. **Events:**
-
-    - Hardware calibration events
-
-    - Job lifecycle events (submitted, started, completed, failed)
-
-    - System alerts and security events
-
-4. **Configuration:**
-
-    - YAML configuration files for metrics collection intervals, exporters, event bus setting
-
-### Outputs:
-
-1. **Exported Metrics:**
-
-    - Prometheus metrics endpoint (`/metrics`)
-
-    - Time-series database integration
-
-    - Real-time dashboard data
-
-2. **Trace Storage:**
-
-    - Jaeger/OpenTelemetry compatible trace data
-
-    - Queryable trace database
-
-3. **Event Streams:**
-
-    - Kafka topics for event processing
-
-    - WebSocket streams for real-time monitoring
-
-    - Alert notifications
-
-4. **API Responses:**
-
-    - Health status
-
-    - Metric queries
-
-    - Trace retrieval
+- [ ] Time-series backend integration managed by a dedicated observability service.
+- [ ] Jaeger/OTLP trace storage and retrieval API as productized component feature.
+- [ ] Kafka/WebSocket alert/event fan-out from observability subsystem.
+- [ ] Dedicated observability API query responses for historical metrics/traces.
 
 ## Storage / State
 
-### Internal State:
+### Internal state
 
-1. **Metrics Registry**: In-memory storage of active metrics with labels and values
+### Implemented now
 
-2. **Trace Buffer**: Temporary storage of trace spans before batch export
+- In-memory counters in System API metrics state:
+  - request total
+  - request duration sum
+  - authz denied total
 
-3. **Event Buffer**: In-memory queue for event batching and backpressure management
+### TODO
 
-4. **Subscription State**: Active WebSocket connections and event subscriptions
+- [ ] Central metrics registry with labels and richer metric types.
+- [ ] Trace buffering with batch export policies.
+- [ ] Event buffering and backpressure controls.
+- [ ] Subscription/session state for realtime stream consumers.
 
-### External Storage:
+### External storage
 
-1. **Time-Series Database**: Prometheus (or compatible) for metric storage
+### Implemented now
 
-2. **Trace Storage**: Jaeger backend or OTLP-compatible storage
+- No mandatory centralized external observability storage implemented by this component itself.
 
-3. **Event Logging**: Kafka topics with retention policies
+### TODO
 
-4. **Configuration Storage**: File-based YAML configurations
+- [ ] Prometheus/compatible TSDB as managed storage target.
+- [ ] Jaeger/OTLP-compatible trace backend integration.
+- [ ] Event-log retention backend (e.g., Kafka topics).
+- [ ] Central configuration storage contract (file/env/control-plane).
 
-### Caching:
+### Caching
 
-- Metric aggregation caching for frequent queries
+### Implemented now
 
-- Trace sampling configuration to reduce storage volume
+- No dedicated caching layer documented/implemented for observability component.
 
-- Event deduplication and batching
+### TODO
+
+- [ ] Metric aggregation cache for frequent queries.
+- [ ] Trace sampling configuration and cache.
+- [ ] Event deduplication/batching cache.
 
 ## Failure Modes
 
-**1. Backend Service Unavailability:**
+### Implemented now
 
-- **Prometheus Down**: Metrics buffered in memory with configurable retention, logged warnings
+- RFC 0018 defines required runtime observability checks as release gates.
+- System API metrics server behavior is test-covered for payload correctness.
 
-- **Jaeger/Trace Collector Down**: Trace spans buffered locally, configurable drop policies after buffer limits
+### TODO
 
-- **Kafka/Event Bus Down**: Events queued in memory, with circuit breaker pattern to prevent memory exhaustion
+- [ ] Backend unavailability strategy for metrics/traces/events (buffering, drop policies, circuit breakers).
+- [ ] Resource exhaustion strategies (adaptive sampling, throttling, degradation modes).
+- [ ] Data-loss controls (overflow policies, dead-letter flow, auditability).
+- [ ] Clock-skew handling across distributed telemetry producers.
+- [ ] Configuration error recovery strategy (fail-fast + safe defaults + audit trail).
 
-**2. Resource Exhaustion:**
+## Observability (of observability)
 
-- **Memory Pressure**: Adaptive sampling reduces trace/event volume, prioritized metric retention
+### Metrics
 
-- **CPU Saturation**: Throttles metric collection frequency, degrades to essential metrics only
+### Implemented now
 
-- **Network Issues**: Implements retry with exponential backoff for external exports
+- Service-local counters exist (System API):
+  - `eigen_api_requests_total`
+  - `eigen_api_request_duration_seconds`
+  - `eigen_api_authz_denied_total`
 
-**3. Data Loss Scenarios:**
+### TODO
 
-- **Buffer Overflow**: Configurable policies (drop oldest, sample, or block)
+- [ ] Observability-subsystem self-metrics family (`observability_*`) as originally planned.
+- [ ] Explicit backend error/drop/latency metrics for observability pipelines.
+- [ ] Capacity and saturation metrics for observability internals.
 
-- **Export Failures**: Dead letter queues for failed exports with manual recovery options
+### Logs
 
-- **Clock Skew**: Handles timestamp inconsistencies across distributed components
+### Implemented now
 
-4. **Configuration Errors:**
+- Structured JSON logs with request correlation fields in System API.
 
-    **Invalid Config**: Fail-fast with clear error messages, fallback to safe defaults
+### TODO
 
-    **Permission Issues**: Graceful degradation of affected features with audit logging
+- [ ] Cross-service unified JSON log schema enforcement (including full RFC 0008 field set).
+- [ ] Audit logging for observability config changes/exports.
+- [ ] Slow-path/bottleneck standardized log events across components.
 
-**Recovery Strategies:**
+### Traces
 
-- Automatic reconnection to backend services
+### Implemented now
 
-- Configurable retry policies with jitter
+- Trace context propagation is required and contract-tested in MVP runtime flow.
 
-- Health checks and automatic failover for critical paths
+### TODO
 
-- Audit trails for all data loss events
+- [ ] Full self-instrumentation of observability pipelines.
+- [ ] Persistent trace export pipeline with backend management.
+- [ ] First-class trace query UX/API.
 
-## Observability (of Observability Core)
+### Health checks
 
-### Metrics:
+### Implemented now
 
-- Internal performance metrics: `observability_events_processed_total`, `observability_metrics_collection_duration_seconds`
+- No dedicated health hierarchy for a standalone observability core service.
 
-- Error rates: `observability_backend_errors_total`, ``observability_events_dropped_total``
+### TODO
 
-- Resource usage: `observability_memory_usage_bytes`, `observability_cpu_usage_percent`
+- [ ] Component-level health endpoints for observability subsystems.
+- [ ] Dependency health checks (Prometheus/Kafka/Jaeger connectivity).
+- [ ] Resource-based alarms and autoscaling hooks.
 
-- Throughput: `observability_event_bus_latency_seconds`, `observability_tracing_spans_created_total`
+### Dashboards & alerts
 
-### Logs:
+### Implemented now
 
-- Structured JSON logging with correlation IDs
+- Prometheus alert packs/runbooks/dashboards exist for multiple domains (orchestrator, benchmark, intelligent runtime, cluster runtime, plugin runtime) at repository level.
 
-- Audit logs for all configuration changes and data export operations
+### TODO
 
-- Error logs with full context for debugging failures
+- [ ] Preconfigured dedicated "Observability Core" dashboard.
+- [ ] Alert rules specifically for centralized observability-pipeline failures.
+- [ ] Capacity forecasting for observability infrastructure as a unified subsystem.
 
-- Performance logs for slow operations and bottlenecks
+## RFC / ADR alignment check
 
-### Traces:
+### Reviewed
 
-- Self-instrumentation of Observability Core operations
+- RFC 0008 (Observability MVP)
+- RFC 0018 (MVP-3 Runtime Observability and Release Gates)
+- ADR 0007 (MVP-3 release readiness and observability gates)
 
-- Trace propagation through event processing pipelines
+### Alignment summary
 
-- Performance analysis of metric collection and export paths
-
-### Health Checks:
-
-- Component-level health endpoints (`/health` for each subsystem)
-
-- Dependency health monitoring (Prometheus, Kafka, Jaeger connectivity)
-
-- Resource utilization alarms and automatic scaling triggers
-
-### Dashboard & Alerts:
-
-- Pre-configured Grafana dashboards for Observability Core
-
-- Alert rules for critical failures and performance degradation
-
-- Capacity planning metrics and predictive scaling
+- Current implementation is aligned with **minimum MVP-3 runtime observability gates** (trace propagation + required checks in CI/process).
+- The original broad "Observability Core" scope from earlier architecture description remains **partially implemented** and is now explicitly captured as TODOs above to avoid scope loss.
