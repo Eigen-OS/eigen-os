@@ -1,151 +1,191 @@
 # Security Isolation (MVP)
 
 - Phase: MVP
+- - Last verified against implementation: 2026-05-09
+- Verified sources: `rfcs/0009-security-isolation-mvp.md`, `docs/adr/0007-mvp3-release-readiness-runtime-contracts-and-security-closure.md`, `rfcs/0018-mvp3-runtime-observability-and-release-gates.md`, System API + Rust security module code.
 
 ## MVP Threat Model (Current Baseline)
 
-Protected in MVP:
+Implemented in MVP:
 
-- Public API ingress must pass through System API authn mode (`allow_all` or `static_token`).
-- Request payloads are bounded (program source bytes + embedded JobSpec YAML bytes).
-- Compiler frontend parses untrusted source without execution and rejects forbidden imports/calls.
-- Compiler frontend enforces basic resource limits (source bytes, AST node count, AST depth).
+- Public API authn boundary is enforced in System API via explicit auth mode:
+  - `SYSTEM_API_AUTH_MODE=allow_all` (dev default)
+  - `SYSTEM_API_AUTH_MODE=static_token` + `SYSTEM_API_AUTH_TOKEN=<token>`
+- Coarse authz checks are enforced at gRPC method level (e.g., `jobs:submit`, `jobs:read`, `devices:list`, `devices:reserve`).
+- Request payload bounds are enforced:
+  - `SYSTEM_API_MAX_PROGRAM_SOURCE_BYTES` (default `262144`)
+  - `SYSTEM_API_MAX_JOBSPEC_YAML_BYTES` (default `65536`)
+- Compiler/frontend path rejects forbidden Eigen-Lang constructs and enforces AST/resource limits (per RFC 0009 + existing validation pipeline).
 
-Not protected in MVP:
+Not implemented in MVP (tracked for later phases):
 
-- No full multi-tenant sandboxing/isolation of runtime execution.
-- No OIDC/JWT federation and no per-user RBAC policy engine.
-- No hardware-rooted trust, confidential compute, or cryptographic attestation.
-- No comprehensive secret scanning/DLP for submitted source artifacts.
+- **TODO:** Full multi-tenant runtime sandboxing/isolation guarantees at kernel/driver/hardware layer.
+- **TODO:** OIDC/JWT federation and centralized per-user RBAC/ABAC policy engine.
+- **TODO:** Hardware-rooted trust, confidential compute, attestation chain.
+- **TODO:** Comprehensive secret scanning/DLP on submitted artifacts.
 
 ## Responsibility
 
-The Security & Isolation module in MVP provides **basic access control, authentication, and resource isolation** to ensure safe, multi‑tenant quantum‑classical job execution. It focuses on:
+Current MVP component responsibilities:
 
-1. **Authentication boundary (explicit mode)**: Enforcing an explicit auth mode in System API:
-   - `SYSTEM_API_AUTH_MODE=allow_all` (default for local/dev MVP)
-   - `SYSTEM_API_AUTH_MODE=static_token` + `SYSTEM_API_AUTH_TOKEN=<token>`
+1. **Authentication boundary (implemented)**
+   - Enforce explicit auth mode in System API (`allow_all` / `static_token`).
 
-2. **Security Context Propagation**: Passing authenticated user identity and roles through the system.
+2. **Authorization checks (implemented)**
+   - Enforce coarse role/permission model in System API with static in-process role mappings.
 
-3. **Input Validation & Sanitization**: Preventing malformed/oversized sources and job payload metadata.
+3. **Input validation & sanitization (implemented)**
+   - Reject malformed/oversized source and embedded JobSpec YAML metadata.
 
-4. **Isolation Hooks**: Providing a minimal interface for future hardware‑level isolation checks (stubbed or simulated in MVP).
+4. **Isolation hook at kernel boundary (partial)**
+   - Rust `security-module` crate exists as MVP placeholder.
+   - **TODO:** Implement `SecurityModule.check(task, device)`-style runtime isolation decision path (currently no real enforcement logic in crate).
+
+5. **Audit/security observability (partial)**
+   - Authz denied events are counted and logged in System API.
+   - **TODO:** Complete structured audit trail for all security-sensitive actions (submit/reserve/cancel/etc.) with durable sink and schema freeze.
 
 ## Interfaces
 
 ### System API (Python)
 
-- **Authentication Interceptors**: Validate API keys/tokens from incoming gRPC/REST requests.
+Implemented:
 
-- **Authorization Engine**: Maps users/roles to permissions (e.g., `jobs:submit`, `devices:list`).
+- Authn gate (`enforce_authn`) for incoming gRPC requests.
+- Authz gate (`enforce_authz`) on protected methods.
+- `auth_context(...)` extraction of `subject`, `roles`, `tenant` (used for request context).
 
-- **Context Propagation**: Injects security context (`x‑eigen‑sub`, `x‑eigen‑roles`, `x‑eigen‑tenant`) into gRPC metadata for internal calls.
+Partially implemented / TODO:
+
+- **TODO:** Canonical interceptor/middleware-based auth chain for both gRPC + REST surface (current baseline is gRPC service-method enforcement; REST parity must be explicitly confirmed/extended).
+- **TODO:** Externalized policy source (current role-permission map is static in code).
 
 ### Kernel (Rust) – Security Module Hook
 
-- **Trait**: `SecurityModule`
+Implemented:
 
-- **Method**: `check(task: &Task, device: &DeviceInfo) -> Result<(), SecurityError>`
+- `src/rust/crates/security-module` crate exists and is wired as placeholder component.
 
-- **Purpose**: Placeholder for future isolation checks; in MVP, logs the request and returns `Ok(())` by default.
+Not yet implemented:
 
-### Internal gRPC Metadata Headers
+- **TODO:** Real kernel-side isolation/security trait + decision API integration (`check(task, device) -> Result<(), SecurityError>`), including deny paths and audit fields.
 
-- `x‑eigen‑sub`: User/Service identifier.
+### Internal security context metadata
 
-- ``x‑eigen‑roles``: Comma‑separated list of roles (e.g., `user,researcher`).
+RFC 0009 contract fields:
 
-- `x‑eigen‑tenant`: Optional tenant/organization ID.
+- `x-eigen-sub`
+- `x-eigen-roles`
+- `x-eigen-tenant`
+- `traceparent`
 
-- `traceparent`: W3C TraceContext for observability.
+Current state:
+
+- `traceparent` is parsed/propagated in System API observability context.
+- `x-eigen-*` fields are consumed by auth context/authz logic.
+- **TODO:** Verify and enforce end-to-end forwarding contract across all internal gRPC hops (`system-api -> kernel -> driver-manager`) and include these fields in kernel audit records per RFC 0009.
 
 ## Inputs / Outputs
 
-| **Input** | **Source** | **Description** |
+| **Input** | **Source** | **Current state** |
 |-------------------|-------------------|-------------------|
-| API Key / Token | HTTP/gRPC Header | Provided by client via `Authorization` header. |
-| JobSpec (YAML) | Client → System API | Validated for safety (no secrets, size limits). |
-| Security Context | System API → Kerneln | Propagated via gRPC metadata. |
-| Device Info | Driver Manager → Kernel | Used for isolation hook (device capabilities, status). |
+| Authorization token | gRPC metadata (`authorization`) | Implemented for `static_token` mode. |
+| Program source bytes | SubmitJob payload | Implemented size validation. |
+| Embedded `jobspec_yaml` | SubmitJob metadata | Implemented size validation and parse path checks. |
+| Security context (`x-eigen-*`) | Request metadata | Partially implemented in System API only; **TODO:** full internal propagation guarantees. |
+| Device info for isolation decision | Driver Manager / Kernel path | **TODO:** not implemented as enforceable security isolation decision in MVP code. |
 
 ---
 
-| **Output** | **Destination** | **Description** |
+| **Output** | **Destination** | **Current state** |
 |-------------------|-------------------|-------------------|
-| AuthZ Decision | System API → Client | Allow/Deny with gRPC status (`PERMISSION_DENIED`, `UNAUTHENTICATED`). |
-| Audit Log Entry | Local log file / stdout | Structured JSON log of security‑relevant events. |
-| Security Metrics | Prometheus endpoint | Counters for auth successes/denials, validation errors. |
+| Authn/Authz decision | System API → Client | Implemented (`UNAUTHENTICATED`, `PERMISSION_DENIED`). |
+| Validation decision | System API → Client | Implemented (`INVALID_ARGUMENT` + field violations). |
+| Security metrics | `/metrics` endpoint | Partially implemented (`eigen_api_authz_denied_total` plus generic request metrics). |
+| Security audit log | Structured logs | Partially implemented; **TODO:** durable audit sink + full event coverage. |
 
 ## Storage / State
 
-- **Role‑Permission Mapping**: Static configuration file (e.g., `configs/security.yaml`), loaded at startup.
+Implemented:
 
-- **Audit Logs**: Written to local disk (JSONL format) under `/var/log/eigen/audit.log`.
+- Security config comes from env vars at process startup/runtime reads.
+- In-memory metrics counters for denied authz and request totals.
 
-- **Security Context Cache**: In‑memory cache in System API for validated tokens (optional, TTL‑based).
+Not implemented / TODO:
+
+- **TODO:** Config-backed role-permission mapping file (RFC text examples mention YAML, but current implementation is in-code static map).
+- **TODO:** Dedicated audit log file path contract (`/var/log/eigen/audit.log`) and rotation/retention policy.
+- **TODO:** Token/context cache with TTL (not present in current code).
 
 ## Failure Modes
 
-| **Failure** | **Detection** | **Mitigation** |
+| **Failure** | **Detection** | **Current mitigation state** |
 |-------------------|-------------------|-------------------|
-| Invalid/Missing Token | System API interceptor | Return `UNAUTHENTICATED` (gRPC status `16`). |
-| Insufficient Permissions | Authorization engine | Return `PERMISSION_DENIED` (gRPC status `7`). |
-| Malformed JobSpec | Input validation | Return `INVALID_ARGUMENT` (gRPC status `3`) with details. |
-| Security Module Unavailable | Kernel health check | Log warning; proceed without isolation check (MVP fallback). |
-| Audit Log Write Failure | File I/O error | Log to stderr as fallback; increment metric `security_audit_failures`. |
+| Missing/invalid token in `static_token` mode | `enforce_authn` | Implemented: return `UNAUTHENTICATED`. |
+| Insufficient permission | `enforce_authz` | Implemented: return `PERMISSION_DENIED`; increment denied metric/log event. |
+| Oversized source / YAML | validation/jobspec parser | Implemented: return `INVALID_ARGUMENT` with field violations. |
+| Security module unavailable / non-functional | kernel path | **TODO:** no explicit runtime health-gated behavior documented in code; placeholder crate only. |
+| Audit sink write failure | audit subsystem | **TODO:** no dedicated audit sink/fallback path implemented. |
 
 ## Observability
 
-### Metrics (Prometheus)
+### Metrics
 
-- `security_auth_attempts_total{outcome="success|denied"}`
+Implemented:
 
-- `security_permission_checks_total{resource,action,allowed}`
+- `eigen_api_authz_denied_total`
+- `eigen_api_requests_total`
+- `eigen_api_request_duration_seconds`
 
-- `security_validation_errors_total{type}`
+Not implemented / TODO:
 
-- `security_audit_events_total`
+- **TODO:** RFC-aligned security metric family with labels for auth attempts, permission checks, and validation error types (the previous proposed `security_*` set is not currently exposed).
 
-### Logs (JSON)
-```json
-{
-  "timestamp": "2026-01-10T10:30:00Z",
-  "level": "INFO",
-  "service": "system-api",
-  "trace_id": "abc123",
-  "job_id": "job-xyz",
-  "user": "user@example.com",
-  "roles": ["user"],
-  "action": "SubmitJob",
-  "resource": "jobs",
-  "allowed": true
-}
-```
+### Logs
+
+Implemented:
+
+- JSON logs with common request fields (`trace_id`, `traceparent`, `method`, `request_id`, optional `job_id`).
+- Authz denied structured warning log entries.
+
+Not implemented / TODO:
+
+- **TODO:** Full security audit schema (subject/action/resource/outcome across all sensitive operations) and immutable/durable audit retention policy.
 
 ### Traces
 
-- Security‑relevant spans (auth, validation) are included in the end‑to‑end trace.
+Implemented:
 
-- Span tags: `user`, `roles`, `resource`, `action`, `outcome`.
+- `traceparent` ingestion and `trace_id` extraction in System API request context.
 
----
+Not implemented / TODO:
 
-## Implementation Notes for MVP
+- **TODO:** End-to-end security span contract with required tags (`user`, `roles`, `resource`, `action`, `outcome`) across all services.
 
-1. **Authentication**:
-   - Explicitly configured at runtime (`allow_all` or `static_token`).
-   - In `static_token` mode, missing/invalid `Authorization: Bearer <token>` returns `UNAUTHENTICATED`.
+## RFC / ADR Conformance Check (2026-05-09)
 
-2. **Authorization**: Static role‑permission mapping defined in YAML. No dynamic policy engine.
+### RFC 0009 (Security & Isolation MVP)
 
-3. **Isolation**: The `SecurityModule` in the kernel is a stub that logs and approves all requests. Real hardware‑level isolation is Phase 2+.
+- **Implemented:** explicit authn mode, coarse authz, payload size limits, baseline role-permission model.
+- **Partially implemented:** auth context metadata handling + security observability.
+- **TODO gaps:** real kernel isolation checks, end-to-end metadata propagation guarantees, complete audit event model.
 
-4. **Input Validation**:
-   - `SYSTEM_API_MAX_PROGRAM_SOURCE_BYTES` (default 262144 bytes).
-   - `SYSTEM_API_MAX_JOBSPEC_YAML_BYTES` (default 65536 bytes) for `metadata[jobspec_yaml]`.
-   - Compiler rejects forbidden imports/calls and enforces AST node/depth limits.
+### ADR 0007 (MVP-3 security closure)
 
-5. **Audit**: All security‑sensitive actions (job submission, device reservation) are logged with user context.
+- ADR requires security audit completion for kernel-driver boundary controls as release evidence.
+- **TODO:** this component doc still needs explicit link/evidence artifact for completed kernel-driver security audit and resulting controls.
 
-6. **Network Security**: All internal services (Kernel, Compiler, Driver Manager) are on a private Docker network. No public exposure.
+### RFC 0018 (runtime observability + release gates)
+
+- Security/privacy clause requires no secret leakage and actionable sanitized diagnostics.
+- **Partially implemented:** bounded logs and basic structured fields.
+- **TODO:** explicit security-focused log redaction policy + CI assertions tied to security telemetry fields.
+
+## Implementation Notes for MVP (frozen current state)
+
+1. Auth is environment-driven (`allow_all` / `static_token`).
+2. Authz is coarse-grained and static-map based in System API.
+3. Request-size validation for source and `jobspec_yaml` is implemented and tested.
+4. Rust `security-module` currently acts as placeholder library, not as a complete enforcement component.
+5. Security observability is partial (denied counter + structured logs) and not yet a full audit subsystem.
+6. Network isolation assumptions are documented at architecture level, but **TODO:** enforceable/measured control evidence should be linked here when available.
