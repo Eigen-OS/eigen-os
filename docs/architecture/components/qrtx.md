@@ -1,92 +1,114 @@
-# Kernel (QRTX) – MVP Summary
+# Kernel (QRTX) – Implementation Status Snapshot
 
-- **Phase**: MVP (Phase 0)
-
-- **Status**: Core scheduler and pipeline; advanced features deferred to later phases.
+- **Original phase intent**: MVP (Phase 0), per RFC 0007.
+- **Current implementation snapshot date**: 2026-05-09.
+- **Status**: Implemented as a minimal internal orchestration kernel in `src/rust/crates/eigen-kernel` with an in-memory store and a reduced state machine; part of the RFC intent remains deferred.
 
 ## Responsibility
 
-**MVP Scope**: QRTX is the central orchestrator that manages the end-to-end job lifecycle via a **simplified pipeline** (no full DAG support yet).
+Implemented now:
 
-**Key responsibilities in MVP:**
+- QRTX accepts internal job submissions and orchestrates a linear async pipeline: compile → execute → persist results/artifacts.
+- QRTX coordinates with:
+  - `CompilationService` (compile + validate call paths are present),
+  - `DriverManagerService` (device status + execute circuit),
+  - QFS via `CircuitFsLocal` (layout + artifacts/results/error payload persistence).
+- QRTX exposes job lifecycle and terminal result/error payload via internal gRPC.
 
-- Receive jobs from system-api via internal gRPC gateway.
+TODO (not fully реализовано относительно RFC/архитектурного намерения):
 
-- Manage task state machine: `Pending` → `Validating` → `Compiling` → `Queued` → `Allocating` → `Executing` → `Completing` → `Completed`.
-
-- Coordinate with eigen-compiler (for compilation) and driver-manager (for execution).
-
-- Persist artifacts/results to QFS (CircuitFS).
-
-- Aggregate device status (backend status + scheduler queue info) for system-api.
+- TODO: Expand lifecycle orchestration from current reduced machine (`Pending → Compiling → Running → Done/Error/Cancelled/Timeout`) to the full RFC chain (`Pending → Validating → Compiling → Queued → Allocating → Executing → Completing → Completed` + documented sub-states).
+- TODO: Add explicit scheduler semantics for queueing/allocation as first-class runtime stages (currently represented only implicitly, without dedicated persisted states).
+- TODO: Add durable state storage/recovery semantics expected for production-grade orchestration (currently only in-memory store).
 
 ## Interfaces
 
-- **Internal gRPC API**: `KernelGateway` service (RFC 0004 Appendix A):
+Implemented now:
 
-    - EnqueueJob, GetJobStatus, CancelJob, GetJobResults, ListDevices
+- **Internal gRPC API**: `KernelGatewayService` with:
+  - `EnqueueJob`, `GetJobStatus`, `CancelJob`, `GetJobResults`.
+- **Outbound gRPC clients**:
+  - `CompilationService`
+  - `DriverManagerService`
+- **QFS client**:
+  - `CircuitFsLocal` used for `jobs/<job_id>/...` artifacts/results/error files.
 
-- **Outbound gRPC clients:**
+TODO:
 
-    - To eigen-compiler: `CompilationService` (compile/validate/optimize)
-
-    - To driver-manager: `DriverManagerService` (execute circuit)
-
-- **QFS client**: For storing/retrieving artifacts in `circuit_fs/<job_id>/`.
+- TODO: `ListDevices` in `KernelGateway` is referenced in older architecture docs/RFC notes but is **not** present in current `kernel_gateway.proto`; align component docs + RFC appendix references to current contract and single source of truth.
+- TODO: Finalize and document whether device listing is owned by Kernel gateway or remains exclusively proxied from System API to Driver Manager in current architecture.
 
 ## Inputs / Outputs
 
-- **Inputs:**
+Implemented now:
 
-    - `EnqueueJobRequest` from system-api (contains job spec, target, metadata).
+- **Inputs**:
+  - `EnqueueJobRequest` (name/program/target/options/metadata).
+  - `GetJobStatusRequest`, `CancelJobRequest`, `GetJobResultsRequest`.
+  - Compiler and driver responses via outbound gRPC.
+- **Outputs**:
+  - gRPC status/result responses including terminal error payload fields (`error_code`, `error_summary`, `error_details_ref`).
+  - QFS artifacts and metadata (compiled IR, counts, execution metadata, persisted error details).
 
-    - Device status updates from driver-manager.
+TODO:
 
-- **Outputs:**
-
-    - Job status updates to system-api (polling-based in MVP).
-
-    - Artifacts stored in QFS: `compiled.aqo.json`, `results.json`, etc.
-
-    - Aggregated `DeviceStatus` for public API.
-
+- TODO: Add explicit, documented inbound device-status update stream contract (current integration polls/calls services; no dedicated async status ingestion API on Kernel gateway).
+- TODO: Reconcile artifact path conventions in this component doc with current runtime/QFS docs to avoid stale `circuit_fs/<job_id>/` wording where runtime now uses canonical `jobs/<job_id>/...` layout helpers.
 
 ## Storage / State
 
-- **State persistence**: In-memory task state (MVP only; no durable state store).
+Implemented now:
 
-- **QFS usage**: All artifacts stored in `circuit_fs/<job_id>/` with fixed naming.
+- **State persistence**:
+  - In-memory `JobStore` with per-job record, timestamps, state, counts, result metadata, error payload.
+- **QFS usage**:
+  - Job layout initialization and persistence of artifacts/results/errors in local QFS root.
+- **Terminalization semantics**:
+  - Terminal states reject further transitions except idempotent re-terminalization for matching terminal event.
 
-- **Device aggregation**: Kernel maintains queue depth and reservation state for each device.
+TODO:
 
-- **Checkpointing**: Not in MVP.
+- TODO: Add durable state backend (DB/event-log) and startup recovery.
+- TODO: Add checkpointing/resume semantics (explicitly absent).
+- TODO: Add formal reservation/queue-depth aggregation state in Kernel if Resource Manager responsibilities are to be hosted here long-term.
 
 ## Failure Modes
 
-- **Compiler failure**: Job transitions to `Failed` with `CompileError`.
+Implemented now:
 
-- **Driver/backend failure**: Job transitions to `Failed` with `ExecuteError`.
+- **Compiler failure / connect failure** → job transitions to `Error`, structured error payload is set.
+- **Driver execution/connect failure** → job transitions to `Error`, structured error payload is set.
+- **QFS persistence/layout failure** → pipeline returns error, job transitions to `Error`.
+- **Cancellation** supported for non-terminal jobs.
+- **Timeout state** exists in state machine and proto enum.
 
-- **QFS unavailable**: Kernel retries; job may stall or fail.
+TODO:
 
-- **Network partition between services**: gRPC timeouts; jobs may be stuck in intermediate states.
+- TODO: Introduce explicit runtime timeout enforcement mechanism (state exists, but dedicated scheduler timeout policy/worker currently not documented as implemented in kernel runtime path).
+- TODO: Add robust retry/backoff policy specification and implementation guarantees for QFS/network partitions (currently failures mostly surface as immediate pipeline errors).
 
 ## Observability
 
-- **Metrics:**
+Implemented now:
 
-    - `eigen_kernel_job_state_transitions_total{from,to}`
+- Structured tracing/logging is wired in kernel pipeline (`tracing`, request metadata propagation including `traceparent`/`trace_id`).
+- Stage-oriented spans are emitted around async pipeline execution.
 
-    - `eigen_kernel_stage_duration_seconds{stage}`
+TODO:
 
-    - `eigen_kernel_queue_depth`
-
-    - `eigen_kernel_active_jobs`
-
-- **Logs**: Include `job_id`, `stage`, `device_id`, `trace_id`.
-
-- **Traces**: Span per pipeline stage; propagated via `traceparent`.
+- TODO: Implement and document the metrics set previously declared here (`eigen_kernel_job_state_transitions_total`, `eigen_kernel_stage_duration_seconds`, `eigen_kernel_queue_depth`, `eigen_kernel_active_jobs`) if these are required by accepted observability RFC/ADR gates; current kernel implementation snapshot focuses on logs/traces and does not expose this full metric surface in the component runtime code.
+- TODO: Synchronize this section with accepted observability contracts and release-gate docs so required telemetry is explicitly testable.
 
 ---
 
-**Note**: MVP implements a **linear pipeline** rather than full DAG orchestration. Advanced scheduling (noise-aware, topology-aware, predictive) and checkpointing are planned for Phase 2+.
+## RFC / ADR Consistency Notes
+
+Checked against repository RFC/ADR artifacts relevant to QRTX:
+
+- RFC 0007 defines fuller lifecycle granularity than currently implemented state machine.
+- RFC 0004 internal API appendix historically references optional `KernelGateway.ListDevices`; current proto omits this RPC.
+- ADR package for MVP release/readiness and later phases should continue to treat reduced-kernel behavior as current baseline until expansion work lands.
+
+TODO:
+
+- TODO: When lifecycle expansion or contract changes land, update this component document + `docs/reference/api/grpc-internal.md` + contract map in one atomic doc change to prevent drift.
