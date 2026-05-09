@@ -1,268 +1,144 @@
-# Internal gRPC APIs (MVP)
+# Internal gRPC APIs (MVP snapshot)
 
-## Summary
+- **Phase**: MVP
+- **Snapshot date**: 2026-05-09
+- **Proto source of truth**: `proto/eigen/internal/v1/*`
 
-Defines the internal gRPC service contracts used between Eigen OS services during MVP. These APIs are **not exposed to clients** and may evolve more freely than the public API.
+This document fixes the **actual current internal gRPC contract** and explicitly marks what is still missing relative to architecture/RFC intent.
 
-## Services Overview
+## Package and service map
 
-| **Service** | **Purpose** | **Language** | **Caller(s)** |
-|-------------------|-------------------|-------------------|-------------------|
-| `KernelGateway` | Entry point for system‑api to forward job requests | Rust | system‑api |
-| `CompilationService` | Compile/validate/optimize quantum circuits | Python | eigen‑kernel |
-| `DriverManagerService` | Execute circuits on backends via plugins | Python | eigen‑kernel |
+Implemented package:
+- `eigen.internal.v1`
 
-### 1. KernelGateway (kernel_api.v0.1)
+Implemented services:
+- `KernelGatewayService` (`kernel_gateway.proto`)
+- `CompilationService` (`compilation_service.proto`)
+- `DriverManagerService` (`driver_manager_service.proto`)
 
-Internal gateway exposed by eigen‑kernel for system‑api to forward requests.
+Common shared types:
+- `CircuitPayload`, `CircuitFormat`, `DeviceInfo`, `DeviceStatus` (`types.proto`)
 
-**Service Definition**
-```proto
-service KernelGateway {
-  // Job lifecycle
-  rpc EnqueueJob(EnqueueJobRequest) returns (EnqueueJobResponse);
-  rpc GetJobStatus(GetJobStatusRequest) returns (GetJobStatusResponse);
-  rpc CancelJob(CancelJobRequest) returns (CancelJobResponse);
-  rpc GetJobResults(GetJobResultsRequest) returns (GetJobResultsResponse);
-  
-  // Device management
-  rpc ListDevices(ListDevicesRequest) returns (ListDevicesResponse);
-  rpc GetDeviceStatus(DeviceStatusRequest) returns (DeviceStatusResponse);
-  
-  // Streaming updates (polling‑based in MVP)
-  rpc PollJobUpdates(PollJobUpdatesRequest) returns (PollJobUpdatesResponse);
-}
+## 1) KernelGatewayService (System API ↔ Kernel)
 
-// Request/response examples (key fields only)
-message EnqueueJobRequest {
-  string job_id = 1;
-  string name = 2;
-  oneof program {
-    EigenLangSource eigen_lang = 3;
-    QasmSource qasm = 4;
-    AqoRef aqo_ref = 5;
-  }
-  string target = 6;
-  int32 priority = 7;
-  map<string, string> compiler_options = 8;
-  map<string, string> metadata = 9;
-  repeated string dependencies = 10;
-  // Auth context from system‑api
-  string subject = 11;
-  repeated string roles = 12;
-  string tenant = 13;
-}
+### Implemented RPCs
+- `EnqueueJob`
+- `GetJobStatus`
+- `CancelJob`
+- `GetJobResults`
 
-message EnqueueJobResponse {
-  string job_id = 1;  // echoed back
-  google.protobuf.Timestamp enqueued_at = 2;
-}
+### Implemented contract details
+- Package/name in code is `KernelGatewayService` (not legacy `KernelGateway`).
+- `EnqueueJobRequest` accepts normalized program bytes: `program` + `program_format`.
+- `EnqueueJobResponse` returns `job_id`, `state`, `created_at`.
+- `GetJobStatusResponse` includes lifecycle fields plus error payload fields (`error_code`, `error_summary`, `error_details_ref`).
+- `GetJobResultsResponse` returns `counts`, `metadata`, completion timestamp, and optional error payload fields.
+- Internal task enum includes: `PENDING`, `COMPILING`, `QUEUED`, `RUNNING`, `DONE`, `ERROR`, `CANCELLED`, `TIMEOUT`.
 
-message PollJobUpdatesRequest {
-  string job_id = 1;
-  uint64 last_event_seq = 2;  // 0 for start
-  int32 max_events = 3;
-}
+### Missing / gaps
+- `PollJobUpdates` is **not** part of this internal proto; streaming/poll adaptation is implemented in public API flow.
+- Explicit auth-context fields (`subject/roles/tenant`) are not encoded as request fields in this proto; propagation is expected via metadata/pipeline policy.
+- Contract-level documentation for idempotency keys on internal submit path is still missing.
 
-message PollJobUpdatesResponse {
-  repeated JobUpdate updates = 1;
-  bool has_more = 2;
-}
-```
+## 2) CompilationService (Kernel ↔ Compiler)
 
-**Notes**:
+### Implemented RPCs
+- `CompileCircuit`
+- `CompileJob`
+- `OptimizeCircuit`
+- `ValidateCircuit`
 
-- Used by system‑api to forward `SubmitJobRequest` after validation/auth
+### Implemented contract details
+- Supports direct source bytes or QFS-like `source_ref` via oneof input.
+- `CompileCircuitResponse`/`CompileJobResponse` return `CircuitPayload` + metadata map.
+- `CircuitPayload.format` comes from shared `CircuitFormat` enum (`AQO_JSON`, `AQO_PROTO`, `QASM3_TEXT`, `BACKEND_NATIVE`).
 
-- Auth context (`subject`, `roles`, `tenant`) must be propagated via gRPC metadata
+### Missing / gaps
+- Runtime behavior currently keeps `OptimizeCircuit` and `ValidateCircuit` as `UNIMPLEMENTED` in compiler service implementation (API surface exists, production behavior incomplete).
+- No frozen schema yet for compiler `options` map keys/values (currently open-ended).
+- Source dereference lifecycle for `source_ref` is not fully standardized in this document (ownership/timeouts/error mapping still needs freeze).
 
-- `PollJobUpdates` is polling‑based in MVP; true streaming may come in Phase 1
+## 3) DriverManagerService (Kernel ↔ Driver Manager)
 
-- Device methods may proxy to driver‑manager or return cached aggregates
+### Implemented RPCs
+- `ListDevices`
+- `GetDeviceStatus`
+- `ExecuteCircuit`
+- `CalibrateDevice`
 
-### 2. CompilationService (compiler_api.v0.1)
+### Implemented contract details
+- `ExecuteCircuitRequest` includes `job_id`, `device_id`, `payload`, `shots`, `options`.
+- `ExecuteCircuitResponse` normalizes backend output into `counts`, `execution_time_sec`, `metadata`.
+- Device discovery/status uses shared `DeviceInfo`/`DeviceStatus` types.
 
-Service for compiling, validating, and optimizing quantum circuits.
+### Missing / gaps
+- Service method `CalibrateDevice` exists in proto, but current MVP runtime behavior is documented as `UNIMPLEMENTED` in component status docs.
+- Async/long-running execution interface is not present yet (single unary execute RPC in MVP).
+- Standardized cross-driver metadata keys for execution diagnostics are not frozen.
 
-**Service Definition**
-```proto
-service CompilationService {
-  // Compile Eigen‑Lang source to AQO
-  rpc CompileCircuit(CompileCircuitRequest) returns (CompileCircuitResponse);
-  
-  // Optimize an existing circuit
-  rpc OptimizeCircuit(OptimizeCircuitRequest) returns (OptimizeCircuitResponse);
-  
-  // Validate circuit syntax/semantics
-  rpc ValidateCircuit(ValidateCircuitRequest) returns (ValidateCircuitResponse);
-}
+## 4) Shared enums/types alignment notes
 
-message CompileCircuitRequest {
-  oneof source {
-    EigenLangSource eigen_lang = 1;
-    QasmSource qasm = 2;
-    AqoBytes aqo = 3;
-  }
-  string target = 4;  // e.g., "sim:local", "ibmq:quito"
-  map<string, string> options = 5;  // compiler_options
-  string job_id = 6;  // for tracing
-}
+### Implemented now
+- Internal enums are prefixed and explicit (`TASK_STATE_*`, `DEVICE_STATUS_*`, `CIRCUIT_FORMAT_*`).
+- `DEVICE_STATUS_ERROR_STATUS` naming differs from historical shorthand (`ERROR`) used in earlier docs.
 
-message CompileCircuitResponse {
-  CircuitPayload payload = 1;
-  CompilationMetadata metadata = 2;
-}
+### Missing / gaps
+- Some architecture text still uses legacy service/version labels (`kernel_api.v1`, etc.) and non-prefixed enum examples; full doc harmonization is still required.
 
-message CircuitPayload {
-  enum Format {
-    AQO_JSON = 0;
-    AQO_PROTO = 1;
-    QASM3_TEXT = 2;
-    BACKEND_NATIVE = 3;
-  }
-  Format format = 1;
-  bytes data = 2;
-}
+## 5) Error model and cross-cutting behavior
 
-message CompilationMetadata {
-  int32 logical_qubits = 1;
-  int32 depth = 2;
-  int32 gate_count = 3;
-  map<string, string> metrics = 4;
-  repeated string warnings = 5;
-}
-```
+### Implemented direction
+- Internal APIs use canonical gRPC status model (not `success=false` payload flags).
+- Validation/state/backend failures are expected to map to standard status codes.
 
-**Notes**:
+Recommended canonical set for MVP operations:
+- `INVALID_ARGUMENT`
+- `NOT_FOUND`
+- `FAILED_PRECONDITION`
+- `RESOURCE_EXHAUSTED`
+- `UNAVAILABLE`
+- `UNIMPLEMENTED`
+- `DEADLINE_EXCEEDED`
 
-- Called by eigen‑kernel during the Compilation stage
+### Missing / gaps
+- A single normative table that maps **every RPC + failure class → exact gRPC code + details type** is still absent.
+- Retry/deadline budgets are not frozen in one reference doc for all internal callers.
 
-- Must perform AST‑only compilation (no execution of user code)
+## 6) Security and observability contract status
 
-- Returns `CircuitPayload` in one of several formats; kernel chooses based on target
+### Implemented/active baseline
+- Internal APIs are intended for private service-to-service use only.
+- Trace propagation uses metadata (`traceparent` / trace id context in runtime).
+- Service-level metrics/logging endpoints exist across components.
 
-- `BACKEND_NATIVE` format is vendor‑specific bytes (driver‑manager responsibility)
+### Missing / gaps
+- mTLS is not yet mandatory end-to-end in MVP baseline.
+- No conformance test matrix is frozen yet for mandatory propagation of `x-eigen-*` security headers on every internal hop.
+- Metric names/labels for internal RPCs are not yet frozen as a reference API contract.
 
-### 3. DriverManagerService (driver_api.v0.1)
+## 7) Architecture drift checklist (to keep docs/code synchronized)
 
-Service for executing circuits on quantum backends via plugin drivers.
-
-**Service Definition**
-```proto
-service DriverManagerService {
-  // List available backends/devices
-  rpc ListDevices(ListDevicesRequest) returns (ListDevicesResponse);
-  
-  // Get detailed device status
-  rpc GetDeviceStatus(DeviceStatusRequest) returns (DeviceStatusResponse);
-  
-  // Execute a circuit
-  rpc ExecuteCircuit(ExecuteCircuitRequest) returns (ExecuteCircuitResponse);
-  
-  // Calibrate a device (optional in MVP)
-  rpc CalibrateDevice(CalibrateDeviceRequest) returns (CalibrateDeviceResponse);
-}
-
-message ExecuteCircuitRequest {
-  string job_id = 1;
-  string device_id = 2;
-  CircuitPayload payload = 3;
-  int32 shots = 4;
-  map<string, string> options = 5;  // backend‑specific
-}
-
-message ExecuteCircuitResponse {
-  map<string, int64> counts = 1;  // bitstring → count
-  double execution_time_sec = 2;
-  map<string, string> metadata = 3;  // backend‑specific
-}
-
-message DeviceInfo {
-  string device_id = 1;
-  string name = 2;
-  string backend_type = 3;  // "simulator", "ibmq", "rigetti", etc.
-  DeviceStatus status = 4;
-  int32 queue_depth = 5;
-  int32 estimated_wait_sec = 6;
-  map<string, string> capabilities = 7;
-}
-
-enum DeviceStatus {
-  ONLINE = 0;
-  OFFLINE = 1;
-  CALIBRATING = 2;
-  MAINTENANCE = 3;
-  ERROR = 4;
-}
-```
-
-**Notes**:
-
-- Called by eigen‑kernel during QuantumExecution stage
-
-- Must normalize backend results into `counts` (bitstring→int64)
-
-- `metadata` may contain backend‑specific info (fidelity, T1/T2, etc.)
-
-- Errors must use gRPC status codes, not embedded error fields
-
-- Simulator driver is required for MVP
-
-## Error Handling
-
-All internal services must use **gRPC status codes** for failures:
-
-| **Code** | **Typical Use** |
-|-------------------|-------------------|
-| `INVALID_ARGUMENT` | Malformed request, unsupported format |
-| `NOT_FOUND` | Job/device doesn't exist |
-| `FAILED_PRECONDITION` | Device offline, job not in runnable state |
-| `RESOURCE_EXHAUSTED` | No available slots, quota exceeded |
-| `UNAVAILABLE` | Backend down, driver unreachable |
-| `UNIMPLEMENTED` | Operation not supported |
-
-Structured error details may be provided using `google.rpc.Status` in the response trailers.
-
-## Security & Observability
-
-- **Network isolation**: These services run on internal network only
-
-- **mTLS**: Optional for MVP, recommended for production
-
-- **Trace propagation**: `traceparent` must be passed via gRPC metadata
-
-- **Auth context**: System‑api passes `x-eigen-sub`, `x-eigen-roles`, `x-eigen-tenant` to KernelGateway
-
-- **Metrics**: Each service exports Prometheus metrics on `/metrics`
-
-## MVP Implementation Notes
-
-1. **Streaming**: `PollJobUpdates` is used instead of true streaming for MVP simplicity
-
-2. **Caching**: Kernel may cache device listings from driver‑manager
-
-3. **Fallbacks**: Simulator driver must always be available
-
-4. **Timeouts**: All inter‑service calls should have reasonable timeouts (configurable)
-
-## Future Evolution
-
-- True streaming from kernel to system‑api (Phase 1)
-
-- Async/long‑running execution API for driver‑manager (Phase 1)
-
-- More granular device capabilities and calibration API (Phase 2)
-
-- Versioning of internal APIs (post‑MVP)
+Open items to close after this snapshot:
+1. Replace residual legacy names in docs with concrete proto names:
+   - `KernelGatewayService`, `CompilationService`, `DriverManagerService`
+   - package `eigen.internal.v1`
+2. Add explicit per-RPC behavior matrix: implemented vs stub vs planned.
+3. Add conformance checks in CI for:
+   - internal proto breaking changes,
+   - required metadata propagation,
+   - canonical error mapping consistency.
+4. Freeze internal options/metadata key dictionaries where interoperability is required.
 
 ---
 
-**References:**
+## References
 
-    RFC 0004: Public gRPC API (client‑facing)
-
-    RFC 0005: AQO format (compiler output)
-
-    RFC 0006: QDriver API (driver‑manager plugin contract)
-
-    RFC 0007: QRTX MVP (kernel pipeline)
+- `proto/eigen/internal/v1/kernel_gateway.proto`
+- `proto/eigen/internal/v1/compilation_service.proto`
+- `proto/eigen/internal/v1/driver_manager_service.proto`
+- `proto/eigen/internal/v1/types.proto`
+- `docs/architecture/contract-map.md`
+- `docs/architecture/components/system-api.md`
+- `docs/architecture/components/compiler.md`
+- `docs/architecture/components/driver-manager.md`
+- `docs/architecture/components/hwe.md`
