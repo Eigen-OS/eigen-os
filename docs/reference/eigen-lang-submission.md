@@ -1,6 +1,21 @@
-# Eigen-Lang submission format (MVP-2)
+# Eigen-Lang Submission Contract (MVP-2 / Phase-5 Snapshot)
 
-## Canonical artifact set
+- Phase: MVP-2 (+ Phase-4/5 metadata extensions)
+- Status date: **2026-05-10**
+- Scope: canonical packaging from `job.yaml`/source files to public `SubmitJobRequest`, compiler intake, and persisted submission artifacts.
+
+## Purpose
+
+This document records the **current actual state** of the Eigen-Lang program submission contract into the system and clearly lists what is still missing to achieve a completely "frozen" submission contract.
+
+Normative sources:
+
+- `docs/reference/jobspec.md` (JobSpec v0.1 mapping)
+- `docs/reference/api/grpc-public.md` (`SubmitJobRequest` surface)
+- `docs/reference/formats/qfs-layout.md` (artifact persistence)
+- `docs/reference/eigen-lang/*` (language subset/semantics/conformance/versioning)
+
+## Canonical user-facing artifact set
 
 MVP-2 submission uses exactly two user-facing artifacts:
 
@@ -8,73 +23,121 @@ MVP-2 submission uses exactly two user-facing artifacts:
 2. Eigen-Lang source resolved from either:
    - `spec.program` (inline source), or
    - `spec.program_path` (safe relative path, default `program.eigen.py`)
+## Submit boundary contract (`SubmitJobRequest`)
 
-## Contract at submit boundary
+`SubmitJobRequest` carries Eigen-Lang payload in `program.eigen_lang`:
 
-`SubmitJobRequest` carries source in `eigen_lang` fields:
+- `eigen_lang.source` — raw source bytes.
+- `eigen_lang.entrypoint` — default `main` when not explicitly set in JobSpec.
+- `eigen_lang.sha256` — deterministic hash over the exact submitted source bytes.
+  
+JobSpec canonical mapping:
 
-- `eigen_lang.source` (raw bytes)
-- `eigen_lang.entrypoint` (default `main`)
-- `eigen_lang.sha256` (deterministic hash of source bytes)
+- `metadata.name` → `name`
+- `spec.target` → `target`
+- `spec.priority` → `priority` (default `50`)
+- `spec.compiler_options` → `compiler_options`
+- `spec.metadata` → `metadata` (+ internal snapshot fields)
+- `spec.dependencies` → `dependencies`
+- `spec.program`/`spec.program_path` → `eigen_lang.source`
+- `spec.entrypoint` → `eigen_lang.entrypoint`
 
-This mapping is deterministic and covered by positive/negative fixture tests.
+## Validation and safety model
 
-## Compiler safety model
-
-Compiler is AST-only and never executes user code.
+Compiler/frontend validation is AST-only and never executes user code.
 
 Validation rejects:
 
-- forbidden imports outside allowed Eigen-Lang module roots,
-- forbidden calls (`exec`, `eval`, `compile`),
-- dynamic runtime control flow (`if/for/while/match/...` in MVP subset),
-- invalid entrypoint shape (exactly one `@hybrid_program` required),
-- AST size/depth beyond configured limits.
+- forbidden imports outside allowed Eigen-Lang roots;
+- forbidden calls (`exec`, `eval`, `compile`);
+- dynamic runtime control flow outside MVP subset (`if/for/while/match/...` where disallowed by subset);
+- invalid entrypoint/decorator shape (single valid `@hybrid_program` path);
+- AST size/depth beyond configured limits;
+- unsafe `spec.program_path` values (absolute paths, `..` traversal).
 
-## Deterministic AQO output
+Validation failures are surfaced as `INVALID_ARGUMENT` with field-level violations.
 
-For the same input source and compiler config, output AQO JSON is stable via canonical serialization (`sort_keys=True`, compact separators), enabling repeatable hashes and golden tests.
+## Deterministic compiler output
 
-### Runtime-intelligence hints and diagnostics (Phase-4)
+For the same source bytes + compiler configuration, canonical AQO JSON output is stable via deterministic serialization. This enables:
 
-Compiler AQO metadata includes deterministic runtime-intelligence fields:
+- repeatable SHA/hash results,
+- stable golden fixtures,
+- deterministic diagnostics ordering.
 
-- `metadata.runtime_intelligence_hints.version` = `1.0.0`
-- `metadata.runtime_intelligence_hints.diagnostics_version` = `1.0.0`
-- `metadata.execution_annotations.version` = `1.0.0`
-- `metadata.execution_annotations.explainability_id` (stable explainability identifier for workflow linking)
+### Runtime-intelligence metadata (Phase-4)
 
-Compile-time diagnostics reject unsupported runtime targets and policy conflicts in a deterministic order, using `RUNTIME_INTELLIGENCE_DIAGNOSTIC` with field-level violations.
+AQO metadata includes deterministic runtime-intelligence fields:
 
-### Distributed execution metadata and hints (Phase-5)
+- `metadata.runtime_intelligence_hints.version = "1.0.0"`
+- `metadata.runtime_intelligence_hints.diagnostics_version = "1.0.0"`
+- `metadata.execution_annotations.version = "1.0.0"`
+- `metadata.execution_annotations.explainability_id` (stable identifier)
 
-Compiler metadata now carries explicit distributed-contract versions and compile-time hint surface:
+Unsupported runtime targets and policy conflicts are reported deterministically via `RUNTIME_INTELLIGENCE_DIAGNOSTIC` with field-level violations.
 
-- `metadata.distributed.execution_metadata_version` = `1.0.0`
-- `metadata.distributed.topology_hints_version` = `1.0.0`
-- `metadata.distributed.enabled` = `true|false`
-- `metadata.distributed.target` (required when distributed mode is enabled)
-- `metadata.distributed.partition_count` (optional, defaults to `1` when enabled)
-- `metadata.distributed.queue_provider` (optional, currently `memory|redis|sqs`)
-- `metadata.distributed.topology_hint` (optional, currently `data_parallel|pipeline`)
+### Distributed metadata/hints (Phase-5)
 
-When `distributed.enabled=true`, AQO includes:
+Compiler metadata carries distributed execution contract fields:
 
-- `distributed_execution.version` = `1.0.0`
+- `metadata.distributed.execution_metadata_version = "1.0.0"`
+- `metadata.distributed.topology_hints_version = "1.0.0"`
+- `metadata.distributed.enabled = true|false`
+- `metadata.distributed.target` (required when enabled)
+- `metadata.distributed.partition_count` (optional; defaults to `1` when enabled)
+- `metadata.distributed.queue_provider` (optional: `memory|redis|sqs`)
+- `metadata.distributed.topology_hint` (optional: `data_parallel|pipeline`)
+
+When distributed mode is enabled, AQO includes:
+
+- `distributed_execution.version = "1.0.0"`
 - `distributed_execution.target`
 - `distributed_execution.partition_count`
-- `distributed_execution.hints.version` = `1.0.0`
+- `distributed_execution.hints.version = "1.0.0"`
 - `distributed_execution.hints.topology_hint`
 
-Deterministic diagnostics reject unsupported distributed configurations using field-level violations in stable validation order (for example, invalid `distributed.target` or disabled distributed mode combined with distributed-only options).
+## Persistence contract (QFS/CircuitFS)
 
-## Storage contract (QFS)
+Submission/compile pipeline persists artifacts in per-job QFS scope:
 
-Per job, the pipeline persists source bundle and compiled artifacts in CircuitFS paths (`job.yaml`, `program.eigen.py`, `compiled.aqo.json`, results/metadata artifacts).
+- `input/job.yaml`
+- `input/program.eigen.py`
+- `compiled/circuit.aqo.json`
+- optional compile/result/log/meta helpers per QFS layout contract
+
+This replaces older flat examples (`job.yaml`, `compiled.aqo.json` at root) for new jobs; readers should remain tolerant to legacy shapes where documented.
+
+## Current gaps / what is still missing
+
+To fully harden submission as a long-term frozen contract, the following are still open:
+
+1. **Idempotency is still convention-based**
+   - No first-class idempotency field in `SubmitJobRequest`; current practice relies on metadata keys/hash conventions.
+2. **Entrypoint/decorator legality matrix is not fully centralized**
+   - Rules are described across subset/syntax/conformance docs but not yet consolidated in a single normative table with exhaustive examples.
+3. **Cross-surface conformance suite is incomplete**
+   - No unified test profile that jointly verifies JobSpec parsing → gRPC payload → compiler diagnostics → QFS artifacts as one end-to-end normative suite.
+4. **Program source provenance envelope is not standardized**
+   - Source hash exists, but no frozen artifact envelope (`hash/size/path/media-type`) shared across API + compiler + QFS.
+5. **Distributed submission policy profile is not fully explicit**
+   - Phase-5 keys are present, but policy/SLO and replay/retention expectations for distributed submission flows are still documented as broader system gaps.
+6. **Migration policy from legacy layouts is not version-tagged per submission artifact**
+   - Read compatibility is described, but per-artifact migration markers are not yet formalized.
+
+## Recommended follow-up hardening tasks
+
+1. Add a single normative “submission conformance matrix” appendix with positive/negative fixtures and exact field-level violations.
+2. Introduce an internal/public `ArtifactHandle`-style schema for source and compiled artifacts (`hash`, `size`, `path`, `format`).
+3. Document canonical idempotency behavior for `SubmitJob` (preferred key, fallback, conflict semantics).
+4. Add explicit compatibility table for legacy submission artifact layouts and deprecation timelines.
 
 ## References
 
 - `docs/reference/jobspec.md`
+- `docs/reference/api/grpc-public.md`
+- `docs/reference/formats/qfs-layout.md`
 - `docs/reference/eigen-lang/allowed-subset.md`
-- `rfcs/0013-mvp2-jobspec-parser-submit-contract.md`
-- `rfcs/0014-mvp2-eigen-lang-ast-safety-deterministic-aqo.md`
+- `docs/reference/eigen-lang/syntax.md`
+- `docs/reference/eigen-lang/semantics.md`
+- `docs/reference/eigen-lang/conformance.md`
+- `docs/reference/eigen-lang/versioning.md`
