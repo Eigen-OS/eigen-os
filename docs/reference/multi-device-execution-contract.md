@@ -2,6 +2,8 @@
 
 **Status:** Phase-2 orchestration contract (runtime).
 
+This document fixes the **current implemented contract state** for multi-device execution and also records known gaps for future phases.
+
 ## Versioning
 
 - **Artifact version field:** `version` is mandatory in split manifests, partial results, partial failures, and merge decisions.
@@ -11,6 +13,8 @@
 - **Fixes only:** behavioral fixes that do not alter public semantics are **PATCH**.
 
 ## Split planner contract
+
+Function: `plan_split(parent_job_id, tasks, max_shards) -> Result<SplitPlanManifest, SplitPlanError>`.
 
 ### Input
 
@@ -32,12 +36,25 @@
   - `backend_id`
   - `task_ids[]`
 
-### Planner guarantees
+### Planner guarantees (implemented)
 
 1. Each shard artifact references both `parent_job_id` and unique `shard_id`.
 2. Shard IDs are deterministic (`<parent>-shard-<NNN>`).
-3. Planner rejects tasks without compatible backends.
-4. Planner rejects splits exceeding `max_shards`.
+3. Backends are normalized (`trim`, sort, dedup) before selection.
+4. Planner rejects:
+   - empty/blank `parent_job_id`;
+   - empty task set;
+   - tasks without compatible backends (including blank-only backend lists);
+   - plans exceeding `max_shards`;
+   - `max_shards == 0`.
+5. Backend choice is deterministic and currently picks the first backend in normalized lexical order.
+
+### Current limitations / gaps
+
+- Planner does not yet consume runtime backend health/capacity when picking backend per task.
+- Planner does not yet emit per-shard resource hints (memory/latency/affinity budget).
+- Planner does not validate task ID uniqueness or non-empty task IDs.
+- Planner does not verify cross-artifact lineage/signature constraints for split manifests.
 
 ## Partial-result and partial-failure envelopes
 
@@ -60,13 +77,27 @@
 - `retryable`
 - `message`
 
+### Envelope invariants (implemented)
+
+- Merge path enforces `parent_job_id` consistency across all incoming result/failure envelopes.
+- Merge path enforces envelope uniqueness by `shard_id` across both result and failure streams.
+
+### Current limitations / gaps
+
+- No explicit runtime validation for `version` equality in merge path.
+- No runtime schema-level checks for blank `backend_id`, `payload_ref`, `payload_checksum`, or `message`.
+- No first-class envelope timestamp/attempt metadata yet (e.g., `attempt`, `emitted_at_ms`).
+
 ## Merge semantics and consistency checks
 
-`merge_partial_results(...)` performs these checks before final reason-code selection:
+Function:
+`merge_partial_results(parent_job_id, expected_shard_ids, results, failures, policy) -> MergeDecision`.
 
-1. **Parent consistency:** every envelope must match target `parent_job_id`.
-2. **Uniqueness:** duplicate `shard_id` in results/failures is invalid.
-3. **Coverage:** computes missing shard IDs relative to expected shard set.
+Checks before policy decision:
+
+1. **Parent consistency:** every envelope must match target `parent_job_id`, otherwise reason = `ParentJobMismatch`.
+2. **Uniqueness:** duplicate `shard_id` in results/failures is invalid, otherwise reason = `DuplicateShardEnvelope`.
+3. **Coverage:** computes `missing_shard_ids` relative to `expected_shard_ids`.м
 
 ### Merge policies
 
@@ -89,11 +120,36 @@
 - `missing_shard_ids[]`
 - `failures[]` (standardized failure envelopes)
 
-## Test coverage
+### Current limitations / gaps
+
+- `AllShardsRequired` currently maps any non-successful complete merge to `MissingExpectedShards` (including cases with explicit shard failures); there is no dedicated reason code for "failed shards present but no missing shards".
+- Merge path does not currently verify that every observed shard belongs to `expected_shard_ids` (unexpected shard IDs are not rejected).
+- Quorum policy is count-based only; it does not weight shards by priority/cost.
+- No tie-in yet to retry orchestration/backoff strategy in merge artifact itself.
+
+## Test coverage (current)
 
 Integration tests validate:
 
-- split manifest generation + parent/shard references,
-- planner validation failures,
+- split manifest generation and parent/shard references,
+- planner validation failures for empty backend compatibility,
 - standardized partial-failure envelope mapping,
 - merge consistency behavior for all-required and quorum policies.
+
+Additional tests present in the codebase also validate parent mismatch and duplicate-shard envelope handling.
+
+## What is missing to fully fix system state
+
+To consider the split/merge contract production-hardened, these items are still missing:
+
+1. **Strict envelope validation layer**
+   - enforce contract `version` checks at merge input;
+   - enforce non-empty critical fields.
+2. **Expected-shard membership enforcement**
+   - reject result/failure envelopes for shard IDs outside manifest-derived expected set.
+3. **Richer merge reason taxonomy**
+   - add explicit reason codes for mixed outcomes (e.g., failures without missing shards).
+4. **Planner quality signals**
+   - integrate backend health/capacity and scheduling hints into backend selection.
+5. **Operational metadata**
+   - add attempt/timestamp/provenance fields to partial envelopes and propagate into merge decision for audit.
