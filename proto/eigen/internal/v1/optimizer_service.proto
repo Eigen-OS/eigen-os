@@ -12,7 +12,7 @@ option java_package = "com.eigen.api.internal.v1";
 // Internal optimizer service contract v1.
 // Source of truth: RFC 0035.
 service OptimizerService {
-  rpc OptimizeCircuit(OptimizeCircuitRequest) returns (OptimizeCircuitResponse);
+  rpc OptimizeCircuit(OptimizerServiceOptimizeCircuitRequest) returns (OptimizerServiceOptimizeCircuitResponse);
 }
 
 message OptimizerContractEnvelope {
@@ -34,7 +34,7 @@ message TopologyContext {
   string backend_profile = 4;
 }
 
-message OptimizeCircuitRequest {
+message OptimizerServiceOptimizeCircuitRequest {
   OptimizerContractEnvelope envelope = 1;
   string request_id = 2;
   CircuitPayload input_aqo = 3;
@@ -79,7 +79,7 @@ message OptimizerError {
   string details_ref = 4;
 }
 
-message OptimizeCircuitResponse {
+message OptimizerServiceOptimizeCircuitResponse {
   string request_id = 1;
   repeated OptimizedCandidate candidates = 2;
   string selected_candidate_id = 3;
