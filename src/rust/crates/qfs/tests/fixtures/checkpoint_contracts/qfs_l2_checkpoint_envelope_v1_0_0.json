@@ -1,0 +1,46 @@
+{
+  "schema_version": "1.0.0",
+  "checkpoint_id": "chkpt-0001",
+  "job_id": "job-phase8a-01",
+  "created_at": "2026-05-16T00:00:00Z",
+  "runtime_version": "eigen-kernel@0.8.0",
+  "payload_refs": {
+    "state_segments": [
+      {
+        "path": "qfs://jobs/job-phase8a-01/checkpoints/chkpt-0001/state-segment-0.bin",
+        "content_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000001",
+        "size_bytes": 1024
+      }
+    ],
+    "memory_graph_ref": "qfs://jobs/job-phase8a-01/checkpoints/chkpt-0001/memory-graph.pb",
+    "execution_cursor_ref": "qfs://jobs/job-phase8a-01/checkpoints/chkpt-0001/execution-cursor.json"
+  },
+  "integrity": {
+    "checksum_set": "sha256",
+    "signature_ref": "qfs://jobs/job-phase8a-01/checkpoints/chkpt-0001/signature.sig"
+  },
+  "provenance": {
+    "compiler_version": "eigen-compiler@0.8.0",
+    "optimizer_version": "eigen-optimizer@0.8.0",
+    "model_version": "model-family-x@2026.05",
+    "backend_profile": "sim:local",
+    "deterministic_seed": 42
+  },
+  "trace_links": {
+    "artifact_manifest_ref": "qfs://jobs/job-phase8a-01/results/manifest.json",
+    "dataset_metadata_ref": "qfs://jobs/job-phase8a-01/meta/dataset-metadata.json",
+    "checkpoint_chain_ref": "qfs://jobs/job-phase8a-01/checkpoints/chain.json"
+  },
+  "guardrails": {
+    "declared_size_bytes": 1048576,
+    "estimated_restore_cost_units": 500,
+    "ttl_class": "hot"
+  },
+  "compatibility": {
+    "min_reader_version": "1.0.0",
+    "max_reader_version": null
+  },
+  "extensions": {
+    "extension_keys": []
+  }
+}

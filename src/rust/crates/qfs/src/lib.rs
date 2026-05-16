@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 
 mod local_circuit_fs;
+mod qfs_l2_checkpoint;
 
 pub use local_circuit_fs::{
     CircuitFsError, CircuitFsLocal, CompiledArtifacts, CompiledMetadata, ErrorDetails,
@@ -15,3 +16,9 @@ pub use local_circuit_fs::{
     SourceMetadata, DEFAULT_CIRCUIT_FS_ROOT,
 };
 
+pub use qfs_l2_checkpoint::{
+    CheckpointArtifactRef, CheckpointCompatibilityWindow, CheckpointEnvelopeV1,
+    CheckpointEnvelopeValidationError, CheckpointExtensions, CheckpointGuardrails,
+    CheckpointIntegrity, CheckpointPayloadRefs, CheckpointProvenance, CheckpointTraceLinks,
+    CHECKPOINT_ENVELOPE_SCHEMA_VERSION,
+};
