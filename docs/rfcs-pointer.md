@@ -109,6 +109,15 @@
   - [RFC 0037 — Phase-8A QFS-L2 checkpoint envelope contract v1](../rfcs/0037-phase8a-qfs-l2-checkpoint-envelope-contract-v1.md)
 - Execution binding:
   - [development/phase-8a-execution-plan.md](development/phase-8a-execution-plan.md)
+- Synchronized ADRs:
+  - [ADR 0020 — Phase-8A Knowledge Base API contract v1](adr/0020-phase8a-knowledge-base-api-contract-v1.md)
+  - [ADR 0021 — Phase-8A GNN optimizer service contract v1](adr/0021-phase8a-gnn-optimizer-service-contract-v1.md)
+  - [ADR 0022 — Phase-8A Continuous learning control plane contract v1](adr/0022-phase8a-continuous-learning-control-plane-contract-v1.md)
+  - [ADR 0023 — Phase-8A QFS-L2 checkpoint envelope contract v1](adr/0023-phase8a-qfs-l2-checkpoint-envelope-contract-v1.md)
+- Release closure artifacts:
+  - [development/phase-8a-rfc-adr-gap-analysis.md](development/phase-8a-rfc-adr-gap-analysis.md)
+  - [development/phase-8a-release-readiness-checklist.md](development/phase-8a-release-readiness-checklist.md)
+  - [development/phase-8a-compatibility-report.md](development/phase-8a-compatibility-report.md)
 
 ## Quick links
 
