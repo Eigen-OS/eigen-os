@@ -1,0 +1,118 @@
+syntax = "proto3";
+
+package eigen.api.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// Knowledge Base API contract v1.
+// Source of truth: RFC 0034.
+service KnowledgeBaseService {
+  rpc UpsertRecord(UpsertRecordRequest) returns (UpsertRecordResponse);
+  rpc BatchUpsertRecords(BatchUpsertRecordsRequest) returns (BatchUpsertRecordsResponse);
+  rpc QueryRecords(QueryRecordsRequest) returns (QueryRecordsResponse);
+  rpc GetRecord(GetRecordRequest) returns (GetRecordResponse);
+}
+
+message ApiContractEnvelope {
+  // SemVer for the stable API payload contract.
+  string contract_version = 1;
+}
+
+message RecordProvenance {
+  string compiler_ref = 1;
+  string optimizer_ref = 2;
+  string runtime_ref = 3;
+  string checkpoint_ref = 4;
+}
+
+message KnowledgeRecord {
+  string record_id = 1;
+  string job_id = 2;
+  string circuit_id = 3;
+  string artifact_ref = 4;
+  string dataset_ref = 5;
+  string backend_profile = 6;
+  string optimizer_version = 7;
+  int32 qubit_count = 8;
+  double entanglement_score = 9;
+  string noise_profile_id = 10;
+  string backend_class = 11;
+  google.protobuf.Timestamp created_at = 12;
+  RecordProvenance provenance = 13;
+  map<string, string> attributes = 14;
+}
+
+message UpsertRecordRequest {
+  ApiContractEnvelope envelope = 1;
+  KnowledgeRecord record = 2;
+  // Deterministic default=false to keep single-write semantics unless explicitly idempotent.
+  bool allow_overwrite = 3;
+}
+
+message UpsertRecordResponse {
+  string record_id = 1;
+  bool created = 2;
+  google.protobuf.Timestamp updated_at = 3;
+}
+
+message BatchUpsertRecordsRequest {
+  ApiContractEnvelope envelope = 1;
+  repeated KnowledgeRecord records = 2;
+  bool allow_overwrite = 3;
+}
+
+message BatchUpsertRecordsResponse {
+  uint32 accepted = 1;
+  uint32 rejected = 2;
+  repeated KnowledgeBaseError errors = 3;
+}
+
+message QueryFilter {
+  int32 min_qubit_count = 1;
+  int32 max_qubit_count = 2;
+  double min_entanglement_score = 3;
+  double max_entanglement_score = 4;
+  string noise_profile_id = 5;
+  string backend_class = 6;
+  string optimizer_version = 7;
+  google.protobuf.Timestamp created_after = 8;
+  google.protobuf.Timestamp created_before = 9;
+}
+
+message QueryRecordsRequest {
+  ApiContractEnvelope envelope = 1;
+  QueryFilter filter = 2;
+  uint32 page_size = 3;
+  string page_token = 4;
+}
+
+message QueryRecordsResponse {
+  repeated KnowledgeRecord records = 1;
+  string next_page_token = 2;
+}
+
+message GetRecordRequest {
+  ApiContractEnvelope envelope = 1;
+  string record_id = 2;
+}
+
+message GetRecordResponse {
+  KnowledgeRecord record = 1;
+}
+
+enum KnowledgeBaseReasonCode {
+  KNOWLEDGE_BASE_REASON_CODE_UNSPECIFIED = 0;
+  KB_INVALID_ARGUMENT = 1;
+  KB_NOT_FOUND = 2;
+  KB_INDEX_UNAVAILABLE = 3;
+  KB_RATE_LIMITED = 4;
+  KB_INTERNAL = 5;
+}
+
+message KnowledgeBaseError {
+  KnowledgeBaseReasonCode reason_code = 1;
+  string message = 2;
+  // Retry semantics: NEVER, SAFE_RETRY, RETRY_WITH_BACKOFF.
+  string retry_semantics = 3;
+  string details_ref = 4;
+}

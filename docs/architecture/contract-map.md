@@ -133,7 +133,7 @@ Detailed kernel state machine is defined in RFC 0007.
 
 **Implementation status (as of 2026-05-08):**
 - ✅ `JobService` and `DeviceService` are implemented in `proto/eigen/api/v1/*` and System API server code.
-- ✅ Public RPCs include `SubmitJob`, `GetJobStatus`, `CancelJob`, `StreamJobUpdates`, `GetJobResults`, `ListDevices`, `GetDeviceStatus`, `ReserveDevice`.
+- ✅ Public RPCs include `SubmitJob`, `GetJobStatus`, `CancelJob`, `StreamJobUpdates`, `GetJobResults`, `ListDevices`, `GetDeviceStatus`, `ReserveDevice`, and `KnowledgeBaseService` (`UpsertRecord`, `BatchUpsertRecords`, `QueryRecords`, `GetRecord`).
 - ✅ Additional implemented public RPCs beyond original MVP text: `GetDispatchRationale` and `GetDeviceDetails`.
 - TODO: Add explicit contract text for `GetDispatchRationale` and `GetDeviceDetails` in this section to avoid undocumented surface area.
 
@@ -170,6 +170,7 @@ Below is the **"MVP freeze" level contract:** fields, errors, idempotency, side 
 - The MVP implementation uses **poll‑based streaming**: System API polls the Kernel and emits events to the client. (RFC 0004).
 
 ### 3.2 DeviceService (eigen_api.v0.1)
+
 **RPC: ListDevices**
 - Returns aggregated view: capabilities + status.
 
@@ -179,7 +180,14 @@ Below is the **"MVP freeze" level contract:** fields, errors, idempotency, side 
 **RPC: ReserveDevice(device_id, ttl)**
 - Clear semantics: reserves a scheduler slot in the Kernel Resource Manager, not hardware-wide exclusive lock. (RFC 0004).
 
-### 3.3 CompilationService (eigen_api.v1)
+### 3.3 KnowledgeBaseService (eigen.api.v1)
+
+- Contract version is frozen at `1.0.0` (RFC 0034).
+- Envelope `ApiContractEnvelope.contract_version` is required in each request to enforce explicit client/server contract binding.
+- Error taxonomy is fixed to: `KB_INVALID_ARGUMENT`, `KB_NOT_FOUND`, `KB_INDEX_UNAVAILABLE`, `KB_RATE_LIMITED`, `KB_INTERNAL`; retry semantics are deterministic (`NEVER`, `SAFE_RETRY`, `RETRY_WITH_BACKOFF`).
+
+### 3.4 CompilationService (eigen_api.v1)
+
 - ✅ Not exposed as public gRPC service in MVP public proto package (matches current architecture intent).
 - TODO: Keep explicit note that local CLI compile path and internal compilation RPC are the supported paths.
 - **Note for MVP**: The `CompilationService` **is not part of the public MVP API**. The `eigen-cli compile` command performs **local compilation**. (RFC 0010, RFC 0004).
