@@ -64,12 +64,20 @@ message OptimizedCandidate {
 }
 
 enum OptimizerReasonCode {
+  option allow_alias = true;
+
   OPTIMIZER_REASON_CODE_UNSPECIFIED = 0;
+  OPT_UNSPECIFIED = 0 [deprecated = true];
   OPTIMIZER_REASON_CODE_INVALID_AQO = 1;
+  OPT_INVALID_AQO = 1 [deprecated = true];
   OPTIMIZER_REASON_CODE_TOPOLOGY_MISSING = 2;
+  OPT_TOPOLOGY_MISSING = 2 [deprecated = true];
   OPTIMIZER_REASON_CODE_MODEL_UNAVAILABLE = 3;
+  OPT_MODEL_UNAVAILABLE = 3 [deprecated = true];
   OPTIMIZER_REASON_CODE_TIMEOUT = 4;
+  OPT_TIMEOUT = 4 [deprecated = true];
   OPTIMIZER_REASON_CODE_INTERNAL = 5;
+  OPT_INTERNAL = 5 [deprecated = true];
 }
 
 message OptimizerError {
