@@ -30,6 +30,10 @@ Architecture Decision Records (ADRs) capture decisions that are already adopted 
 - [0017 — Phase-6 plugin contract RFC package acceptance baseline](0017-phase6-plugin-contract-rfc-package-acceptance.md)
 - [0018 — Phase-7 API and contract versioning policy v1](0018-phase7-api-and-contract-versioning-policy-v1.md)
 - [0019 — Phase-7 developer experience and conformance toolchain baseline v1](0019-phase7-developer-experience-and-conformance-toolchain-baseline-v1.md)
+- [0020 — Phase-8A Knowledge Base API contract v1](0020-phase8a-knowledge-base-api-contract-v1.md)
+- [0021 — Phase-8A GNN optimizer service contract v1](0021-phase8a-gnn-optimizer-service-contract-v1.md)
+- [0022 — Phase-8A Continuous learning control plane contract v1](0022-phase8a-continuous-learning-control-plane-contract-v1.md)
+- [0023 — Phase-8A QFS-L2 checkpoint envelope contract v1](0023-phase8a-qfs-l2-checkpoint-envelope-contract-v1.md)
 
 ## Phase-3 status
 
@@ -65,3 +69,10 @@ Architecture Decision Records (ADRs) capture decisions that are already adopted 
 - Required coverage check: [`../development/phase-7-rfc-adr-gap-analysis.md`](../development/phase-7-rfc-adr-gap-analysis.md).
 - Phase-7 closure package: [`../development/phase-7-release-readiness-checklist.md`](../development/phase-7-release-readiness-checklist.md), [`../development/phase-7-compatibility-report.md`](../development/phase-7-compatibility-report.md).
 - Policy reminder: when Phase-7 contracts evolve, SemVer policy and migration-note gates from RFC 0032/0033 remain mandatory.
+
+## Phase-8A status
+
+- As of 2026-05-16, required Phase-8A RFC package is accepted and synchronized with ADRs (ADR 0020/0021/0022/0023).
+- Required coverage check: [`../development/phase-8a-rfc-adr-gap-analysis.md`](../development/phase-8a-rfc-adr-gap-analysis.md).
+- Phase-8A closure package: [`../development/phase-8a-release-readiness-checklist.md`](../development/phase-8a-release-readiness-checklist.md), [`../development/phase-8a-compatibility-report.md`](../development/phase-8a-compatibility-report.md).
+- Policy reminder: breaking contract changes require MAJOR + migration notes; deprecation support window remains 2 minors or 90 days, whichever is longer.
