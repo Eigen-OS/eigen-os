@@ -253,6 +253,29 @@ jobs:
         working-directory: proto
         run: buf breaking --against '../.git#ref=refs/remotes/origin/main,subdir=proto'
 
+  phase8a-ci-gate-bundle:
+    name: Phase-8A CI gate bundle
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src/rust
+
+      - name: Run Phase-8A gate bundle
+        run: bash scripts/ci/check-phase8a-gates.sh
+        
   phase2-contract-compatibility:
     name: Phase-2 contract compatibility suite
     runs-on: ubuntu-latest
