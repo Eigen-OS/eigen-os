@@ -4,7 +4,7 @@
 - **Authors**: Eigen OS maintainers
 - **Created**: 2026-05-16
 - **Target Milestone**: Phase 8A
-- **Tracking Issue**: M8A-02
+- **Tracking Issue**: P8A-02
 
 ## Summary
 
@@ -25,26 +25,32 @@ Defines the v1 contract for the GNN optimizer service that transforms input AQO/
 
 ### Request
 
-`OptimizeRequest` includes:
-- input `aqo`;
-- topology graph/profile;
-- noise snapshot reference;
-- optimization objective preset;
-- deterministic seed.
+`OptimizeCircuitRequest` includes:
+- `envelope.contract_version` (SemVer lock);
+- stable `request_id`;
+- input AQO payload (`input_aqo`);
+- topology/noise/profile context (`topology`);
+- objective preset + weighted objective map (`objective`);
+- deterministic seed (`deterministic_seed`);
+- bounded budget/timeout fields (`candidate_budget`, `timeout_ms`);
+- trace metadata (`trace_context`).
 
 ### Response
 
-`OptimizeResponse` includes:
-- mapped `aqo` candidate list;
-- `score` and score breakdown;
-- selected candidate ID;
-- explainability summary;
-- `model_version` and `fallback_used` flag.
+`OptimizeCircuitResponse` includes:
+- stable `request_id`;
+- mapped AQO candidates (`OptimizedCandidate[]`) with `ScoreBreakdown`;
+- selected candidate id (`selected_candidate_id`);
+- explainability summary per candidate;
+- `model_version`, `fallback_used`, and `fallback_reason`;
+- latency/trace fields (`optimizer_latency_ms`, `scoring_latency_ms`, `mapping_latency_ms`, `trace_id`);
+- explicit error envelope (`OptimizerError`) with reason code + retry semantics.
 
 ### Determinism and fallback
 
-- Same input + seed must be replay-stable in contract tests.
-- If model unavailable or confidence below threshold, return heuristic baseline with `fallback_used=true`.
+- Same `(input_aqo, topology, objective, deterministic_seed)` tuple must be replay-stable in contract tests.
+- If `candidate_budget` is absent, deterministic default is `1`; if `timeout_ms` is absent, deterministic default is `100` ms.
+- If model is unavailable or confidence falls below policy threshold, return heuristic baseline with `fallback_used=true`, non-empty `fallback_reason`, and the original `deterministic_seed` echoed in response.
 
 ### Error model
 
@@ -63,9 +69,10 @@ Defines the v1 contract for the GNN optimizer service that transforms input AQO/
 
 ## Test plan
 
-- Golden fixtures for optimizer I/O compatibility.
-- Seeded determinism replay tests.
-- Fallback path conformance tests.
+- Golden fixture `src/services/system-api/tests/fixtures/contracts/optimizer_v1/service_contract_v1_0_0.json` freezes v1 request/response/error + fallback semantics.
+- Seeded determinism replay tests must assert stable `selected_candidate_id` and score breakdown for repeated identical inputs.
+- Fallback path conformance tests must assert `fallback_used=true` and required `fallback_reason`.
+- Contract drift gate includes `proto/eigen/internal/v1/optimizer_service.proto` and fixture hashes in `scripts/ci/contract-version-manifest.json`.
 
 ## Compatibility and versioning
 

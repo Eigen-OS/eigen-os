@@ -15,6 +15,7 @@ Implemented services:
 - `KernelGatewayService` (`kernel_gateway.proto`)
 - `CompilationService` (`compilation_service.proto`)
 - `DriverManagerService` (`driver_manager_service.proto`)
+- `OptimizerService` (`optimizer_service.proto`)
 
 Common shared types:
 - `CircuitPayload`, `CircuitFormat`, `DeviceInfo`, `DeviceStatus` (`types.proto`)
@@ -76,7 +77,22 @@ Common shared types:
 - Async/long-running execution interface is not present yet (single unary execute RPC in MVP).
 - Standardized cross-driver metadata keys for execution diagnostics are not frozen.
 
-## 4) Shared enums/types alignment notes
+## 4) OptimizerService (Compiler/Kernel ↔ Optimizer)
+
+### Implemented RPCs
+- `OptimizeCircuit`
+
+### Implemented contract details
+- Request carries explicit SemVer envelope (`OptimizerContractEnvelope.contract_version`).
+- Request locks deterministic replay input set: `input_aqo`, `topology`, `objective`, `deterministic_seed`.
+- Response includes deterministic echo (`deterministic_seed`), fallback markers (`fallback_used`, `fallback_reason`), and trace/performance fields (`trace_id`, `optimizer_latency_ms`, `scoring_latency_ms`, `mapping_latency_ms`).
+- Canonical reason codes: `OPT_INVALID_AQO`, `OPT_TOPOLOGY_MISSING`, `OPT_MODEL_UNAVAILABLE`, `OPT_TIMEOUT`, `OPT_INTERNAL`.
+
+### Missing / gaps
+- Runtime implementation for model execution path is not yet wired in this repository snapshot (contract frozen first).
+- Confidence-threshold policy table (preset-specific thresholds) still needs an explicit reference artifact.
+
+## 5) Shared enums/types alignment notes
 
 ### Implemented now
 - Internal enums are prefixed and explicit (`TASK_STATE_*`, `DEVICE_STATUS_*`, `CIRCUIT_FORMAT_*`).
@@ -85,7 +101,7 @@ Common shared types:
 ### Missing / gaps
 - Some architecture text still uses legacy service/version labels (`kernel_api.v1`, etc.) and non-prefixed enum examples; full doc harmonization is still required.
 
-## 5) Error model and cross-cutting behavior
+## 6) Error model and cross-cutting behavior
 
 ### Implemented direction
 - Internal APIs use canonical gRPC status model (not `success=false` payload flags).
@@ -104,7 +120,7 @@ Recommended canonical set for MVP operations:
 - A single normative table that maps **every RPC + failure class → exact gRPC code + details type** is still absent.
 - Retry/deadline budgets are not frozen in one reference doc for all internal callers.
 
-## 6) Security and observability contract status
+## 7) Security and observability contract status
 
 ### Implemented/active baseline
 - Internal APIs are intended for private service-to-service use only.
@@ -116,7 +132,7 @@ Recommended canonical set for MVP operations:
 - No conformance test matrix is frozen yet for mandatory propagation of `x-eigen-*` security headers on every internal hop.
 - Metric names/labels for internal RPCs are not yet frozen as a reference API contract.
 
-## 7) Architecture drift checklist (to keep docs/code synchronized)
+## 8) Architecture drift checklist (to keep docs/code synchronized)
 
 Open items to close after this snapshot:
 1. Replace residual legacy names in docs with concrete proto names:

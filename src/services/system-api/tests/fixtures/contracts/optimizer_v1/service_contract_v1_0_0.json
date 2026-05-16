@@ -1,0 +1,52 @@
+{
+  "contract": "optimizer_service",
+  "version": "1.0.0",
+  "request": {
+    "required_fields": [
+      "envelope.contract_version",
+      "request_id",
+      "input_aqo",
+      "topology.topology_ref",
+      "objective.preset",
+      "deterministic_seed"
+    ],
+    "deterministic_defaults": {
+      "candidate_budget": 1,
+      "timeout_ms": 100,
+      "trace_context": {}
+    }
+  },
+  "response": {
+    "required_fields": [
+      "request_id",
+      "candidates",
+      "selected_candidate_id",
+      "model_version",
+      "fallback_used",
+      "deterministic_seed",
+      "optimizer_latency_ms"
+    ],
+    "fallback_contract": {
+      "fallback_used": true,
+      "requires_fallback_reason": true
+    }
+  },
+  "reason_codes": [
+    "OPT_INVALID_AQO",
+    "OPT_TOPOLOGY_MISSING",
+    "OPT_MODEL_UNAVAILABLE",
+    "OPT_TIMEOUT",
+    "OPT_INTERNAL"
+  ],
+  "retry_semantics": {
+    "OPT_INVALID_AQO": "NEVER",
+    "OPT_TOPOLOGY_MISSING": "NEVER",
+    "OPT_MODEL_UNAVAILABLE": "RETRY_WITH_BACKOFF",
+    "OPT_TIMEOUT": "SAFE_RETRY",
+    "OPT_INTERNAL": "SAFE_RETRY"
+  },
+  "deprecation_policy": {
+    "min_supported_minor_releases": 2,
+    "min_supported_days": 90
+  }
+}

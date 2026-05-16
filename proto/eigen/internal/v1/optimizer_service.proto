@@ -1,0 +1,95 @@
+syntax = "proto3";
+
+package eigen.internal.v1;
+
+import "eigen/internal/v1/types.proto";
+
+option go_package = "github.com/eigen-os/eigen/api/internal/v1;internalv1";
+option java_multiple_files = true;
+option java_outer_classname = "OptimizerServiceProto";
+option java_package = "com.eigen.api.internal.v1";
+
+// Internal optimizer service contract v1.
+// Source of truth: RFC 0035.
+service OptimizerService {
+  rpc OptimizeCircuit(OptimizeCircuitRequest) returns (OptimizeCircuitResponse);
+}
+
+message OptimizerContractEnvelope {
+  // Stable payload SemVer.
+  string contract_version = 1;
+}
+
+message OptimizationObjective {
+  // Preset objective id (e.g. "latency", "fidelity", "balanced").
+  string preset = 1;
+  // Optional weighted objectives (weights are deterministic default 0 when absent).
+  map<string, double> weights = 2;
+}
+
+message TopologyContext {
+  string topology_ref = 1;
+  string topology_digest_sha256 = 2;
+  string noise_snapshot_ref = 3;
+  string backend_profile = 4;
+}
+
+message OptimizeCircuitRequest {
+  OptimizerContractEnvelope envelope = 1;
+  string request_id = 2;
+  CircuitPayload input_aqo = 3;
+  TopologyContext topology = 4;
+  OptimizationObjective objective = 5;
+  uint64 deterministic_seed = 6;
+  uint32 candidate_budget = 7;
+  uint32 timeout_ms = 8;
+  map<string, string> trace_context = 9;
+}
+
+message ScoreBreakdown {
+  double total_score = 1;
+  double latency_score = 2;
+  double fidelity_score = 3;
+  double resource_score = 4;
+  double risk_score = 5;
+}
+
+message OptimizedCandidate {
+  string candidate_id = 1;
+  CircuitPayload mapped_aqo = 2;
+  ScoreBreakdown score = 3;
+  double confidence = 4;
+  string explainability_summary = 5;
+  map<string, string> metadata = 6;
+}
+
+enum OptimizerReasonCode {
+  OPTIMIZER_REASON_CODE_UNSPECIFIED = 0;
+  OPT_INVALID_AQO = 1;
+  OPT_TOPOLOGY_MISSING = 2;
+  OPT_MODEL_UNAVAILABLE = 3;
+  OPT_TIMEOUT = 4;
+  OPT_INTERNAL = 5;
+}
+
+message OptimizerError {
+  OptimizerReasonCode reason_code = 1;
+  string message = 2;
+  string retry_semantics = 3;
+  string details_ref = 4;
+}
+
+message OptimizeCircuitResponse {
+  string request_id = 1;
+  repeated OptimizedCandidate candidates = 2;
+  string selected_candidate_id = 3;
+  string model_version = 4;
+  bool fallback_used = 5;
+  string fallback_reason = 6;
+  uint64 deterministic_seed = 7;
+  string trace_id = 8;
+  uint32 optimizer_latency_ms = 9;
+  uint32 scoring_latency_ms = 10;
+  uint32 mapping_latency_ms = 11;
+  OptimizerError error = 12;
+}
