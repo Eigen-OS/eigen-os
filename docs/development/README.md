@@ -140,6 +140,9 @@ git fetch origin main:main
 - Phase 7 DX & conformance baseline (normative): [`../../rfcs/0033-phase7-developer-experience-and-conformance-toolchain-baseline-v1.md`](../../rfcs/0033-phase7-developer-experience-and-conformance-toolchain-baseline-v1.md)
 - Phase 8+ implementation roadmap for TZ v1.1.0: [`phase-8-implementation-roadmap-v1.1.0.md`](phase-8-implementation-roadmap-v1.1.0.md)
 
+- Phase 8A execution plan: [`phase-8a-execution-plan.md`](phase-8a-execution-plan.md)
+- Phase 8A issue pack: [`phase-8a-issue-pack.md`](phase-8a-issue-pack.md)
+
 ## Related files
 
 - Repo layout: [`repo-layout.md`](repo-layout.md)
