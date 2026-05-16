@@ -88,3 +88,20 @@ Phase-8A is complete only when:
 | `feature.qfs_l2_checkpoint_v1` | `false` | Enable after checkpoint envelope conformance checks are passing in CI for target branch. |
 
 All flags must remain explicitly set during phased rollout; missing flags resolve to deterministic safe defaults (`false`).
+
+## CI gate bundle implementation (P8A-06)
+
+The Phase-8A gate bundle is executable via `scripts/ci/check-phase8a-gates.sh` and wired as a required CI job (`phase8a-ci-gate-bundle`) in `.github/workflows/ci.yml`.
+
+Gate sequence (fail-closed):
+
+1. `check-contract-drift.py` validates all versioned contract artifacts against `scripts/ci/contract-version-manifest.json`.
+2. `integration_phase8a_vertical_slice_fixture_replay_is_deterministic` verifies deterministic replay of compile → optimize → execute → persist/query.
+3. `check-runtime-decision-determinism.sh` validates deterministic scheduler/runtime decision replay artifacts.
+4. `check-phase8a-probe-fixtures.py` validates versioned probe fixtures and budget bounds for:
+   - compile latency trend,
+   - scheduler enqueue p95 trend,
+   - KB indexed query latency trend,
+   - bounded dataset ingestion fixture.
+
+Probe fixtures are versioned at `docs/development/fixtures/phase8a/probe_trends_v1.json`.
