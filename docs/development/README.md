@@ -138,6 +138,7 @@ git fetch origin main:main
 - Phase 7 compatibility report: [`phase-7-compatibility-report.md`](phase-7-compatibility-report.md)
 - Phase 7 API & contract versioning policy (normative): [`../../rfcs/0032-phase7-api-and-contract-versioning-policy-v1.md`](../../rfcs/0032-phase7-api-and-contract-versioning-policy-v1.md)
 - Phase 7 DX & conformance baseline (normative): [`../../rfcs/0033-phase7-developer-experience-and-conformance-toolchain-baseline-v1.md`](../../rfcs/0033-phase7-developer-experience-and-conformance-toolchain-baseline-v1.md)
+- Phase 8+ implementation roadmap for TZ v1.1.0: [`phase-8-implementation-roadmap-v1.1.0.md`](phase-8-implementation-roadmap-v1.1.0.md)
 
 ## Related files
 
