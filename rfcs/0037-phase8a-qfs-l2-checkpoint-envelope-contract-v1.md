@@ -30,6 +30,14 @@ Defines a versioned QFS-L2 checkpoint envelope for runtime state snapshot/restor
 - Integrity: checksum set + signature reference.
 - Provenance: compiler/optimizer/model versions, backend profile, seed.
 - Guardrails: declared byte size, estimated restore cost, TTL class.
+- Trace links (mandatory): `artifact_manifest_ref`, `dataset_metadata_ref`, `checkpoint_chain_ref`.
+
+### Decoding and upgrade notes
+
+- Readers must first decode `schema_version` and route by SemVer major.
+- `1.x` readers must reject missing trace-link fields and report `QFSL2_INVALID_ENVELOPE`.
+- Future `1.x` extensions are allowed only via additive optional fields with deterministic defaults.
+- `2.0.0+` may introduce incompatible required-field or semantic changes and must ship migration notes.
 
 ### API semantics
 
@@ -62,6 +70,7 @@ Defines a versioned QFS-L2 checkpoint envelope for runtime state snapshot/restor
 
 - **Version impact:** QFS-L2 envelope contract `1.0.0`.
 - **Compatibility:** additive optional metadata is `MINOR`; required header/payload semantic changes are `MAJOR`.
+- **Reader policy:** fail closed on unknown major, fail closed on missing mandatory trace-link fields.
 
 ## Open questions
 
