@@ -11,7 +11,7 @@
     },
     {
       "path": "proto/eigen/api/v1/knowledge_base_service.proto",
-      "sha256": "a34e3b2d478977ec79bc7d4a0d428b6d1552feaab1bc6999acb79dd20412cc1b"
+      "sha256": "446d338ee4fb439ce46d7db015e0b0f0a40c81f7151f54a2199d7348cc953fdc"
     },
     {
       "path": "proto/eigen/api/v1/types.proto",
@@ -51,7 +51,7 @@
     },
     {
       "path": "proto/eigen/internal/v1/optimizer_service.proto",
-      "sha256": "9abb8c8ccb47a8525717217faddd556c0f5c7934809af139d33b3b27f8fb5d8d"
+      "sha256": "6ea2f2ef03ca1ff0919105b7f253b0aad699a558dd6b000d4bea1303732e079f"
     },
     {
       "path": "src/services/system-api/tests/fixtures/contracts/optimizer_v1/service_contract_v1_0_0.json",
