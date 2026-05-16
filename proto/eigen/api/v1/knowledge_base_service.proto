@@ -101,12 +101,20 @@ message GetRecordResponse {
 }
 
 enum KnowledgeBaseReasonCode {
+  option allow_alias = true;
+
   KNOWLEDGE_BASE_REASON_CODE_UNSPECIFIED = 0;
+  KB_UNSPECIFIED = 0 [deprecated = true];
   KNOWLEDGE_BASE_REASON_CODE_INVALID_ARGUMENT = 1;
+  KB_INVALID_ARGUMENT = 1 [deprecated = true];
   KNOWLEDGE_BASE_REASON_CODE_NOT_FOUND = 2;
+  KB_NOT_FOUND = 2 [deprecated = true];
   KNOWLEDGE_BASE_REASON_CODE_INDEX_UNAVAILABLE = 3;
+  KB_INDEX_UNAVAILABLE = 3 [deprecated = true];
   KNOWLEDGE_BASE_REASON_CODE_RATE_LIMITED = 4;
+  KB_RATE_LIMITED = 4 [deprecated = true];
   KNOWLEDGE_BASE_REASON_CODE_INTERNAL = 5;
+  KB_INTERNAL = 5 [deprecated = true];
 }
 
 message KnowledgeBaseError {
