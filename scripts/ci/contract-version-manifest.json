@@ -1,5 +1,5 @@
 {
-  "manifest_version": "1.2.0",
+  "manifest_version": "1.3.0",
   "artifacts": [
     {
       "path": "proto/eigen/api/v1/device_service.proto",
@@ -44,10 +44,18 @@
     {
       "path": "src/rust/crates/resource-manager/tests/fixtures/scheduler_contracts/queue_delivery_contract_v1_0_1.json",
       "sha256": "7530003ad5dcd5a1c77434c04843fc91c52fed7ef81899fc0825fa02f4a88207"
-      },
+    },
     {
       "path": "src/services/system-api/tests/fixtures/contracts/knowledge_base_v1/error_model_v1_0_0.json",
       "sha256": "06bcabb1b49239b93bf78307bc849bfb9bee6f906fb9fbb7f35c48e10e26d337"
+      },
+    {
+      "path": "proto/eigen/internal/v1/optimizer_service.proto",
+      "sha256": "9abb8c8ccb47a8525717217faddd556c0f5c7934809af139d33b3b27f8fb5d8d"
+    },
+    {
+      "path": "src/services/system-api/tests/fixtures/contracts/optimizer_v1/service_contract_v1_0_0.json",
+      "sha256": "cd2a6582c2c816c48841fc64fa72bd3427505e8f005133b4f95f0f2bf0cfa7fa"
     }
   ]
 }
