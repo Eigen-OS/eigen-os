@@ -15,6 +15,7 @@ This document fixes the **current public gRPC contract state** for Eigen OS and 
   - `proto/eigen/api/v1/job_service.proto`
   - `proto/eigen/api/v1/device_service.proto`
   - `proto/eigen/api/v1/types.proto`
+  - `proto/eigen/api/v1/knowledge_base_service.proto`
 
 > Note: older references to `eigen_api.v1` are stale; the current package name in proto is `eigen.api.v1`.
 
@@ -46,7 +47,22 @@ service DeviceService {
 }
 ```
 
-### 3) Compilation API status
+### 3) `KnowledgeBaseService`
+
+```proto
+service KnowledgeBaseService {
+  rpc UpsertRecord(UpsertRecordRequest) returns (UpsertRecordResponse);
+  rpc BatchUpsertRecords(BatchUpsertRecordsRequest) returns (BatchUpsertRecordsResponse);
+  rpc QueryRecords(QueryRecordsRequest) returns (QueryRecordsResponse);
+  rpc GetRecord(GetRecordRequest) returns (GetRecordResponse);
+}
+```
+
+Compatibility + error contract for this service is frozen at **v1.0.0** and defined in RFC 0034 (`rfcs/0034-phase8a-knowledge-base-api-contract-v1.md`) and the proto schema (`proto/eigen/api/v1/knowledge_base_service.proto`).
+
+Deterministic reason codes: `KB_INVALID_ARGUMENT`, `KB_NOT_FOUND`, `KB_INDEX_UNAVAILABLE`, `KB_RATE_LIMITED`, `KB_INTERNAL`. Retry semantics are encoded per error as `NEVER`, `SAFE_RETRY`, or `RETRY_WITH_BACKOFF`.
+
+### 4) Compilation API status
 
 Compilation is **not** part of the public frozen contract for `eigen.api.v1` and remains an internal surface.
 
@@ -117,7 +133,7 @@ In proto, enum values are prefixed and include explicit UNSPECIFIED variants:
 - `ReserveDevice` reserves scheduling capacity, not global hardware lock.
 - Response contains `reservation_id` and `expires_at`.
 
-## 4) Error signaling
+## 5) Error signaling
 
 - Success = gRPC `OK`.
 - Failure = non-`OK` status (optionally enriched with structured details).
