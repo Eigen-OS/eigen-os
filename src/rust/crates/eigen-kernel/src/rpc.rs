@@ -253,10 +253,12 @@ async fn run_pipeline(
     req: EnqueueJobRequest,
     trace_ctx: TraceContext,
 ) -> Result<(), PipelineError> {
+    let flags = Phase8aFeatureFlags::from_metadata(&req.metadata);
     let mut results_metadata = HashMap::from([(
         "results_ref".to_string(),
         format!("jobs/{job_id}/results.parquet"),
     )]);
+     results_metadata.extend(flags.as_results_metadata());
 
     store
         .apply_event(job_id, JobEvent::StartCompiling)
@@ -381,6 +383,58 @@ async fn run_pipeline(
 struct VqeLoopOutcome {
     last_execution: ExecuteCircuitResponse,
     results_metadata: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Phase8aFeatureFlags {
+    kb_v1: bool,
+    optimizer_v1: bool,
+    learning_pipeline_v1: bool,
+    qfs_l2_checkpoint_v1: bool,
+}
+
+impl Phase8aFeatureFlags {
+    fn from_metadata(metadata: &HashMap<String, String>) -> Self {
+        Self {
+            kb_v1: parse_bool(metadata.get("feature.kb_v1").map(String::as_str)),
+            optimizer_v1: parse_bool(metadata.get("feature.optimizer_v1").map(String::as_str)),
+            learning_pipeline_v1: parse_bool(
+                metadata
+                    .get("feature.learning_pipeline_v1")
+                    .map(String::as_str),
+            ),
+            qfs_l2_checkpoint_v1: parse_bool(
+                metadata
+                    .get("feature.qfs_l2_checkpoint_v1")
+                    .map(String::as_str),
+            ),
+        }
+    }
+
+    fn as_results_metadata(&self) -> HashMap<String, String> {
+        HashMap::from([
+            ("feature.kb_v1".to_string(), self.kb_v1.to_string()),
+            (
+                "feature.optimizer_v1".to_string(),
+                self.optimizer_v1.to_string(),
+            ),
+            (
+                "feature.learning_pipeline_v1".to_string(),
+                self.learning_pipeline_v1.to_string(),
+            ),
+            (
+                "feature.qfs_l2_checkpoint_v1".to_string(),
+                self.qfs_l2_checkpoint_v1.to_string(),
+            ),
+        ])
+    }
+}
+
+fn parse_bool(raw: Option<&str>) -> bool {
+    matches!(
+        raw.map(|v| v.trim().to_ascii_lowercase()),
+        Some(v) if v == "1" || v == "true" || v == "yes" || v == "on"
+    )
 }
 
 async fn run_vqe_loop(
@@ -1035,6 +1089,7 @@ mod tests {
     use crate::proto::driver_manager_service_server::DriverManagerServiceServer;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Mutex, OnceLock};
+    use std::path::PathBuf;
     use tempfile::TempDir;
     use tokio::time::{Duration, sleep};
 
@@ -1587,6 +1642,111 @@ def vqe_program():
             }
             sleep(Duration::from_millis(30)).await;
         }
+
+        assert!(compiler_trace_store().lock().unwrap().iter().any(|entry| {
+            entry.traceparent.as_deref() == Some(traceparent)
+                && entry.trace_id.as_deref() == Some(trace_id)
+        }));
+        assert!(driver_trace_store().lock().unwrap().iter().any(|entry| {
+            entry.traceparent.as_deref() == Some(traceparent)
+                && entry.trace_id.as_deref() == Some(trace_id)
+        }));
+    }
+
+    #[tokio::test]
+    async fn integration_phase8a_vertical_slice_fixture_replay_is_deterministic() {
+        driver_attempt_counter().store(0, Ordering::SeqCst);
+        compiler_trace_store().lock().unwrap().clear();
+        driver_trace_store().lock().unwrap().clear();
+        let fixture_raw = std::fs::read_to_string(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/phase8a/vertical_slice_replay_v1.json"),
+        )
+        .unwrap();
+        let fixture: serde_json::Value = serde_json::from_str(&fixture_raw).unwrap();
+
+        let temp_qfs = TempDir::new().unwrap();
+        let compiler_addr: SocketAddr = "127.0.0.1:50181".parse().unwrap();
+        let driver_addr: SocketAddr = "127.0.0.1:50182".parse().unwrap();
+
+        tokio::spawn(async move {
+            tonic::transport::Server::builder()
+                .add_service(CompilationServiceServer::new(MockCompiler))
+                .serve(compiler_addr)
+                .await
+                .unwrap();
+        });
+        tokio::spawn(async move {
+            tonic::transport::Server::builder()
+                .add_service(DriverManagerServiceServer::new(MockDriver))
+                .serve(driver_addr)
+                .await
+                .unwrap();
+        });
+        sleep(Duration::from_millis(80)).await;
+
+        let svc = KernelGatewaySvc {
+            store: JobStore::default(),
+            deps: PipelineDeps {
+                compiler_endpoint: "http://127.0.0.1:50181".to_string(),
+                driver_endpoint: "http://127.0.0.1:50182".to_string(),
+                default_device_id: "sim:local".to_string(),
+                qfs: CircuitFsLocal::new(temp_qfs.path()),
+            },
+        };
+
+        let mut metadata = HashMap::new();
+        for (k, v) in fixture["feature_flags"].as_object().unwrap() {
+            metadata.insert(k.clone(), v.as_str().unwrap().to_string());
+        }
+        metadata.insert("shots".to_string(), "1024".to_string());
+
+        let traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+        let trace_id = "4bf92f3577b34da6a3ce929d0e0e4736";
+        let mut req = Request::new(EnqueueJobRequest {
+            name: "phase8a-vertical-slice".to_string(),
+            program: b"x".to_vec(),
+            program_format: "eigen-lang".to_string(),
+            target: "sim:local".to_string(),
+            priority: 1,
+            compiler_options: HashMap::new(),
+            metadata,
+        });
+        req.metadata_mut()
+            .insert("traceparent", traceparent.parse().unwrap());
+        req.metadata_mut()
+            .insert("trace_id", trace_id.parse().unwrap());
+
+        let job_id = svc.enqueue_job(req).await.unwrap().into_inner().job_id;
+        for _ in 0..40 {
+            let status = svc
+                .get_job_status(Request::new(GetJobStatusRequest {
+                    job_id: job_id.clone(),
+                }))
+                .await
+                .unwrap()
+                .into_inner();
+            if status.state == TaskState::Done as i32 {
+                break;
+            }
+            sleep(Duration::from_millis(30)).await;
+        }
+
+        let results = svc
+            .get_job_results(Request::new(GetJobResultsRequest { job_id: job_id.clone() }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(results.state, TaskState::Done as i32);
+
+        for key in fixture["required_results_metadata_keys"].as_array().unwrap() {
+            assert!(results.metadata.contains_key(key.as_str().unwrap()));
+        }
+        assert_eq!(results.metadata.get("feature.kb_v1"), Some(&"true".to_string()));
+        assert_eq!(results.metadata.get("feature.optimizer_v1"), Some(&"true".to_string()));
+        assert!(results.metadata["results_ref"].starts_with("jobs/"));
+        assert!(results.metadata["result_envelope_ref"].contains(&job_id));
+        assert!(results.metadata["result_manifest_ref"].contains(&job_id));
 
         assert!(compiler_trace_store().lock().unwrap().iter().any(|entry| {
             entry.traceparent.as_deref() == Some(traceparent)

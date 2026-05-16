@@ -77,3 +77,14 @@ Phase-8A is complete only when:
 - [ ] Vertical-slice integration test passing in CI.
 - [ ] Phase-8A probe fixtures committed and runnable.
 - [ ] Compatibility impact statement published in release notes draft.
+
+## Feature flag defaults and rollout notes (P8A-05)
+
+| Flag | Default | Rollout note |
+|---|---|---|
+| `feature.kb_v1` | `false` | Enable first in replay/fixture environments to verify stable `results_ref`/record linkage before shared environments. |
+| `feature.optimizer_v1` | `false` | Enable after deterministic replay is green; keep disabled for non-hybrid jobs to preserve baseline behavior. |
+| `feature.learning_pipeline_v1` | `false` | Enable only with bounded fixture datasets and trace-linked artifacts for auditability. |
+| `feature.qfs_l2_checkpoint_v1` | `false` | Enable after checkpoint envelope conformance checks are passing in CI for target branch. |
+
+All flags must remain explicitly set during phased rollout; missing flags resolve to deterministic safe defaults (`false`).
