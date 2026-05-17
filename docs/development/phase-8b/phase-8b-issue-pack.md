@@ -2,7 +2,7 @@ This document is a ready-to-use set of GitHub issues for the **Phase-8B** stage 
 
 **Context Sources:**
 - `docs/development/phase-8-implementation-roadmap-v1.1.0.md` (Section: "Phase-8B")
-- `docs/development/phase-8b-execution-plan.md`
+- `docs/development/phase-8b/phase-8b-execution-plan.md`
 - `docs/development/post-mvp-open-source-roadmap.md` (phase progression context)
 - `rfcs/0032-phase7-api-and-contract-versioning-policy-v1.md` (normative versioning constraints)
 
