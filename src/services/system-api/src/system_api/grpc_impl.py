@@ -860,6 +860,7 @@ class JobService:
         queued_for_target = sum(
             1
             for rec in self._jobs.values()
+            if rec.job_id != record.job_id
             if rec.dispatch_rationale.get("selected_backend", "sim:local")
             == record.dispatch_rationale.get("selected_backend", "sim:local")
             and rec.updates
