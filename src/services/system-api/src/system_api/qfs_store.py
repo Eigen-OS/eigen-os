@@ -6,6 +6,7 @@ import os
 import threading
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Callable, Protocol
 
 
@@ -204,3 +205,122 @@ def _build_qfs_store_from_env() -> QFSStore:
 
 
 QFS_STORE = _build_qfs_store_from_env()
+
+QFS_L3_ARTIFACT_CONTRACT_VERSION = "1.0.0"
+
+_JOB_LAYOUT_REQUIRED_REFS = (
+    "input/job.yaml",
+    "input/program.eigen.py",
+    "compiled/circuit.aqo.json",
+)
+
+
+@dataclass(frozen=True)
+class ArtifactMetadata:
+    qfs_ref: str
+    job_id: str
+    trace_id: str
+    stage: str
+    artifact_type: str
+    created_at_epoch_ms: int
+    retention_until_epoch_ms: int
+
+
+@dataclass(frozen=True)
+class LayoutValidationResult:
+    ok: bool
+    diagnostics: list[str]
+    missing_required: list[str]
+
+
+@dataclass(frozen=True)
+class RetentionCleanupEvent:
+    qfs_ref: str
+    reason_code: str
+
+
+class QFSLayoutValidator:
+    """Deterministic QFS-L3 layout validator with stable diagnostics."""
+
+    @staticmethod
+    def validate_job_layout(*, store: QFSStore, job_id: str, require_results: bool = False) -> LayoutValidationResult:
+        base = f"qfs://jobs/{job_id}/"
+        refs = set(store.list_refs(base))
+        required = [f"{base}{suffix}" for suffix in _JOB_LAYOUT_REQUIRED_REFS]
+        if require_results:
+            required.append(f"{base}results.parquet")
+        missing = sorted(ref for ref in required if ref not in refs)
+        diagnostics = [f"MISSING_REQUIRED:{ref}" for ref in missing]
+        return LayoutValidationResult(ok=not missing, diagnostics=diagnostics, missing_required=missing)
+
+    @staticmethod
+    def validate_metadata(meta: ArtifactMetadata) -> list[str]:
+        violations: list[str] = []
+        if not meta.qfs_ref.startswith(f"qfs://jobs/{meta.job_id}/"):
+            violations.append("INVALID_REF_SCOPE:qfs_ref must be under job scope")
+        if not meta.trace_id.strip():
+            violations.append("INVALID_TRACE_ID:trace_id is required")
+        if not meta.stage.strip():
+            violations.append("INVALID_STAGE:stage is required")
+        if not meta.artifact_type.strip():
+            violations.append("INVALID_ARTIFACT_TYPE:artifact_type is required")
+        if meta.retention_until_epoch_ms < meta.created_at_epoch_ms:
+            violations.append("INVALID_RETENTION_WINDOW:retention_until must be >= created_at")
+        return sorted(violations)
+
+
+class QFSMetadataIndex:
+    """In-memory metadata index for trace-linked artifact lookup paths."""
+
+    def __init__(self):
+        self._items: list[ArtifactMetadata] = []
+        self._lock = threading.RLock()
+
+    def upsert(self, meta: ArtifactMetadata) -> None:
+        violations = QFSLayoutValidator.validate_metadata(meta)
+        if violations:
+            raise ValueError(f"INVALID_METADATA:{'|'.join(violations)}")
+        with self._lock:
+            self._items = [item for item in self._items if item.qfs_ref != meta.qfs_ref]
+            self._items.append(meta)
+            self._items.sort(key=lambda item: (item.job_id, item.trace_id, item.stage, item.qfs_ref))
+
+    def find_by_trace(self, trace_id: str) -> list[ArtifactMetadata]:
+        with self._lock:
+            return [item for item in self._items if item.trace_id == trace_id]
+
+    def find_by_job(self, job_id: str) -> list[ArtifactMetadata]:
+        with self._lock:
+            return [item for item in self._items if item.job_id == job_id]
+
+    def all(self) -> list[ArtifactMetadata]:
+        with self._lock:
+            return list(self._items)
+
+
+class QFSRetentionExecutor:
+    """Retention cleanup executor with deterministic reason codes."""
+
+    REASON_RETENTION_EXPIRED = "RETENTION_EXPIRED"
+    REASON_ORPHAN_NOT_INDEXED = "ORPHAN_NOT_INDEXED"
+
+    @staticmethod
+    def run(
+        *,
+        store: QFSStore,
+        index: QFSMetadataIndex,
+        now_epoch_ms: int | None = None,
+    ) -> list[RetentionCleanupEvent]:
+        now_ms = now_epoch_ms if now_epoch_ms is not None else int(datetime.now(tz=UTC).timestamp() * 1000)
+        events: list[RetentionCleanupEvent] = []
+        indexed_refs = {item.qfs_ref: item for item in index.all()}
+        for ref in sorted(store.list_refs("qfs://jobs/")):
+            meta = indexed_refs.get(ref)
+            if meta is None:
+                store.delete_bytes(ref)
+                events.append(RetentionCleanupEvent(qfs_ref=ref, reason_code=QFSRetentionExecutor.REASON_ORPHAN_NOT_INDEXED))
+                continue
+            if now_ms >= meta.retention_until_epoch_ms:
+                store.delete_bytes(ref)
+                events.append(RetentionCleanupEvent(qfs_ref=ref, reason_code=QFSRetentionExecutor.REASON_RETENTION_EXPIRED))
+        return events
