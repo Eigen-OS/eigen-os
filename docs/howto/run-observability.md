@@ -64,3 +64,10 @@ Prometheus must include `intelligent-runtime-alerts.yaml` in `rule_files` and sc
 - Runbook: `docs/howto/cluster-runtime-observability-runbook.md`
 
 Prometheus must include `cluster-runtime-alerts.yaml` in `rule_files` and scrape the cluster runtime target exposing `eigen_cluster_*` series (default `127.0.0.1:9096`).
+
+## Phase-8B runtime/data observability pack
+
+- Alerts: `monitoring/metrics/prometheus/runtime-data-alerts.yaml`
+- Runbook: `docs/howto/runtime-data-observability-runbook.md`
+
+Prometheus must include `runtime-data-alerts.yaml` in `rule_files` and scrape runtime + queue + cluster targets exposing `eigen_stage_*`, `eigen_orch_*`, and `eigen_cluster_*` series.

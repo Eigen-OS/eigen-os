@@ -94,3 +94,19 @@ def test_benchmark_metrics_exporter_renders_stable_contract_metrics():
     assert "eigen_bench_runs_failed_total 8" in text
     assert "eigen_bench_ingestion_failures_total 3" in text
     assert "eigen_bench_stalled_runs 1" in text
+
+def test_runtime_data_alert_pack_has_required_rules_and_runbooks():
+    text = open("monitoring/metrics/prometheus/runtime-data-alerts.yaml", "r", encoding="utf-8").read()
+    expected_alerts = {
+        "EigenRuntimeDataQueuePressureCritical",
+        "EigenRuntimeDataCompileRegressionP95",
+        "EigenRuntimeDataCompileRegressionP99Critical",
+        "EigenRuntimeDataDriverDegradationErrorRate",
+        "EigenRuntimeDataCorrelationBreakage",
+    }
+
+    for alert in expected_alerts:
+        assert f"alert: {alert}" in text
+
+    assert text.count('runbook: "docs/howto/runtime-data-observability-runbook.md#') == 5
+    

@@ -18,6 +18,7 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 
 ### Added
 
+- Phase-8B P8B-05 observability join model + runtime/data alert pack (`runtime-observability` assets `0.4.0`) with lifecycle span correlation requirements (`queue -> schedule -> dispatch -> execute -> persist -> checkpoint`), deterministic queue/compiler/driver regression alerts, and runbook-linked actionable diagnostics for CI/ops workflows.
 - Phase-8B P8B-02 scheduler policy pack (`system-api` package `0.6.0`) with deterministic priority+quota dispatch hooks, starvation-protection promotion guard, explicit topology/noise telemetry fallback markers, and fixture-oriented scheduler policy tests.
 - Phase-8B P8B-01 QRTX DAG resolver + lifecycle idempotency hardening (`system-api` package `0.5.1`) with deterministic DAG reason codes (`DAG_RESOLVE_OK`, `DAG_UNKNOWN_NODE`, `DAG_SELF_DEPENDENCY`, `DAG_CYCLE_DETECTED`), replay-safe lifecycle signal handling for cancel/retry sequencing, and fixture tests for repeated/out-of-order control signals.
 - Phase-7 P7-06 RFC package and ADR synchronization closure (`governance-docs` package `0.11.0`) with RFC 0032/0033 accepted status alignment, new ADR 0018/0019 records, synchronized RFC/development pointers, and published Phase-7 readiness + compatibility reports.
