@@ -122,6 +122,8 @@ class JobService:
         self._batch_wait_window_sec = max(float(os.getenv("EIGEN_BATCH_WAIT_WINDOW_SEC", "0.2")), 0.0)
         self._batch_dispatch_gap_sec = max(float(os.getenv("EIGEN_BATCH_DISPATCH_GAP_SEC", "0.15")), 0.0)
         self._batch_inflight_limit = max(int(os.getenv("EIGEN_BATCH_INFLIGHT_LIMIT", "64")), self._batch_size)
+        self._quota_per_target = max(int(os.getenv("EIGEN_SCHED_QUOTA_PER_TARGET", "8")), 1)
+        self._starvation_threshold_sec = max(float(os.getenv("EIGEN_SCHED_STARVATION_SEC", "2.0")), 0.0)
         self._dispatch_slot_seq = 0
 
     def _request_fingerprint(self, request) -> str:
@@ -600,10 +602,20 @@ class JobService:
             "topology_attempt": topology["attempt"],
             "topology_envelope_ref": f"qfs://jobs/{job_id}/topology/envelope.json",
         }
+        noise_score = metadata.get("noise_score", "").strip()
+        noise_threshold = metadata.get("noise_threshold", "").strip() or "0.03"
+        topology_telemetry = metadata.get("topology_telemetry", "").strip().lower() in {"1", "true", "yes", "on"}
+        topology_fallback = metadata.get("topology_fallback", "").strip() or "cluster-local/default"
+        noise_fallback = "NOISE_TELEMETRY_MISSING"
+        if noise_score:
+            noise_fallback = "NO_FALLBACK"
+        topology_fallback_reason = "TOPOLOGY_TELEMETRY_MISSING"
+        if topology_telemetry:
+            topology_fallback_reason = "NO_FALLBACK"
         dispatch_rationale = {
-            "version": "2.2.0",
-            "policy_version": metadata.get("dispatch_policy_version", "2.1.0"),
-            "reason_codes": ["WEIGHTED_FAIRNESS", "DEVICE_SCORE", "SINGLE_DISPATCH"],
+           "version": "2.3.0",
+            "policy_version": metadata.get("dispatch_policy_version", "2.2.0"),
+            "reason_codes": ["WEIGHTED_FAIRNESS", "DEVICE_SCORE", "PRIORITY_QUOTA", "SINGLE_DISPATCH"],
             "selected_backend": request.target or "sim:local",
             "selected_queue": f"priority-{int(request.priority)}",
             "attributes": {
@@ -612,9 +624,14 @@ class JobService:
                 "job_name": request.name,
                 "batch_mode_enabled": str(self._batch_mode_enabled).lower(),
                 "policy_branch": "single_dispatch",
-                "fallback_reason": "NO_FALLBACK",
-                "artifact_version": "1.1.0",
+                "fallback_reason": f"{topology_fallback_reason}|{noise_fallback}",
+                "artifact_version": "1.2.0",
                 "topology_contract_version": topology["contract_version"],
+                "topology_hook_status": "present" if topology_telemetry else "fallback",
+                "topology_fallback_target": topology_fallback,
+                "noise_hook_status": "present" if noise_score else "fallback",
+                "noise_score": noise_score or "unavailable",
+                "noise_threshold": noise_threshold,
             },
             "lineage": [
                 {
@@ -735,7 +752,7 @@ class JobService:
     def _assign_single_dispatch_delay(self, record: _JobRecord) -> None:
         slot = self._dispatch_slot_seq
         self._dispatch_slot_seq += 1
-        record.queue_delay_sec = float(slot) * self._batch_dispatch_gap_sec
+        record.queue_delay_sec += float(slot) * self._batch_dispatch_gap_sec
 
     def _inflight_batch_jobs(self) -> int:
         terminal_values = {getattr(self._types_pb, name) for name in TERMINAL_JOB_STATES}
@@ -840,6 +857,30 @@ class JobService:
                 members = members[self._batch_size :]
 
     def _assign_scheduler_slot(self, record: _JobRecord) -> None:
+        queued_for_target = sum(
+            1
+            for rec in self._jobs.values()
+            if rec.dispatch_rationale.get("selected_backend", "sim:local")
+            == record.dispatch_rationale.get("selected_backend", "sim:local")
+            and rec.updates
+            and rec.updates[-1].stage == "QUEUED"
+        )
+        age_sec = (datetime.now(timezone.utc) - record.created_at_dt).total_seconds()
+        if queued_for_target >= self._quota_per_target:
+            penalty_slots = max(queued_for_target - self._quota_per_target + 1, 1)
+            record.queue_delay_sec += float(penalty_slots) * self._batch_dispatch_gap_sec
+            record.dispatch_rationale["reason_codes"].append("TARGET_QUOTA_DELAY")
+            record.dispatch_rationale["attributes"]["quota_state"] = "throttled"
+            record.dispatch_rationale["attributes"]["quota_penalty_slots"] = str(penalty_slots)
+        else:
+            record.dispatch_rationale["attributes"]["quota_state"] = "eligible"
+            record.dispatch_rationale["attributes"]["quota_penalty_slots"] = "0"
+        if age_sec >= self._starvation_threshold_sec:
+            record.queue_delay_sec = 0.0
+            record.dispatch_rationale["reason_codes"].append("STARVATION_PROTECTION")
+            record.dispatch_rationale["attributes"]["starvation_guard"] = "promoted"
+        else:
+            record.dispatch_rationale["attributes"]["starvation_guard"] = "none"
         if not self._batch_mode_enabled:
             self._assign_single_dispatch_delay(record)
             return
