@@ -275,6 +275,33 @@ jobs:
 
       - name: Run Phase-8A gate bundle
         run: bash scripts/ci/check-phase8a-gates.sh
+  
+  phase8b-ci-gate-bundle:
+    name: Phase-8B CI gate bundle
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install system-api with dev deps
+        working-directory: src/services/system-api
+        run: pip install -e .[dev]
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src/rust
+
+      - name: Run Phase-8B gate bundle
+        run: bash scripts/ci/check-phase8b-gates.sh
         
   phase2-contract-compatibility:
     name: Phase-2 contract compatibility suite

@@ -94,3 +94,14 @@ Phase-8B is complete only when:
 - [ ] Replay-safe lifecycle/idempotency suite is green.
 - [ ] Observability alert pack is deployed and linked to runbooks.
 - [ ] Phase-8B compatibility report is published and linked in release notes draft.
+
+## CI gate bundle implementation (P8B-06)
+
+The Phase-8B gate bundle is executable via `scripts/ci/check-phase8b-gates.sh` and wired as a required CI job (`phase8b-ci-gate-bundle`) in `.github/workflows/ci.yml`.
+
+Gate checks include:
+1. contract drift validation,
+2. synthetic queue scale fixture gate (>=10,000 jobs),
+3. enqueue p95 latency trend fixture gate (<=100 ms in benchmark profile),
+4. artifact integrity diagnostics fixture marker checks,
+5. checkpoint envelope compatibility/integrity tests.
