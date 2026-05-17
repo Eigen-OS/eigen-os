@@ -13,11 +13,15 @@ Phase-8B hardens scheduler/runtime and storage/data fabric capabilities to produ
 
 ## Required Phase-8B documentation package
 
-1. This execution plan (implementation binding for sprint planning, CI gate mapping, and acceptance review).
-2. Phase-8B issue pack (ready-to-use GitHub issues with acceptance criteria).
-3. Phase-8B RFC/ADR gap analysis (whether new normative RFC/ADR updates are required beyond Phase-8A baselines).
-4. Phase-8B release readiness checklist (operational exit verification for milestone closure).
-5. Phase-8B compatibility report (documented version/support impact for runtime, QFS-L2/L3, and observability contracts).
+1. RFC package:
+   - RFC 0038 — QRTX Scheduling and Lifecycle Hardening Contract v1.
+   - RFC 0039 — QFS-L2/L3 Data Fabric Hardening Contract v1.
+   - RFC 0040 — Runtime/Data Observability and SLO Gate Contract v1.
+2. This execution plan (implementation binding for sprint planning, CI gate mapping, and acceptance review).
+3. Phase-8B issue pack (ready-to-use GitHub issues with acceptance criteria).
+4. Phase-8B RFC/ADR gap analysis (whether new normative RFC/ADR updates are required beyond Phase-8A baselines).
+5. Phase-8B release readiness checklist (operational exit verification for milestone closure).
+6. Phase-8B compatibility report (documented version/support impact for runtime, QFS-L2/L3, and observability contracts).
 
 ## Workstreams and deliverables
 
