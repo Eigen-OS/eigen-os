@@ -106,3 +106,36 @@ def test_benchmark_batching_improves_throughput_within_latency_bound(monkeypatch
     batched_max_delay = max(batched._jobs[job_id].queue_delay_sec for job_id in batched_ids)
     unbatched_max_delay = max(unbatched._jobs[job_id].queue_delay_sec for job_id in unbatched_ids)
     assert batched_max_delay <= unbatched_max_delay + max_latency_regression_sec
+
+def test_priority_quota_and_starvation_hooks_are_deterministic(monkeypatch):
+    monkeypatch.setenv("EIGEN_SCHED_QUOTA_PER_TARGET", "1")
+    monkeypatch.setenv("EIGEN_SCHED_STARVATION_SEC", "0.0")
+    service = _make_service(monkeypatch, batch_mode="0")
+
+    first_id = _submit(service, name="quota-1")
+    second_id = _submit(service, name="quota-2")
+    first = service.GetDispatchRationale(job_pb.GetDispatchRationaleRequest(job_id=first_id), _Context()).rationale
+    second = service.GetDispatchRationale(job_pb.GetDispatchRationaleRequest(job_id=second_id), _Context()).rationale
+
+    assert first.attributes["quota_state"] == "eligible"
+    assert second.attributes["quota_state"] == "throttled"
+    assert "TARGET_QUOTA_DELAY" in second.reason_codes
+    assert first.attributes["starvation_guard"] == "promoted"
+    assert "STARVATION_PROTECTION" in first.reason_codes
+
+
+def test_topology_noise_fallback_is_explicit(monkeypatch):
+    service = _make_service(monkeypatch, batch_mode="0")
+    req = job_pb.SubmitJobRequest(
+        name="fallback-hooks",
+        target="sim:local",
+        priority=42,
+        metadata={"topology_fallback": "cluster-fallback/partition-0"},
+        eigen_lang=types_pb.EigenLangSource(source=b"def main():\n return 'ok'\n", entrypoint="main"),
+    )
+    job_id = service.SubmitJob(req, _Context()).job_id
+    rationale = service.GetDispatchRationale(job_pb.GetDispatchRationaleRequest(job_id=job_id), _Context()).rationale
+    assert rationale.attributes["topology_hook_status"] == "fallback"
+    assert rationale.attributes["noise_hook_status"] == "fallback"
+    assert rationale.attributes["fallback_reason"] == "TOPOLOGY_TELEMETRY_MISSING|NOISE_TELEMETRY_MISSING"
+    

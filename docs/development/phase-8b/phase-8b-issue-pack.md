@@ -85,6 +85,11 @@ This document is a ready-to-use set of GitHub issues for the **Phase-8B** stage 
 - Policy modules are configurable and deterministic under fixed fixtures.
 - Fallback behavior is explicit when topology/noise telemetry is missing.
 - Policy regressions fail CI via policy fixture suite.
+**Operator policy inputs (v1 defaults)**
+- `EIGEN_SCHED_QUOTA_PER_TARGET` (default `8`, min `1`) limits queued jobs per selected backend before quota throttling activates.
+- `EIGEN_SCHED_STARVATION_SEC` (default `2.0`, min `0.0`) promotes aged jobs with starvation protection.
+- `metadata.topology_telemetry` + `metadata.topology_fallback` control topology hook status and deterministic fallback target marker.
+- `metadata.noise_score` + `metadata.noise_threshold` control noise hook status; missing telemetry emits explicit fallback markers.
 
 **RFC link**
 - `rfcs/0038-phase8b-qrtx-scheduling-and-lifecycle-hardening-contract-v1.md`
