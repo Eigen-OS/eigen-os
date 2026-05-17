@@ -1,7 +1,7 @@
 # QFS Layout — Current MVP Contract (CircuitFS)
 
 - Phase: MVP
-- Status date: **2026-05-09**
+- Status date: **2026-05-17**
 - Scope: stable artifact layout used by runtime/kernel and System API result retrieval.
 
 ## Summary
@@ -111,6 +111,19 @@ Current behavior should preserve read compatibility for legacy jobs where only `
 - `compiled/circuit.aqo.json` must remain schema-compatible with current AQO reference.
 - Missing optional files must not break result retrieval when required files exist.
 
+## Phase-8B QFS-L3 Hardening Additions (`1.0.0`, MINOR)
+
+- Strict layout validation now returns deterministic diagnostics in the stable form
+  `MISSING_REQUIRED:qfs://jobs/{job_id}/...` for required refs.
+- Metadata envelopes for indexed artifacts validate deterministic fields:
+  `qfs_ref`, `job_id`, `trace_id`, `stage`, `artifact_type`,
+  `created_at_epoch_ms`, `retention_until_epoch_ms`.
+- Trace-linked lookup path support is defined as:
+  - `trace_id -> [qfs_ref...]`
+  - `job_id -> [qfs_ref...]`
+- Retention cleanup reason codes are frozen:
+  - `RETENTION_EXPIRED`
+  - `ORPHAN_NOT_INDEXED`
 ## Gaps / What Is Missing
 
 The following are not yet fully specified or uniformly enforced and should be tracked as system gaps:
