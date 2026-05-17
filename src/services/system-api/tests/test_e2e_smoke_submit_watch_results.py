@@ -88,7 +88,7 @@ def test_e2e_smoke_submit_watch_results(grpc_addr: str):
         assert results.metadata.get(key) == template.format(job_id=job_id)
 
     rationale = stub.GetDispatchRationale(job_pb.GetDispatchRationaleRequest(job_id=job_id)).rationale
-    assert rationale.version == "2.2.0"
+    assert rationale.version == "2.3.0"
     assert rationale.policy_version
     assert "WEIGHTED_FAIRNESS" in rationale.reason_codes
     assert "DEVICE_SCORE" in rationale.reason_codes

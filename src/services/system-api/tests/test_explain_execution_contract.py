@@ -52,10 +52,10 @@ def test_explain_execution_success_contract_fixture_is_stable(grpc_addr: str) ->
     rationale = stub.GetDispatchRationale(job_pb.GetDispatchRationaleRequest(job_id=job_id)).rationale
 
     assert set(contract["response_required_fields"]).issubset(set(rationale.DESCRIPTOR.fields_by_name))
-    assert rationale.version == "2.2.0"
+    assert rationale.version == "2.3.0"
     attrs = dict(rationale.attributes)
     assert set(contract["attributes_required_keys"]).issubset(attrs.keys())
-    assert attrs["artifact_version"] == "1.1.0"
+    assert attrs["artifact_version"] == "1.2.0"
 
     lineage = json.loads(attrs["decision_lineage"])
     assert len(lineage) >= int(contract["lineage_min_length"])
