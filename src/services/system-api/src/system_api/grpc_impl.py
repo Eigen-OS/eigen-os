@@ -18,6 +18,8 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from .errors import abort_invalid_argument, abort_with_error_info
+from .lifecycle import apply_signal
+from .scheduling import resolve_dag
 from .observability import log_request_end, log_request_start, new_request_context
 from .qfs_store import QFS_STORE
 from .security import enforce_authn, enforce_authz
@@ -855,6 +857,11 @@ class JobService:
         if violations:
             abort_invalid_argument(context, "validation failed", violations)
 
+        dag_nodes = sorted({request.name, *list(request.dependencies)})
+        dag = resolve_dag(dag_nodes, {request.name: list(request.dependencies)})
+        if not dag.ok:
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT, f"dag resolution failed: {dag.reason_code}: {dag.detail}")
+
         idem_key = self._idempotency_key(request)
         request_fingerprint = self._request_fingerprint(request)
 
@@ -973,7 +980,12 @@ class JobService:
                 context.abort(grpc.StatusCode.NOT_FOUND, f"job_id not found: {request.job_id}")
             self._advance_job(record)
             terminal_values = {getattr(self._types_pb, name) for name in TERMINAL_JOB_STATES}
-            if record.updates[-1].state not in terminal_values and not record.cancel_requested:
+            decision = apply_signal(
+                current_stage=record.updates[-1].stage,
+                signal="cancel",
+                already_requested=record.cancel_requested,
+            )
+            if decision.accepted and record.updates[-1].state not in terminal_values:
                 record.cancel_requested = True
                 self._advance_job(record)
                 accepted = True
