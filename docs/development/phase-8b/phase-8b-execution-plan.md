@@ -1,6 +1,6 @@
 # Phase-8B Execution Plan (Runtime and Data Fabric Hardening)
 
-- **Status:** Proposed
+- **Status:** Complete
 - **Date:** 2026-05-17
 - **Source roadmap:** `docs/development/phase-8-implementation-roadmap-v1.1.0.md`
 - **Milestone:** M8B
@@ -87,13 +87,13 @@ Phase-8B is complete only when:
 
 ## Exit review checklist
 
-- [ ] Queue scale synthetic test (`>= 10,000`) is passing and evidence is linked.
-- [ ] Enqueue latency p95 trend gate is green and documented.
-- [ ] Artifact integrity gate is green with fixture evidence.
-- [ ] Checkpoint/restore integrity gate is green with fixture evidence.
-- [ ] Replay-safe lifecycle/idempotency suite is green.
-- [ ] Observability alert pack is deployed and linked to runbooks.
-- [ ] Phase-8B compatibility report is published and linked in release notes draft.
+- [x] Queue scale synthetic test (`>= 10,000`) is passing and evidence is linked.
+- [x] Enqueue latency p95 trend gate is green and documented.
+- [x] Artifact integrity gate is green with fixture evidence.
+- [x] Checkpoint/restore integrity gate is green with fixture evidence.
+- [x] Replay-safe lifecycle/idempotency suite is green.
+- [x] Observability alert pack is deployed and linked to runbooks.
+- [x] Phase-8B compatibility report is published and linked in release notes draft.
 
 ## CI gate bundle implementation (P8B-06)
 

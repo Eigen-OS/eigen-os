@@ -119,6 +119,23 @@
   - [development/phase-8a-release-readiness-checklist.md](development/phase-8a-release-readiness-checklist.md)
   - [development/phase-8a-compatibility-report.md](development/phase-8a-compatibility-report.md)
 
+## Phase-8B RFC set (accepted)
+
+- Status on 2026-05-17: required Phase-8B runtime/data hardening RFC package is accepted and synchronized with ADRs for milestone closure.
+- Coverage check: [development/phase-8b/phase-8b-rfc-adr-gap-analysis.md](development/phase-8b/phase-8b-rfc-adr-gap-analysis.md)
+- Accepted RFCs:
+  - [RFC 0038 — Phase-8B QRTX scheduling and lifecycle hardening contract v1](../rfcs/0038-phase8b-qrtx-scheduling-and-lifecycle-hardening-contract-v1.md)
+  - [RFC 0039 — Phase-8B QFS-L2/L3 data fabric hardening contract v1](../rfcs/0039-phase8b-qfs-l2-l3-data-fabric-hardening-contract-v1.md)
+  - [RFC 0040 — Phase-8B runtime/data observability and SLO gates contract v1](../rfcs/0040-phase8b-runtime-data-observability-and-slo-gates-v1.md)
+- Synchronized ADRs:
+  - [ADR 0024 — Phase-8B QRTX scheduling and lifecycle hardening contract v1](adr/0024-phase8b-qrtx-scheduling-and-lifecycle-hardening-contract-v1.md)
+  - [ADR 0025 — Phase-8B QFS-L2/L3 data fabric hardening contract v1](adr/0025-phase8b-qfs-l2-l3-data-fabric-hardening-contract-v1.md)
+  - [ADR 0026 — Phase-8B runtime/data observability and SLO gates contract v1](adr/0026-phase8b-runtime-data-observability-and-slo-gates-v1.md)
+- Release closure artifacts:
+  - [development/phase-8b/phase-8b-release-readiness-checklist.md](development/phase-8b/phase-8b-release-readiness-checklist.md)
+  - [development/phase-8b/phase-8b-compatibility-report.md](development/phase-8b/phase-8b-compatibility-report.md)
+  - [development/phase-8b/phase-8b-exit-evidence-bundle.md](development/phase-8b/phase-8b-exit-evidence-bundle.md)
+
 ## Quick links
 
 - RFC directory: [`../rfcs/`](../rfcs/)

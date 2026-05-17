@@ -32,6 +32,10 @@ Eigen-OS evolves as:
 - Phase-3: Benchmarking platform
 - Phase-4: Intelligent runtime
 - Phase-5: Distributed execution
+- Phase-6: Plugin ecosystem baseline
+- Phase-7: Stability and developer experience baseline
+- Phase-8A: Knowledge/optimizer/learning/checkpoint contract baseline
+- Phase-8B: Runtime and data-fabric hardening
 
 ### Capabilities Today
 
@@ -171,7 +175,7 @@ Future support:
 
 ---
 
-## 5. Next Milestone — Phase-6: Plugin Ecosystem
+## 5. Phase-6: Plugin Ecosystem (Completed)
 
 ### Goal
 
@@ -185,8 +189,7 @@ Make Eigen-OS a platform.
 - Sigstore/Cosign default trust stack (keyless Fulcio + Rekor for public/community plugins)
 - mandatory out-of-process OCI sandbox via gVisor (`runsc`)
 - Phase-6 GA plugin types: `driver`, `compiler_backend`, `optimizer`
-- Phase-6 plugin contract RFC package (Draft): [`RFC 0029`](../rfcs/0029-phase6-plugin-sdk-and-manifest-contract-v1.md), [`RFC 0030`](../rfcs/0030-phase6-plugin-lifecycle-and-runtime-isolation-contract-v1.md), [`RFC 0031`](../rfcs/0031-phase6-plugin-compatibility-and-trust-policy-contract-v1.md)
-- Phase-6 plugin contract RFC package (Draft): [`RFC 0029`](../rfcs/0029-phase6-plugin-sdk-and-manifest-contract-v1.md), [`RFC 0030`](../rfcs/0030-phase6-plugin-lifecycle-and-runtime-isolation-contract-v1.md), [`RFC 0031`](../rfcs/0031-phase6-plugin-compatibility-and-trust-policy-contract-v1.md)
+- Phase-6 plugin contract RFC package: [`RFC 0029`](../rfcs/0029-phase6-plugin-sdk-and-manifest-contract-v1.md), [`RFC 0030`](../rfcs/0030-phase6-plugin-lifecycle-and-runtime-isolation-contract-v1.md), [`RFC 0031`](../rfcs/0031-phase6-plugin-compatibility-and-trust-policy-contract-v1.md)
 
 ### Eigen-Lang Integration
 
@@ -210,7 +213,7 @@ from eigen_lang_plugins.qaoa import QAOAAnsatz
 
 ---
 
-## 6. Phase-7: Stability & Developer Experience
+## 6. Phase-7: Stability & Developer Experience (Completed)
 
 ### Goal
 
@@ -242,7 +245,23 @@ Make Eigen-Lang production-grade for developers and researchers.
 
 ---
 
-## 7. Long-Term Eigen-Lang Vision
+## 7. Phase-8A and Phase-8B: Runtime Intelligence/Data Hardening (Completed)
+
+### Phase-8A baseline
+
+Phase-8A established accepted contracts and ADRs for the Knowledge Base API, GNN optimizer service, continuous learning control plane, and QFS-L2 checkpoint envelope. See [`RFC 0034`](../rfcs/0034-phase8a-knowledge-base-api-contract-v1.md) through [`RFC 0037`](../rfcs/0037-phase8a-qfs-l2-checkpoint-envelope-contract-v1.md) and ADR 0020 through ADR 0023.
+
+### Phase-8B baseline
+
+Phase-8B closed runtime/data-fabric hardening with accepted contracts and ADRs for:
+
+- deterministic QRTX scheduling and lifecycle hardening ([`RFC 0038`](../rfcs/0038-phase8b-qrtx-scheduling-and-lifecycle-hardening-contract-v1.md), ADR 0024);
+- QFS-L2/L3 artifact, retention, indexing, and checkpoint/restore hardening ([`RFC 0039`](../rfcs/0039-phase8b-qfs-l2-l3-data-fabric-hardening-contract-v1.md), ADR 0025);
+- runtime/data telemetry correlation, alerting, and SLO gates ([`RFC 0040`](../rfcs/0040-phase8b-runtime-data-observability-and-slo-gates-v1.md), ADR 0026).
+
+Closure evidence is tracked in [`docs/development/phase-8b/phase-8b-exit-evidence-bundle.md`](development/phase-8b/phase-8b-exit-evidence-bundle.md).
+
+## 8. Long-Term Eigen-Lang Vision
 
 Eigen-Lang evolves into:
 
@@ -260,7 +279,7 @@ The language must remain:
 
 ---
 
-## 8. Guiding Principles
+## 9. Guiding Principles
 
 - contracts-first architecture
 - reproducibility over magic
@@ -270,17 +289,16 @@ The language must remain:
 
 ---
 
-## 9. Immediate Next Steps
+## 10. Immediate Next Steps
 
-1. Kick off Phase-4 scoring module implementation
-2. Add scheduling policy configuration surfaces
-3. Implement explanation APIs for backend selection/execution
-4. Expose first Eigen-Lang runtime-intelligence diagnostics
-5. Prepare demo-ready explainability workflow
+1. Keep Phase-8B SLO gates green in required CI.
+2. Monitor runtime/data alert packs for queue pressure, compiler regression, and driver degradation signals.
+3. Treat any runtime lifecycle, QFS envelope, or telemetry-contract breakage as RFC/ADR-governed work with migration notes.
+4. Plan the next milestone from the Phase-8+ implementation roadmap after Phase-8B closure evidence is reviewed.
 
 ---
 
-## 10. Strategic Direction
+## 11. Strategic Direction
 
 Eigen-OS evolves across multiple layers:
 
@@ -294,7 +312,7 @@ Eigen-OS evolves across multiple layers:
 
 ---
 
-## 11. Long-Term Vision
+## 12. Long-Term Vision
 
 Eigen-OS becomes:
 
@@ -304,7 +322,7 @@ Eigen-OS becomes:
 - a distributed execution layer
 - a programmable ecosystem centered around Eigen-Lang
 
-## 12. Documentation Alignment Track (New)
+## 13. Documentation Alignment Track (New)
 
 ### Goal
 Bring component documentation to strict implementation parity and explicitly separate current MVP behavior from target architecture.

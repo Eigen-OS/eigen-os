@@ -1,4 +1,4 @@
-# Phase-8B RFC/ADR Gap Analysis
+# Phase-8B RFC/ADR Coverage Check
 
 - **Status:** Accepted
 - **Date:** 2026-05-17
@@ -7,7 +7,7 @@
 
 ## Objective
 
-Confirm whether Phase-8B delivery requires additional normative RFC/ADR artifacts beyond the existing accepted contract package.
+Confirm that Phase-8B delivery has synchronized accepted RFC contracts, mirrored ADR decisions, and release-facing documentation evidence.
 
 ## Inputs reviewed
 
@@ -19,22 +19,34 @@ Confirm whether Phase-8B delivery requires additional normative RFC/ADR artifact
 
 ## Decision
 
-**RFC/ADR delta decision: none needed.**
+**RFC/ADR delta decision: synchronized and closed.**
 
-Current Phase-8B scope is fully covered by RFCs 0038/0039/0040:
-- scheduler/lifecycle hardening and policy hooks (RFC 0038),
-- QFS L2/L3 data-fabric and checkpoint/restore hardening (RFC 0039),
-- observability contract and release-gate requirements (RFC 0040).
+Current Phase-8B scope is fully covered by accepted RFCs and mirrored ADRs:
+- scheduler/lifecycle hardening and policy hooks (RFC 0038 + ADR 0024),
+- QFS L2/L3 data-fabric and checkpoint/restore hardening (RFC 0039 + ADR 0025),
+- observability contract and release-gate requirements (RFC 0040 + ADR 0026).
 
-No additional architectural decision requiring new ADR scope was identified for milestone closure.
+No additional RFC beyond RFC 0038/0039/0040 is required for milestone closure. The accepted architectural outcomes are now mirrored in ADR 0024/0025/0026 as required by the ADR lifecycle policy.
 
 ## Governance traceability
 
-- If a breaking contract proposal appears during implementation, open a new RFC before merge to `main`.
-- If implementation constrains or overrides accepted architecture choices, open an ADR and cross-link it from the affected RFC.
+- RFC 0038/0039/0040 status is accepted for the Phase-8B closure baseline.
+- ADR 0024/0025/0026 provide the operational decision records for implementation teams.
+- If a breaking contract proposal appears after closure, open a new RFC before merge to `main`.
+- If implementation constrains or overrides accepted architecture choices, open an ADR update and cross-link it from the affected RFC.
 
 ## Compatibility statement
 
 - **Version Impact:** PATCH (documentation/governance synchronization only).
 - **Breaking Marker:** false.
 - **Migration Notes:** None.
+
+## Gap matrix
+
+| Area | Required artifact | Current evidence | Status |
+| --- | --- | --- | --- |
+| QRTX scheduling/lifecycle governance | Accepted RFC + mirrored ADR | RFC 0038 + ADR 0024 | Closed |
+| QFS-L2/L3 data-fabric governance | Accepted RFC + mirrored ADR | RFC 0039 + ADR 0025 | Closed |
+| Runtime/data observability and SLO gates | Accepted RFC + mirrored ADR | RFC 0040 + ADR 0026 | Closed |
+| Docs pointer synchronization | RFC/ADR/development indexes | `docs/rfcs-pointer.md`, `docs/adr/README.md`, `docs/development/README.md` | Closed |
+| Exit review bundle | CI evidence + compatibility statement + release-note draft | readiness checklist, compatibility report, exit evidence bundle | Closed |

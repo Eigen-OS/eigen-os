@@ -193,12 +193,12 @@ This document is a ready-to-use set of GitHub issues for the **Phase-8B** stage 
 
 **Scope**
 - Publish and synchronize Phase-8B execution/issue/checklist/report package.
-- Confirm whether any new RFC/ADR items are required and open them if needed.
+- Synchronize accepted Phase-8B RFCs with mirrored ADR records and note that no additional RFC beyond RFC 0038/0039/0040 is required.
 - Produce exit evidence bundle with CI gate links and compatibility impact statement.
 
 **Acceptance Criteria**
 - All Phase-8B planning artifacts are linked from `docs/development/README.md`.
-- RFC/ADR delta decision is explicit ("none needed" or tracked issues/RFCs opened).
+- RFC/ADR coverage decision is explicit and links accepted RFC 0038/0039/0040 to ADR 0024/0025/0026.
 - Exit review bundle includes CI evidence and release-note draft references.
 
 **RFC link**

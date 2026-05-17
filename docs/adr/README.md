@@ -34,6 +34,9 @@ Architecture Decision Records (ADRs) capture decisions that are already adopted 
 - [0021 — Phase-8A GNN optimizer service contract v1](0021-phase8a-gnn-optimizer-service-contract-v1.md)
 - [0022 — Phase-8A Continuous learning control plane contract v1](0022-phase8a-continuous-learning-control-plane-contract-v1.md)
 - [0023 — Phase-8A QFS-L2 checkpoint envelope contract v1](0023-phase8a-qfs-l2-checkpoint-envelope-contract-v1.md)
+- [0024 — Phase-8B QRTX scheduling and lifecycle hardening contract v1](0024-phase8b-qrtx-scheduling-and-lifecycle-hardening-contract-v1.md)
+- [0025 — Phase-8B QFS-L2/L3 data fabric hardening contract v1](0025-phase8b-qfs-l2-l3-data-fabric-hardening-contract-v1.md)
+- [0026 — Phase-8B runtime/data observability and SLO gates contract v1](0026-phase8b-runtime-data-observability-and-slo-gates-v1.md)
 
 ## Phase-3 status
 
@@ -76,3 +79,10 @@ Architecture Decision Records (ADRs) capture decisions that are already adopted 
 - Required coverage check: [`../development/phase-8a-rfc-adr-gap-analysis.md`](../development/phase-8a-rfc-adr-gap-analysis.md).
 - Phase-8A closure package: [`../development/phase-8a-release-readiness-checklist.md`](../development/phase-8a-release-readiness-checklist.md), [`../development/phase-8a-compatibility-report.md`](../development/phase-8a-compatibility-report.md).
 - Policy reminder: breaking contract changes require MAJOR + migration notes; deprecation support window remains 2 minors or 90 days, whichever is longer.
+
+## Phase-8B status
+
+- As of 2026-05-17, accepted Phase-8B RFCs are synchronized with ADRs (ADR 0024/0025/0026).
+- Required coverage check: [`../development/phase-8b/phase-8b-rfc-adr-gap-analysis.md`](../development/phase-8b/phase-8b-rfc-adr-gap-analysis.md).
+- Phase-8B release package: [`../development/phase-8b/phase-8b-release-readiness-checklist.md`](../development/phase-8b/phase-8b-release-readiness-checklist.md), [`../development/phase-8b/phase-8b-compatibility-report.md`](../development/phase-8b/phase-8b-compatibility-report.md), [`../development/phase-8b/phase-8b-exit-evidence-bundle.md`](../development/phase-8b/phase-8b-exit-evidence-bundle.md).
+- Policy reminder: Phase-8B runtime/data contract changes must preserve deterministic reason codes, CI gate evidence, and SemVer/migration-note discipline.
