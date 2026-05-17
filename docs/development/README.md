@@ -145,6 +145,8 @@ git fetch origin main:main
 - Phase 8A RFC/ADR gap analysis: [`phase-8a-rfc-adr-gap-analysis.md`](phase-8a-rfc-adr-gap-analysis.md)
 - Phase 8A release readiness checklist: [`phase-8a-release-readiness-checklist.md`](phase-8a-release-readiness-checklist.md)
 - Phase 8A compatibility report: [`phase-8a-compatibility-report.md`](phase-8a-compatibility-report.md)
+- Phase 8B execution plan: [`phase-8b-execution-plan.md`](phase-8b-execution-plan.md)
+- Phase 8B issue pack: [`phase-8b-issue-pack.md`](phase-8b-issue-pack.md)
 
 ## Related files
 
