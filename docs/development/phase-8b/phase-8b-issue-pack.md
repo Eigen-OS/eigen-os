@@ -65,7 +65,7 @@ This document is a ready-to-use set of GitHub issues for the **Phase-8B** stage 
 - CI blocks merges when lifecycle invariants regress.
 
 **RFC link**
-- `docs/development/phase-8b-execution-plan.md`
+- `rfcs/0038-phase8b-qrtx-scheduling-and-lifecycle-hardening-contract-v1.md`
 
 ---
 
@@ -87,7 +87,7 @@ This document is a ready-to-use set of GitHub issues for the **Phase-8B** stage 
 - Policy regressions fail CI via policy fixture suite.
 
 **RFC link**
-- `docs/development/phase-8b-execution-plan.md`
+- `rfcs/0038-phase8b-qrtx-scheduling-and-lifecycle-hardening-contract-v1.md`
 
 ---
 
@@ -109,7 +109,7 @@ This document is a ready-to-use set of GitHub issues for the **Phase-8B** stage 
 - Indexed lookup paths are documented and exercised in integration tests.
 
 **RFC link**
-- `docs/development/phase-8b-execution-plan.md`
+- `rfcs/0039-phase8b-qfs-l2-l3-data-fabric-hardening-contract-v1.md`
 
 ---
 
@@ -131,7 +131,7 @@ This document is a ready-to-use set of GitHub issues for the **Phase-8B** stage 
 - Integrity suite validates snapshot decode and replay compatibility.
 
 **RFC link**
-- `docs/development/phase-8b-execution-plan.md`
+- `rfcs/0039-phase8b-qfs-l2-l3-data-fabric-hardening-contract-v1.md`
 
 ---
 
@@ -153,7 +153,7 @@ This document is a ready-to-use set of GitHub issues for the **Phase-8B** stage 
 - Critical regression classes produce actionable diagnostics in CI/ops workflows.
 
 **RFC link**
-- `docs/development/phase-8b-execution-plan.md`
+- `rfcs/0040-phase8b-runtime-data-observability-and-slo-gates-v1.md`
 
 ---
 
@@ -175,7 +175,7 @@ This document is a ready-to-use set of GitHub issues for the **Phase-8B** stage 
 - Fixture outputs and trend artifacts are versioned and documented.
 
 **RFC link**
-- `docs/development/phase-8b-execution-plan.md`
+- `rfcs/0040-phase8b-runtime-data-observability-and-slo-gates-v1.md`
 
 ---
 
@@ -197,4 +197,6 @@ This document is a ready-to-use set of GitHub issues for the **Phase-8B** stage 
 - Exit review bundle includes CI evidence and release-note draft references.
 
 **RFC link**
-- `docs/development/phase-8b-execution-plan.md`
+- `rfcs/0038-phase8b-qrtx-scheduling-and-lifecycle-hardening-contract-v1.md`
+- `rfcs/0039-phase8b-qfs-l2-l3-data-fabric-hardening-contract-v1.md`
+- `rfcs/0040-phase8b-runtime-data-observability-and-slo-gates-v1.md`
