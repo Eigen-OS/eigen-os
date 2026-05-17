@@ -95,7 +95,7 @@ def test_e2e_smoke_submit_watch_results(grpc_addr: str):
     assert rationale.selected_backend == "sim:local"
     assert rationale.attributes["policy_branch"]
     assert rationale.attributes["fallback_reason"]
-    assert rationale.attributes["artifact_version"] == "1.1.0"
+    assert rationale.attributes["artifact_version"] == "1.2.0"
     assert rationale.attributes["decision_lineage"]
     assert int(rationale.attributes["dispatch_latency_ms"]) >= 0
     assert rationale.timeline_ref == f"qfs://jobs/{job_id}/timeline.json"
