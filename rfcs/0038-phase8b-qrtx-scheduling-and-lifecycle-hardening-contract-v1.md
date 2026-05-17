@@ -1,6 +1,6 @@
 # RFC 0038: Phase-8B QRTX Scheduling and Lifecycle Hardening Contract v1
 
-- **Status:** Draft
+- **Status:** Accepted
 - **Date:** 2026-05-17
 - **Authors:** Runtime/Core
 - **Phase:** 8B

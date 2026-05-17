@@ -18,6 +18,7 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 
 ### Added
 
+- Phase-8B RFC/ADR synchronization closure (`governance-docs` package `0.12.0`) with RFC 0038/0039/0040 accepted status alignment, new ADR 0024/0025/0026 records, synchronized RFC/ADR pointers, and completed Phase-8B readiness + evidence docs.
 - Phase-8B P8B-06 CI gate bundle (`qa-ci` assets `0.1.0`) with required executable `scripts/ci/check-phase8b-gates.sh`, deterministic scale/latency/integrity fixture validation (`docs/development/fixtures/phase8b/ci_gate_bundle_v1.json`), and fail-closed reason-code diagnostics with mitigation hints.
 - Phase-8B P8B-05 observability join model + runtime/data alert pack (`runtime-observability` assets `0.4.0`) with lifecycle span correlation requirements (`queue -> schedule -> dispatch -> execute -> persist -> checkpoint`), deterministic queue/compiler/driver regression alerts, and runbook-linked actionable diagnostics for CI/ops workflows.
 - Phase-8B P8B-02 scheduler policy pack (`system-api` package `0.6.0`) with deterministic priority+quota dispatch hooks, starvation-protection promotion guard, explicit topology/noise telemetry fallback markers, and fixture-oriented scheduler policy tests.
@@ -208,6 +209,7 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 
 ### Added
 
+- Phase-8B RFC/ADR synchronization closure (`governance-docs` package `0.12.0`) with RFC 0038/0039/0040 accepted status alignment, new ADR 0024/0025/0026 records, synchronized RFC/ADR pointers, and completed Phase-8B readiness + evidence docs.
 - Phase-8B P8B-06 CI gate bundle (`qa-ci` assets `0.1.0`) with required executable `scripts/ci/check-phase8b-gates.sh`, deterministic scale/latency/integrity fixture validation (`docs/development/fixtures/phase8b/ci_gate_bundle_v1.json`), and fail-closed reason-code diagnostics with mitigation hints.
 - Phase-7 P7-05 tooling baseline integration (`cli` in Rust workspace `0.17.0`) with single-command formatter/linter/unit-test workflow (`scripts/dev/run-tooling-baseline.sh`), CI lint entrypoint (`scripts/ci/lint.sh`), and richer plugin scaffold templates (`README.md`, `src/lib.rs`, `tests/manifest_contract.rs`) that validate by default.
 - Phase-5 P5-09 ADR synchronization and release meta package (`governance-docs` package `0.10.1`) with implemented RFC status updates for RFC 0026/0027/0028, synchronized ADR set (ADR 0014/0015/0016), and published Phase-5 release readiness + compatibility docs.
@@ -223,6 +225,7 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 
 ### Added
 
+- Phase-8B RFC/ADR synchronization closure (`governance-docs` package `0.12.0`) with RFC 0038/0039/0040 accepted status alignment, new ADR 0024/0025/0026 records, synchronized RFC/ADR pointers, and completed Phase-8B readiness + evidence docs.
 - Phase-8B P8B-06 CI gate bundle (`qa-ci` assets `0.1.0`) with required executable `scripts/ci/check-phase8b-gates.sh`, deterministic scale/latency/integrity fixture validation (`docs/development/fixtures/phase8b/ci_gate_bundle_v1.json`), and fail-closed reason-code diagnostics with mitigation hints.
 - Phase-7 P7-05 tooling baseline integration (`cli` in Rust workspace `0.17.0`) with single-command formatter/linter/unit-test workflow (`scripts/dev/run-tooling-baseline.sh`), CI lint entrypoint (`scripts/ci/lint.sh`), and richer plugin scaffold templates (`README.md`, `src/lib.rs`, `tests/manifest_contract.rs`) that validate by default.
 - Phase-5 P5-09 ADR synchronization and release meta package (`governance-docs` package `0.10.1`) with implemented RFC status updates for RFC 0026/0027/0028, synchronized ADR set (ADR 0014/0015/0016), and published Phase-5 release readiness + compatibility docs.

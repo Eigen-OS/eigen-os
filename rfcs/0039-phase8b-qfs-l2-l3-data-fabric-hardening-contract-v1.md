@@ -1,6 +1,6 @@
 # RFC 0039: Phase-8B QFS-L2/L3 Data Fabric Hardening Contract v1
 
-- **Status:** Draft
+- **Status:** Accepted
 - **Date:** 2026-05-17
 - **Authors:** Data/Storage + Runtime/Core
 - **Phase:** 8B

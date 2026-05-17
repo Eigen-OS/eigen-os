@@ -24,8 +24,8 @@ Compatibility impact assessment for Phase-8B contracts:
 
 1. **CLI payloads:** no schema changes proposed in this governance package.
 2. **Plugin envelopes:** no envelope changes proposed in this governance package.
-3. **JobSpec/AQO/QFS norms:** no new normative deltas beyond RFC 0038/0039.
-4. **Metrics/alerts:** expected additive operational hardening under RFC 0040; no removal/breaking rename in this package.
+3. **JobSpec/AQO/QFS norms:** no new normative deltas beyond accepted RFC 0038/0039 and mirrored ADR 0024/0025.
+4. **Metrics/alerts:** additive operational hardening under accepted RFC 0040 and mirrored ADR 0026; no removal/breaking rename in this package.
 
 ## Release notes draft reference
 

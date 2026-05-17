@@ -1,6 +1,6 @@
 # RFC 0040: Phase-8B Runtime/Data Observability and SLO Gate Contract v1
 
-- **Status:** Draft
+- **Status:** Accepted
 - **Date:** 2026-05-17
 - **Authors:** Observability/SRE + QA/CI
 - **Phase:** 8B
