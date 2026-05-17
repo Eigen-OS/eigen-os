@@ -124,6 +124,18 @@ Current behavior should preserve read compatibility for legacy jobs where only `
 - Retention cleanup reason codes are frozen:
   - `RETENTION_EXPIRED`
   - `ORPHAN_NOT_INDEXED`
+
+## Phase-8B QFS-L2 Checkpoint/Restore Hardening (`1.1.0`, MINOR)
+
+- Checkpoint restore admission now has deterministic budget guardrails for:
+  - `declared_size_bytes` (checkpoint payload size budget).
+  - `estimated_restore_cost_units` (restore execution cost budget).
+- Guardrail denials expose stable reason codes:
+  - `SIZE_BUDGET_EXCEEDED`
+  - `RESTORE_COST_BUDGET_EXCEEDED`
+- Each rejection includes a deterministic hint payload that states the observed and allowed values.
+- Contract fixture tests verify deterministic decode/validation and restore admission reason-code behavior.
+ 
 ## Gaps / What Is Missing
 
 The following are not yet fully specified or uniformly enforced and should be tracked as system gaps:

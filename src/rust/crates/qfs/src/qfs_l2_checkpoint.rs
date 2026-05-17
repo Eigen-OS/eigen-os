@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
 pub const CHECKPOINT_ENVELOPE_SCHEMA_VERSION: &str = "1.0.0";
+pub const CHECKPOINT_RUNTIME_API_VERSION: &str = "1.1.0";
+pub const DEFAULT_MAX_CHECKPOINT_SIZE_BYTES: u64 = 512 * 1024 * 1024;
+pub const DEFAULT_MAX_RESTORE_COST_UNITS: u64 = 1_000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CheckpointEnvelopeV1 {
@@ -33,6 +36,31 @@ impl CheckpointEnvelopeV1 {
             || self.trace_links.checkpoint_chain_ref.is_empty()
         {
             return Err(CheckpointEnvelopeValidationError::MissingTraceLink);
+        }
+        Ok(())
+    }
+
+    pub fn evaluate_restore_admission(
+        &self,
+        policy: &CheckpointBudgetPolicy,
+    ) -> Result<(), CheckpointAdmissionRejection> {
+        if self.guardrails.declared_size_bytes > policy.max_checkpoint_size_bytes {
+            return Err(CheckpointAdmissionRejection::new(
+                CheckpointAdmissionReasonCode::SizeBudgetExceeded,
+                format!(
+                    "declared_size_bytes={} exceeds max_checkpoint_size_bytes={}",
+                    self.guardrails.declared_size_bytes, policy.max_checkpoint_size_bytes
+                ),
+            ));
+        }
+        if self.guardrails.estimated_restore_cost_units > policy.max_restore_cost_units {
+            return Err(CheckpointAdmissionRejection::new(
+                CheckpointAdmissionReasonCode::RestoreCostBudgetExceeded,
+                format!(
+                    "estimated_restore_cost_units={} exceeds max_restore_cost_units={}",
+                    self.guardrails.estimated_restore_cost_units, policy.max_restore_cost_units
+                ),
+            ));
         }
         Ok(())
     }
@@ -98,4 +126,38 @@ pub enum CheckpointEnvelopeValidationError {
     SchemaVersionMismatch { expected: String, got: String },
     #[error("mandatory trace-link fields must be non-empty")]
     MissingTraceLink,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckpointBudgetPolicy {
+    pub max_checkpoint_size_bytes: u64,
+    pub max_restore_cost_units: u64,
+}
+
+impl Default for CheckpointBudgetPolicy {
+    fn default() -> Self {
+        Self {
+            max_checkpoint_size_bytes: DEFAULT_MAX_CHECKPOINT_SIZE_BYTES,
+            max_restore_cost_units: DEFAULT_MAX_RESTORE_COST_UNITS,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckpointAdmissionRejection {
+    pub reason_code: CheckpointAdmissionReasonCode,
+    pub hint: String,
+}
+
+impl CheckpointAdmissionRejection {
+    fn new(reason_code: CheckpointAdmissionReasonCode, hint: String) -> Self {
+        Self { reason_code, hint }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum CheckpointAdmissionReasonCode {
+    SizeBudgetExceeded,
+    RestoreCostBudgetExceeded,
 }
