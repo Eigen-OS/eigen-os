@@ -17,8 +17,10 @@ pub use local_circuit_fs::{
 };
 
 pub use qfs_l2_checkpoint::{
-    CheckpointArtifactRef, CheckpointCompatibilityWindow, CheckpointEnvelopeV1,
+    CheckpointAdmissionReasonCode, CheckpointAdmissionRejection, CheckpointArtifactRef,
+    CheckpointBudgetPolicy, CheckpointCompatibilityWindow, CheckpointEnvelopeV1,
     CheckpointEnvelopeValidationError, CheckpointExtensions, CheckpointGuardrails,
     CheckpointIntegrity, CheckpointPayloadRefs, CheckpointProvenance, CheckpointTraceLinks,
-    CHECKPOINT_ENVELOPE_SCHEMA_VERSION,
+    CHECKPOINT_ENVELOPE_SCHEMA_VERSION, CHECKPOINT_RUNTIME_API_VERSION,
+    DEFAULT_MAX_CHECKPOINT_SIZE_BYTES, DEFAULT_MAX_RESTORE_COST_UNITS,
 };
