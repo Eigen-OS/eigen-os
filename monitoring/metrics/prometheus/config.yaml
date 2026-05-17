@@ -8,6 +8,7 @@ rule_files:
   - benchmark-alerts.yaml
   - intelligent-runtime-alerts.yaml
   - cluster-runtime-alerts.yaml
+  - runtime-data-alerts.yaml
 
 scrape_configs:
   - job_name: eigen-kernel-stage-metrics

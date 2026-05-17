@@ -1,0 +1,44 @@
+groups:
+  - name: eigen-runtime-data-signals
+    interval: 30s
+    rules:
+      - alert: EigenRuntimeDataQueuePressureCritical
+        expr: eigen_orch_queue_depth > 300 and eigen_orch_queue_oldest_age_seconds > 180
+        for: 10m
+        labels: { severity: critical, team: sre }
+        annotations:
+          summary: "Queue pressure sustained across depth and oldest-age thresholds"
+          runbook: "docs/howto/runtime-data-observability-runbook.md#queue-pressure"
+
+      - alert: EigenRuntimeDataCompileRegressionP95
+        expr: eigen_stage_latency_seconds{stage="compile",quantile="0.95"} > 1.2
+        for: 15m
+        labels: { severity: warning, team: runtime }
+        annotations:
+          summary: "Compile p95 latency regressed beyond deterministic threshold"
+          runbook: "docs/howto/runtime-data-observability-runbook.md#compiler-regressions"
+
+      - alert: EigenRuntimeDataCompileRegressionP99Critical
+        expr: eigen_stage_latency_seconds{stage="compile",quantile="0.99"} > 2.4
+        for: 15m
+        labels: { severity: critical, team: runtime }
+        annotations:
+          summary: "Compile p99 latency indicates release-risking compiler regression"
+          runbook: "docs/howto/runtime-data-observability-runbook.md#compiler-regressions"
+
+      - alert: EigenRuntimeDataDriverDegradationErrorRate
+        expr: eigen_stage_error_rate{stage="execute"} > 0.03
+        for: 10m
+        labels: { severity: critical, team: runtime }
+        annotations:
+          summary: "Driver degradation signaled by execute-stage error-rate breach"
+          runbook: "docs/howto/runtime-data-observability-runbook.md#driver-degradation"
+
+      - alert: EigenRuntimeDataCorrelationBreakage
+        expr: increase(eigen_cluster_trace_breakage_total[10m]) > 0
+        for: 5m
+        labels: { severity: critical, team: sre }
+        annotations:
+          summary: "Correlation lineage break detected across scheduler/hardware/runtime path"
+          runbook: "docs/howto/runtime-data-observability-runbook.md#correlation-breakage"
+          
