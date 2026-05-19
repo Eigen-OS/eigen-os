@@ -1,9 +1,9 @@
 # Phase-8C Compatibility Report
 
-- **Status:** Accepted (milestone closure evidence recorded)
+- **Status:** Draft (to finalize at milestone closure)
 - **Date:** 2026-05-19
 - **Milestone:** M8C
-- **Version:** 1.0.0
+- **Version:** 0.2.0
 
 ## Scope
 
@@ -18,7 +18,7 @@ This report tracks compatibility impact for adaptive intelligence components int
 
 Compatibility decisions in this report follow:
 - `rfcs/0032-phase7-api-and-contract-versioning-policy-v1.md`
-- accepted governance baselines: RFC 0035/0036/0040 with synchronized ADRs 0021/0022/0026.
+- accepted Phase-8C RFCs (0041/0042/0043) once finalized.
 
 ## Current impact classification (implemented)
 
@@ -26,7 +26,7 @@ Compatibility decisions in this report follow:
 | --- | --- | --- |
 | Compiler transition metadata schema | MINOR (expected) | additive fields for decision provenance and fallback marker |
 | Optimizer evaluation artifact schema | MINOR (expected) | additive metrics and lifecycle-state markers |
-| Learning control-plane API/payloads | MINOR (confirmed) | additive trigger/promotion/rollback envelope remains backward-compatible |
+| Learning control-plane API/payloads | MINOR (confirmed) | final depends on accepted trigger/promotion/rollback envelope |
 | KB lineage indexes | MINOR (expected) | additive query dimensions |
 | Existing CLI/system-api flows | PATCH (expected) | no mandatory user-facing breaking change planned |
 
@@ -51,6 +51,6 @@ Compatibility decisions in this report follow:
 ## Finalization criteria
 
 This report can be marked **Accepted** only when:
-- accepted governance baselines (RFC 0035/0036/0040 + ADR 0021/0022/0026) are linked and unchanged,
+- RFC 0041/0042/0043 are accepted,
 - CI compatibility and drift gates pass for the updated KB decision-log and lineage-index schema,
 - migration notes (if required) are published and linked.
