@@ -87,15 +87,4 @@ __all__ = [
     "DatasetRecord",
     "DatasetValidationError",
     "ValidationError",
-    "OPTIMIZER_BASELINE_VERSION",
-    "OPTIMIZER_EVAL_CONTRACT_VERSION",
-    "OptimizerEvaluationHarness",
-    "TopologyAwareBaseline",
 ]
-
-from .optimizer_evaluation import (
-    OPTIMIZER_BASELINE_VERSION,
-    OPTIMIZER_EVAL_CONTRACT_VERSION,
-    OptimizerEvaluationHarness,
-    TopologyAwareBaseline,
-)
