@@ -44,23 +44,12 @@ def test_pipeline_generates_artifact_and_rollback_reason_codes_when_regression_d
 
     assert result["trigger"]["should_retrain"] is True
     assert result["artifact"]["artifact_version"] == "phase8c-candidate-0007"
-    assert result["artifact"]["lineage"]["lineage_hash"].startswith("sha256:")
     assert result["promotion"]["recommendation"] == "BLOCK_PROMOTION"
     assert result["rollback"]["action"] == "ROLLBACK_TO_STABLE"
     assert result["rollback"]["reason_codes"] == [
         "CANARY_INSUFFICIENT_SHADOW_SAMPLES",
         "CANARY_REGRESSION_VS_BASELINE_HEURISTIC",
     ]
-
-def test_pipeline_auto_mints_artifact_version_when_not_supplied() -> None:
-    pipeline = ContinuousLearningPipeline()
-    fixture = _fixture()
-    fixture.pop("artifact_version", None)
-
-    result = pipeline.evaluate(fixture)
-
-    assert result["artifact"]["artifact_version"] == "phase8c-candidate-1000"
-    assert result["artifact"]["lineage"]["lineage_hash"].startswith("sha256:")
 
 def test_pipeline_does_not_trigger_retrain_before_threshold() -> None:
     pipeline = ContinuousLearningPipeline()

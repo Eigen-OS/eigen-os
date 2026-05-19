@@ -5,7 +5,7 @@ from typing import Any
 
 from .compare_api import BenchmarkCompareApi
 
-OPTIMIZER_EVAL_CONTRACT_VERSION = "1.2.0"
+OPTIMIZER_EVAL_CONTRACT_VERSION = "1.1.0"
 OPTIMIZER_BASELINE_VERSION = "1.0.0"
 
 
@@ -96,7 +96,7 @@ class OptimizerEvaluationHarness:
             "offline_bundle": offline,
         }
 
-LEARNING_PIPELINE_POLICY_VERSION = "1.2.0"
+LEARNING_PIPELINE_POLICY_VERSION = "1.1.0"
 DEFAULT_TRIGGER_CIRCUITS = 1000
 ROLLBACK_RUNBOOK_REF = "docs/howto/intelligent-runtime-observability-runbook.md"
 
@@ -127,21 +127,12 @@ class ContinuousLearningPipeline:
                 "rollback": None,
             }
 
-        artifact_version = str(
-            fixture.get("artifact_version")
-            or f"phase8c-candidate-{observed_new_circuits:04d}"
-        )
-        lineage_hash = hashlib.sha256(
-            f'{fixture["dataset_ref"]}|{fixture["dataset_hash"]}|{int(fixture["seed"])}|{artifact_version}'.encode("utf-8")
-        ).hexdigest()
-
         artifact = {
-            "artifact_version": artifact_version,
+            "artifact_version": fixture.get("artifact_version", "model-v-next"),
             "lineage": {
                 "dataset_ref": fixture["dataset_ref"],
                 "dataset_hash": fixture["dataset_hash"],
                 "seed": int(fixture["seed"]),
-                "lineage_hash": f"sha256:{lineage_hash}",
             },
         }
 
