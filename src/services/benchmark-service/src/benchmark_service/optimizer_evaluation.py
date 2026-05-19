@@ -5,7 +5,7 @@ from typing import Any
 
 from .compare_api import BenchmarkCompareApi
 
-OPTIMIZER_EVAL_CONTRACT_VERSION = "1.1.0"
+OPTIMIZER_EVAL_CONTRACT_VERSION = "1.0.0"
 OPTIMIZER_BASELINE_VERSION = "1.0.0"
 
 
@@ -94,73 +94,4 @@ class OptimizerEvaluationHarness:
             "recommendation": recommendation,
             "gate_reasons": gate_reasons,
             "offline_bundle": offline,
-        }
-
-LEARNING_PIPELINE_POLICY_VERSION = "1.1.0"
-DEFAULT_TRIGGER_CIRCUITS = 1000
-ROLLBACK_RUNBOOK_REF = "docs/howto/intelligent-runtime-observability-runbook.md"
-
-
-class ContinuousLearningPipeline:
-    """Deterministic trigger/promotion/rollback policy bundle for Phase-8C."""
-
-    def __init__(self) -> None:
-        self._harness = OptimizerEvaluationHarness()
-
-    def evaluate(self, fixture: dict[str, Any]) -> dict[str, Any]:
-        trigger_policy = fixture.get("trigger_policy", {})
-        threshold = int(trigger_policy.get("new_circuit_threshold", DEFAULT_TRIGGER_CIRCUITS))
-        observed_new_circuits = int(fixture.get("observed_new_circuits", 0))
-        should_retrain = observed_new_circuits >= threshold
-
-        if not should_retrain:
-            return {
-                "contract_version": OPTIMIZER_EVAL_CONTRACT_VERSION,
-                "policy_version": LEARNING_PIPELINE_POLICY_VERSION,
-                "trigger": {
-                    "threshold": threshold,
-                    "observed_new_circuits": observed_new_circuits,
-                    "should_retrain": False,
-                },
-                "artifact": None,
-                "promotion": None,
-                "rollback": None,
-            }
-
-        artifact = {
-            "artifact_version": fixture.get("artifact_version", "model-v-next"),
-            "lineage": {
-                "dataset_ref": fixture["dataset_ref"],
-                "dataset_hash": fixture["dataset_hash"],
-                "seed": int(fixture["seed"]),
-            },
-        }
-
-        promotion = self._harness.evaluate_shadow(fixture)
-
-        rollback = None
-        if promotion["recommendation"] != "PROMOTE":
-            rollback_reasons = [
-                f"CANARY_{reason}"
-                for reason in promotion["gate_reasons"]
-                if reason in {"REGRESSION_VS_BASELINE_HEURISTIC", "INSUFFICIENT_SHADOW_SAMPLES"}
-            ]
-            if rollback_reasons:
-                rollback = {
-                    "action": "ROLLBACK_TO_STABLE",
-                    "reason_codes": sorted(rollback_reasons),
-                    "runbook_ref": ROLLBACK_RUNBOOK_REF,
-                }
-
-        return {
-            "contract_version": OPTIMIZER_EVAL_CONTRACT_VERSION,
-            "policy_version": LEARNING_PIPELINE_POLICY_VERSION,
-            "trigger": {
-                "threshold": threshold,
-                "observed_new_circuits": observed_new_circuits,
-                "should_retrain": True,
-            },
-            "artifact": artifact,
-            "promotion": promotion,
-            "rollback": rollback,
         }
