@@ -160,6 +160,12 @@ git fetch origin main:main
 - Phase 8C release readiness checklist: [`phase-8c/phase-8c-release-readiness-checklist.md`](phase-8c/phase-8c-release-readiness-checklist.md)
 - Phase 8C compatibility report: [`phase-8c/phase-8c-compatibility-report.md`](phase-8c/phase-8c-compatibility-report.md)
 - Phase 8C exit evidence bundle: [`phase-8c/phase-8c-exit-evidence-bundle.md`](phase-8c/phase-8c-exit-evidence-bundle.md)
+- Phase 8D execution plan: [`phase-8d/phase-8d-execution-plan.md`](phase-8d/phase-8d-execution-plan.md)
+- Phase 8D issue pack: [`phase-8d/phase-8d-issue-pack.md`](phase-8d/phase-8d-issue-pack.md)
+- Phase 8D RFC/ADR gap analysis: [`phase-8d/phase-8d-rfc-adr-gap-analysis.md`](phase-8d/phase-8d-rfc-adr-gap-analysis.md)
+- Phase 8D release readiness checklist: [`phase-8d/phase-8d-release-readiness-checklist.md`](phase-8d/phase-8d-release-readiness-checklist.md)
+- Phase 8D compatibility report: [`phase-8d/phase-8d-compatibility-report.md`](phase-8d/phase-8d-compatibility-report.md)
+- Phase 8D exit evidence bundle: [`phase-8d/phase-8d-exit-evidence-bundle.md`](phase-8d/phase-8d-exit-evidence-bundle.md)
 
 ## Related files
 
