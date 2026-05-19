@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "driver-manager"
-version = "0.4.0"
+version = "0.5.0"
 description = "Eigen OS driver-manager service (MVP skeleton)."
 requires-python = ">=3.12"
 dependencies = [

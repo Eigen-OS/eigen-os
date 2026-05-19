@@ -82,6 +82,7 @@ class SimulatorDriver:
         _ = device_id
         start = time.perf_counter()
 
+        self._validate_provider_profile(options)
         self._simulate_error(options)
         payload = self._parse_payload(circuit)
         qubits = self._parse_qubits(payload)
@@ -96,6 +97,7 @@ class SimulatorDriver:
 
         elapsed = time.perf_counter() - start
         metadata = {
+            "provider_profile": options.get("provider_profile", "simulator"),
             "driver": self.name,
             "aqo_version": str(payload.get("version", "")),
             "qubits": str(qubits),
@@ -116,6 +118,11 @@ class SimulatorDriver:
     def calibrate_device(self, device_id: str, options: dict[str, str]) -> str:
         _ = (options,)
         return f"calib://simulator/{device_id}"
+
+    def _validate_provider_profile(self, options: dict[str, str]) -> None:
+        profile = options.get("provider_profile", "simulator").strip().lower()
+        if profile != "simulator":
+            raise DriverExecutionError(grpc.StatusCode.UNIMPLEMENTED, f"Unsupported provider_profile: {profile}")
 
     def _simulate_error(self, options: dict[str, str]) -> None:
         signal = options.get("simulate_error", "").upper()
