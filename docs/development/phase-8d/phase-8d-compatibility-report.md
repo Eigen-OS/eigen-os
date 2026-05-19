@@ -3,7 +3,7 @@
 - **Status:** Draft (execution in progress)
 - **Date:** 2026-05-19
 - **Milestone:** M8D
-- **Version:** 0.1.0
+- **Version:** 0.2.0
 
 ## Scope
 
@@ -13,7 +13,7 @@ This report tracks compatibility impact for hardware externalization components 
 - provider support matrix (simulator, IBM Quantum, AWS Braket),
 - system-api REST parity and compatibility matrix publication,
 - developer surface skeleton contracts (dashboard, VS Code, Jupyter),
-- operator rollback and incident governance references.
+- operator rollback and incident governance references (runbook + rehearsal matrix fixture).
 
 ## Compatibility policy baseline
 
@@ -50,7 +50,7 @@ Compatibility decisions in this report follow:
 - QDriver conformance suite evidence for simulator/IBM/AWS.
 - Cross-provider tolerance and parity report for canonical workload set.
 - REST parity check evidence and updated compatibility matrix artifact.
-- Runbook drill evidence and rollback safety check logs.
+- Runbook drill evidence and rollback safety check logs, including `rollback_rehearsal_matrix_v1.json` fixture validation.
 
 ## Finalization criteria
 

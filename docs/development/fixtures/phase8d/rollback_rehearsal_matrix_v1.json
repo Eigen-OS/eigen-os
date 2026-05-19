@@ -1,0 +1,25 @@
+{
+  "artifact_version": "1.0.0",
+  "phase": "8d",
+  "official_matrix": ["simulator", "ibm", "aws"],
+  "providers": [
+    {
+      "provider": "simulator",
+      "exercised_controls": ["adapter_pin", "adapter_quarantine", "matrix_demotion"],
+      "covered_failure_classes": ["provider_outage", "provider_degradation", "auth_failure", "quota_failure"],
+      "escalation_path_verified": true
+    },
+    {
+      "provider": "ibm",
+      "exercised_controls": ["adapter_pin", "adapter_quarantine", "matrix_demotion"],
+      "covered_failure_classes": ["provider_outage", "provider_degradation", "auth_failure", "quota_failure"],
+      "escalation_path_verified": true
+    },
+    {
+      "provider": "aws",
+      "exercised_controls": ["adapter_pin", "adapter_quarantine", "matrix_demotion"],
+      "covered_failure_classes": ["provider_outage", "provider_degradation", "auth_failure", "quota_failure"],
+      "escalation_path_verified": true
+    }
+  ]
+}
