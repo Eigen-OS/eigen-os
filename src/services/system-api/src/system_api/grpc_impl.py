@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import threading
 import uuid
 from dataclasses import dataclass
@@ -1051,17 +1052,28 @@ class JobService:
             abort_invalid_argument(context, "validation failed", violations)
 
         start_after_seq = int(request.last_event_seq)
-        with self._lock:
-            record = self._jobs.get(request.job_id)
-            if record is None:
-                context.abort(grpc.StatusCode.NOT_FOUND, f"job_id not found: {request.job_id}")
-            self._advance_job(record)
-            selected_updates = list(record.updates)
+        terminal_values = {getattr(self._types_pb, name) for name in TERMINAL_JOB_STATES}
+        while True:
+            with self._lock:
+                record = self._jobs.get(request.job_id)
+                if record is None:
+                    context.abort(grpc.StatusCode.NOT_FOUND, f"job_id not found: {request.job_id}")
+                self._advance_job(record)
+                selected_updates = list(record.updates)
+                done = selected_updates[-1].state in terminal_values
 
-        for update in selected_updates:
-            if int(update.event_seq) <= start_after_seq:
-                continue
-            yield self._job_pb.StreamJobUpdatesResponse(update=update)
+            for update in selected_updates:
+                event_seq = int(update.event_seq)
+                if event_seq <= start_after_seq:
+                    continue
+                start_after_seq = event_seq
+                yield self._job_pb.StreamJobUpdatesResponse(update=update)
+
+            if done:
+                break
+            if not context.is_active():
+                break
+            time.sleep(0.01)
 
         log_request_end("JobService.StreamJobUpdates", rc)
 
@@ -1078,6 +1090,8 @@ class JobService:
 
         with self._lock:
             record = self._jobs.get(request.job_id)
+            if record is not None:
+                self._advance_job(record)
 
         if record is None:
             context.abort(grpc.StatusCode.NOT_FOUND, f"job_id not found: {request.job_id}")
