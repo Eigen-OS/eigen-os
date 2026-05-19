@@ -136,18 +136,6 @@
   - [development/phase-8b/phase-8b-compatibility-report.md](development/phase-8b/phase-8b-compatibility-report.md)
   - [development/phase-8b/phase-8b-exit-evidence-bundle.md](development/phase-8b/phase-8b-exit-evidence-bundle.md)
 
-## Phase-9A RFC set (accepted)
-
-- Status on 2026-05-19: Phase-9A governance/security automation RFC package is accepted and synchronized with ADRs.
-- Accepted RFCs:
-  - [RFC 0041 — Phase-9A Policy Engine v2 Contract](../rfcs/0041-phase9a-policy-engine-v2-contract.md)
-  - [RFC 0042 — Phase-9A Federated Identity and Workload Attestation Contract](../rfcs/0042-phase9a-federated-identity-and-workload-attestation.md)
-  - [RFC 0043 — Phase-9A Contract Drift Detection and Auto-Remediation Baseline](../rfcs/0043-phase9a-contract-drift-detection-and-auto-remediation.md)
-- Synchronized ADRs:
-  - [ADR 0027 — Phase-9A Policy Engine v2 Contract](adr/0027-phase9a-policy-engine-v2-contract.md)
-  - [ADR 0028 — Phase-9A Federated Identity and Workload Attestation Contract](adr/0028-phase9a-federated-identity-and-workload-attestation.md)
-  - [ADR 0029 — Phase-9A Contract Drift Detection and Auto-Remediation Baseline](adr/0029-phase9a-contract-drift-detection-and-auto-remediation.md)
-
 ## Quick links
 
 - RFC directory: [`../rfcs/`](../rfcs/)
