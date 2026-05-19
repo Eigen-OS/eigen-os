@@ -159,6 +159,7 @@ git fetch origin main:main
 - Phase 8C RFC/ADR gap analysis: [`phase-8c/phase-8c-rfc-adr-gap-analysis.md`](phase-8c/phase-8c-rfc-adr-gap-analysis.md)
 - Phase 8C release readiness checklist: [`phase-8c/phase-8c-release-readiness-checklist.md`](phase-8c/phase-8c-release-readiness-checklist.md)
 - Phase 8C compatibility report: [`phase-8c/phase-8c-compatibility-report.md`](phase-8c/phase-8c-compatibility-report.md)
+- Phase 8C exit evidence bundle: [`phase-8c/phase-8c-exit-evidence-bundle.md`](phase-8c/phase-8c-exit-evidence-bundle.md)
 
 ## Related files
 

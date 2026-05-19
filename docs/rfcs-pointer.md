@@ -135,6 +135,19 @@
   - [development/phase-8b/phase-8b-release-readiness-checklist.md](development/phase-8b/phase-8b-release-readiness-checklist.md)
   - [development/phase-8b/phase-8b-compatibility-report.md](development/phase-8b/phase-8b-compatibility-report.md)
   - [development/phase-8b/phase-8b-exit-evidence-bundle.md](development/phase-8b/phase-8b-exit-evidence-bundle.md)
+  
+## Phase-8C governance sync set (accepted)
+
+- Status on 2026-05-19: Phase-8C closure package is synchronized with accepted RFC/ADR baselines and exit evidence.
+- Coverage check: [development/phase-8c/phase-8c-rfc-adr-gap-analysis.md](development/phase-8c/phase-8c-rfc-adr-gap-analysis.md)
+- Accepted RFC/ADR baselines used by Phase-8C:
+  - [RFC 0035 — Phase-8A GNN optimizer service contract v1](../rfcs/0035-phase8a-gnn-optimizer-service-contract-v1.md) ↔ [ADR 0021](adr/0021-phase8a-gnn-optimizer-service-contract-v1.md)
+  - [RFC 0036 — Phase-8A Continuous learning control plane contract v1](../rfcs/0036-phase8a-continuous-learning-control-plane-contract-v1.md) ↔ [ADR 0022](adr/0022-phase8a-continuous-learning-control-plane-contract-v1.md)
+  - [RFC 0040 — Phase-8B runtime/data observability and SLO gates contract v1](../rfcs/0040-phase8b-runtime-data-observability-and-slo-gates-v1.md) ↔ [ADR 0026](adr/0026-phase8b-runtime-data-observability-and-slo-gates-v1.md)
+- Closure artifacts:
+  - [development/phase-8c/phase-8c-release-readiness-checklist.md](development/phase-8c/phase-8c-release-readiness-checklist.md)
+  - [development/phase-8c/phase-8c-compatibility-report.md](development/phase-8c/phase-8c-compatibility-report.md)
+  - [development/phase-8c/phase-8c-exit-evidence-bundle.md](development/phase-8c/phase-8c-exit-evidence-bundle.md)
 
 ## Phase-9A RFC set (accepted)
 
