@@ -90,6 +90,13 @@ Architecture Decision Records (ADRs) capture decisions that are already adopted 
 - Phase-8B release package: [`../development/phase-8b/phase-8b-release-readiness-checklist.md`](../development/phase-8b/phase-8b-release-readiness-checklist.md), [`../development/phase-8b/phase-8b-compatibility-report.md`](../development/phase-8b/phase-8b-compatibility-report.md), [`../development/phase-8b/phase-8b-exit-evidence-bundle.md`](../development/phase-8b/phase-8b-exit-evidence-bundle.md).
 - Policy reminder: Phase-8B runtime/data contract changes must preserve deterministic reason codes, CI gate evidence, and SemVer/migration-note discipline.
 
+## Phase-8C status
+
+- As of 2026-05-19, Phase-8C closure package is synchronized with accepted RFC/ADR baselines (RFC 0035/0036/0040 ↔ ADR 0021/0022/0026).
+- Required coverage check: [`../development/phase-8c/phase-8c-rfc-adr-gap-analysis.md`](../development/phase-8c/phase-8c-rfc-adr-gap-analysis.md).
+- Phase-8C release package: [`../development/phase-8c/phase-8c-release-readiness-checklist.md`](../development/phase-8c/phase-8c-release-readiness-checklist.md), [`../development/phase-8c/phase-8c-compatibility-report.md`](../development/phase-8c/phase-8c-compatibility-report.md), [`../development/phase-8c/phase-8c-exit-evidence-bundle.md`](../development/phase-8c/phase-8c-exit-evidence-bundle.md).
+- Policy reminder: Phase-8C governance updates are documentation-only unless contract artifacts change; SemVer and migration-note gates remain mandatory for any future contract deltas.
+
 ## Phase-9A status
 
 - As of 2026-05-19, required Phase-9A RFC package is accepted and synchronized with ADRs (ADR 0027/0028/0029).
