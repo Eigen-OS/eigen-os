@@ -23,6 +23,7 @@ class DriverExecutionError(Exception):
     def __init__(self, code: grpc.StatusCode, message: str):
         super().__init__(message)
         self.code = code
+        self.status_code = code
         self.message = message
 
 
