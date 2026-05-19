@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import hashlib
 from typing import Any
 
 from .compare_api import BenchmarkCompareApi

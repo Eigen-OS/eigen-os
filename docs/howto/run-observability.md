@@ -71,10 +71,3 @@ Prometheus must include `cluster-runtime-alerts.yaml` in `rule_files` and scrape
 - Runbook: `docs/howto/runtime-data-observability-runbook.md`
 
 Prometheus must include `runtime-data-alerts.yaml` in `rule_files` and scrape runtime + queue + cluster targets exposing `eigen_stage_*`, `eigen_orch_*`, and `eigen_cluster_*` series.
-
-## Phase-8C adaptive-loop observability pack
-
-- Alerts: `monitoring/metrics/prometheus/adaptive-loop-alerts.yaml`
-- Runbook: `docs/howto/adaptive-loop-observability-runbook.md`
-
-Prometheus must include `adaptive-loop-alerts.yaml` in `rule_files` and scrape adaptive-loop telemetry exposing `eigen_adaptive_*` series for retrain queue depth/age, promotion attempts/failures, and rollback/promotions counters.
