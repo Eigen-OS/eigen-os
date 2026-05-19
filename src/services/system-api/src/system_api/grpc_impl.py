@@ -578,10 +578,13 @@ class JobService:
                 backend_error_kind,
                 ("RUNTIME_BACKEND_EXECUTION_ERROR", "backend execution failed"),
             )
+        default_runtime_sec = 0.0
+        if request.target.startswith("emu:real"):
+            default_runtime_sec = 1.0
         try:
-            run_duration_sec = max(float(metadata.get("simulate_runtime_sec", "0.0") or 0.0), 0.0)
+            run_duration_sec = max(float(metadata.get("simulate_runtime_sec", str(default_runtime_sec)) or default_runtime_sec), 0.0)
         except ValueError:
-            run_duration_sec = 0.0
+            run_duration_sec = default_runtime_sec
 
         results_metadata = {
             "version": "0.2",
