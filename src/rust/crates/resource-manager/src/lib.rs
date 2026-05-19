@@ -29,7 +29,7 @@ pub const BACKEND_SELECTION_EXPLAIN_RESPONSE_VERSION: &str = "1.0.0";
 /// SemVer schema version for scheduling policy bundles (Phase-4 policy engine).
 pub const SCHEDULING_POLICY_BUNDLE_SCHEMA_VERSION: &str = "1.0.0";
 /// SemVer version for scheduling policy-resolution decision artifacts.
-pub const SCHEDULING_POLICY_RESOLUTION_VERSION: &str = "1.0.0";
+pub const SCHEDULING_POLICY_RESOLUTION_VERSION: &str = "1.1.0";
 /// SemVer version for rebalancing/preemption safety artifacts.
 pub const REBALANCING_POLICY_VERSION: &str = "2.2.0";
 /// SemVer version for multi-device split/merge execution contract artifacts.
@@ -1512,6 +1512,19 @@ pub enum PolicyResolutionErrorCode {
     PolicyBundleInvalid,
     PolicyModeUnsupported,
     PolicyResolutionFailed,
+    ModelDecisionInvalid,
+}
+
+/// Stable reason-code mapping for deterministic/model-assisted transition outcomes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PolicyTransitionReasonCode {
+    DeterministicSelection,
+    ModelSelectionAccepted,
+    FallbackMissingModelOutput,
+    FallbackInvalidModelOutput,
+    FallbackMissingPolicyBundle,
+    FallbackInvalidPolicyBundle,
+    FallbackNoViableCandidate,
 }
 
 /// Versioned policy-resolution artifact for scheduling/explainability.
@@ -1526,6 +1539,8 @@ pub struct PolicyResolutionArtifact {
     pub resolution_trace: Vec<String>,
     pub fallback_applied: bool,
     pub fallback_reason: Option<String>,
+    pub transition_reason_code: PolicyTransitionReasonCode,
+    pub deterministic_seed: u64,
     pub error_code: Option<PolicyResolutionErrorCode>,
 }
 
@@ -1573,6 +1588,16 @@ pub fn resolve_policy_bundle(
     bundle: Option<&PolicyBundle>,
     candidates: &[PolicyCandidate],
 ) -> PolicyResolutionArtifact {
+    resolve_policy_bundle_with_model(bundle, candidates, None, 0)
+}
+
+/// Deterministic + model-assisted transition resolver with hardened fallback behavior.
+pub fn resolve_policy_bundle_with_model(
+    bundle: Option<&PolicyBundle>,
+    candidates: &[PolicyCandidate],
+    model_selected_candidate_id: Option<&str>,
+    deterministic_seed: u64,
+) -> PolicyResolutionArtifact {
     let mut trace = vec![
         "validate-policy-schema".to_string(),
         "apply-profile-defaults".to_string(),
@@ -1580,14 +1605,14 @@ pub fn resolve_policy_bundle(
         "resolve-conflicts-fixed-precedence".to_string(),
     ];
 
-    let (resolved_bundle, fallback_applied, fallback_reason, error_code) = match bundle {
+    let (resolved_bundle, fallback_applied, fallback_reason, error_code, mut transition_reason_code) = match bundle {
         Some(candidate_bundle) => match validate_policy_bundle(candidate_bundle) {
-            Ok(()) => (candidate_bundle.clone(), false, None, None),
+            Ok(()) => (candidate_bundle.clone(), false, None, None, PolicyTransitionReasonCode::DeterministicSelection),
             Err(_) => (
                 PolicyBundle::default(),
                 true,
                 Some("invalid_policy_bundle".to_string()),
-                Some(PolicyResolutionErrorCode::PolicyBundleInvalid),
+                PolicyTransitionReasonCode::FallbackInvalidPolicyBundle,
             ),
         },
         None => (
@@ -1595,6 +1620,7 @@ pub fn resolve_policy_bundle(
             true,
             Some("missing_policy_bundle".to_string()),
             None,
+            PolicyTransitionReasonCode::FallbackMissingPolicyBundle,
         ),
     };
 
@@ -1616,13 +1642,34 @@ pub fn resolve_policy_bundle(
             resolution_trace: trace,
             fallback_applied: true,
             fallback_reason: Some("no_viable_candidate".to_string()),
+            transition_reason_code: PolicyTransitionReasonCode::FallbackNoViableCandidate,
+            deterministic_seed,
             error_code: Some(PolicyResolutionErrorCode::PolicyResolutionFailed),
         };
     }
 
-    let selected_candidate_id = ranked
+    let deterministic_selected = ranked
         .first()
         .map(|candidate| candidate.candidate_id.clone());
+    let selected_candidate_id = match model_selected_candidate_id {
+        Some(model_id) if ranked.iter().any(|c| c.candidate_id == model_id) => {
+            transition_reason_code = PolicyTransitionReasonCode::ModelSelectionAccepted;
+            trace.push("model-selection-accepted".to_string());
+            Some(model_id.to_string())
+        }
+        Some(_) => {
+            transition_reason_code = PolicyTransitionReasonCode::FallbackInvalidModelOutput;
+            trace.push("fallback-invalid-model-selection".to_string());
+            deterministic_selected
+        }
+        None => {
+            if !fallback_applied {
+                transition_reason_code = PolicyTransitionReasonCode::FallbackMissingModelOutput;
+                trace.push("fallback-missing-model-selection".to_string());
+            }
+            deterministic_selected
+        }
+    };
     trace.push("selection-complete".to_string());
 
     PolicyResolutionArtifact {
@@ -1635,6 +1682,8 @@ pub fn resolve_policy_bundle(
         resolution_trace: trace,
         fallback_applied,
         fallback_reason,
+        transition_reason_code,
+        deterministic_seed,
         error_code,
     }
 }

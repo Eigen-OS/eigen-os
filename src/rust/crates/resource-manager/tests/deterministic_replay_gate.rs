@@ -284,6 +284,8 @@ fn policy_snapshot(artifact: &resource_manager::PolicyResolutionArtifact) -> Val
         "resolution_trace": artifact.resolution_trace,
         "fallback_applied": artifact.fallback_applied,
         "fallback_reason": artifact.fallback_reason,
+        "transition_reason_code": format!("{:?}", artifact.transition_reason_code),
+        "deterministic_seed": artifact.deterministic_seed,
         "error_code": artifact.error_code.map(|code| format!("{:?}", code)),
     })
 }
