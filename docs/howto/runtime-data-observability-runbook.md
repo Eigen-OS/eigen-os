@@ -60,6 +60,18 @@ Prometheus alerts:
   2. Confirm whether degradation is localized to a single hardware pool.
   3. Isolate failing pool and re-route new assignments until driver rollback completes.
 
+#### IBM Quantum-specific checks
+
+When failures are concentrated on the `ibm:qiskit-runtime` target:
+
+1. Confirm credential source and channel in `/healthz` (`auth_source`, `channel`, `instance`).
+2. Distinguish taxonomy quickly:
+   - `auth` → token/secret drift.
+   - `quota` → provider credits or tenant rate limits.
+   - `network`/`deadline_exceeded` → transient backend instability.
+3. If quota-limited, reduce shot count and allow configured retry budget to absorb bursts before escalating.
+4. If deadline failures persist beyond retry budget, fail over workload class to simulator profile and open provider incident with correlation IDs.
+
 ### Correlation breakage
 
 - Trigger: any increase in `eigen_cluster_trace_breakage_total` over 10m.
