@@ -37,6 +37,9 @@ Architecture Decision Records (ADRs) capture decisions that are already adopted 
 - [0024 — Phase-8B QRTX scheduling and lifecycle hardening contract v1](0024-phase8b-qrtx-scheduling-and-lifecycle-hardening-contract-v1.md)
 - [0025 — Phase-8B QFS-L2/L3 data fabric hardening contract v1](0025-phase8b-qfs-l2-l3-data-fabric-hardening-contract-v1.md)
 - [0026 — Phase-8B runtime/data observability and SLO gates contract v1](0026-phase8b-runtime-data-observability-and-slo-gates-v1.md)
+- [0027 — Phase-9A Policy Engine v2 Contract](0027-phase9a-policy-engine-v2-contract.md)
+- [0028 — Phase-9A Federated Identity and Workload Attestation Contract](0028-phase9a-federated-identity-and-workload-attestation.md)
+- [0029 — Phase-9A Contract Drift Detection and Auto-Remediation Baseline](0029-phase9a-contract-drift-detection-and-auto-remediation.md)
 
 ## Phase-3 status
 
@@ -86,3 +89,8 @@ Architecture Decision Records (ADRs) capture decisions that are already adopted 
 - Required coverage check: [`../development/phase-8b/phase-8b-rfc-adr-gap-analysis.md`](../development/phase-8b/phase-8b-rfc-adr-gap-analysis.md).
 - Phase-8B release package: [`../development/phase-8b/phase-8b-release-readiness-checklist.md`](../development/phase-8b/phase-8b-release-readiness-checklist.md), [`../development/phase-8b/phase-8b-compatibility-report.md`](../development/phase-8b/phase-8b-compatibility-report.md), [`../development/phase-8b/phase-8b-exit-evidence-bundle.md`](../development/phase-8b/phase-8b-exit-evidence-bundle.md).
 - Policy reminder: Phase-8B runtime/data contract changes must preserve deterministic reason codes, CI gate evidence, and SemVer/migration-note discipline.
+
+## Phase-9A status
+
+- As of 2026-05-19, required Phase-9A RFC package is accepted and synchronized with ADRs (ADR 0027/0028/0029).
+- Policy reminder: Phase-9A contract changes require deterministic reason codes, SemVer discipline, and migration-note evidence for breaking changes.
