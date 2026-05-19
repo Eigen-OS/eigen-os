@@ -1612,6 +1612,7 @@ pub fn resolve_policy_bundle_with_model(
                 PolicyBundle::default(),
                 true,
                 Some("invalid_policy_bundle".to_string()),
+                None,
                 PolicyTransitionReasonCode::FallbackInvalidPolicyBundle,
             ),
         },
