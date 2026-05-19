@@ -3,7 +3,7 @@
 - **Status:** Draft (to finalize at milestone closure)
 - **Date:** 2026-05-19
 - **Milestone:** M8C
-- **Version:** 0.2.0
+- **Version:** 0.1.0
 
 ## Scope
 
@@ -20,13 +20,13 @@ Compatibility decisions in this report follow:
 - `rfcs/0032-phase7-api-and-contract-versioning-policy-v1.md`
 - accepted Phase-8C RFCs (0041/0042/0043) once finalized.
 
-## Current impact classification (implemented)
+## Current impact classification (planning state)
 
 | Surface | Impact class | Notes |
 | --- | --- | --- |
 | Compiler transition metadata schema | MINOR (expected) | additive fields for decision provenance and fallback marker |
 | Optimizer evaluation artifact schema | MINOR (expected) | additive metrics and lifecycle-state markers |
-| Learning control-plane API/payloads | MINOR (confirmed) | final depends on accepted trigger/promotion/rollback envelope |
+| Learning control-plane API/payloads | MINOR or MAJOR (TBD) | final depends on accepted trigger/promotion/rollback envelope |
 | KB lineage indexes | MINOR (expected) | additive query dimensions |
 | Existing CLI/system-api flows | PATCH (expected) | no mandatory user-facing breaking change planned |
 
@@ -52,5 +52,5 @@ Compatibility decisions in this report follow:
 
 This report can be marked **Accepted** only when:
 - RFC 0041/0042/0043 are accepted,
-- CI compatibility and drift gates pass for the updated KB decision-log and lineage-index schema,
+- all compatibility-impact rows are resolved from "expected/TBD" to confirmed SemVer classes,
 - migration notes (if required) are published and linked.
