@@ -40,6 +40,9 @@ Architecture Decision Records (ADRs) capture decisions that are already adopted 
 - [0027 — Phase-9A Policy Engine v2 Contract](0027-phase9a-policy-engine-v2-contract.md)
 - [0028 — Phase-9A Federated Identity and Workload Attestation Contract](0028-phase9a-federated-identity-and-workload-attestation.md)
 - [0029 — Phase-9A Contract Drift Detection and Auto-Remediation Baseline](0029-phase9a-contract-drift-detection-and-auto-remediation.md)
+- [0030 — Phase-8D QDriver API v1 final contract and conformance semantics](0030-phase8d-qdriver-api-v1-final-contract-and-conformance-semantics.md)
+- [0031 — Phase-8D provider driver matrix contract and tolerance profiles](0031-phase8d-provider-driver-matrix-contract-and-tolerance-profiles.md)
+- [0032 — Phase-8D externalization surfaces contract v1](0032-phase8d-externalization-surfaces-contract-v1.md)
 
 ## Phase-3 status
 
@@ -96,6 +99,13 @@ Architecture Decision Records (ADRs) capture decisions that are already adopted 
 - Required coverage check: [`../development/phase-8c/phase-8c-rfc-adr-gap-analysis.md`](../development/phase-8c/phase-8c-rfc-adr-gap-analysis.md).
 - Phase-8C release package: [`../development/phase-8c/phase-8c-release-readiness-checklist.md`](../development/phase-8c/phase-8c-release-readiness-checklist.md), [`../development/phase-8c/phase-8c-compatibility-report.md`](../development/phase-8c/phase-8c-compatibility-report.md), [`../development/phase-8c/phase-8c-exit-evidence-bundle.md`](../development/phase-8c/phase-8c-exit-evidence-bundle.md).
 - Policy reminder: Phase-8C governance updates are documentation-only unless contract artifacts change; SemVer and migration-note gates remain mandatory for any future contract deltas.
+
+## Phase-8D status
+
+- As of 2026-05-19, required Phase-8D RFC package is accepted and synchronized with ADRs (ADR 0030/0031/0032).
+- Required coverage check: [`../development/phase-8d/phase-8d-rfc-adr-gap-analysis.md`](../development/phase-8d/phase-8d-rfc-adr-gap-analysis.md).
+- Phase-8D release package: [`../development/phase-8d/phase-8d-release-readiness-checklist.md`](../development/phase-8d/phase-8d-release-readiness-checklist.md), [`../development/phase-8d/phase-8d-compatibility-report.md`](../development/phase-8d/phase-8d-compatibility-report.md), [`../development/phase-8d/phase-8d-exit-evidence-bundle.md`](../development/phase-8d/phase-8d-exit-evidence-bundle.md).
+- Policy reminder: breaking behavior requires MAJOR and migration notes; deprecations follow 2-minor-or-90-day policy.
 
 ## Phase-9A status
 
