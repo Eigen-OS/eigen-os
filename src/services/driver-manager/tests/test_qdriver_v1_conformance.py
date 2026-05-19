@@ -31,7 +31,7 @@ def _aqo(ops: list[dict], qubits: int = 2) -> bytes:
     [
         ("simulator", True, "pass"),
         ("ibm", False, "unsupported"),
-        ("aws", False, "unsupported"),
+        ("aws", True, "pass"),
     ],
 )
 def test_qdriver_v1_profile_matrix_fail_closed(
@@ -40,6 +40,18 @@ def test_qdriver_v1_profile_matrix_fail_closed(
     enabled: bool,
     expected: str,
 ) -> None:
+    if profile == "aws":
+        counts, _, metadata = simulator_driver.execute_circuit(
+            device_id="sim:local",
+            circuit=_aqo([{"op": "MEASURE", "q": [0], "c": [0]}], qubits=1),
+            shots=8,
+            options={"provider_profile": profile, "seed": "11"},
+        )
+        assert sum(counts.values()) == 8
+        assert metadata["provider_profile"] == "aws"
+        assert expected == "pass"
+        return
+    
     if not enabled:
         with pytest.raises(DriverExecutionError) as err:
             simulator_driver.execute_circuit(
