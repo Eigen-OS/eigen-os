@@ -154,6 +154,11 @@ git fetch origin main:main
 - Phase 8B RFC 0038: [`../../rfcs/0038-phase8b-qrtx-scheduling-and-lifecycle-hardening-contract-v1.md`](../../rfcs/0038-phase8b-qrtx-scheduling-and-lifecycle-hardening-contract-v1.md)
 - Phase 8B RFC 0039: [`../../rfcs/0039-phase8b-qfs-l2-l3-data-fabric-hardening-contract-v1.md`](../../rfcs/0039-phase8b-qfs-l2-l3-data-fabric-hardening-contract-v1.md)
 - Phase 8B RFC 0040: [`../../rfcs/0040-phase8b-runtime-data-observability-and-slo-gates-v1.md`](../../rfcs/0040-phase8b-runtime-data-observability-and-slo-gates-v1.md)
+- Phase 8C execution plan: [`phase-8c/phase-8c-execution-plan.md`](phase-8c/phase-8c-execution-plan.md)
+- Phase 8C issue pack: [`phase-8c/phase-8c-issue-pack.md`](phase-8c/phase-8c-issue-pack.md)
+- Phase 8C RFC/ADR gap analysis: [`phase-8c/phase-8c-rfc-adr-gap-analysis.md`](phase-8c/phase-8c-rfc-adr-gap-analysis.md)
+- Phase 8C release readiness checklist: [`phase-8c/phase-8c-release-readiness-checklist.md`](phase-8c/phase-8c-release-readiness-checklist.md)
+- Phase 8C compatibility report: [`phase-8c/phase-8c-compatibility-report.md`](phase-8c/phase-8c-compatibility-report.md)
 
 ## Related files
 
