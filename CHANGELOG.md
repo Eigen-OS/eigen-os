@@ -18,6 +18,7 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 
 ### Added
 
+- Phase-8D P8D-02 IBM Quantum official driver hardening (`driver-manager` package `0.6.0`) with version-pinned adapter defaults, retry/timeout/quota-aware execution policy aligned with QDriver v1.0 taxonomy, IBM-focused driver tests, and IBM degradation response guidance in the runtime-data runbook.
 - Phase-8D P8D-01 QDriver v1.0 conformance gate foundation (`driver-manager` package `0.5.0`) with explicit fail-closed provider-profile handling for unsupported adapters and deterministic profile-matrix conformance tests (`simulator` pass, `ibm`/`aws` unsupported-class diagnostics).
 - Phase-8B RFC/ADR synchronization closure (`governance-docs` package `0.12.0`) with RFC 0038/0039/0040 accepted status alignment, new ADR 0024/0025/0026 records, synchronized RFC/ADR pointers, and completed Phase-8B readiness + evidence docs.
 - Phase-8B P8B-06 CI gate bundle (`qa-ci` assets `0.1.0`) with required executable `scripts/ci/check-phase8b-gates.sh`, deterministic scale/latency/integrity fixture validation (`docs/development/fixtures/phase8b/ci_gate_bundle_v1.json`), and fail-closed reason-code diagnostics with mitigation hints.
