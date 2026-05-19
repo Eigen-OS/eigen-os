@@ -11,6 +11,8 @@ service KnowledgeBaseService {
   rpc BatchUpsertRecords(BatchUpsertRecordsRequest) returns (BatchUpsertRecordsResponse);
   rpc QueryRecords(QueryRecordsRequest) returns (QueryRecordsResponse);
   rpc GetRecord(GetRecordRequest) returns (GetRecordResponse);
+  rpc AppendDecisionLog(AppendDecisionLogRequest) returns (AppendDecisionLogResponse);
+  rpc QueryDecisionLogs(QueryDecisionLogsRequest) returns (QueryDecisionLogsResponse);
 }
 
 message ApiContractEnvelope {
@@ -40,6 +42,29 @@ message KnowledgeRecord {
   google.protobuf.Timestamp created_at = 12;
   RecordProvenance provenance = 13;
   map<string, string> attributes = 14;
+  ModelLineage lineage = 15;
+}
+
+
+
+message ModelLineage {
+  string model_version = 1;
+  string training_set_hash = 2;
+  string evaluation_bundle_hash = 3;
+  string promotion_policy_version = 4;
+  string promotion_outcome = 5;
+}
+
+message DecisionLog {
+  string decision_id = 1;
+  string trace_id = 2;
+  string model_version = 3;
+  string component = 4;
+  string policy_branch = 5;
+  string selected_action = 6;
+  bool fallback_used = 7;
+  map<string, string> feature_snapshot = 8;
+  google.protobuf.Timestamp decided_at = 9;
 }
 
 message UpsertRecordRequest {
@@ -68,6 +93,8 @@ message BatchUpsertRecordsResponse {
 }
 
 message QueryFilter {
+  string trace_id = 10;
+  string model_version = 11;
   int32 min_qubit_count = 1;
   int32 max_qubit_count = 2;
   double min_entanglement_score = 3;
@@ -98,6 +125,29 @@ message GetRecordRequest {
 
 message GetRecordResponse {
   KnowledgeRecord record = 1;
+}
+
+message AppendDecisionLogRequest {
+  ApiContractEnvelope envelope = 1;
+  DecisionLog decision_log = 2;
+}
+
+message AppendDecisionLogResponse {
+  string decision_id = 1;
+  google.protobuf.Timestamp appended_at = 2;
+}
+
+message QueryDecisionLogsRequest {
+  ApiContractEnvelope envelope = 1;
+  string trace_id = 2;
+  string model_version = 3;
+  uint32 page_size = 4;
+  string page_token = 5;
+}
+
+message QueryDecisionLogsResponse {
+  repeated DecisionLog decision_logs = 1;
+  string next_page_token = 2;
 }
 
 enum KnowledgeBaseReasonCode {
