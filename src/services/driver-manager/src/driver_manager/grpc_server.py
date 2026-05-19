@@ -8,7 +8,6 @@ from concurrent import futures
 
 import grpc
 
-from .aws_braket_driver import AwsBraketDriver
 from .grpc_impl import DriverManagerService
 from .proto_gen import ensure_generated
 from .qiskit_runtime_driver import QiskitRuntimeDriver
@@ -38,11 +37,6 @@ def _build_registry(types_pb) -> DriverRegistry:
         qiskit = QiskitRuntimeDriver(types_pb=types_pb)
         qiskit.initialize(config=_driver_config_from_env("DRIVER_MANAGER_QISKIT_RUNTIME"))
         registry.add_driver(qiskit.name, qiskit)
-
-    if os.getenv("DRIVER_MANAGER_AWS_BRAKET_ENABLED", "false").lower() in {"1", "true", "yes"}:
-        aws = AwsBraketDriver(types_pb=types_pb)
-        aws.initialize(config=_driver_config_from_env("DRIVER_MANAGER_AWS_BRAKET"))
-        registry.add_driver(aws.name, aws)
 
     return registry
 
