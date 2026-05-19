@@ -30,7 +30,7 @@ This document is the closure index for Phase-8D acceptance evidence.
 
 - [ ] IBM provider incident drill evidence.
 - [ ] AWS provider incident drill evidence.
-- [ ] Driver rollback rehearsal evidence (pin/quarantine/demotion).
+- [ ] Driver rollback rehearsal evidence (pin/quarantine/demotion) via `docs/development/fixtures/phase8d/rollback_rehearsal_matrix_v1.json`.
 - [ ] Escalation map and on-call handoff sign-off.
 
 ## 5) Governance closure evidence
