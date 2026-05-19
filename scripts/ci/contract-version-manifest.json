@@ -1,5 +1,5 @@
 {
-  "manifest_version": "1.4.0",
+  "manifest_version": "1.5.0",
   "artifacts": [
     {
       "path": "proto/eigen/api/v1/device_service.proto",
@@ -11,7 +11,7 @@
     },
     {
       "path": "proto/eigen/api/v1/knowledge_base_service.proto",
-      "sha256": "446d338ee4fb439ce46d7db015e0b0f0a40c81f7151f54a2199d7348cc953fdc"
+      "sha256": "57816f181017726cb124c94456e5d32468d2ffb6b42fdbe1d3ee65a472cd8b98"
     },
     {
       "path": "proto/eigen/api/v1/types.proto",
@@ -60,6 +60,10 @@
     {
       "path": "src/services/system-api/tests/fixtures/contracts/learning_control_plane_v1/control_plane_contract_v1_0_0.json",
       "sha256": "585f2cca4615b66776c7e6d91b34c0584984e86d9993e9cb0a9a1deffd097692"
+    },
+    {
+      "path": "src/services/system-api/tests/fixtures/contracts/knowledge_base_v1/decision_log_lineage_contract_v1_1_0.json",
+      "sha256": "9be0f3b2b20aa71f3f42cfb8d3774c54bb1348b92a5b55c5de18a987b09d18be"
     }
   ]
 }
