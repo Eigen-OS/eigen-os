@@ -1,0 +1,22 @@
+{
+  "contract": "knowledge_base.decision_log_lineage",
+  "version": "1.1.0",
+  "semver_impact": "MINOR",
+  "capabilities": {
+    "decision_log_write": "AppendDecisionLog",
+    "decision_log_query": ["trace_id", "model_version"],
+    "lineage_index_fields": [
+      "training_set_hash",
+      "evaluation_bundle_hash",
+      "promotion_policy_version",
+      "promotion_outcome"
+    ]
+  },
+  "compatibility": {
+    "breaking": false,
+    "defaults": {
+      "fallback_used": false,
+      "promotion_outcome": "UNKNOWN"
+    }
+  }
+}
