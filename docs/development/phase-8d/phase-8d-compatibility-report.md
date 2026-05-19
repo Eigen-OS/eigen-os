@@ -1,9 +1,9 @@
 # Phase-8D Compatibility Report
 
-- **Status:** Draft (execution in progress)
+- **Status:** Accepted (execution in progress)
 - **Date:** 2026-05-19
 - **Milestone:** M8D
-- **Version:** 0.2.0
+- **Version:** 0.3.0
 
 ## Scope
 

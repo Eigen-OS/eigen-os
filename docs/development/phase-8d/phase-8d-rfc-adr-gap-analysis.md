@@ -1,8 +1,8 @@
 # Phase-8D RFC/ADR Gap Analysis (Hardware Externalization and Provider Readiness)
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-05-19
-- **Version:** 1.1.0
+- **Version:** 1.2.0
 - **Issue:** P8D-08
 
 ## Objective
@@ -48,8 +48,8 @@ Rationale:
 
 | Area | Required artifact | Current evidence | Status |
 | --- | --- | --- | --- |
-| QDriver v1.0 conformance semantics | New accepted RFC + mirrored ADR | Execution plan only | Open |
-| Provider parity/tolerance policy | New accepted RFC + mirrored ADR | Execution plan + roadmap goals | Open |
-| REST parity + developer externalization surfaces | New accepted RFC + mirrored ADR | Execution plan only | Open |
-| Incident/rollback governance for official matrix | Acceptance criteria + runbook policy references | Draft checklist only | Open |
-| Docs pointer synchronization | Updated development/RFC/ADR indexes | Pending | Open |
+| QDriver v1.0 conformance semantics | New accepted RFC + mirrored ADR | RFC 0044 + ADR 0030 accepted | Closed |
+| Provider parity/tolerance policy | New accepted RFC + mirrored ADR | RFC 0045 + ADR 0031 accepted | Closed |
+| REST parity + developer externalization surfaces | New accepted RFC + mirrored ADR | RFC 0044 + ADR 0030 accepted | Closed |
+| Incident/rollback governance for official matrix | Acceptance criteria + runbook policy references | Checklist + runbook references linked | Closed |
+| Docs pointer synchronization | Updated development/RFC/ADR indexes | Pointers synchronized in docs indexes | Closed |

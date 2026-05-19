@@ -1,6 +1,6 @@
 # Phase-8D Release Readiness Checklist
 
-- **Status:** Draft (for milestone execution)
+- **Status:** Accepted (for milestone execution)
 - **Date:** 2026-05-19
 - **Milestone:** M8D
 

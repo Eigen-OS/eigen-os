@@ -1,6 +1,6 @@
 # Phase-8D Exit Evidence Bundle
 
-- **Status:** Draft
+- **Status:** Accepted
 - **Date:** 2026-05-19
 - **Milestone:** M8D
 
