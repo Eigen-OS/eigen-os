@@ -277,13 +277,10 @@
         "apply-profile-defaults",
         "apply-overrides-canonical-order",
         "resolve-conflicts-fixed-precedence",
-        "fallback-missing-model-selection",
         "selection-complete"
       ],
       "selected_candidate_id": "cand-cheap",
-      "version": "1.1.0",
-      "transition_reason_code": "FallbackMissingModelOutput",
-      "deterministic_seed": 0
+      "version": "1.0.0"
     },
     "explain_response": {
       "candidate_scores": [
