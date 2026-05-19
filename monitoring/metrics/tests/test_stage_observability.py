@@ -110,3 +110,18 @@ def test_runtime_data_alert_pack_has_required_rules_and_runbooks():
 
     assert text.count('runbook: "docs/howto/runtime-data-observability-runbook.md#') == 5
     
+def test_adaptive_loop_alert_pack_has_required_rules_runbooks_and_noise_suppression():
+    text = open("monitoring/metrics/prometheus/adaptive-loop-alerts.yaml", "r", encoding="utf-8").read()
+    expected_alerts = {
+        "EigenAdaptiveLoopRetrainQueuePressureCritical",
+        "EigenAdaptiveLoopPromotionFailuresSpike",
+        "EigenAdaptiveLoopRollbackRateHigh",
+        "EigenAdaptiveLoopRollbackRateCritical",
+    }
+
+    for alert in expected_alerts:
+        assert f"alert: {alert}" in text
+
+    assert text.count('runbook: "docs/howto/adaptive-loop-observability-runbook.md#') == 4
+    assert text.count('noise_suppression: "') == 4
+    
