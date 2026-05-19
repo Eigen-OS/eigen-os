@@ -121,7 +121,7 @@ class SimulatorDriver:
 
     def _validate_provider_profile(self, options: dict[str, str]) -> None:
         profile = options.get("provider_profile", "simulator").strip().lower()
-        if profile != "simulator":
+        if profile not in {"simulator", "aws"}:
             raise DriverExecutionError(grpc.StatusCode.UNIMPLEMENTED, f"Unsupported provider_profile: {profile}")
 
     def _simulate_error(self, options: dict[str, str]) -> None:
