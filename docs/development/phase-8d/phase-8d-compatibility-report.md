@@ -58,3 +58,9 @@ This report can be marked **Accepted** only when:
 - RFC 0044/0045/0046 and ADR 0030/0031/0032 are accepted and linked,
 - CI drift and parity gates pass for the final externalized contract surfaces,
 - migration notes (if required) are published and linked in release notes.
+
+## P8D-04 parity tolerance policy artifact
+
+- Versioned tolerance policy fixture: `docs/development/fixtures/phase8d/provider_tolerance_policy_v1.json` (`policy_version: 1.0.0`).
+- Release gate expectation: cross-provider comparator must fail closed when result-shape, latency-band, or noise-delta limits are exceeded.
+- Official targets covered by this policy: simulator, IBM, AWS.

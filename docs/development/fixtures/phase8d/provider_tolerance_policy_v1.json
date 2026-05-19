@@ -1,0 +1,14 @@
+{
+  "policy_version": "1.0.0",
+  "canonical_workload": "phase8d_canonical_workload_v1",
+  "result_shape": {
+    "allowed_missing_keys": 0
+  },
+  "latency": {
+    "max_ratio_vs_simulator": 5.0
+  },
+  "noise": {
+    "max_probability_delta": 0.12
+  },
+  "official_targets": ["simulator", "ibm", "aws"]
+}
