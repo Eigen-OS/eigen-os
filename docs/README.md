@@ -40,6 +40,7 @@ If you are new to the repository, read in this order:
 ### Development
 - [`development/README.md`](development/README.md)
 - [`development/post-mvp-open-source-roadmap.md`](development/post-mvp-open-source-roadmap.md)
+- [`development/phase-9-open-core-tz-1.3.0-gap-and-plan.md`](development/phase-9-open-core-tz-1.3.0-gap-and-plan.md)
 
 ### Explanation
 - [`explanation/mission.md`](explanation/mission.md)

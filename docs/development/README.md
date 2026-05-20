@@ -166,6 +166,7 @@ git fetch origin main:main
 - Phase 8D release readiness checklist: [`phase-8d/phase-8d-release-readiness-checklist.md`](phase-8d/phase-8d-release-readiness-checklist.md)
 - Phase 8D compatibility report: [`phase-8d/phase-8d-compatibility-report.md`](phase-8d/phase-8d-compatibility-report.md)
 - Phase 8D exit evidence bundle: [`phase-8d/phase-8d-exit-evidence-bundle.md`](phase-8d/phase-8d-exit-evidence-bundle.md)
+- Phase 9 open-core alignment plan (TZ v1.3.0): [`phase-9-open-core-tz-1.3.0-gap-and-plan.md`](phase-9-open-core-tz-1.3.0-gap-and-plan.md)
 
 ## Related files
 
