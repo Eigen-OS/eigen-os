@@ -78,3 +78,7 @@ Prometheus must include `runtime-data-alerts.yaml` in `rule_files` and scrape ru
 - Runbook: `docs/howto/adaptive-loop-observability-runbook.md`
 
 Prometheus must include `adaptive-loop-alerts.yaml` in `rule_files` and scrape adaptive-loop telemetry exposing `eigen_adaptive_*` series for retrain queue depth/age, promotion attempts/failures, and rollback/promotions counters.
+
+## Phase-8D operations governance
+
+- Official provider rollback governance runbook: `docs/howto/official-provider-rollback-runbook.md`
