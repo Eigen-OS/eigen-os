@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import json
 from typing import Any
 
 from .compare_api import BenchmarkCompareApi
 
-OPTIMIZER_EVAL_CONTRACT_VERSION = "1.3.0"
+OPTIMIZER_EVAL_CONTRACT_VERSION = "1.4.0"
 OPTIMIZER_BASELINE_VERSION = "1.0.0"
 
 
@@ -142,7 +143,7 @@ class OptimizerEvaluationHarness:
             "offline_bundle": offline,
         }
 
-LEARNING_PIPELINE_POLICY_VERSION = "1.2.0"
+LEARNING_PIPELINE_POLICY_VERSION = "1.3.0"
 DEFAULT_TRIGGER_CIRCUITS = 1000
 ROLLBACK_RUNBOOK_REF = "docs/howto/intelligent-runtime-observability-runbook.md"
 
@@ -156,8 +157,42 @@ class ContinuousLearningPipeline:
     def evaluate(self, fixture: dict[str, Any]) -> dict[str, Any]:
         trigger_policy = fixture.get("trigger_policy", {})
         threshold = int(trigger_policy.get("new_circuit_threshold", DEFAULT_TRIGGER_CIRCUITS))
+        max_interval_minutes = int(trigger_policy.get("max_interval_minutes", 1440))
         observed_new_circuits = int(fixture.get("observed_new_circuits", 0))
-        should_retrain = observed_new_circuits >= threshold
+        elapsed_minutes_since_last_train = int(fixture.get("elapsed_minutes_since_last_train", 0))
+        manual_override = bool(fixture.get("manual_retrain_override", False))
+        actor = str(fixture.get("trigger_actor", "continuous-learning-controller"))
+        reason = str(fixture.get("trigger_reason", "scheduled-policy-evaluation"))
+
+        trigger_rules = {
+            "new_data_threshold": observed_new_circuits >= threshold,
+            "time_cap_exceeded": elapsed_minutes_since_last_train >= max_interval_minutes,
+            "manual_override": manual_override,
+        }
+        should_retrain = any(trigger_rules.values())
+        trigger_event_id = self._sha256_digest(
+            {
+                "dataset_ref": fixture.get("dataset_ref"),
+                "dataset_hash": fixture.get("dataset_hash"),
+                "threshold": threshold,
+                "max_interval_minutes": max_interval_minutes,
+                "observed_new_circuits": observed_new_circuits,
+                "elapsed_minutes_since_last_train": elapsed_minutes_since_last_train,
+                "manual_override": manual_override,
+                "actor": actor,
+                "reason": reason,
+            }
+        )[:24]
+        audit_events = [
+            {
+                "event_id": f"evt-{trigger_event_id}",
+                "event_type": "RETRAIN_TRIGGER_EVALUATED",
+                "actor": actor,
+                "reason_code": reason,
+                "rules": trigger_rules,
+                "should_retrain": should_retrain,
+            }
+        ]
 
         if not should_retrain:
             return {
@@ -165,9 +200,14 @@ class ContinuousLearningPipeline:
                 "policy_version": LEARNING_PIPELINE_POLICY_VERSION,
                 "trigger": {
                     "threshold": threshold,
+                    "max_interval_minutes": max_interval_minutes,
                     "observed_new_circuits": observed_new_circuits,
+                    "elapsed_minutes_since_last_train": elapsed_minutes_since_last_train,
+                    "manual_override": manual_override,
+                    "rules": trigger_rules,
                     "should_retrain": False,
                 },
+                "audit_events": audit_events,
                 "artifact": None,
                 "promotion": None,
                 "rollback": None,
@@ -181,13 +221,40 @@ class ContinuousLearningPipeline:
             f'{fixture["dataset_ref"]}|{fixture["dataset_hash"]}|{int(fixture["seed"])}|{artifact_version}'.encode("utf-8")
         ).hexdigest()
 
+        dataset_snapshot_manifest = {
+            "snapshot_ref": fixture["dataset_ref"],
+            "snapshot_hash": fixture["dataset_hash"],
+            "record_count": int(fixture.get("snapshot_record_count", observed_new_circuits)),
+            "partition_spec": str(fixture.get("snapshot_partition_spec", "default")),
+        }
+        config_payload = fixture.get("training_config", {})
+        config_digest = f"sha256:{self._sha256_digest(config_payload)}"
+        model_artifact_hashes = {
+            "weights": f"sha256:{self._sha256_digest({'artifact_version': artifact_version, 'kind': 'weights'})}",
+            "metadata": f"sha256:{self._sha256_digest({'artifact_version': artifact_version, 'kind': 'metadata'})}",
+            "eval_report": f"sha256:{self._sha256_digest({'artifact_version': artifact_version, 'kind': 'eval_report'})}",
+        }
+
         artifact = {
             "artifact_version": artifact_version,
+            "registry_entry_id": f"model-{artifact_version}",
             "lineage": {
                 "dataset_ref": fixture["dataset_ref"],
                 "dataset_hash": fixture["dataset_hash"],
                 "seed": int(fixture["seed"]),
                 "lineage_hash": f"sha256:{lineage_hash}",
+            },
+            "dataset_snapshot_manifest": dataset_snapshot_manifest,
+            "training_config_digest": config_digest,
+            "model_artifact_hashes": model_artifact_hashes,
+            "reproduce": {
+                "command": (
+                    "python -m benchmark_service.reproduce_training "
+                    f"--artifact-version {artifact_version} "
+                    f"--dataset-manifest-hash {dataset_snapshot_manifest['snapshot_hash']} "
+                    f"--config-digest {config_digest}"
+                ),
+                "expected_lineage_hash": f"sha256:{lineage_hash}",
             },
         }
 
@@ -207,15 +274,39 @@ class ContinuousLearningPipeline:
                     "runbook_ref": ROLLBACK_RUNBOOK_REF,
                 }
 
+        audit_events.append(
+            {
+                "event_id": f"evt-{self._sha256_digest({'artifact_version': artifact_version, 'event': 'MODEL_VERSION_PRODUCED'})[:24]}",
+                "event_type": "MODEL_VERSION_PRODUCED",
+                "actor": actor,
+                "reason_code": reason,
+                "linked_model_version": artifact_version,
+                "digests": {
+                    "lineage_hash": artifact["lineage"]["lineage_hash"],
+                    "training_config_digest": config_digest,
+                    "weights_hash": model_artifact_hashes["weights"],
+                },
+            }
+        )
+
         return {
             "contract_version": OPTIMIZER_EVAL_CONTRACT_VERSION,
             "policy_version": LEARNING_PIPELINE_POLICY_VERSION,
             "trigger": {
                 "threshold": threshold,
+                "max_interval_minutes": max_interval_minutes,
                 "observed_new_circuits": observed_new_circuits,
+                "elapsed_minutes_since_last_train": elapsed_minutes_since_last_train,
+                "manual_override": manual_override,
+                "rules": trigger_rules,
                 "should_retrain": True,
             },
+            "audit_events": audit_events,
             "artifact": artifact,
             "promotion": promotion,
             "rollback": rollback,
         }
+
+    def _sha256_digest(self, payload: Any) -> str:
+        normalized = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+        return hashlib.sha256(normalized).hexdigest()
