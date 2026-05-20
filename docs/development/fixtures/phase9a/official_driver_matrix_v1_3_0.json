@@ -1,0 +1,28 @@
+{
+  "matrix_version": "1.3.0",
+  "phase": "9A",
+  "official_targets": ["simulator", "ibm", "aws"],
+  "entries": [
+    {
+      "provider": "simulator",
+      "driver": "simulator",
+      "driver_version": "1.3.0",
+      "artifact_digest": "sha256:simulator-artifact-v1-3-0",
+      "manifest_digest": "sha256:simulator-manifest-v1-3-0"
+    },
+    {
+      "provider": "ibm",
+      "driver": "qiskit-runtime",
+      "driver_version": "1.3.0",
+      "artifact_digest": "sha256:qiskit-runtime-artifact-v1-3-0",
+      "manifest_digest": "sha256:qiskit-runtime-manifest-v1-3-0"
+    },
+    {
+      "provider": "aws",
+      "driver": "aws-braket",
+      "driver_version": "1.3.0",
+      "artifact_digest": "sha256:aws-braket-artifact-v1-3-0",
+      "manifest_digest": "sha256:aws-braket-manifest-v1-3-0"
+    }
+  ]
+}

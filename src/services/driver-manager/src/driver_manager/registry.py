@@ -28,6 +28,24 @@ class PluginRuntimeSpec:
     pid_limit: int
 
 
+@dataclass(frozen=True)
+class DriverSignatureEnvelope:
+    artifact_digest: str
+    manifest_digest: str
+    signature_ref: str
+    signer_identity: str
+    trust_profile: str
+
+
+@dataclass(frozen=True)
+class OfficialDriverMatrixEntry:
+    provider: str
+    driver: str
+    driver_version: str
+    artifact_digest: str
+    manifest_digest: str
+
+
 class DriverRegistry:
     """Manage registered drivers and reverse index device_id -> driver."""
 
@@ -38,11 +56,50 @@ class DriverRegistry:
             "plugin_runtime_boundary_reject_total": 0,
             "plugin_in_process_reject_total": 0,
             "plugin_sandbox_policy_reject_total": 0,
+            "driver_signature_reject_total": 0,
+            "driver_matrix_mismatch_reject_total": 0,
         }
 
-    def add_plugin_driver(self, name: str, driver: BaseDriver, runtime_spec: PluginRuntimeSpec) -> None:
+    def add_plugin_driver(
+        self,
+        name: str,
+        driver: BaseDriver,
+        runtime_spec: PluginRuntimeSpec,
+        signature: DriverSignatureEnvelope,
+        official_entry: OfficialDriverMatrixEntry,
+    ) -> None:
         self._enforce_plugin_runtime_policy(runtime_spec)
+        self._enforce_signature_policy(name=name, signature=signature, official_entry=official_entry)
         self.add_driver(name=name, driver=driver)
+
+    def _enforce_signature_policy(
+        self,
+        name: str,
+        signature: DriverSignatureEnvelope,
+        official_entry: OfficialDriverMatrixEntry,
+    ) -> None:
+        if not signature.signature_ref.strip() or not signature.signer_identity.strip():
+            self._policy_reject_counters["driver_signature_reject_total"] += 1
+            raise ValueError(
+                f"DRIVER_SIGNATURE_REQUIRED: driver={name} has missing signature metadata"
+            )
+
+        if signature.trust_profile != "sigstore-keyless-v1":
+            self._policy_reject_counters["driver_signature_reject_total"] += 1
+            raise ValueError(
+                f"DRIVER_SIGNATURE_TRUST_PROFILE_UNSUPPORTED: driver={name} trust_profile={signature.trust_profile}"
+            )
+
+        if signature.artifact_digest != official_entry.artifact_digest:
+            self._policy_reject_counters["driver_matrix_mismatch_reject_total"] += 1
+            raise ValueError(
+                f"DRIVER_MATRIX_METADATA_MISMATCH: driver={name} field=artifact_digest"
+            )
+        if signature.manifest_digest != official_entry.manifest_digest:
+            self._policy_reject_counters["driver_matrix_mismatch_reject_total"] += 1
+            raise ValueError(
+                f"DRIVER_MATRIX_METADATA_MISMATCH: driver={name} field=manifest_digest"
+            )
 
     def add_driver(self, name: str, driver: BaseDriver) -> None:
         if not name:
