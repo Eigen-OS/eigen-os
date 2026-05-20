@@ -6,7 +6,7 @@ from typing import Any
 
 from .compare_api import BenchmarkCompareApi
 
-OPTIMIZER_EVAL_CONTRACT_VERSION = "1.2.0"
+OPTIMIZER_EVAL_CONTRACT_VERSION = "1.3.0"
 OPTIMIZER_BASELINE_VERSION = "1.0.0"
 
 
@@ -64,6 +64,14 @@ class OptimizerEvaluationHarness:
             }
         )
 
+        quality_signal = self._build_quality_signal(
+            baseline_snapshot=baseline_snapshot,
+            candidate_snapshot=candidate_snapshot,
+            topology_request=topology_request,
+            observed_shadow_samples=int(fixture.get("observed_shadow_samples", 0)),
+            min_shadow_samples=int(fixture.get("promotion_policy", {}).get("min_shadow_samples", 1)),
+        )
+
         return {
             "contract_version": OPTIMIZER_EVAL_CONTRACT_VERSION,
             "mode": "offline",
@@ -72,6 +80,43 @@ class OptimizerEvaluationHarness:
             "seed": int(fixture["seed"]),
             "baseline_heuristic": baseline_heuristic,
             "comparison": comparison["comparison"],
+            "quality_signal": quality_signal,
+        }
+
+    def _build_quality_signal(
+        self,
+        *,
+        baseline_snapshot: dict[str, Any],
+        candidate_snapshot: dict[str, Any],
+        topology_request: dict[str, Any],
+        observed_shadow_samples: int,
+        min_shadow_samples: int,
+    ) -> dict[str, Any]:
+        baseline_metrics = {
+            str(metric["name"]): float(metric["mean"])
+            for metric in baseline_snapshot.get("metrics", [])
+        }
+        candidate_metrics = {
+            str(metric["name"]): float(metric["mean"])
+            for metric in candidate_snapshot.get("metrics", [])
+        }
+        fidelity = candidate_metrics.get("fidelity", 0.0)
+        baseline_fidelity = baseline_metrics.get("fidelity")
+        runtime_ms = candidate_metrics.get("latency_ms", 0.0)
+        observed_error = None
+        if baseline_fidelity is not None:
+            observed_error = round(max(0.0, baseline_fidelity - fidelity), 6)
+
+        confidence = 1.0 if observed_shadow_samples >= min_shadow_samples else 0.0
+        baseline_heuristic = self._baseline.score(topology_request)
+        return {
+            "schema_version": "1.0.0",
+            "swap_count": int(baseline_heuristic["route_count"]),
+            "predicted_error": round(max(0.0, 1.0 - fidelity), 6),
+            "observed_error": observed_error,
+            "runtime_ms": float(runtime_ms),
+            "confidence": confidence,
+            "confidence_source": "shadow_sample_coverage",
         }
 
     def evaluate_shadow(self, fixture: dict[str, Any]) -> dict[str, Any]:

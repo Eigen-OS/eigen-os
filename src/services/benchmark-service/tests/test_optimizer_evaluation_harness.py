@@ -24,6 +24,10 @@ def test_offline_harness_is_reproducible_for_frozen_fixture() -> None:
 
     assert first == second
     assert first["comparison"]["summary"]["has_regression"] is True
+    assert first["contract_version"] == "1.3.0"
+    assert first["quality_signal"]["schema_version"] == "1.0.0"
+    assert first["quality_signal"]["swap_count"] == 2
+    assert "confidence" in first["quality_signal"]
 
 
 def test_shadow_harness_emits_block_recommendation_with_gate_reasons() -> None:
