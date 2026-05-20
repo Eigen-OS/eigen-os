@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 pub const JOBSPEC_API_VERSION: &str = "eigen.os/v0.1";
 pub const JOBSPEC_KIND: &str = "QuantumJob";
-pub const EIGEN_LANG_RUNTIME_HINTS_VERSION: &str = "1.0.0";
+pub const EIGEN_LANG_RUNTIME_HINTS_VERSION: &str = "1.1.0";
 pub const EIGEN_LANG_RUNTIME_DIAGNOSTICS_VERSION: &str = "1.0.0";
 pub const EIGEN_LANG_EXECUTION_ANNOTATIONS_VERSION: &str = "1.0.0";
 
@@ -806,6 +806,8 @@ fn runtime_intelligence_hints_for_compile(
         "hardware"
     };
 
+    let recommendation_policy = recommendation_policy_for_compile(req)?;
+
     let runtime_hints = format!(
         concat!(
             "{{",
@@ -814,7 +816,8 @@ fn runtime_intelligence_hints_for_compile(
             "\"target_family\":\"{target_family}\",",
             "\"preferred_backend\":\"{preferred_backend}\",",
             "\"scoring_profile\":\"{scoring_profile}\",",
-            "\"explainability_ref\":\"{explainability_ref}\"",
+            "\"explainability_ref\":\"{explainability_ref}\",",
+            "\"recommendation_policy\":{recommendation_policy}",
             "}}"
         ),
         version = EIGEN_LANG_RUNTIME_HINTS_VERSION,
@@ -827,6 +830,7 @@ fn runtime_intelligence_hints_for_compile(
         preferred_backend = preferred_backend,
         scoring_profile = json_escape(&scoring_profile),
         explainability_ref = json_escape(&format!("explain://compile/{}/{}", req.name, req.target)),
+        recommendation_policy = recommendation_policy,
     );
 
     let execution_annotations = format!(
@@ -842,10 +846,79 @@ fn runtime_intelligence_hints_for_compile(
             "explain-{}",
             &sha256_hex(req.name.as_bytes())[0..12]
         )),
-        traceability_key = json_escape(&format!("job:{}:target:{}", req.name, req.target)),
-    );
+        
+fn recommendation_policy_for_compile(req: &SubmitJobRequest) -> Result<String, JobSpecValidationError> {
+    let min_confidence = req
+        .compiler_options
+        .get("runtime.recommendation.min_confidence")
+        .and_then(|value| value.parse::<f64>().ok())
+        .unwrap_or(0.8);
+    let snapshot_epoch_ms = req
+        .metadata
+        .get("runtime.recommendation.snapshot_epoch_ms")
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(0);
 
-    Ok((runtime_hints, execution_annotations))
+    let context_payload = req
+        .metadata
+        .get("runtime.recommendation.context")
+        .or_else(|| req.compiler_options.get("runtime.recommendation.context"));
+
+    let no_context = format!(
+        "{{\"status\":\"FALLBACK\",\"reason\":\"NO_CONTEXT\",\"min_confidence\":{min_confidence:.3},\"snapshot_epoch_ms\":{snapshot_epoch_ms}}}"
+    );
+    let Some(payload) = context_payload else {
+        return Ok(no_context);
+    };
+
+    let contract = extract_json_string_field(payload, "contract");
+    let version = extract_json_string_field(payload, "version");
+    let backend_class = extract_json_string_field(payload, "backend_class");
+    let confidence = extract_json_number_field(payload, "confidence");
+    let fallback_used = extract_json_bool_field(payload, "fallback_used");
+    let expires_at_epoch_ms = extract_json_u64_field(payload, "expires_at_epoch_ms");
+    if contract.as_deref() != Some("pattern_miner.recommendation")
+        || version.as_deref() != Some("1.0.0")
+        || backend_class.is_none()
+        || confidence.is_none()
+        || fallback_used.is_none()
+        || expires_at_epoch_ms.is_none()
+    {
+        return Err(JobSpecValidationError {
+            code: "RUNTIME_INTELLIGENCE_DIAGNOSTIC",
+            violations: vec![FieldViolation {
+                field: "spec.metadata.runtime.recommendation.context".to_string(),
+                description: "malformed recommendation context payload".to_string(),
+            }],
+        });
+    }
+    let backend_class = backend_class.expect("checked is_some");
+    let confidence = confidence.expect("checked is_some");
+    let fallback_used = fallback_used.expect("checked is_some");
+    let expires_at_epoch_ms = expires_at_epoch_ms.expect("checked is_some");
+
+    let fallback_reason = if fallback_used {
+        Some("UPSTREAM_FALLBACK_USED")
+    } else if confidence < min_confidence {
+        Some("LOW_CONFIDENCE")
+    } else if snapshot_epoch_ms > 0 && expires_at_epoch_ms < snapshot_epoch_ms {
+        Some("STALE_CONTEXT")
+    } else if req.target.starts_with("sim:") && backend_class != "sim" {
+        Some("CONFLICT_TARGET_BACKEND")
+    } else {
+        None
+    };
+
+    if let Some(reason) = fallback_reason {
+        Ok(format!(
+            "{{\"status\":\"FALLBACK\",\"reason\":\"{reason}\",\"min_confidence\":{min_confidence:.3},\"snapshot_epoch_ms\":{snapshot_epoch_ms}}}"
+        ))
+    } else {
+        Ok(format!(
+            "{{\"status\":\"APPLIED\",\"reason\":\"NONE\",\"backend_class\":\"{}\",\"confidence\":{confidence:.6},\"snapshot_epoch_ms\":{snapshot_epoch_ms}}}",
+            json_escape(&backend_class)
+        ))
+    }
 }
 
 fn is_supported_runtime_target(target: &str) -> bool {
@@ -898,6 +971,33 @@ fn extract_json_string_field(doc: &str, field: &str) -> Option<String> {
     let tail = &tail[quote + 1..];
     let end = tail.find('"')?;
     Some(tail[..end].to_string())
+}
+
+fn extract_json_bool_field(doc: &str, field: &str) -> Option<bool> {
+    let needle = format!("\"{field}\"");
+    let start = doc.find(&needle)?;
+    let tail = &doc[start + needle.len()..];
+    let colon = tail.find(':')?;
+    let value = tail[colon + 1..]
+        .trim_start()
+        .strip_prefix("true")
+        .map(|_| true)
+        .or_else(|| tail[colon + 1..].trim_start().strip_prefix("false").map(|_| false))?;
+    Some(value)
+}
+
+fn extract_json_number_field(doc: &str, field: &str) -> Option<f64> {
+    let needle = format!("\"{field}\"");
+    let start = doc.find(&needle)?;
+    let tail = &doc[start + needle.len()..];
+    let colon = tail.find(':')?;
+    let value = tail[colon + 1..].trim_start();
+    let end = value.find([',', '}']).unwrap_or(value.len());
+    value[..end].trim().parse::<f64>().ok()
+}
+
+fn extract_json_u64_field(doc: &str, field: &str) -> Option<u64> {
+    extract_json_number_field(doc, field).map(|v| v as u64)
 }
 
 pub fn get_job_status_from_system_api(job_id: &str) -> Result<JobStatusView, GrpcLikeError> {
@@ -1350,7 +1450,8 @@ spec:
         let aqo = compile_job_to_aqo_json(&yaml_path).expect("compile");
         assert!(aqo.contains("\"aqo_version\": \"0.1\""));
         assert!(aqo.contains("\"runtime_intelligence_hints\":"));
-        assert!(aqo.contains("\"version\":\"1.0.0\""));
+        assert!(aqo.contains("\"version\":\"1.1.0\""));
+        assert!(aqo.contains("\"recommendation_policy\":"));
         assert!(aqo.contains("\"execution_annotations\":"));
         assert!(aqo.contains("\"explainability_id\":"));
         let viz = visualize_aqo_json(&aqo);
@@ -1413,6 +1514,60 @@ spec:
                 assert!(validation.violations.iter().any(|v| {
                     v.description
                         .contains("runtime.require_backend=qpu cannot target simulator")
+                }));
+            }
+            other => panic!("expected validation error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn compile_recommendation_policy_fallback_variants_are_deterministic() {
+        let dir = temp_dir();
+        let yaml_path = dir.join("job.yaml");
+        fs::write(dir.join("program.eigen.py"), "@hybrid_program\ndef main():\n    return 1\n").unwrap();
+        fs::write(
+            &yaml_path,
+            "apiVersion: eigen.os/v0.1\nkind: QuantumJob\nmetadata:\n  name: rec-policy\nspec:\n  target: sim:local\n",
+        )
+        .unwrap();
+        let no_context = compile_job_to_aqo_json(&yaml_path).unwrap();
+        assert!(no_context.contains("\"reason\":\"NO_CONTEXT\""));
+
+        fs::write(
+            &yaml_path,
+            "apiVersion: eigen.os/v0.1\nkind: QuantumJob\nmetadata:\n  name: rec-policy\nspec:\n  target: sim:local\n  metadata:\n    runtime.recommendation.snapshot_epoch_ms: \"200\"\n    runtime.recommendation.context: '{\"contract\":\"pattern_miner.recommendation\",\"version\":\"1.0.0\",\"backend_class\":\"sim\",\"confidence\":0.99,\"fallback_used\":false,\"expires_at_epoch_ms\":100}'\n",
+        )
+        .unwrap();
+        let stale_context = compile_job_to_aqo_json(&yaml_path).unwrap();
+        assert!(stale_context.contains("\"reason\":\"STALE_CONTEXT\""));
+
+        fs::write(
+            &yaml_path,
+            "apiVersion: eigen.os/v0.1\nkind: QuantumJob\nmetadata:\n  name: rec-policy\nspec:\n  target: sim:local\n  metadata:\n    runtime.recommendation.snapshot_epoch_ms: \"100\"\n    runtime.recommendation.context: '{\"contract\":\"pattern_miner.recommendation\",\"version\":\"1.0.0\",\"backend_class\":\"qpu\",\"confidence\":0.99,\"fallback_used\":false,\"expires_at_epoch_ms\":300}'\n",
+        )
+        .unwrap();
+        let conflict_context = compile_job_to_aqo_json(&yaml_path).unwrap();
+        assert!(conflict_context.contains("\"reason\":\"CONFLICT_TARGET_BACKEND\""));
+    }
+
+    #[test]
+    fn compile_fails_closed_for_malformed_recommendation_context_payload() {
+        let dir = temp_dir();
+        let yaml_path = dir.join("job.yaml");
+        fs::write(dir.join("program.eigen.py"), "@hybrid_program\ndef main():\n    return 1\n").unwrap();
+        fs::write(
+            &yaml_path,
+            "apiVersion: eigen.os/v0.1\nkind: QuantumJob\nmetadata:\n  name: malformed-rec\nspec:\n  target: sim:local\n  metadata:\n    runtime.recommendation.context: '{\"contract\":\"pattern_miner.recommendation\"}'\n",
+        )
+        .unwrap();
+
+        let err = compile_job_to_aqo_json(&yaml_path).unwrap_err();
+        match err {
+            SubmitBuildError::Validation(validation) => {
+                assert_eq!(validation.code, "RUNTIME_INTELLIGENCE_DIAGNOSTIC");
+                assert!(validation.violations.iter().any(|v| {
+                    v.field == "spec.metadata.runtime.recommendation.context"
+                        && v.description.contains("malformed recommendation context payload")
                 }));
             }
             other => panic!("expected validation error, got {other:?}"),
