@@ -1,9 +1,9 @@
 # Phase-8D Compatibility Report
 
-- **Status:** Draft (execution in progress)
+- **Status:** Accepted (execution in progress)
 - **Date:** 2026-05-19
 - **Milestone:** M8D
-- **Version:** 0.1.0
+- **Version:** 0.3.0
 
 ## Scope
 
@@ -13,7 +13,7 @@ This report tracks compatibility impact for hardware externalization components 
 - provider support matrix (simulator, IBM Quantum, AWS Braket),
 - system-api REST parity and compatibility matrix publication,
 - developer surface skeleton contracts (dashboard, VS Code, Jupyter),
-- operator rollback and incident governance references.
+- operator rollback and incident governance references (runbook + rehearsal matrix fixture).
 
 ## Compatibility policy baseline
 
@@ -50,7 +50,7 @@ Compatibility decisions in this report follow:
 - QDriver conformance suite evidence for simulator/IBM/AWS.
 - Cross-provider tolerance and parity report for canonical workload set.
 - REST parity check evidence and updated compatibility matrix artifact.
-- Runbook drill evidence and rollback safety check logs.
+- Runbook drill evidence and rollback safety check logs, including `rollback_rehearsal_matrix_v1.json` fixture validation.
 
 ## Finalization criteria
 
@@ -58,3 +58,9 @@ This report can be marked **Accepted** only when:
 - RFC 0044/0045/0046 and ADR 0030/0031/0032 are accepted and linked,
 - CI drift and parity gates pass for the final externalized contract surfaces,
 - migration notes (if required) are published and linked in release notes.
+
+## P8D-04 parity tolerance policy artifact
+
+- Versioned tolerance policy fixture: `docs/development/fixtures/phase8d/provider_tolerance_policy_v1.json` (`policy_version: 1.0.0`).
+- Release gate expectation: cross-provider comparator must fail closed when result-shape, latency-band, or noise-delta limits are exceeded.
+- Official targets covered by this policy: simulator, IBM, AWS.
