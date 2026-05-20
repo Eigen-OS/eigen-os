@@ -149,6 +149,23 @@
   - [development/phase-8c/phase-8c-compatibility-report.md](development/phase-8c/phase-8c-compatibility-report.md)
   - [development/phase-8c/phase-8c-exit-evidence-bundle.md](development/phase-8c/phase-8c-exit-evidence-bundle.md)
 
+## Phase-8D RFC set (accepted)
+
+- Status on 2026-05-19: required Phase-8D governance package is accepted and synchronized with mirrored ADRs for closure readiness.
+- Coverage check: [development/phase-8d/phase-8d-rfc-adr-gap-analysis.md](development/phase-8d/phase-8d-rfc-adr-gap-analysis.md)
+- Accepted RFCs:
+  - [RFC 0044 — Phase-8D QDriver API v1 Final Contract and Conformance Semantics](../rfcs/0044-phase8d-qdriver-api-v1-final-contract-and-conformance-semantics.md)
+  - [RFC 0045 — Phase-8D Provider Driver Matrix Contract and Tolerance Profiles](../rfcs/0045-phase8d-provider-driver-matrix-contract-and-tolerance-profiles.md)
+  - [RFC 0046 — Phase-8D Externalization Surfaces Contract v1](../rfcs/0046-phase8d-externalization-surfaces-contract-v1.md)
+- Synchronized ADRs:
+  - [ADR 0030 — Phase-8D QDriver API v1 final contract and conformance semantics](adr/0030-phase8d-qdriver-api-v1-final-contract-and-conformance-semantics.md)
+  - [ADR 0031 — Phase-8D provider driver matrix contract and tolerance profiles](adr/0031-phase8d-provider-driver-matrix-contract-and-tolerance-profiles.md)
+  - [ADR 0032 — Phase-8D externalization surfaces contract v1](adr/0032-phase8d-externalization-surfaces-contract-v1.md)
+- Release closure artifacts:
+  - [development/phase-8d/phase-8d-release-readiness-checklist.md](development/phase-8d/phase-8d-release-readiness-checklist.md)
+  - [development/phase-8d/phase-8d-compatibility-report.md](development/phase-8d/phase-8d-compatibility-report.md)
+  - [development/phase-8d/phase-8d-exit-evidence-bundle.md](development/phase-8d/phase-8d-exit-evidence-bundle.md)
+
 ## Phase-9A RFC set (accepted)
 
 - Status on 2026-05-19: Phase-9A governance/security automation RFC package is accepted and synchronized with ADRs.
