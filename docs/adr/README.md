@@ -43,6 +43,7 @@ Architecture Decision Records (ADRs) capture decisions that are already adopted 
 - [0030 — Phase-8D QDriver API v1 final contract and conformance semantics](0030-phase8d-qdriver-api-v1-final-contract-and-conformance-semantics.md)
 - [0031 — Phase-8D provider driver matrix contract and tolerance profiles](0031-phase8d-provider-driver-matrix-contract-and-tolerance-profiles.md)
 - [0032 — Phase-8D externalization surfaces contract v1](0032-phase8d-externalization-surfaces-contract-v1.md)
+- [0033 — Phase-9B intelligence closure contract v1](0033-phase9b-intelligence-closure-contract-v1.md)
 
 ## Phase-3 status
 
@@ -111,3 +112,10 @@ Architecture Decision Records (ADRs) capture decisions that are already adopted 
 
 - As of 2026-05-19, required Phase-9A RFC package is accepted and synchronized with ADRs (ADR 0027/0028/0029).
 - Policy reminder: Phase-9A contract changes require deterministic reason codes, SemVer discipline, and migration-note evidence for breaking changes.
+
+## Phase-9B status
+
+- As of 2026-05-20, required Phase-9B RFC package is synchronized with ADRs (ADR 0033).
+- Required coverage check: [`../development/phase-9b/phase-9b-rfc-adr-gap-analysis.md`](../development/phase-9b/phase-9b-rfc-adr-gap-analysis.md).
+- Phase-9B release package: [`../development/phase-9b/phase-9b-release-readiness-checklist.md`](../development/phase-9b/phase-9b-release-readiness-checklist.md), [`../development/phase-9b/phase-9b-compatibility-report.md`](../development/phase-9b/phase-9b-compatibility-report.md), [`../development/phase-9b/phase-9b-exit-evidence-bundle.md`](../development/phase-9b/phase-9b-exit-evidence-bundle.md).
+- Policy reminder: CI must fail closed on undocumented contract drift and conformance regressions; deprecations retain support for 2 minors or 90 days, whichever is longer.
