@@ -87,6 +87,7 @@ This document is a ready-to-use set of GitHub issues for the **Phase-9A** stage 
 
 **RFC link**
 - `rfcs/0044-phase8d-qdriver-api-v1-final-contract-and-conformance-semantics.md`
+- `docs/development/phase-9a/p9a-02-lqm-atomic-allocation-offline-failover.md` (implementation spec and deterministic test matrix)
 
 ---
 
@@ -154,6 +155,7 @@ This document is a ready-to-use set of GitHub issues for the **Phase-9A** stage 
 
 **RFC link**
 - `rfcs/0044-phase8d-qdriver-api-v1-final-contract-and-conformance-semantics.md`
+- `docs/development/phase-9a/p9a-02-lqm-atomic-allocation-offline-failover.md` (implementation spec and deterministic test matrix)
 - `rfcs/0045-phase8d-provider-driver-matrix-contract-and-tolerance-profiles.md`
 
 ---
