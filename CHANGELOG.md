@@ -18,6 +18,7 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 
 ### Added
 
+- Phase-9B P9B-06 canary rollout + auto-rollback safety pack (`benchmark-service` package `0.11.0`) with deterministic canary cohort/window policy fields, auditable stable canary reason codes, and automatic rollback envelopes that pin stable target model version and 15-minute restore SLO metadata.
 - Phase-8D P8D-06 developer surfaces skeleton pack (`governance-docs` package `0.13.0`) with non-GA bootstrap artifacts for web dashboard, VS Code, and Jupyter surfaces, simulator walkthrough docs, and explicit System API parity alignment constraints.
 - Phase-8D P8D-07 operator rollback governance pack (`driver-manager` package `0.8.0`) with official-provider runbooks for outage/degradation/auth/quota incidents, deterministic rollback controls (adapter pin/quarantine/matrix demotion), and fixture-tested rollback-safety rehearsal checks for simulator/IBM/AWS.
 - Phase-8D P8D-02 IBM Quantum official driver hardening (`driver-manager` package `0.6.0`) with version-pinned adapter defaults, retry/timeout/quota-aware execution policy aligned with QDriver v1.0 taxonomy, IBM-focused driver tests, and IBM degradation response guidance in the runtime-data runbook.
