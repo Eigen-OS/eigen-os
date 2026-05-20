@@ -40,9 +40,20 @@ def test_e2e_smoke_submit_watch_results(grpc_addr: str):
 
     job_id = _submit_bell_state_job(stub)
 
-    with pytest.raises(grpc.RpcError) as err:
-        stub.GetJobResults(job_pb.GetJobResultsRequest(job_id=job_id))
-    assert err.value.code() == grpc.StatusCode.FAILED_PRECONDITION
+    # Depending on scheduler speed, results can be unavailable or already terminal.
+    try:
+        early_results = stub.GetJobResults(job_pb.GetJobResultsRequest(job_id=job_id))
+    except grpc.RpcError as err:
+        assert err.code() == grpc.StatusCode.FAILED_PRECONDITION
+    else:
+        assert early_results.job_id == job_id
+        assert early_results.state in {
+            types_pb.JOB_STATE_DONE,
+            types_pb.JOB_STATE_ERROR,
+            types_pb.JOB_STATE_CANCELLED,
+            types_pb.JOB_STATE_TIMEOUT,
+        }
+
 
     # submit -> watch
     stream = stub.StreamJobUpdates(job_pb.StreamJobUpdatesRequest(job_id=job_id))
