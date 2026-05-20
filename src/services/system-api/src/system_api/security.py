@@ -145,10 +145,27 @@ def enforce_authz(context: grpc.ServicerContext, *, required_permission: str) ->
     scope, _, action = need.partition(":")
     wildcard = f"{scope}:*"
 
+    subject, _, tenant = auth_context(context)
+    if not subject.strip() or not tenant.strip():
+        log_authz_denied(
+            method=getattr(context, "_rpc_event_call_details", None).method if hasattr(context, "_rpc_event_call_details") else "unknown",
+            subject=subject or "unknown",
+            permission="POLICY_DENY_MISSING_AUTH_CONTEXT",
+        )
+        context.abort(
+            grpc.StatusCode.PERMISSION_DENIED,
+            "POLICY_DENY_MISSING_AUTH_CONTEXT: subject and tenant are required",
+        )
+
     if need in granted or wildcard in granted or "*" in granted:
         return
 
+    log_authz_denied(
+        method=getattr(context, "_rpc_event_call_details", None).method if hasattr(context, "_rpc_event_call_details") else "unknown",
+        subject=subject,
+        permission=f"POLICY_DENY_PERMISSION_REQUIRED:{need}",
+    )
     context.abort(
         grpc.StatusCode.PERMISSION_DENIED,
-        f"permission denied: requires {required_permission}",
+        f"POLICY_DENY_PERMISSION_REQUIRED: requires {required_permission}",
     )
