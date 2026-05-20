@@ -122,6 +122,12 @@ The Stage-9A CI must fail closed if any of the following regresses:
 - error taxonomy mapping fixture;
 - contract drift without SemVer/migration notes compliance.
 
+## Implementation Evidence (Current Repository)
+
+- Reference implementation (deterministic in-process LQM model): `src/services/system-api/src/system_api/lqm.py`
+- Conformance and deterministic fixtures/tests:
+  - `src/services/system-api/tests/test_lqm_atomic_offline_failover.py`
+
 ## Versioning & Compatibility Classification
 
 - Contract shape additions (new optional telemetry fields / reason codes): `MINOR`.
