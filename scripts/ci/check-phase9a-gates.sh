@@ -13,6 +13,7 @@ echo "[phase9a-gates] fault-injection deterministic suite"
   cd src/services/system-api
   pip install -e .[dev]
   pytest -q tests/test_security_baseline.py::test_static_token_mode_fails_closed_on_missing_auth_context
+  pytest -q tests/test_lqm_atomic_offline_failover.py
 )
 (
   cd src/services/driver-manager
