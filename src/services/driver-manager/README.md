@@ -39,6 +39,27 @@ export DRIVER_MANAGER_SECRETS_JSON='{"ibm/runtime/token":"<your-token>"}'
 python -m driver_manager.main
 ```
 
+Lifecycle-aware secret envelope (Stage-9A):
+
+```json
+{
+  "ibm/runtime/token": {
+    "value": "<your-token>",
+    "state": "issued",
+    "issued_at": "2026-05-20T00:00:00Z",
+    "expires_at": "2026-06-20T00:00:00Z"
+  },
+  "aws/braket/credentials": {
+    "value": {"access_key_id": "<id>", "secret_access_key": "<secret>"},
+    "state": "rotated",
+    "issued_at": "2026-05-01T00:00:00Z",
+    "rotated_at": "2026-05-20T00:00:00Z"
+  }
+}
+```
+
+`state=revoked` or expired `expires_at` entries are denied during retrieval and emitted as audit events (`secret_lifecycle_event`).
+
 ## Tests
 
 ```bash
