@@ -41,7 +41,7 @@
   "candidate_snapshot": {
     "run_id": "candidate-frozen-001",
     "metrics": [
-       {
+      {
         "name": "latency_ms",
         "mean": 103.0,
         "stddev": 2.0,
@@ -71,5 +71,11 @@
     "new_circuit_threshold": 1000
   },
   "observed_new_circuits": 1000,
-  "artifact_version": "phase8c-candidate-0007"
+  "artifact_version": "phase8c-candidate-0007",
+  "canary_policy": {
+    "cohort_dimension": "backend_class",
+    "cohort_value": "simulator",
+    "evaluation_window_minutes": 45
+  },
+  "stable_model_version": "phase8c-stable-0006"
 }

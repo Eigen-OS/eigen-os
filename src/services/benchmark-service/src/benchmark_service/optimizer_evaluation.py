@@ -7,7 +7,7 @@ from typing import Any
 
 from .compare_api import BenchmarkCompareApi
 
-OPTIMIZER_EVAL_CONTRACT_VERSION = "1.4.0"
+OPTIMIZER_EVAL_CONTRACT_VERSION = "1.5.0"
 OPTIMIZER_BASELINE_VERSION = "1.0.0"
 
 
@@ -143,9 +143,12 @@ class OptimizerEvaluationHarness:
             "offline_bundle": offline,
         }
 
-LEARNING_PIPELINE_POLICY_VERSION = "1.3.0"
+LEARNING_PIPELINE_POLICY_VERSION = "1.4.0"
 DEFAULT_TRIGGER_CIRCUITS = 1000
-ROLLBACK_RUNBOOK_REF = "docs/howto/intelligent-runtime-observability-runbook.md"
+ROLLBACK_RUNBOOK_REF = "docs/howto/intelligent-runtime-observability-runbook.md#rollback-decision-trace"
+DEFAULT_CANARY_EVALUATION_WINDOW_MINUTES = 30
+DEFAULT_CANARY_COHORT = "backend_class"
+AUTO_ROLLBACK_SLO_MINUTES = 15
 
 
 class ContinuousLearningPipeline:
@@ -235,6 +238,16 @@ class ContinuousLearningPipeline:
             "eval_report": f"sha256:{self._sha256_digest({'artifact_version': artifact_version, 'kind': 'eval_report'})}",
         }
 
+        canary_policy = fixture.get("canary_policy", {})
+        cohort_dimension = str(canary_policy.get("cohort_dimension", DEFAULT_CANARY_COHORT))
+        cohort_value = str(
+            canary_policy.get("cohort_value")
+            or fixture.get("cohort_filters", {}).get(cohort_dimension, "default")
+        )
+        evaluation_window_minutes = int(
+            canary_policy.get("evaluation_window_minutes", DEFAULT_CANARY_EVALUATION_WINDOW_MINUTES)
+        )
+
         artifact = {
             "artifact_version": artifact_version,
             "registry_entry_id": f"model-{artifact_version}",
@@ -259,20 +272,20 @@ class ContinuousLearningPipeline:
         }
 
         promotion = self._harness.evaluate_shadow(fixture)
+        canary_decision = "PROMOTE" if promotion["recommendation"] == "PROMOTE" else "ROLLBACK"
+        canary_reason_codes = [f"CANARY_{reason}" for reason in promotion["gate_reasons"]]
+        if canary_decision == "PROMOTE":
+            canary_reason_codes = ["CANARY_PROMOTION_APPROVED"]
 
         rollback = None
-        if promotion["recommendation"] != "PROMOTE":
-            rollback_reasons = [
-                f"CANARY_{reason}"
-                for reason in promotion["gate_reasons"]
-                if reason in {"REGRESSION_VS_BASELINE_HEURISTIC", "INSUFFICIENT_SHADOW_SAMPLES"}
-            ]
-            if rollback_reasons:
-                rollback = {
-                    "action": "ROLLBACK_TO_STABLE",
-                    "reason_codes": sorted(rollback_reasons),
-                    "runbook_ref": ROLLBACK_RUNBOOK_REF,
-                }
+        if canary_decision == "ROLLBACK":
+            rollback = {
+                "action": "ROLLBACK_TO_STABLE",
+                "reason_codes": sorted(canary_reason_codes),
+                "runbook_ref": ROLLBACK_RUNBOOK_REF,
+                "target_model_version": str(fixture.get("stable_model_version", "phase8c-stable-previous")),
+                "slo_minutes": AUTO_ROLLBACK_SLO_MINUTES,
+            }
 
         audit_events.append(
             {
@@ -304,6 +317,16 @@ class ContinuousLearningPipeline:
             "audit_events": audit_events,
             "artifact": artifact,
             "promotion": promotion,
+            "canary": {
+                "cohort": {
+                    "dimension": cohort_dimension,
+                    "value": cohort_value,
+                },
+                "evaluation_window_minutes": evaluation_window_minutes,
+                "decision": canary_decision,
+                "reason_codes": sorted(canary_reason_codes),
+                "auto_rollback_slo_minutes": AUTO_ROLLBACK_SLO_MINUTES,
+            },
             "rollback": rollback,
         }
 
