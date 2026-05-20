@@ -24,7 +24,7 @@ def test_offline_harness_is_reproducible_for_frozen_fixture() -> None:
 
     assert first == second
     assert first["comparison"]["summary"]["has_regression"] is True
-    assert first["contract_version"] == "1.4.0"
+    assert first["contract_version"] == "1.5.0"
     assert first["quality_signal"]["schema_version"] == "1.0.0"
     assert first["quality_signal"]["swap_count"] == 2
     assert "confidence" in first["quality_signal"]
@@ -56,6 +56,12 @@ def test_pipeline_generates_artifact_and_rollback_reason_codes_when_regression_d
     assert result["rollback"]["action"] == "ROLLBACK_TO_STABLE"
     assert result["audit_events"][0]["event_type"] == "RETRAIN_TRIGGER_EVALUATED"
     assert result["audit_events"][1]["linked_model_version"] == "phase8c-candidate-0007"
+    assert result["canary"]["cohort"]["dimension"] == "backend_class"
+    assert result["canary"]["cohort"]["value"] == "simulator"
+    assert result["canary"]["evaluation_window_minutes"] == 45
+    assert result["canary"]["decision"] == "ROLLBACK"
+    assert result["rollback"]["target_model_version"] == "phase8c-stable-0006"
+    assert result["rollback"]["slo_minutes"] == 15
     assert result["rollback"]["reason_codes"] == [
         "CANARY_INSUFFICIENT_SHADOW_SAMPLES",
         "CANARY_REGRESSION_VS_BASELINE_HEURISTIC",
