@@ -35,6 +35,7 @@ Stage A closes critical-path kernel compliance for TZ v1.3.0:
 - `phase-9a-issue-pack.md` (ready-to-file issue set).
 - `phase-9a-rfc-adr-gap-analysis.md` (normative governance sync).
 - Stage-9A readiness checklist + compatibility and exit artifacts (tracked by issue P9A-08).
+- Stage-9A rollback runbook (`docs/howto/stage-9a-rollback-runbook.md`) and drill evidence fixture (`docs/development/fixtures/phase9a/rollback_drill_evidence_v1.json`).
 
 ## Exit criteria
 

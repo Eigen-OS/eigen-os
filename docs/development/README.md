@@ -176,6 +176,8 @@ git fetch origin main:main
 - Phase 9A issue pack: [`phase-9a/phase-9a-issue-pack.md`](phase-9a/phase-9a-issue-pack.md)
 - Phase 9A RFC/ADR gap analysis: [`phase-9a/phase-9a-rfc-adr-gap-analysis.md`](phase-9a/phase-9a-rfc-adr-gap-analysis.md)
 - Phase 9A CI fail-closed gate mapping: [`phase-9a/p9a-06-ci-fail-closed-gates.md`](phase-9a/p9a-06-ci-fail-closed-gates.md)
+- Stage-9A rollback runbook: [`../howto/stage-9a-rollback-runbook.md`](../howto/stage-9a-rollback-runbook.md)
+- Stage-9A rollback drill evidence fixture: [`fixtures/phase9a/rollback_drill_evidence_v1.json`](fixtures/phase9a/rollback_drill_evidence_v1.json)
 
 ## Related files
 
