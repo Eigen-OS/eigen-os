@@ -321,7 +321,101 @@ jobs:
 
       - name: Run Phase-8C gate bundle
         run: bash scripts/ci/check-phase8c-gates.sh
-              
+  
+  sast-gate:
+    name: SAST gate (Bandit + Semgrep)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install SAST tools
+        run: pip install bandit semgrep
+
+      - name: Run Bandit
+        run: bandit -q -r src/services -x src/services/*/tests
+
+      - name: Run Semgrep
+        run: semgrep scan --error --config p/security-audit --config p/python --config p/rust src
+
+  dast-gate:
+    name: DAST gate (ZAP baseline)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run OWASP ZAP baseline against OpenAPI spec
+        uses: zaproxy/action-baseline@v0.12.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          target: "file://src/services/system-api/openapi.yaml"
+          cmd_options: "-I -a"
+
+  sbom-gate:
+    name: SBOM gate (CycloneDX generation + Trivy scan)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: cyclonedx-json
+          output-file: sbom.cdx.json
+
+      - name: Verify SBOM contains components
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          doc = json.loads(Path("sbom.cdx.json").read_text(encoding="utf-8"))
+          components = doc.get("components", [])
+          if not components:
+              raise SystemExit("SBOM gate failed: no components found")
+          print(f"[sbom-gate] components={len(components)}")
+          PY
+
+      - name: Scan SBOM with Trivy (HIGH/CRITICAL fail-closed)
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          scan-type: "sbom"
+          scan-ref: "sbom.cdx.json"
+          format: "table"
+          ignore-unfixed: true
+          exit-code: "1"
+          severity: "HIGH,CRITICAL"
+
+  phase9a-ci-gate-bundle:
+    name: Phase-9A CI gate bundle
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src/rust
+
+      - name: Run Phase-9A gate bundle
+        run: bash scripts/ci/check-phase9a-gates.sh
+        
   phase2-contract-compatibility:
     name: Phase-2 contract compatibility suite
     runs-on: ubuntu-latest
