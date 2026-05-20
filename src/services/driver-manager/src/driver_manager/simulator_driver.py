@@ -23,6 +23,7 @@ class DriverExecutionError(Exception):
     def __init__(self, code: grpc.StatusCode, message: str):
         super().__init__(message)
         self.code = code
+        self.status_code = code
         self.message = message
 
 
@@ -121,7 +122,7 @@ class SimulatorDriver:
 
     def _validate_provider_profile(self, options: dict[str, str]) -> None:
         profile = options.get("provider_profile", "simulator").strip().lower()
-        if profile not in {"simulator", "aws"}:
+        if profile != "simulator":
             raise DriverExecutionError(grpc.StatusCode.UNIMPLEMENTED, f"Unsupported provider_profile: {profile}")
 
     def _simulate_error(self, options: dict[str, str]) -> None:
