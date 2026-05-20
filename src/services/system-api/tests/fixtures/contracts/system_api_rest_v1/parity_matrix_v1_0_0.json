@@ -1,0 +1,31 @@
+{
+  "artifact_version": "1.0.0",
+  "updated_at": "2026-05-19",
+  "release_artifacts": {
+    "compatibility_report": "docs/development/phase-8d/phase-8d-compatibility-report.md",
+    "exit_evidence": "docs/development/phase-8d/phase-8d-exit-evidence-bundle.md"
+  },
+  "rest_parity": {
+    "version": "1.0.0",
+    "paths": ["submit", "watch", "results", "cancel"],
+    "required_terminal_states": ["DONE", "ERROR", "CANCELLED", "TIMEOUT"],
+    "watch_monotonic_event_seq": true
+  },
+  "providers": [
+    {
+      "provider": "sim:local",
+      "capabilities": {"submit": true, "watch": true, "results": true, "cancel": true},
+      "status": "ga"
+    },
+    {
+      "provider": "ibm:runtime",
+      "capabilities": {"submit": true, "watch": true, "results": true, "cancel": true},
+      "status": "preview"
+    },
+    {
+      "provider": "aws:braket",
+      "capabilities": {"submit": true, "watch": true, "results": true, "cancel": true},
+      "status": "preview"
+    }
+  ]
+}
