@@ -1,6 +1,6 @@
 # Phase-8D Release Readiness Checklist
 
-- **Status:** Draft (for milestone execution)
+- **Status:** Accepted (for milestone execution)
 - **Date:** 2026-05-19
 - **Milestone:** M8D
 
@@ -36,12 +36,12 @@ Use this checklist at sprint reviews and release candidate evaluation for Phase-
 - [ ] Nightly conformance smoke for simulator/IBM/AWS is required and green.
 - [ ] Contract drift checks for external API projections are required and green.
 - [ ] Gate failures produce deterministic reason codes and mitigation hints.
-- [ ] Compatibility matrix fixture verification is required and green.
+- [ ] Rollback-safety fixture verification is required and green.
 
 ## 5) Operations and rollback readiness
 
-- [ ] Runbooks for provider outage/degradation/auth/quota failures are approved.
-- [ ] Rollback controls (pin/quarantine/demotion) are documented and tested.
+- [ ] Runbooks for provider outage/degradation/auth/quota failures are approved (`docs/howto/official-provider-rollback-runbook.md`).
+- [ ] Rollback controls (pin/quarantine/demotion) are documented and tested via rollback-safety fixture checks.
 - [ ] Escalation map is reviewed with owner groups.
 - [ ] One rollback drill per official provider is completed and evidenced.
 - [ ] On-call handoff package is approved.
