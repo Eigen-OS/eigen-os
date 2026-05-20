@@ -846,6 +846,16 @@ fn runtime_intelligence_hints_for_compile(
             "explain-{}",
             &sha256_hex(req.name.as_bytes())[0..12]
         )),
+
+        traceability_key = json_escape(&format!(
+            "trace://compile/{}/{}",
+            req.name,
+            req.target
+        )),
+    );
+
+    Ok((runtime_hints, execution_annotations))
+}
         
 fn recommendation_policy_for_compile(req: &SubmitJobRequest) -> Result<String, JobSpecValidationError> {
     let min_confidence = req
