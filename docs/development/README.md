@@ -167,6 +167,10 @@ git fetch origin main:main
 - Phase 8D compatibility report: [`phase-8d/phase-8d-compatibility-report.md`](phase-8d/phase-8d-compatibility-report.md)
 - Phase 8D exit evidence bundle: [`phase-8d/phase-8d-exit-evidence-bundle.md`](phase-8d/phase-8d-exit-evidence-bundle.md)
 - Phase 9 open-core alignment plan (TZ v1.3.0): [`phase-9-open-core-tz-1.3.0-gap-and-plan.md`](phase-9-open-core-tz-1.3.0-gap-and-plan.md)
+- Phase 9A execution plan: [`phase-9a/phase-9a-execution-plan.md`](phase-9a/phase-9a-execution-plan.md)
+- Phase 9A issue pack: [`phase-9a/phase-9a-issue-pack.md`](phase-9a/phase-9a-issue-pack.md)
+- Phase 9A RFC/ADR gap analysis: [`phase-9a/phase-9a-rfc-adr-gap-analysis.md`](phase-9a/phase-9a-rfc-adr-gap-analysis.md)
+
 
 ## Related files
 
