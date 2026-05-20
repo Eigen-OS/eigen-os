@@ -40,6 +40,8 @@ def _extract_bad_request(err: grpc.RpcError) -> error_details_pb2.BadRequest:
 def test_auth_static_token_mode_requires_authorization(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SYSTEM_API_AUTH_MODE", "static_token")
     monkeypatch.setenv("SYSTEM_API_AUTH_TOKEN", "test-token")
+    monkeypatch.setenv("SYSTEM_API_AUTH_SUBJECT", "test-user")
+    monkeypatch.setenv("SYSTEM_API_AUTH_TENANT", "test-tenant")
 
     addr = f"127.0.0.1:{_free_port()}"
     server = serve(bind=addr)
@@ -106,6 +108,8 @@ def test_authz_readonly_cannot_submit_but_can_list_devices(monkeypatch: pytest.M
     monkeypatch.setenv("SYSTEM_API_AUTH_MODE", "static_token")
     monkeypatch.setenv("SYSTEM_API_AUTH_TOKEN", "readonly-token")
     monkeypatch.setenv("SYSTEM_API_AUTH_ROLES", "readonly")
+    monkeypatch.setenv("SYSTEM_API_AUTH_SUBJECT", "readonly-user")
+    monkeypatch.setenv("SYSTEM_API_AUTH_TENANT", "readonly-tenant")
 
     addr = f"127.0.0.1:{_free_port()}"
     server = serve(bind=addr)
