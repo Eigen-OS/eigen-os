@@ -1,5 +1,5 @@
 {
-  "manifest_version": "1.5.0",
+  "manifest_version": "1.6.0",
   "artifacts": [
     {
       "path": "proto/eigen/api/v1/device_service.proto",
@@ -64,6 +64,10 @@
     {
       "path": "src/services/system-api/tests/fixtures/contracts/knowledge_base_v1/decision_log_lineage_contract_v1_1_0.json",
       "sha256": "9be0f3b2b20aa71f3f42cfb8d3774c54bb1348b92a5b55c5de18a987b09d18be"
+    },
+    {
+      "path": "src/services/system-api/tests/fixtures/contracts/system_api_rest_v1/parity_matrix_v1_0_0.json",
+      "sha256": "e680c037e80e85a958ea8fbd6c932a629d29ee1854836360c353480cd74a17e6"
     }
   ]
 }
