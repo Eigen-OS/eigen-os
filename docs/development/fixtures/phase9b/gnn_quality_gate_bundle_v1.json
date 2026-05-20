@@ -1,0 +1,17 @@
+{
+  "contract_version": "1.3.0",
+  "quality_signal": {
+    "schema_version": "1.0.0",
+    "swap_count": 2,
+    "predicted_error": 0.008,
+    "observed_error": 0.0,
+    "runtime_ms": 103.0,
+    "confidence": 0.0,
+    "confidence_source": "shadow_sample_coverage"
+  },
+  "threshold_policy": {
+    "max_runtime_ms": 120.0,
+    "max_predicted_error": 0.02,
+    "min_confidence": 0.0
+  }
+}
