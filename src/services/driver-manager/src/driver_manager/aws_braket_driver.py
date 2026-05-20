@@ -117,7 +117,7 @@ class AwsBraketDriver:
         est_wait = 60 if self._queue_state == "queued" else 0
         status = self._types_pb.ONLINE if self._initialized else self._types_pb.OFFLINE
         if self._queue_state == "degraded":
-            status = self._types_pb.DEGRADED
+            status = getattr(self._types_pb, "DEGRADED", self._types_pb.ONLINE)
         return DeviceStatusInfo(device_id=device_id, status=status, queue_depth=queue_depth, estimated_wait_sec=est_wait, metadata={"driver": self.name, "queue_state": self._queue_state})
 
     def calibrate_device(self, device_id: str, options: dict[str, str]) -> str:
