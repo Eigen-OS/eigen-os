@@ -181,7 +181,11 @@ git fetch origin main:main
 - Phase 9B execution plan: [`phase-9b/phase-9b-execution-plan.md`](phase-9b/phase-9b-execution-plan.md)
 - Phase 9B issue pack: [`phase-9b/phase-9b-issue-pack.md`](phase-9b/phase-9b-issue-pack.md)
 - Phase 9B RFC/ADR gap analysis: [`phase-9b/phase-9b-rfc-adr-gap-analysis.md`](phase-9b/phase-9b-rfc-adr-gap-analysis.md)
+- Phase 9B release readiness checklist: [`phase-9b/phase-9b-release-readiness-checklist.md`](phase-9b/phase-9b-release-readiness-checklist.md)
+- Phase 9B compatibility report: [`phase-9b/phase-9b-compatibility-report.md`](phase-9b/phase-9b-compatibility-report.md)
+- Phase 9B exit evidence bundle: [`phase-9b/phase-9b-exit-evidence-bundle.md`](phase-9b/phase-9b-exit-evidence-bundle.md)
 - Phase 9B RFC 0047: [`../../rfcs/0047-phase9b-intelligence-closure-contract-v1.md`](../../rfcs/0047-phase9b-intelligence-closure-contract-v1.md)
+- Phase 9B ADR 0033: [`../adr/0033-phase9b-intelligence-closure-contract-v1.md`](../adr/0033-phase9b-intelligence-closure-contract-v1.md)
 - Stage-9A rollback runbook: [`../howto/stage-9a-rollback-runbook.md`](../howto/stage-9a-rollback-runbook.md)
 - Stage-9A rollback drill evidence fixture: [`fixtures/phase9a/rollback_drill_evidence_v1.json`](fixtures/phase9a/rollback_drill_evidence_v1.json)
 

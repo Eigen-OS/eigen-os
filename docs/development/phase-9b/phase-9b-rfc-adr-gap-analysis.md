@@ -28,10 +28,13 @@ Identify whether the current RFC/ADR set is sufficient for **Stage B — Intelli
 A dedicated Phase-9B RFC is required to consolidate Stage-B requirements and tighten deterministic lifecycle semantics.
 
 - **Action:** introduce `rfcs/0047-phase9b-intelligence-closure-contract-v1.md`.
-- **ADR impact:** no new ADR is required at this stage because this is contract/policy tightening, not an architectural fork.
+- **ADR impact:** publish `docs/adr/0033-phase9b-intelligence-closure-contract-v1.md` to keep RFC→ADR synchronization explicit for Stage-B closure governance and evidence policy.
 
 ## Follow-up checklist
 
+- [ ] Publish ADR 0033 and add it to `docs/adr/README.md`.
+- [ ] Publish Phase-9B release checklist, compatibility report, and exit evidence bundle.
+- [ ] Update `docs/development/README.md` with complete Phase-9B artifact links.
 - [ ] Update compatibility fixtures for any new/changed payload schemas.
 - [ ] Add migration notes for contract changes (if any breakage risk exists).
 - [ ] Ensure CI includes Phase-9B conformance gates as required checks.
