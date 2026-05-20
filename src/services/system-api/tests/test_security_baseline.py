@@ -159,3 +159,56 @@ def test_metrics_include_authz_denied_counter(monkeypatch: pytest.MonkeyPatch) -
     finally:
         server.stop(grace=None)
         metrics_server.shutdown()
+
+def test_static_token_mode_fails_closed_on_missing_auth_context(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SYSTEM_API_AUTH_MODE", "static_token")
+    monkeypatch.setenv("SYSTEM_API_AUTH_TOKEN", "ctx-token")
+    monkeypatch.setenv("SYSTEM_API_AUTH_ROLES", "admin")
+    monkeypatch.setenv("SYSTEM_API_AUTH_SUBJECT", "")
+    monkeypatch.setenv("SYSTEM_API_AUTH_TENANT", "")
+
+    addr = f"127.0.0.1:{_free_port()}"
+    server = serve(bind=addr)
+    time.sleep(0.05)
+    try:
+        channel = grpc.insecure_channel(addr)
+        stub = dev_pb_grpc.DeviceServiceStub(channel)
+        with pytest.raises(grpc.RpcError) as exc:
+            stub.ListDevices(
+                dev_pb.ListDevicesRequest(),
+                metadata=(("authorization", "Bearer ctx-token"),),
+            )
+        assert exc.value.code() == grpc.StatusCode.PERMISSION_DENIED
+        assert "POLICY_DENY_MISSING_AUTH_CONTEXT" in exc.value.details()
+    finally:
+        server.stop(grace=None)
+
+
+def test_cross_tenant_access_denied(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SYSTEM_API_AUTH_MODE", "static_token")
+    monkeypatch.setenv("SYSTEM_API_AUTH_TOKEN", "tenant-token")
+    monkeypatch.setenv("SYSTEM_API_AUTH_ROLES", "user")
+    monkeypatch.setenv("SYSTEM_API_AUTH_SUBJECT", "alice")
+    monkeypatch.setenv("SYSTEM_API_AUTH_TENANT", "tenant-a")
+    addr = f"127.0.0.1:{_free_port()}"
+    server = serve(bind=addr)
+    time.sleep(0.05)
+    try:
+        channel = grpc.insecure_channel(addr)
+        job_stub = job_pb_grpc.JobServiceStub(channel)
+        md = (("authorization", "Bearer tenant-token"),)
+        submitted = job_stub.SubmitJob(
+            job_pb.SubmitJobRequest(
+                name="tenant-owned",
+                target="sim:local",
+                eigen_lang=types_pb.EigenLangSource(source=b"def main():\n    return 0", entrypoint="main"),
+            ),
+            metadata=md,
+        )
+        monkeypatch.setenv("SYSTEM_API_AUTH_TENANT", "tenant-b")
+        with pytest.raises(grpc.RpcError) as exc:
+            job_stub.GetJobStatus(job_pb.GetJobStatusRequest(job_id=submitted.job_id), metadata=md)
+        assert exc.value.code() == grpc.StatusCode.PERMISSION_DENIED
+        assert "POLICY_DENY_TENANT_MISMATCH" in exc.value.details()
+    finally:
+        server.stop(grace=None)
