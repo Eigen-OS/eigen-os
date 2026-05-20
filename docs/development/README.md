@@ -83,6 +83,11 @@ Configure branch protection so the following CI jobs are **Required**:
 - `Protobuf lint + breaking checks`
 - `Migration notes gate`
 - `Docs tutorial smoke checks`
+- `SAST gate (Bandit + Semgrep)`
+- `DAST gate (ZAP baseline)`
+- `SBOM gate (CycloneDX generation + Trivy scan)`
+- `Contract drift gate`
+- `Phase-9A CI gate bundle`
 
 For fixture updates (`src/services/eigen-compiler/tests/golden/**`, `src/services/system-api/tests/fixtures/jobspec/**`, `src/services/system-api/tests/fixtures/runtime/**`, `src/rust/apps/cli/tests/fixtures/**`):
 
@@ -170,7 +175,7 @@ git fetch origin main:main
 - Phase 9A execution plan: [`phase-9a/phase-9a-execution-plan.md`](phase-9a/phase-9a-execution-plan.md)
 - Phase 9A issue pack: [`phase-9a/phase-9a-issue-pack.md`](phase-9a/phase-9a-issue-pack.md)
 - Phase 9A RFC/ADR gap analysis: [`phase-9a/phase-9a-rfc-adr-gap-analysis.md`](phase-9a/phase-9a-rfc-adr-gap-analysis.md)
-
+- Phase 9A CI fail-closed gate mapping: [`phase-9a/p9a-06-ci-fail-closed-gates.md`](phase-9a/p9a-06-ci-fail-closed-gates.md)
 
 ## Related files
 
