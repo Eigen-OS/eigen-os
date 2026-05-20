@@ -159,7 +159,7 @@ class JobService:
     def _idempotency_key(self, request) -> str | None:
         key = request.metadata.get("client_request_id", "").strip()
         if key:
-            return "client_request_id:" + key
+            return ":".join(("client_request_id", key))
         if request.WhichOneof("program") == "eigen_lang":
             digest = request.eigen_lang.sha256.strip()
             if digest:
