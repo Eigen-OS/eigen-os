@@ -11,6 +11,7 @@ import grpc
 
 from .base_driver import DeviceStatusInfo, DriverCapabilities, DriverHealth
 from .simulator_driver import DriverExecutionError
+from .secret_lifecycle import SecretLifecycleStore
 
 
 @dataclass(frozen=True)
@@ -147,13 +148,8 @@ class AwsBraketDriver:
 
         secret_ref = config.get("credentials_secret_ref", "").strip()
         if secret_ref:
-            secrets_blob = os.getenv("DRIVER_MANAGER_SECRETS_JSON", "{}")
-            try:
-                secrets = json.loads(secrets_blob)
-            except json.JSONDecodeError as exc:
-                self._init_error = "DRIVER_MANAGER_SECRETS_JSON must be valid JSON object"
-                raise ValueError(self._init_error) from exc
-            raw = secrets.get(secret_ref, {})
+            secrets = SecretLifecycleStore()
+            raw = secrets.get(secret_ref, actor=self.name, workload_id=config.get("workload_id", "driver-init"), consumer=self.name)
             if isinstance(raw, dict):
                 access_key_id = str(raw.get("access_key_id", "")).strip()
                 secret_access_key = str(raw.get("secret_access_key", "")).strip()

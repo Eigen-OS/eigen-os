@@ -11,6 +11,7 @@ import grpc
 
 from .base_driver import DeviceStatusInfo, DriverCapabilities, DriverHealth
 from .simulator_driver import DriverExecutionError
+from .secret_lifecycle import SecretLifecycleStore
 
 
 @dataclass(frozen=True)
@@ -155,13 +156,8 @@ class QiskitRuntimeDriver:
 
         token_secret_ref = config.get("token_secret_ref", "").strip()
         if token_secret_ref:
-            secrets_blob = os.getenv("DRIVER_MANAGER_SECRETS_JSON", "{}")
-            try:
-                secrets = json.loads(secrets_blob)
-            except json.JSONDecodeError as exc:
-                self._init_error = "DRIVER_MANAGER_SECRETS_JSON must be valid JSON object"
-                raise ValueError(self._init_error) from exc
-            token = str(secrets.get(token_secret_ref, "")).strip()
+            secrets = SecretLifecycleStore()
+            token = str(secrets.get(token_secret_ref, actor=self.name, workload_id=config.get("workload_id", "driver-init"), consumer=self.name)).strip()
             if token:
                 return _AuthConfig(source=f"secret_ref:{token_secret_ref}", token=token)
             self._init_error = f"missing token for secret ref '{token_secret_ref}'"
