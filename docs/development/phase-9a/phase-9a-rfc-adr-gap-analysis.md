@@ -20,6 +20,16 @@ Define RFC/ADR coverage needed for Stage-9A core-closure work and record whether
 | Contract drift auto-remediation | `rfcs/0043-phase9a-contract-drift-detection-and-auto-remediation.md` | `docs/adr/0029-phase9a-contract-drift-detection-and-auto-remediation.md` | **Covered**; CI evidence required. |
 | Driver signature enforcement + official matrix governance | `rfcs/0044-phase8d-qdriver-api-v1-final-contract-and-conformance-semantics.md`, `rfcs/0045-phase8d-provider-driver-matrix-contract-and-tolerance-profiles.md` | `docs/adr/0030-phase8d-qdriver-api-v1-final-contract-and-conformance-semantics.md`, `docs/adr/0031-phase8d-provider-driver-matrix-contract-and-tolerance-profiles.md` | **Covered with update**; require explicit Stage-9A governance addendum in docs. |
 
+## Stage-9A closure synchronization status (P9A-08)
+
+- **Last synchronized:** 2026-05-20
+- **Decision status:** Current for Stage-9A closure package.
+- **Traceability links:**
+  - Issue pack: `docs/development/phase-9a/phase-9a-issue-pack.md`
+  - Release readiness checklist: `docs/development/phase-9a/phase-9a-release-readiness-checklist.md`
+  - Compatibility report: `docs/development/phase-9a/phase-9a-compatibility-report.md`
+  - Exit evidence bundle: `docs/development/phase-9a/phase-9a-exit-evidence-bundle.md
+  
 ## Decision
 
 - **No new RFC IDs are mandatory at Stage-9A kickoff.**

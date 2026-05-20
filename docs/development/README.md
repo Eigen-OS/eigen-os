@@ -174,8 +174,10 @@ git fetch origin main:main
 - Phase 9 open-core alignment plan (TZ v1.3.0): [`phase-9-open-core-tz-1.3.0-gap-and-plan.md`](phase-9-open-core-tz-1.3.0-gap-and-plan.md)
 - Phase 9A execution plan: [`phase-9a/phase-9a-execution-plan.md`](phase-9a/phase-9a-execution-plan.md)
 - Phase 9A issue pack: [`phase-9a/phase-9a-issue-pack.md`](phase-9a/phase-9a-issue-pack.md)
-- Phase 9A RFC/ADR gap analysis: [`phase-9a/phase-9a-rfc-adr-gap-analysis.md`](phase-9a/phase-9a-rfc-adr-gap-analysis.md)
+- Phase 9A release readiness checklist: [`phase-9a/phase-9a-release-readiness-checklist.md`](phase-9a/phase-9a-release-readiness-checklist.md)
+- Phase 9A compatibility report: [`phase-9a/phase-9a-compatibility-report.md`](phase-9a/phase-9a-compatibility-report.md)
 - Phase 9A CI fail-closed gate mapping: [`phase-9a/p9a-06-ci-fail-closed-gates.md`](phase-9a/p9a-06-ci-fail-closed-gates.md)
+- Phase 9A exit evidence bundle: [`phase-9a/phase-9a-exit-evidence-bundle.md`](phase-9a/phase-9a-exit-evidence-bundle.md)
 - Stage-9A rollback runbook: [`../howto/stage-9a-rollback-runbook.md`](../howto/stage-9a-rollback-runbook.md)
 - Stage-9A rollback drill evidence fixture: [`fixtures/phase9a/rollback_drill_evidence_v1.json`](fixtures/phase9a/rollback_drill_evidence_v1.json)
 
