@@ -23,7 +23,7 @@ from .lifecycle import apply_signal
 from .scheduling import resolve_dag
 from .observability import log_request_end, log_request_start, new_request_context
 from .qfs_store import QFS_STORE
-from .security import enforce_authn, enforce_authz
+from .security import auth_context, enforce_authn, enforce_authz
 from .validation import (
     validate_device_id,
     validate_job_id,
@@ -101,6 +101,8 @@ class _JobRecord:
     batch_manifest_ref: str
     batch_id: str
     queue_delay_sec: float
+    owner_subject: str
+    owner_tenant: str
 
 
 @dataclass
@@ -546,7 +548,16 @@ class JobService:
         else:
             self._store_timeline(record)
 
-    def _build_job_record(self, request, *, job_id: str, created_at: Timestamp, trace_id: str | None) -> _JobRecord:
+    def _build_job_record(
+        self,
+        request,
+        *,
+        job_id: str,
+        created_at: Timestamp,
+        trace_id: str | None,
+        owner_subject: str,
+        owner_tenant: str,
+    ) -> _JobRecord:
         metadata = dict(request.metadata)
         created_at_dt = created_at.ToDatetime().replace(tzinfo=timezone.utc)
         attempt = 1
@@ -739,6 +750,8 @@ class JobService:
             batch_manifest_ref="",
             batch_id="",
             queue_delay_sec=0.0,
+            owner_subject=owner_subject,
+            owner_tenant=owner_tenant,
         )
         self._provision_temporary_artifacts(record)
         QFS_STORE.atomic_write_bytes(
@@ -893,6 +906,16 @@ class JobService:
         if not record.batch_id:
             self._assign_single_dispatch_delay(record)
 
+    def _enforce_job_access(self, *, context: grpc.ServicerContext, record: _JobRecord) -> None:
+        subject, roles, tenant = auth_context(context)
+        if "*" in roles or "admin" in roles:
+            return
+        if tenant != record.owner_tenant:
+            context.abort(
+                grpc.StatusCode.PERMISSION_DENIED,
+                "POLICY_DENY_TENANT_MISMATCH: cross-tenant access denied",
+            )
+
     def SubmitJob(self, request, context: grpc.ServicerContext):
         enforce_authn(context, method_name="JobService.SubmitJob")
         enforce_authz(context, required_permission="jobs:submit")
@@ -943,7 +966,15 @@ class JobService:
             rc.job_id = job_id
             now = _ts_now()
             trace_id = rc.trace_id or request.metadata.get("trace_id", "").strip() or None
-            record = self._build_job_record(request, job_id=job_id, created_at=now, trace_id=trace_id)
+            owner_subject, _, owner_tenant = auth_context(context)
+            record = self._build_job_record(
+                request,
+                job_id=job_id,
+                created_at=now,
+                trace_id=trace_id,
+                owner_subject=owner_subject,
+                owner_tenant=owner_tenant,
+            )
             self._jobs[job_id] = record
             self._assign_scheduler_slot(record)
             if idem_key:
@@ -985,6 +1016,7 @@ class JobService:
         if record is None:
             context.abort(grpc.StatusCode.NOT_FOUND, f"job_id not found: {request.job_id}")
         with self._lock:
+            self._enforce_job_access(context=context, record=record)
             self._advance_job(record)
             latest = record.updates[-1]
         created_at = record.created_at
@@ -1024,6 +1056,7 @@ class JobService:
             record = self._jobs.get(request.job_id)
             if record is None:
                 context.abort(grpc.StatusCode.NOT_FOUND, f"job_id not found: {request.job_id}")
+            self._enforce_job_access(context=context, record=record)
             self._advance_job(record)
             terminal_values = {getattr(self._types_pb, name) for name in TERMINAL_JOB_STATES}
             decision = apply_signal(
@@ -1058,6 +1091,7 @@ class JobService:
                 record = self._jobs.get(request.job_id)
                 if record is None:
                     context.abort(grpc.StatusCode.NOT_FOUND, f"job_id not found: {request.job_id}")
+                self._enforce_job_access(context=context, record=record)
                 self._advance_job(record)
                 selected_updates = list(record.updates)
                 done = selected_updates[-1].state in terminal_values
@@ -1091,6 +1125,7 @@ class JobService:
         with self._lock:
             record = self._jobs.get(request.job_id)
             if record is not None:
+                self._enforce_job_access(context=context, record=record)
                 self._advance_job(record)
 
         if record is None:
@@ -1152,6 +1187,7 @@ class JobService:
                     domain="eigen.api.v1.explain",
                     metadata={"job_id": request.job_id},
                 )
+            self._enforce_job_access(context=context, record=record)
             self._advance_job(record)
             rationale = dict(record.dispatch_rationale)
             attrs = dict(rationale["attributes"])
