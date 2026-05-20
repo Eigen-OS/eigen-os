@@ -1,0 +1,49 @@
+{
+  "contract": "knowledge_base.immutability_anonymization_index_profile",
+  "version": "1.2.0",
+  "semver_impact": "MINOR",
+  "immutability": {
+    "record_types": ["Circuit", "Pattern", "Task"],
+    "append_only": true,
+    "mutation_block_reason_code": "KB_IMMUTABILITY_VIOLATION",
+    "audit_required_fields": [
+      "record_type",
+      "record_id",
+      "actor_anonymous_id",
+      "trace_id",
+      "reason_code",
+      "timestamp_utc"
+    ]
+  },
+  "anonymization": {
+    "algorithm": "HMAC-SHA256",
+    "runtime_reversible_mapping_allowed": false,
+    "id_format": "anon:<salt_epoch>:<hex_digest_32>",
+    "salt_rotation_policy": {
+      "rotation_period_days": 30,
+      "overlap_acceptance_days": 14,
+      "max_runtime_salt_epochs": 2
+    }
+  },
+  "index_profile": {
+    "profile_version": "1.0.0",
+    "required_sections": [
+      "structural_indexes",
+      "vector_indexes",
+      "query_dimensions",
+      "max_result_window"
+    ],
+    "latency_slo_ms_p95": {
+      "structural_search": 100,
+      "vector_search": 180,
+      "hybrid_search": 220
+    }
+  },
+  "compatibility": {
+    "breaking": false,
+    "defaults": {
+      "append_only": true,
+      "runtime_reversible_mapping_allowed": false
+    }
+  }
+}
