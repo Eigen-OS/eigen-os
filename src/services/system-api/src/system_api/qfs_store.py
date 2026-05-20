@@ -239,6 +239,126 @@ class RetentionCleanupEvent:
     reason_code: str
 
 
+@dataclass(frozen=True)
+class CheckpointArtifact:
+    checkpoint_id: str
+    qfs_ref: str
+    payload: bytes
+    created_at_epoch_ms: int
+    retention_until_epoch_ms: int
+
+
+class CheckpointQuotaExceededError(RuntimeError):
+    """Deterministic quota failure for QFS-L2 checkpoint artifacts."""
+
+    def __init__(self, *, reason_code: str, detail: str):
+        super().__init__(f"{reason_code}:{detail}")
+        self.reason_code = reason_code
+        self.detail = detail
+
+
+@dataclass(frozen=True)
+class CheckpointQuotaPolicy:
+    max_artifacts: int
+    max_total_bytes: int
+
+
+@dataclass(frozen=True)
+class RestoreCacheEvent:
+    checkpoint_id: str
+    reason_code: str
+
+
+class CheckpointCatalog:
+    """In-memory checkpoint catalog with deterministic quota + retention semantics."""
+
+    REASON_QUOTA_ARTIFACTS_EXCEEDED = "QUOTA_ARTIFACTS_EXCEEDED"
+    REASON_QUOTA_BYTES_EXCEEDED = "QUOTA_BYTES_EXCEEDED"
+    REASON_RETENTION_WINDOW_EXPIRED = "RETENTION_WINDOW_EXPIRED"
+
+    def __init__(self, *, quota: CheckpointQuotaPolicy):
+        self._quota = quota
+        self._items: dict[str, CheckpointArtifact] = {}
+        self._lock = threading.RLock()
+
+    def upsert(self, artifact: CheckpointArtifact) -> None:
+        if artifact.retention_until_epoch_ms < artifact.created_at_epoch_ms:
+            raise ValueError(f"{self.REASON_RETENTION_WINDOW_EXPIRED}:retention_until must be >= created_at")
+        with self._lock:
+            existing = self._items.get(artifact.checkpoint_id)
+            current_count = len(self._items) - (1 if existing is not None else 0)
+            if current_count + 1 > self._quota.max_artifacts:
+                raise CheckpointQuotaExceededError(
+                    reason_code=self.REASON_QUOTA_ARTIFACTS_EXCEEDED,
+                    detail=f"max_artifacts={self._quota.max_artifacts}",
+                )
+            current_bytes = sum(len(item.payload) for item in self._items.values()) - (len(existing.payload) if existing is not None else 0)
+            projected_bytes = current_bytes + len(artifact.payload)
+            if projected_bytes > self._quota.max_total_bytes:
+                raise CheckpointQuotaExceededError(
+                    reason_code=self.REASON_QUOTA_BYTES_EXCEEDED,
+                    detail=f"max_total_bytes={self._quota.max_total_bytes};projected_bytes={projected_bytes}",
+                )
+            self._items[artifact.checkpoint_id] = artifact
+
+    def get(self, checkpoint_id: str, *, now_epoch_ms: int | None = None) -> CheckpointArtifact | None:
+        now_ms = now_epoch_ms if now_epoch_ms is not None else int(datetime.now(tz=UTC).timestamp() * 1000)
+        with self._lock:
+            artifact = self._items.get(checkpoint_id)
+            if artifact is None:
+                return None
+            if now_ms >= artifact.retention_until_epoch_ms:
+                del self._items[checkpoint_id]
+                return None
+            return artifact
+
+
+class QFSRestoreCache:
+    """Deterministic LRU restore cache with observable eviction diagnostics."""
+
+    REASON_CACHE_EVICTED_LRU = "CACHE_EVICTED_LRU"
+    REASON_CACHE_MISS = "CACHE_MISS"
+    REASON_CACHE_HIT = "CACHE_HIT"
+
+    def __init__(self, *, capacity: int):
+        if capacity < 1:
+            raise ValueError("capacity must be >= 1")
+        self._capacity = capacity
+        self._cache: dict[str, bytes] = {}
+        self._last_access_ns: dict[str, int] = {}
+        self._clock = 0
+        self._lock = threading.RLock()
+        self._events: list[RestoreCacheEvent] = []
+
+    def put(self, checkpoint_id: str, payload: bytes) -> None:
+        with self._lock:
+            self._clock += 1
+            self._cache[checkpoint_id] = bytes(payload)
+            self._last_access_ns[checkpoint_id] = self._clock
+            while len(self._cache) > self._capacity:
+                evicted = min(self._last_access_ns, key=lambda key: (self._last_access_ns[key], key))
+                del self._cache[evicted]
+                del self._last_access_ns[evicted]
+                self._events.append(RestoreCacheEvent(checkpoint_id=evicted, reason_code=self.REASON_CACHE_EVICTED_LRU))
+
+    def get(self, checkpoint_id: str) -> bytes | None:
+        with self._lock:
+            payload = self._cache.get(checkpoint_id)
+            if payload is None:
+                self._events.append(RestoreCacheEvent(checkpoint_id=checkpoint_id, reason_code=self.REASON_CACHE_MISS))
+                return None
+            self._clock += 1
+            self._last_access_ns[checkpoint_id] = self._clock
+            self._events.append(RestoreCacheEvent(checkpoint_id=checkpoint_id, reason_code=self.REASON_CACHE_HIT))
+            return bytes(payload)
+
+    def consume_events(self) -> list[RestoreCacheEvent]:
+        with self._lock:
+            events = list(self._events)
+            self._events.clear()
+            return events
+
+
 class QFSLayoutValidator:
     """Deterministic QFS-L3 layout validator with stable diagnostics."""
 

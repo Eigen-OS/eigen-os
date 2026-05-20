@@ -2,11 +2,18 @@ from __future__ import annotations
 
 import io
 
+import pytest
+
 from system_api.qfs_store import (
     ArtifactMetadata,
+    CheckpointArtifact,
+    CheckpointCatalog,
+    CheckpointQuotaExceededError,
+    CheckpointQuotaPolicy,
     LocalBlobBackend,
     QFSLayoutValidator,
     QFSMetadataIndex,
+    QFSRestoreCache,
     QFSRetentionExecutor,
     QFSStore,
     RetryConfig,
@@ -161,3 +168,71 @@ def test_qfs_retention_executor_uses_deterministic_reason_codes():
     assert store.get_bytes(expired_ref) is None
     assert store.get_bytes(orphan_ref) is None
     
+def test_checkpoint_catalog_enforces_deterministic_quota_reason_codes():
+    catalog = CheckpointCatalog(quota=CheckpointQuotaPolicy(max_artifacts=1, max_total_bytes=5))
+    catalog.upsert(
+        CheckpointArtifact(
+            checkpoint_id="c1",
+            qfs_ref="qfs://jobs/j1/checkpoints/c1.bin",
+            payload=b"123",
+            created_at_epoch_ms=100,
+            retention_until_epoch_ms=1_000,
+        )
+    )
+
+    with pytest.raises(CheckpointQuotaExceededError) as ex_count:
+        catalog.upsert(
+            CheckpointArtifact(
+                checkpoint_id="c2",
+                qfs_ref="qfs://jobs/j1/checkpoints/c2.bin",
+                payload=b"4",
+                created_at_epoch_ms=100,
+                retention_until_epoch_ms=1_000,
+            )
+        )
+    assert ex_count.value.reason_code == CheckpointCatalog.REASON_QUOTA_ARTIFACTS_EXCEEDED
+
+    with pytest.raises(CheckpointQuotaExceededError) as ex_bytes:
+        catalog.upsert(
+            CheckpointArtifact(
+                checkpoint_id="c1",
+                qfs_ref="qfs://jobs/j1/checkpoints/c1.bin",
+                payload=b"123456",
+                created_at_epoch_ms=100,
+                retention_until_epoch_ms=1_000,
+            )
+        )
+    assert ex_bytes.value.reason_code == CheckpointCatalog.REASON_QUOTA_BYTES_EXCEEDED
+
+
+def test_checkpoint_catalog_drops_expired_artifact_on_restore_read():
+    catalog = CheckpointCatalog(quota=CheckpointQuotaPolicy(max_artifacts=2, max_total_bytes=10))
+    catalog.upsert(
+        CheckpointArtifact(
+            checkpoint_id="c-expired",
+            qfs_ref="qfs://jobs/j1/checkpoints/c-expired.bin",
+            payload=b"abc",
+            created_at_epoch_ms=100,
+            retention_until_epoch_ms=200,
+        )
+    )
+    assert catalog.get("c-expired", now_epoch_ms=250) is None
+
+
+def test_restore_cache_lru_is_deterministic_and_observable():
+    cache = QFSRestoreCache(capacity=2)
+    cache.put("c1", b"1")
+    cache.put("c2", b"2")
+    assert cache.get("c1") == b"1"
+    cache.put("c3", b"3")
+
+    assert cache.get("c2") is None
+    assert cache.get("c3") == b"3"
+
+    events = cache.consume_events()
+    assert [(event.checkpoint_id, event.reason_code) for event in events] == [
+        ("c1", QFSRestoreCache.REASON_CACHE_HIT),
+        ("c2", QFSRestoreCache.REASON_CACHE_EVICTED_LRU),
+        ("c2", QFSRestoreCache.REASON_CACHE_MISS),
+        ("c3", QFSRestoreCache.REASON_CACHE_HIT),
+    ]
