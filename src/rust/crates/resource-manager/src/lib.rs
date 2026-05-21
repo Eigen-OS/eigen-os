@@ -15,7 +15,7 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 ///
 /// Any breaking change to queue semantics, quota semantics,
 /// dispatch reason codes, or dispatch contracts must bump MAJOR.
-pub const SCHEDULER_DECISION_VERSION: &str = "2.1.0";
+pub const SCHEDULER_DECISION_VERSION: &str = "2.2.0";
 /// SemVer version for device score DTOs/contracts.
 pub const DEVICE_SCORE_VERSION: &str = "2.1.0";
 /// SemVer version for backend scoring contract artifacts (Phase-4 intelligent runtime).
