@@ -44,6 +44,7 @@ Architecture Decision Records (ADRs) capture decisions that are already adopted 
 - [0031 — Phase-8D provider driver matrix contract and tolerance profiles](0031-phase8d-provider-driver-matrix-contract-and-tolerance-profiles.md)
 - [0032 — Phase-8D externalization surfaces contract v1](0032-phase8d-externalization-surfaces-contract-v1.md)
 - [0033 — Phase-9B intelligence closure contract v1](0033-phase9b-intelligence-closure-contract-v1.md)
+- [0034 — Phase-9C multi-tenant plugin boundary contract v1](0034-phase9c-multitenant-plugin-boundary-contract-v1.md)
 
 ## Phase-3 status
 
