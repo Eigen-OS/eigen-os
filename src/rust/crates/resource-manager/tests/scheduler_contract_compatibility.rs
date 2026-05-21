@@ -45,7 +45,7 @@ fn scheduler_decision_contract_matches_golden_fixture() {
         "reason_code": format!("{:?}", decision.reason_code),
     });
 
-    assert_eq!(snapshot, fixture("scheduler_decision_v2_1_0.json"));
+    assert_eq!(snapshot, fixture("scheduler_decision_v2_2_0.json"));
 }
 
 #[test]
@@ -59,7 +59,7 @@ fn dispatch_reason_codes_match_golden_fixture() {
     ]);
 
     let expected: BTreeSet<String> =
-        serde_json::from_value(fixture("dispatch_reason_codes_v2_1_0.json"))
+        serde_json::from_value(fixture("dispatch_reason_codes_v2_2_0.json"))
             .expect("reason-code fixture must be an array of strings");
 
     assert_eq!(current, expected);
@@ -243,8 +243,40 @@ fn queue_delivery_previous_minor_baseline_remains_compatible() {
 }
 
 #[test]
+fn deterministic_fair_queueing_fixture_matches_golden_snapshot() {
+    let fixture: Value = fixture("fair_queueing_admission_ordering_v1_0_0.json");
+    let mut scheduler = Scheduler::new(AdmissionPolicy::default(), FairnessPolicy::default());
+
+    for job in fixture["input"]["jobs"].as_array().expect("jobs must be array") {
+        scheduler.submit(ScheduledJob {
+            job_id: job["job_id"].as_str().expect("job_id").to_string(),
+            tenant_id: job["tenant_id"].as_str().expect("tenant_id").to_string(),
+            project_id: job["project_id"].as_str().expect("project_id").to_string(),
+            priority: job["priority"].as_u64().expect("priority") as u8,
+        });
+    }
+
+    let mut dispatch_order = Vec::new();
+    let mut reason_codes = Vec::new();
+    while scheduler.queue_depth() > 0 {
+        let decision = scheduler.dispatch_next();
+        dispatch_order.push(decision.selected_job_id.expect("job id expected"));
+        reason_codes.push(format!("{:?}", decision.reason_code));
+    }
+
+    let snapshot = json!({
+        "contract_version": fixture["contract_version"],
+        "seed": fixture["input"]["seed"],
+        "dispatch_order": dispatch_order,
+        "reason_codes": reason_codes,
+    });
+
+    assert_eq!(snapshot, fixture["expected"]);
+}
+
+#[test]
 fn all_orchestration_contracts_keep_explicit_version_markers() {
-    assert_eq!(SCHEDULER_DECISION_VERSION, "2.1.0");
+    assert_eq!(SCHEDULER_DECISION_VERSION, "2.2.0");
     assert_eq!(DEVICE_SCORE_VERSION, "2.1.0");
     assert_eq!(BACKEND_SCORING_CONTRACT_VERSION, "1.0.0");
     assert_eq!(BACKEND_SCORING_PROFILE_SCHEMA_VERSION, "1.0.0");
