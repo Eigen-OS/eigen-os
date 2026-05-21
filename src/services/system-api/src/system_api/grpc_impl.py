@@ -40,6 +40,7 @@ TERMINAL_JOB_STATES = {
 
 TOPOLOGY_CONTRACT_VERSION = "1.1.0"
 TOPOLOGY_LINEAGE_VERSION = "1.1.0"
+TENANT_ENVELOPE_CONTRACT_VERSION = "1.0.0"
 
 
 def _ts_now() -> Timestamp:
@@ -103,6 +104,9 @@ class _JobRecord:
     queue_delay_sec: float
     owner_subject: str
     owner_tenant: str
+    owner_project: str
+    tenant_quota_limit: int
+    project_quota_limit: int
 
 
 @dataclass
@@ -559,6 +563,11 @@ class JobService:
         owner_tenant: str,
     ) -> _JobRecord:
         metadata = dict(request.metadata)
+        tenant_envelope = request.tenant
+        tenant_id = (tenant_envelope.tenant_id or metadata.get("tenant_id") or owner_tenant or "tenant-default").strip() or "tenant-default"
+        project_id = (tenant_envelope.project_id or metadata.get("project_id") or "project-default").strip() or "project-default"
+        tenant_quota_limit = int(tenant_envelope.tenant_max_queued_jobs or os.getenv("EIGEN_SCHED_TENANT_QUOTA_MAX_QUEUED", "16"))
+        project_quota_limit = int(tenant_envelope.project_max_queued_jobs or os.getenv("EIGEN_SCHED_PROJECT_QUOTA_MAX_QUEUED", "8"))
         created_at_dt = created_at.ToDatetime().replace(tzinfo=timezone.utc)
         attempt = 1
         try:
@@ -599,7 +608,7 @@ class JobService:
             run_duration_sec = default_runtime_sec
 
         results_metadata = {
-            "version": "0.2",
+            "version": "0.3",
             "backend": request.target or "sim:local",
             "qfs_compiled_aqo": f"qfs://jobs/{job_id}/compiled/circuit.aqo.json",
             "qfs_results_parquet": f"qfs://jobs/{job_id}/results.parquet",
@@ -616,6 +625,11 @@ class JobService:
             "topology_partition_id": topology["partition_id"],
             "topology_attempt": topology["attempt"],
             "topology_envelope_ref": f"qfs://jobs/{job_id}/topology/envelope.json",
+            "tenant_envelope_contract_version": TENANT_ENVELOPE_CONTRACT_VERSION,
+            "tenant_id": tenant_id,
+            "project_id": project_id,
+            "tenant_max_queued_jobs": str(max(tenant_quota_limit, 1)),
+            "project_max_queued_jobs": str(max(project_quota_limit, 1)),
         }
         noise_score = metadata.get("noise_score", "").strip()
         noise_threshold = metadata.get("noise_threshold", "").strip() or "0.03"
@@ -628,7 +642,7 @@ class JobService:
         if topology_telemetry:
             topology_fallback_reason = "NO_FALLBACK"
         dispatch_rationale = {
-           "version": "2.3.0",
+           "version": "2.4.0",
             "policy_version": metadata.get("dispatch_policy_version", "2.2.0"),
             "reason_codes": ["WEIGHTED_FAIRNESS", "DEVICE_SCORE", "PRIORITY_QUOTA", "SINGLE_DISPATCH"],
             "selected_backend": request.target or "sim:local",
@@ -647,6 +661,11 @@ class JobService:
                 "noise_hook_status": "present" if noise_score else "fallback",
                 "noise_score": noise_score or "unavailable",
                 "noise_threshold": noise_threshold,
+                "tenant_envelope_contract_version": TENANT_ENVELOPE_CONTRACT_VERSION,
+                "tenant_id": tenant_id,
+                "project_id": project_id,
+                "tenant_quota_limit": str(max(tenant_quota_limit, 1)),
+                "project_quota_limit": str(max(project_quota_limit, 1)),
             },
             "lineage": [
                 {
@@ -751,7 +770,10 @@ class JobService:
             batch_id="",
             queue_delay_sec=0.0,
             owner_subject=owner_subject,
-            owner_tenant=owner_tenant,
+            owner_tenant=tenant_id,
+            owner_project=project_id,
+            tenant_quota_limit=max(tenant_quota_limit, 1),
+            project_quota_limit=max(project_quota_limit, 1),
         )
         self._provision_temporary_artifacts(record)
         QFS_STORE.atomic_write_bytes(
@@ -893,6 +915,30 @@ class JobService:
         else:
             record.dispatch_rationale["attributes"]["quota_state"] = "eligible"
             record.dispatch_rationale["attributes"]["quota_penalty_slots"] = "0"
+            queued_for_tenant = sum(
+            1
+            for rec in self._jobs.values()
+            if rec.job_id != record.job_id and rec.owner_tenant == record.owner_tenant and rec.updates and rec.updates[-1].stage == "QUEUED"
+        )
+        if queued_for_tenant >= record.tenant_quota_limit:
+            record.dispatch_rationale["reason_codes"].append("TENANT_BASELINE_QUOTA_DELAY")
+            record.dispatch_rationale["attributes"]["tenant_quota_state"] = "throttled"
+        else:
+            record.dispatch_rationale["attributes"]["tenant_quota_state"] = "eligible"
+        queued_for_project = sum(
+            1
+            for rec in self._jobs.values()
+            if rec.job_id != record.job_id
+            and rec.owner_tenant == record.owner_tenant
+            and rec.owner_project == record.owner_project
+            and rec.updates
+            and rec.updates[-1].stage == "QUEUED"
+        )
+        if queued_for_project >= record.project_quota_limit:
+            record.dispatch_rationale["reason_codes"].append("PROJECT_BASELINE_QUOTA_DELAY")
+            record.dispatch_rationale["attributes"]["project_quota_state"] = "throttled"
+        else:
+            record.dispatch_rationale["attributes"]["project_quota_state"] = "eligible"
         if age_sec >= self._starvation_threshold_sec:
             record.queue_delay_sec = 0.0
             record.dispatch_rationale["reason_codes"].append("STARVATION_PROTECTION")
