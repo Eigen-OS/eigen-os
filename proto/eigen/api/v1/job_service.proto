@@ -18,6 +18,19 @@ service JobService {
 }
 
 message SubmitJobRequest {
+  message TenantQuotaEnvelope {
+    // Contract SemVer for tenant envelope.
+    string contract_version = 1;
+    // Canonical tenant scope. If omitted server defaults to "tenant-default".
+    string tenant_id = 2;
+    // Canonical project scope inside tenant. If omitted server defaults to "project-default".
+    string project_id = 3;
+    // Baseline per-tenant concurrent queued jobs (0 => server default policy).
+    uint32 tenant_max_queued_jobs = 4;
+    // Baseline per-project concurrent queued jobs (0 => server default policy).
+    uint32 project_max_queued_jobs = 5;
+  }
+
   string name = 1;
 
   oneof program {
@@ -35,6 +48,7 @@ message SubmitJobRequest {
   map<string, string> compiler_options = 7;
   map<string, string> metadata = 8;
   repeated string dependencies = 9;
+  TenantQuotaEnvelope tenant = 10;
 }
 
 message SubmitJobResponse {
