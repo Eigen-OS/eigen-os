@@ -29,7 +29,7 @@ pub const BACKEND_SELECTION_EXPLAIN_RESPONSE_VERSION: &str = "1.0.0";
 /// SemVer schema version for scheduling policy bundles (Phase-4 policy engine).
 pub const SCHEDULING_POLICY_BUNDLE_SCHEMA_VERSION: &str = "1.0.0";
 /// SemVer version for scheduling policy-resolution decision artifacts.
-pub const SCHEDULING_POLICY_RESOLUTION_VERSION: &str = "1.1.0";
+pub const SCHEDULING_POLICY_RESOLUTION_VERSION: &str = "1.2.0";
 /// SemVer version for rebalancing/preemption safety artifacts.
 pub const REBALANCING_POLICY_VERSION: &str = "2.2.0";
 /// SemVer version for multi-device split/merge execution contract artifacts.
@@ -1482,6 +1482,115 @@ impl Default for PolicyBundle {
     }
 }
 
+/// Plugin category determines kernel behavior under plugin execution faults.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PolicyPluginCategory {
+    Policy,
+    Observability,
+    Security,
+}
+
+/// Deterministic fail policy for plugin isolation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PluginFailurePolicy {
+    FailIsolated,
+    FailClosed,
+}
+
+/// Stable reason-code taxonomy for plugin isolation fallback.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PluginFailureReasonCode {
+    PluginTimeout,
+    PluginCrash,
+    PluginMalformedOutput,
+}
+
+/// Policy-plugin execution status envelope.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PolicyPluginExecutionStatus {
+    pub plugin_id: String,
+    pub category: PolicyPluginCategory,
+    pub failure_policy: PluginFailurePolicy,
+    pub fallback_applied: bool,
+    pub reason_code: Option<PluginFailureReasonCode>,
+    pub reason_detail: Option<String>,
+    pub alert_labels: BTreeMap<String, String>,
+}
+
+impl PolicyPluginCategory {
+    pub fn default_failure_policy(self) -> PluginFailurePolicy {
+        match self {
+            Self::Policy => PluginFailurePolicy::FailIsolated,
+            Self::Observability => PluginFailurePolicy::FailIsolated,
+            Self::Security => PluginFailurePolicy::FailClosed,
+        }
+    }
+}
+
+fn plugin_failure_reason_label(reason: PluginFailureReasonCode) -> &'static str {
+    match reason {
+        PluginFailureReasonCode::PluginTimeout => "plugin_timeout",
+        PluginFailureReasonCode::PluginCrash => "plugin_crash",
+        PluginFailureReasonCode::PluginMalformedOutput => "plugin_malformed_output",
+    }
+}
+
+fn plugin_transition_reason(reason: PluginFailureReasonCode) -> PolicyTransitionReasonCode {
+    match reason {
+        PluginFailureReasonCode::PluginTimeout => PolicyTransitionReasonCode::FallbackPolicyPluginTimeout,
+        PluginFailureReasonCode::PluginCrash => PolicyTransitionReasonCode::FallbackPolicyPluginCrash,
+        PluginFailureReasonCode::PluginMalformedOutput => PolicyTransitionReasonCode::FallbackPolicyPluginMalformedOutput,
+    }
+}
+
+pub fn evaluate_policy_plugin_execution(
+    plugin_id: &str,
+    category: PolicyPluginCategory,
+    plugin_result: Result<Option<&str>, PluginFailureReasonCode>,
+) -> PolicyPluginExecutionStatus {
+    let normalized_plugin_id = plugin_id.trim();
+    let mut alert_labels = BTreeMap::new();
+    alert_labels.insert("plugin_id".to_string(), normalized_plugin_id.to_string());
+    alert_labels.insert("plugin_category".to_string(), format!("{:?}", category).to_lowercase());
+
+    let failure_policy = category.default_failure_policy();
+    match plugin_result {
+        Ok(Some(model_candidate_id)) if !model_candidate_id.trim().is_empty() => PolicyPluginExecutionStatus {
+            plugin_id: normalized_plugin_id.to_string(),
+            category,
+            failure_policy,
+            fallback_applied: false,
+            reason_code: None,
+            reason_detail: None,
+            alert_labels,
+        },
+        Ok(_) | Err(PluginFailureReasonCode::PluginMalformedOutput) => {
+            alert_labels.insert("reason_code".to_string(), "plugin_malformed_output".to_string());
+            PolicyPluginExecutionStatus {
+                plugin_id: normalized_plugin_id.to_string(),
+                category,
+                failure_policy,
+                fallback_applied: true,
+                reason_code: Some(PluginFailureReasonCode::PluginMalformedOutput),
+                reason_detail: Some("policy-plugin-returned-empty-or-malformed-selection".to_string()),
+                alert_labels,
+            }
+        }
+        Err(reason_code) => {
+            alert_labels.insert("reason_code".to_string(), plugin_failure_reason_label(reason_code).to_string());
+            PolicyPluginExecutionStatus {
+                plugin_id: normalized_plugin_id.to_string(),
+                category,
+                failure_policy,
+                fallback_applied: true,
+                reason_code: Some(reason_code),
+                reason_detail: Some(format!("policy-plugin-isolated:{normalized_plugin_id}:{}", plugin_failure_reason_label(reason_code))),
+                alert_labels,
+            }
+        }
+    }
+}
+
 /// Policy bundle validation errors.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PolicyBundleValidationError {
@@ -1525,6 +1634,9 @@ pub enum PolicyTransitionReasonCode {
     FallbackMissingPolicyBundle,
     FallbackInvalidPolicyBundle,
     FallbackNoViableCandidate,
+    FallbackPolicyPluginTimeout,
+    FallbackPolicyPluginCrash,
+    FallbackPolicyPluginMalformedOutput,
 }
 
 /// Versioned policy-resolution artifact for scheduling/explainability.
@@ -1612,7 +1724,7 @@ pub fn resolve_policy_bundle_with_model(
                 PolicyBundle::default(),
                 true,
                 Some("invalid_policy_bundle".to_string()),
-                None,
+                Some(PolicyResolutionErrorCode::PolicyBundleInvalid),
                 PolicyTransitionReasonCode::FallbackInvalidPolicyBundle,
             ),
         },
@@ -1620,7 +1732,7 @@ pub fn resolve_policy_bundle_with_model(
             PolicyBundle::default(),
             true,
             Some("missing_policy_bundle".to_string()),
-            None,
+            Some(PolicyResolutionErrorCode::PolicyResolutionFailed),
             PolicyTransitionReasonCode::FallbackMissingPolicyBundle,
         ),
     };
@@ -1652,22 +1764,30 @@ pub fn resolve_policy_bundle_with_model(
     let deterministic_selected = ranked
         .first()
         .map(|candidate| candidate.candidate_id.clone());
-    let selected_candidate_id = match model_selected_candidate_id {
-        Some(model_id) if ranked.iter().any(|c| c.candidate_id == model_id) => {
+    let plugin_status = evaluate_policy_plugin_execution(
+        "scheduler.policy.default",
+        PolicyPluginCategory::Policy,
+        match model_selected_candidate_id {
+            Some(model_id) => Ok(Some(model_id)),
+            None => Err(PluginFailureReasonCode::PluginTimeout),
+        },
+    );
+
+    let selected_candidate_id = if plugin_status.fallback_applied {
+        if let Some(reason_code) = plugin_status.reason_code {
+            transition_reason_code = plugin_transition_reason(reason_code);
+            trace.push(format!("plugin-fallback:{}:{}", plugin_status.plugin_id, plugin_failure_reason_label(reason_code)));
+        }
+        deterministic_selected
+    } else {
+        let model_id = model_selected_candidate_id.expect("plugin status implies model selection exists");
+        if ranked.iter().any(|c| c.candidate_id == model_id) {
             transition_reason_code = PolicyTransitionReasonCode::ModelSelectionAccepted;
             trace.push("model-selection-accepted".to_string());
             Some(model_id.to_string())
-        }
-        Some(_) => {
+        } else {
             transition_reason_code = PolicyTransitionReasonCode::FallbackInvalidModelOutput;
             trace.push("fallback-invalid-model-selection".to_string());
-            deterministic_selected
-        }
-        None => {
-            if !fallback_applied {
-                transition_reason_code = PolicyTransitionReasonCode::FallbackMissingModelOutput;
-                trace.push("fallback-missing-model-selection".to_string());
-            }
             deterministic_selected
         }
     };
@@ -3243,6 +3363,33 @@ mod tests {
             decision.error_code,
             Some(PolicyResolutionErrorCode::PolicyResolutionFailed)
         );
+    }
+
+    #[test]
+    fn policy_plugin_failure_is_isolated_with_stable_reason_codes() {
+        let status = evaluate_policy_plugin_execution(
+            "plugin.policy.alpha",
+            PolicyPluginCategory::Policy,
+            Err(PluginFailureReasonCode::PluginCrash),
+        );
+        assert!(status.fallback_applied);
+        assert_eq!(status.failure_policy, PluginFailurePolicy::FailIsolated);
+        assert_eq!(status.reason_code, Some(PluginFailureReasonCode::PluginCrash));
+        assert_eq!(
+            status.alert_labels.get("reason_code").map(String::as_str),
+            Some("plugin_crash")
+        );
+    }
+
+    #[test]
+    fn security_plugin_defaults_to_fail_closed_policy() {
+        let status = evaluate_policy_plugin_execution(
+            "plugin.security.guard",
+            PolicyPluginCategory::Security,
+            Err(PluginFailureReasonCode::PluginTimeout),
+        );
+        assert_eq!(status.failure_policy, PluginFailurePolicy::FailClosed);
+        assert!(status.fallback_applied);
     }
 
     #[test]

@@ -277,12 +277,12 @@
         "apply-profile-defaults",
         "apply-overrides-canonical-order",
         "resolve-conflicts-fixed-precedence",
-        "fallback-missing-model-selection",
+        "plugin-fallback:scheduler.policy.default:plugin_timeout",
         "selection-complete"
       ],
       "selected_candidate_id": "cand-cheap",
-      "version": "1.1.0",
-      "transition_reason_code": "FallbackMissingModelOutput",
+      "version": "1.2.0",
+      "transition_reason_code": "FallbackPolicyPluginTimeout",
       "deterministic_seed": 0
     },
     "explain_response": {
