@@ -6,8 +6,9 @@ use resource_manager::{
     BackendCandidateDescriptor, BackendRuntimeDescriptor, BackendScoringProfile,
     BackendWorkloadDescriptor, CLUSTER_ASSIGNMENT_LINEAGE_VERSION,
     CLUSTER_CONTROL_PLANE_CONTRACT_VERSION, ClusterWorkerRegistration, ClusterWorkerState,
-    DISTRIBUTED_QUEUE_CONTRACT_VERSION, ExplainBackendSelectionRequest, InMemoryQueueAdapter,
-    PolicyBundle, PolicyCandidate, PolicyMode, PolicyPriorityMap,
+    DISTRIBUTED_QUEUE_CONTRACT_VERSION, ExplainBackendSelectionRequest, ExplainPolicyContext,
+    ExplainQuotaSnapshot, ExplainTenantContext, InMemoryQueueAdapter,
+    PolicyBundle, PolicyCandidate, PolicyMode, PolicyPriorityMap, PolicyTransitionReasonCode,
     QUEUE_DEAD_LETTER_CONTRACT_VERSION, QUEUE_LEASE_EVENT_VERSION, QueueAdapter,
     QueueTaskEnvelope, UserIntentWeights, assign_cluster_job, explain_backend_selection,
     resolve_policy_bundle, score_backend_candidates,
@@ -410,6 +411,27 @@ fn deterministic_replay_gate_matches_recorded_artifacts() {
         response_version: BACKEND_SELECTION_EXPLAIN_RESPONSE_VERSION,
         decision_id: decision.decision_id.clone(),
         include_rejected_candidates: true,
+        tenant_context: ExplainTenantContext {
+            tenant_id: "tenant-replay-001".to_string(),
+            project_id: "project-replay-001".to_string(),
+            quota_snapshot: ExplainQuotaSnapshot {
+                tenant_limit: 100,
+                tenant_used: 24,
+                project_limit: 50,
+                project_used: 9,
+                admitted: true,
+                reason_code: resource_manager::AdmissionReasonCode::Accepted,
+            },
+            sensitivity_labels: vec!["tenant_id".to_string(), "project_id".to_string()],
+        },
+        policy_context: ExplainPolicyContext {
+            policy_bundle_id: policy_bundle.policy_bundle_id.clone(),
+            policy_bundle_version: policy_bundle.policy_bundle_version.clone(),
+            transition_reason_code: PolicyTransitionReasonCode::DeterministicSelection,
+            fallback_applied: false,
+            fallback_reason: None,
+            plugin_trace: vec!["plugin:policy:default:ok".to_string()],
+        },
     };
     let explain_response = explain_backend_selection(&explain_request, &decision);
     let explain_actual = explain_snapshot(&explain_response);

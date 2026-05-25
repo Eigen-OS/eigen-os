@@ -23,9 +23,9 @@ pub const BACKEND_SCORING_CONTRACT_VERSION: &str = "1.0.0";
 /// SemVer schema version for persisted backend scoring profiles.
 pub const BACKEND_SCORING_PROFILE_SCHEMA_VERSION: &str = "1.0.0";
 /// SemVer schema version for backend-selection explain API request DTO.
-pub const BACKEND_SELECTION_EXPLAIN_REQUEST_VERSION: &str = "1.0.0";
+pub const BACKEND_SELECTION_EXPLAIN_REQUEST_VERSION: &str = "1.1.0";
 /// SemVer schema version for backend-selection explain API response envelope.
-pub const BACKEND_SELECTION_EXPLAIN_RESPONSE_VERSION: &str = "1.0.0";
+pub const BACKEND_SELECTION_EXPLAIN_RESPONSE_VERSION: &str = "1.1.0";
 /// SemVer schema version for scheduling policy bundles (Phase-4 policy engine).
 pub const SCHEDULING_POLICY_BUNDLE_SCHEMA_VERSION: &str = "1.0.0";
 /// SemVer version for scheduling policy-resolution decision artifacts.
@@ -1369,6 +1369,36 @@ pub struct ExplainBackendSelectionRequest {
     pub response_version: &'static str,
     pub decision_id: String,
     pub include_rejected_candidates: bool,
+    pub tenant_context: ExplainTenantContext,
+    pub policy_context: ExplainPolicyContext,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExplainTenantContext {
+    pub tenant_id: String,
+    pub project_id: String,
+    pub quota_snapshot: ExplainQuotaSnapshot,
+    pub sensitivity_labels: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExplainQuotaSnapshot {
+    pub tenant_limit: u32,
+    pub tenant_used: u32,
+    pub project_limit: u32,
+    pub project_used: u32,
+    pub admitted: bool,
+    pub reason_code: AdmissionReasonCode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExplainPolicyContext {
+    pub policy_bundle_id: String,
+    pub policy_bundle_version: String,
+    pub transition_reason_code: PolicyTransitionReasonCode,
+    pub fallback_applied: bool,
+    pub fallback_reason: Option<String>,
+    pub plugin_trace: Vec<String>,
 }
 
 /// Ordered factor contribution in the explain response envelope.
@@ -1403,6 +1433,33 @@ pub struct ExplainBackendSelectionResponse {
     pub candidate_scores: Vec<BackendScoreCandidate>,
     pub factor_contributions: Vec<ExplainFactorContribution>,
     pub confidence: ExplainConfidenceMetadata,
+    pub evidence_schema_version: &'static str,
+    pub decision_provenance: ExplainDecisionProvenance,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExplainDecisionProvenance {
+    pub tenant_context: ExplainTenantEvidence,
+    pub policy_context: ExplainPolicyEvidence,
+    pub evidence_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExplainTenantEvidence {
+    pub tenant_id: String,
+    pub project_id: String,
+    pub quota_trace: Vec<String>,
+    pub redactions_applied: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExplainPolicyEvidence {
+    pub policy_bundle_id: String,
+    pub policy_bundle_version: String,
+    pub transition_reason_code: PolicyTransitionReasonCode,
+    pub fallback_applied: bool,
+    pub fallback_reason: Option<String>,
+    pub plugin_trace: Vec<String>,
 }
 
 /// Named policy operating mode for scheduling policy bundle resolution.
@@ -2817,6 +2874,58 @@ pub fn explain_backend_selection(
     request: &ExplainBackendSelectionRequest,
     decision: &BackendScoringDecisionArtifact,
 ) -> ExplainBackendSelectionResponse {
+    let tenant_id = request.tenant_context.tenant_id.trim();
+    let project_id = request.tenant_context.project_id.trim();
+    let redacted_tenant = redact_identifier(tenant_id);
+    let redacted_project = redact_identifier(project_id);
+    evidence_schema_version: "2.0.0",
+        decision_provenance: ExplainDecisionProvenance {
+            tenant_context: ExplainTenantEvidence {
+                tenant_id: redacted_tenant.clone(),
+                project_id: redacted_project.clone(),
+                quota_trace: vec![
+                    format!("quota:tenant:{}/{}", request.tenant_context.quota_snapshot.tenant_used, request.tenant_context.quota_snapshot.tenant_limit),
+                    format!("quota:project:{}/{}", request.tenant_context.quota_snapshot.project_used, request.tenant_context.quota_snapshot.project_limit),
+                    format!("quota:admitted:{}", request.tenant_context.quota_snapshot.admitted),
+                    format!("quota:reason:{:?}", request.tenant_context.quota_snapshot.reason_code),
+                ],
+                redactions_applied: if request.tenant_context.sensitivity_labels.is_empty() {
+                    Vec::new()
+                } else {
+                    request
+                        .tenant_context
+                        .sensitivity_labels
+                        .iter()
+                        .map(|label| format!("redact:{label}"))
+                        .collect()
+                },
+            },
+            policy_context: ExplainPolicyEvidence {
+                policy_bundle_id: request.policy_context.policy_bundle_id.clone(),
+                policy_bundle_version: request.policy_context.policy_bundle_version.clone(),
+                transition_reason_code: request.policy_context.transition_reason_code,
+                fallback_applied: request.policy_context.fallback_applied,
+                fallback_reason: request.policy_context.fallback_reason.clone(),
+                plugin_trace: request.policy_context.plugin_trace.clone(),
+            },
+            evidence_ids: vec![
+                format!("backend-decision:{}", decision.decision_id),
+                format!("tenant:{}:project:{}", redacted_tenant, redacted_project),
+                format!(
+                    "policy:{}@{}",
+                    request.policy_context.policy_bundle_id, request.policy_context.policy_bundle_version
+                ),
+                format!("reason:{:?}", request.policy_context.transition_reason_code),
+            ],
+        },
+    }
+}
+
+fn redact_identifier(value: &str) -> String {
+    if value.len() <= 4 {
+        "***".to_string()
+    } else {
+        format!("{}***", &value[..4])
     let mut eligible_scores: Vec<u64> = decision
         .candidates
         .iter()

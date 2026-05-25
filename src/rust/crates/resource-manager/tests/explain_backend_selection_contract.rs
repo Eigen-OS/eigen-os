@@ -5,6 +5,7 @@ use resource_manager::{
     BACKEND_SCORING_CONTRACT_VERSION, BACKEND_SELECTION_EXPLAIN_REQUEST_VERSION,
     BACKEND_SELECTION_EXPLAIN_RESPONSE_VERSION, BackendCandidateDescriptor, BackendRuntimeDescriptor,
     BackendScoringProfile, BackendWorkloadDescriptor, ExplainBackendSelectionRequest,
+    ExplainPolicyContext, ExplainQuotaSnapshot, ExplainTenantContext, PolicyTransitionReasonCode,
     explain_backend_selection, score_backend_candidates,
 };
 use serde_json::{Value, json};
@@ -100,6 +101,27 @@ fn explain_backend_selection_contract_matches_golden_fixture() {
         response_version: BACKEND_SELECTION_EXPLAIN_RESPONSE_VERSION,
         decision_id: decision.decision_id.clone(),
         include_rejected_candidates: true,
+        tenant_context: ExplainTenantContext {
+            tenant_id: "tenant-alpha-001".to_string(),
+            project_id: "project-solver-007".to_string(),
+            quota_snapshot: ExplainQuotaSnapshot {
+                tenant_limit: 200,
+                tenant_used: 81,
+                project_limit: 80,
+                project_used: 42,
+                admitted: true,
+                reason_code: resource_manager::AdmissionReasonCode::Accepted,
+            },
+            sensitivity_labels: vec!["tenant_id".to_string(), "project_id".to_string()],
+        },
+        policy_context: ExplainPolicyContext {
+            policy_bundle_id: "balanced".to_string(),
+            policy_bundle_version: "1.0.0".to_string(),
+            transition_reason_code: PolicyTransitionReasonCode::DeterministicSelection,
+            fallback_applied: false,
+            fallback_reason: None,
+            plugin_trace: vec!["plugin:policy:default:ok".to_string()],
+        },
     };
 
     let response = explain_backend_selection(&request, &decision);
@@ -135,9 +157,27 @@ fn explain_backend_selection_contract_matches_golden_fixture() {
             "runner_up_score_millis": response.confidence.runner_up_score_millis,
             "confidence": response.confidence.confidence,
         },
+        "evidence_schema_version": response.evidence_schema_version,
+        "decision_provenance": {
+            "tenant_context": {
+                "tenant_id": response.decision_provenance.tenant_context.tenant_id,
+                "project_id": response.decision_provenance.tenant_context.project_id,
+                "quota_trace": response.decision_provenance.tenant_context.quota_trace,
+                "redactions_applied": response.decision_provenance.tenant_context.redactions_applied,
+            },
+            "policy_context": {
+                "policy_bundle_id": response.decision_provenance.policy_context.policy_bundle_id,
+                "policy_bundle_version": response.decision_provenance.policy_context.policy_bundle_version,
+                "transition_reason_code": format!("{:?}", response.decision_provenance.policy_context.transition_reason_code),
+                "fallback_applied": response.decision_provenance.policy_context.fallback_applied,
+                "fallback_reason": response.decision_provenance.policy_context.fallback_reason,
+                "plugin_trace": response.decision_provenance.policy_context.plugin_trace,
+            },
+            "evidence_ids": response.decision_provenance.evidence_ids,
+        },
     });
 
-    assert_eq!(snapshot, fixture("backend_selection_explain_v1_0_0.json"));
+    assert_eq!(snapshot, fixture("backend_selection_explain_v1_1_0.json"));
 }
 
 #[test]
@@ -148,6 +188,27 @@ fn explain_backend_selection_is_stable_for_identical_decision_artifacts() {
         response_version: BACKEND_SELECTION_EXPLAIN_RESPONSE_VERSION,
         decision_id: decision.decision_id.clone(),
         include_rejected_candidates: true,
+        tenant_context: ExplainTenantContext {
+            tenant_id: "tenant-alpha-001".to_string(),
+            project_id: "project-solver-007".to_string(),
+            quota_snapshot: ExplainQuotaSnapshot {
+                tenant_limit: 200,
+                tenant_used: 81,
+                project_limit: 80,
+                project_used: 42,
+                admitted: true,
+                reason_code: resource_manager::AdmissionReasonCode::Accepted,
+            },
+            sensitivity_labels: vec!["tenant_id".to_string(), "project_id".to_string()],
+        },
+        policy_context: ExplainPolicyContext {
+            policy_bundle_id: "balanced".to_string(),
+            policy_bundle_version: "1.0.0".to_string(),
+            transition_reason_code: PolicyTransitionReasonCode::DeterministicSelection,
+            fallback_applied: false,
+            fallback_reason: None,
+            plugin_trace: vec!["plugin:policy:default:ok".to_string()],
+        },
     };
 
     let first = explain_backend_selection(&request, &decision);
@@ -158,7 +219,7 @@ fn explain_backend_selection_is_stable_for_identical_decision_artifacts() {
 
 #[test]
 fn backend_selection_explain_contract_versions_are_explicit() {
-    assert_eq!(BACKEND_SELECTION_EXPLAIN_REQUEST_VERSION, "1.0.0");
-    assert_eq!(BACKEND_SELECTION_EXPLAIN_RESPONSE_VERSION, "1.0.0");
+    assert_eq!(BACKEND_SELECTION_EXPLAIN_REQUEST_VERSION, "1.1.0");
+    assert_eq!(BACKEND_SELECTION_EXPLAIN_RESPONSE_VERSION, "1.1.0");
     assert_eq!(BACKEND_SCORING_CONTRACT_VERSION, "1.0.0");
 }
