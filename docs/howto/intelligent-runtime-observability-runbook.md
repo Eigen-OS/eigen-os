@@ -64,3 +64,16 @@ Record in incident report:
 - policy/scoring profile versions before/after mitigation,
 - whether rollback was required,
 - follow-up action items for deterministic replay coverage.
+
+## Tenant Incident Analysis Recipes (Phase-9C Explain API v2)
+
+- Correlate tenant-level explain fallback spikes:
+  - `sum by (tenant_id, transition_reason_code) (increase(eigen_runtime_explain_fallback_total[15m]))`
+- Detect quota-driven admission pressure by tenant/project:
+  - `sum by (tenant_id, project_id, quota_reason_code) (increase(eigen_runtime_quota_decisions_total[15m]))`
+- Isolate policy-plugin failures that triggered deterministic kernel fallback:
+  - `sum by (tenant_id, plugin_id, reason_code) (increase(eigen_runtime_plugin_fallback_total{plugin_category="policy"}[15m]))`
+- Track backend-selection confidence degradation for impacted tenants:
+  - `histogram_quantile(0.95, sum by (le, tenant_id) (rate(eigen_runtime_explain_confidence_bucket[15m])))`
+
+Use explain evidence IDs (`backend-decision:*`, `tenant:*`, `policy:*`) to pivot from traces to scheduler/backend decision artifacts during tenant postmortems.
