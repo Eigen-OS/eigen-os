@@ -1,195 +1,670 @@
 # Knowledge Base
 
-- **Phase:** Post-MVP (target capability; not in execution path).
-- **Implementation state (verified on 2026-05-08):** no standalone service, crate, RPC contract, or storage schema for Knowledge Base is implemented in the repository.
-- **Role in current architecture docs:** conceptual component referenced by architecture/mission materials as a future optimization and learning loop.
+- **Version:** 1.0.0
+- **Status:** Target architecture with documented implemented baseline
+- **Last synchronized:** 2026-05-25
 
-## Verification Scope (what was re-checked)
+## 1. Purpose
 
-This status was re-validated against:
+The Knowledge Base (KB) is the long-term adaptive optimization and reusable intelligence subsystem of Eigen OS.
 
-- Component/architecture docs (`docs/architecture/overview.md`, `docs/architecture/components.md`, `docs/architecture/components/compiler.md`).
-- RFC index and active RFC package map (`docs/rfcs-pointer.md`).
-- ADR index and accepted ADR set (`docs/adr/README.md` and ADR files in `docs/adr/`).
-- Repository implementation paths (`src/`) for executable contracts and runtime wiring.
+Its purpose is to provide:
 
-### Result
+- deterministic reuse of previously validated optimization knowledge,
+- semantic pattern matching for compilation/runtime optimization,
+- feedback-driven improvement loops,
+- explainable optimization provenance,
+- reusable execution intelligence across heterogeneous hardware.
 
-Knowledge Base remains **documented as planned** and **not yet implemented**.
+The Knowledge Base is not a generic vector database or telemetry archive.
 
----
+It is a structured, versioned, deterministic optimization memory system integrated with:
 
-## Responsibility
-
-### What is implemented now
-
-- No runtime responsibility is assigned to a concrete Knowledge Base module.
-- No code path in current MVP/Phase runtime requires a Knowledge Base lookup/update step.
-
-### Target responsibility (tracked for next stage)
-
-- Store reusable artifacts mapping from task/program characteristics to optimization outcomes.
-- Support pattern reuse in compilation/runtime planning.
-- Provide a learning feedback loop from execution outcomes back into future decisions.
-
-### TODO (Responsibility)
-
-- TODO: freeze v1 responsibility boundaries between Compiler, Intelligent Runtime, and Knowledge Base (who reads/writes which artifact and at which lifecycle stage).
-- TODO: define strict scope for OSS baseline (deterministic reuse only vs adaptive model updates).
-- TODO: add explicit non-goals for first production release (e.g., no online training in request path, no opaque non-reproducible policy overrides).
+- the Neuro-DPDA compiler path,
+- the GNN hardware optimizer,
+- runtime execution telemetry,
+- scheduling and adaptation layers,
+- QFS artifact persistence.
 
 ---
 
-## Interfaces
+## 2. Architectural Position
 
-### What is implemented now
+### 2.1 Layer Placement
 
-- No public API endpoint exists for Knowledge Base operations.
-- No internal gRPC/protobuf service definition exists for Knowledge Base in current runtime contracts.
-- No crate-level or Python package API is wired into kernel/compiler execution flow as `knowledge_base` capability.
+The Knowledge Base belongs to the Runtime Intelligence layer of Eigen OS.
 
-### Target interfaces (to be specified)
+Logical placement:
 
-- Read path for candidate retrieval (e.g., by program signature, backend profile, objective shape).
-- Write path for post-run feedback ingestion (metrics, outcome quality, constraints).
-- Optional explainability surface to expose why a prior artifact was reused/rejected.
-
-### TODO (Interfaces)
-
-- TODO: publish an RFC for Knowledge Base service contract (API, request/response schema, determinism guarantees, versioning).
-- TODO: add ADR that defines whether KB is a separate service or embedded library in existing services.
-- TODO: define failure semantics and fallback behavior when KB is unavailable (must preserve deterministic baseline execution).
-- TODO: define compatibility policy for KB schemas and migration strategy across releases.
-
----
-
-## Inputs / Outputs
-
-### What is implemented now
-
-- No executable input/output contract currently references Knowledge Base artifacts.
-- Job submission, compilation, scheduling, and execution contracts function without KB-specific fields.
-
-### Planned I/O model (conceptual)
-
-Potential inputs:
-- Program/circuit structural signatures.
-- Target backend/device capability metadata.
-- Historical execution outcomes and quality metrics.
-
-Potential outputs:
-- Candidate optimized circuit templates/transform recipes.
-- Ranking/prior probabilities for compiler/runtime choices.
-- Metadata for explainability and audit trails.
-
-### TODO (Inputs / Outputs)
-
-- TODO: define canonical feature schema for lookup keys (hashing, normalization, version stamping).
-- TODO: define output envelope with provenance fields (source run IDs, confidence, timestamp, compatibility window).
-- TODO: align I/O fields with Phase-4 explainability contracts and Phase-5 distributed execution metadata.
-- TODO: document deterministic fallback when no KB match exists.
+```text
+Client SDKs
+    ↓
+System API
+    ↓
+Eigen Compiler (Neuro-DPDA)
+    ↓
+Knowledge Base
+    ↓
+GNN Optimizer / HWE
+    ↓
+Driver Manager
+    ↓
+Quantum Hardware
+```
 
 ---
 
-## Storage / State
+### 2.2 Responsibility Separation
 
-### What is implemented now
+| **Component** | **Responsibility** |
+|---|---|
+| Compiler | Deterministic AST → AQO transformation |
+| Neuro-DPDA | Semantic optimization and pattern generation |
+| Knowledge Base | Persistent reusable optimization knowledge |
+| GNN Optimizer | Hardware-aware placement/routing |
+| HWE | Runtime adaptation/orchestration |
+| Driver Manager | Backend abstraction and execution transport |
 
-- No persistent storage layout (tables/buckets/files) is defined for Knowledge Base.
-- No retention, compaction, or lifecycle policies are codified.
+The Knowledge Base MUST NOT:
 
-### Planned storage concerns
-
-- Artifact durability for reusable patterns.
-- Separation between raw run telemetry and curated reusable knowledge entries.
-- Versioned schema evolution with backward/forward compatibility constraints.
-
-### TODO (Storage / State)
-
-- TODO: choose baseline storage design (single-node SQLite + object artifacts vs service DB + object store hybrid).
-- TODO: define schema versioning and migration tooling requirements.
-- TODO: define retention policy (TTL, archival tiers, reproducibility-preserving snapshots).
-- TODO: define data integrity controls (checksums, provenance chain, immutable audit records).
-
----
-
-## Failure Modes
-
-### What is implemented now
-
-- No runtime failure mode exists because KB is not active in current execution path.
-
-### Expected failure classes (for future implementation)
-
-- Lookup miss / low-confidence match.
-- Corrupt or incompatible stored artifact.
-- Stale knowledge causing degraded optimization.
-- Storage/service outage or latency spikes.
-
-### TODO (Failure Modes)
-
-- TODO: define error taxonomy and mapping to existing public/internal error model.
-- TODO: specify circuit/runtime fallback policy per failure class.
-- TODO: define safety guardrails to prevent unsafe or non-deterministic reuse.
-- TODO: add conformance and chaos scenarios validating degradation behavior.
+- directly execute user workloads,
+- replace deterministic compiler behavior,
+- mutate AQO semantics independently,
+- perform opaque online learning in request path,
+- override explicit runtime policies.
 
 ---
 
-## Observability
-### What is implemented now
+## 3. Current Implemented Baseline
 
-- No KB-specific metrics/logs/traces are emitted.
+As of the current repository state, no standalone Knowledge Base service, crate, storage engine, or RPC contract exists.
 
-### Planned observability model
+### 3.1 What Is Implemented Today
 
-- Match-rate and miss-rate metrics.
-- Reuse impact metrics (latency, fidelity/quality improvement, cost reduction).
-- Drift/freshness indicators and confidence distribution.
-- Trace annotations linking decisions to knowledge entry provenance.
+Implemented today:
 
-### TODO (Observability)
+- deterministic compiler/runtime pipeline,
+- AQO generation,
+- structured runtime telemetry,
+- execution metrics persistence,
+- plugin ecosystem groundwork,
+- metadata propagation across runtime flows.
 
-- TODO: define minimal metric set and SLOs (availability, p95 lookup latency, safe fallback rate).
-- TODO: define log schema for auditability (why candidate was selected/rejected).
-- TODO: define tracing attributes compatible with Phase-5 topology tracing contracts.
-- TODO: add release gates and fixture-based validation for KB observability.
+These capabilities form the future integration surface for the Knowledge Base.
 
 ---
 
-## RFC / ADR Alignment Check (2026-05-08)
+### 3.2 What Is NOT Implemented
 
-### RFC status
+Not implemented:
 
-- Current implemented RFC packages (MVP-2, MVP-3, Phase-3/4/5) do not introduce an implemented Knowledge Base contract.
-- Phase-6/7 RFC packages focus on plugin ecosystem, versioning policy, and developer experience; no accepted executable KB contract is present.
-- Historical language scope notes KB integration as Post-MVP direction (not MVP requirement).
+- Knowledge Base service,
+- lookup engine,
+- optimization artifact store,
+- semantic retrieval layer,
+- learning loop,
+- reusable optimization memory,
+- ranking/inference engine,
+- explainability contract,
+- KB-aware compiler/runtime integration.
 
-### ADR status
+Current runtime operates in:
 
-- No accepted ADR currently defines a concrete Knowledge Base architecture, contract, or operational policy.
-- Existing ADR set is synchronized around implemented MVP/Phase contracts, but KB remains outside that accepted implementation baseline.
-
-### TODO (RFC/ADR)
-
-- TODO: create dedicated KB RFC series (service contract, data model, safety/determinism policy, observability/release gates).
-- TODO: land synchronized ADR package once KB RFCs move to Accepted/Implemented.
-- TODO: add KB to RFC↔ADR gap-analysis workflow documents before implementation starts.
+```text
+KB-disabled deterministic baseline mode
+```
 
 ---
 
-## Execution-Path Status Snapshot
+## 4. Strategic Role in Eigen OS
 
-As of 2026-05-08, the system can be treated as operating in **KB-disabled baseline mode**:
+The Knowledge Base is the persistent intelligence layer connecting:
 
-- Compiler/runtime decisions execute via currently implemented deterministic and policy-based contracts.
-- No persistent knowledge reuse loop modifies compile/runtime outcomes.
-- Future KB work can be introduced incrementally only after RFC/ADR contract freeze.
+- Neuro-DPDA semantic compilation,
+- runtime execution feedback,
+- GNN hardware optimization,
+- adaptive orchestration,
+- historical optimization outcomes.
 
-## Next-Stage Checklist (implementation preparation)
+The long-term objective is to allow Eigen OS to improve optimization quality while preserving:
 
-- TODO: draft KB architecture RFC v1 and circulate for review.
-- TODO: decide deployment shape (service vs library) and publish ADR.
-- TODO: define schemas + migrations + provenance/audit model.
-- TODO: define deterministic integration points with compiler/runtime.
-- TODO: define observability + conformance + release-readiness gates.
-- TODO: update `docs/architecture/overview.md` and component index once KB reaches implementation milestones.
+- determinism,
+- auditability,
+- explainability,
+- reproducibility.
+
+---
+
+## 5. Core Responsibilities
+
+### 5.1 Optimization Knowledge Storage
+
+The KB SHALL store reusable optimization artifacts including:
+
+- compilation patterns,
+- AQO transformation recipes,
+- routing strategies,
+- backend-specific optimizations,
+- topology-aware mappings,
+- execution heuristics,
+- validated optimization templates.
+
+---
+
+### 5.2 Semantic Pattern Matching
+
+The KB SHALL support retrieval based on:
+
+- program structure,
+- circuit topology,
+- optimization objective,
+- backend profile,
+- execution constraints,
+- workload category,
+- compiler metadata.
+
+---
+
+### 5.3 Feedback Learning Loop
+
+The KB SHALL support ingestion of:
+
+- execution quality metrics,
+- runtime adaptation outcomes,
+- fidelity measurements,
+- latency statistics,
+- optimizer success/failure signals,
+- replay validation outcomes.
+
+This feedback SHALL be versioned and auditable.
+
+---
+
+### 5.4 Explainability
+
+Every optimization candidate returned by the KB MUST include:
+
+- provenance,
+- source execution references,
+- compatibility metadata,
+- confidence metadata,
+- deterministic identifiers,
+- explanation payload.
+
+---
+
+### 5.5 Deterministic Reuse
+
+The KB SHALL support deterministic optimization reuse.
+
+Deterministic mode requires:
+
+- stable lookup semantics,
+- reproducible retrieval,
+- version-pinned artifacts,
+- replay-safe optimization outputs.
+
+---
+
+## 6. Integration with Neuro-DPDA
+
+The Neuro-DPDA compiler path combines:
+
+- symbolic deterministic pushdown automata,
+- transformer-assisted optimization,
+- semantic compilation analysis,
+- pattern-guided optimization.
+
+The Knowledge Base SHALL serve as the persistent memory layer for Neuro-DPDA.
+
+---
+
+### 6.1 Compiler → KB Flow
+
+The compiler SHALL provide:
+
+```text
+- structural signatures,
+- semantic fingerprints,
+- optimization context,
+- target constraints,
+- determinism policy,
+- optimization outcomes.
+```
+
+---
+
+### 6.2 KB → Compiler Flow
+
+The KB SHALL provide:
+
+```text
+- reusable transformations,
+- optimization candidates,
+- historical best-known mappings,
+- semantic equivalence references,
+- compatibility constraints,
+- explainability metadata.
+```
+
+---
+
+## 7. Integration with GNN Optimizer
+
+The Knowledge Base SHALL integrate with the GNN hardware optimizer.
+
+The GNN optimizer is responsible for:
+
+- qubit placement,
+- routing,
+- topology-aware optimization,
+- hardware adaptation.
+
+The KB SHALL persist and retrieve:
+
+- validated routing outcomes,
+- topology-specific optimization histories,
+- placement quality metrics,
+- hardware behavior trends,
+- optimizer confidence histories.
+
+---
+
+### 7.1 Runtime Interaction
+
+The GNN optimizer MAY query the KB for:
+
+- historical topology mappings,
+- backend-specific routing outcomes,
+- known degradation patterns,
+- prior optimization scores.
+
+---
+
+### 7.2 Safety Constraints
+
+The KB MUST NOT:
+
+- override deterministic fallback policy,
+- bypass policy validation,
+- inject unverifiable optimizer outputs,
+- mutate optimization results post-validation.
+
+---
+
+## 8. Interfaces
+
+### 8.1 Current State
+
+Implemented now:
+
+- no public API,
+- no internal RPC service,
+- no protobuf contract,
+- no runtime integration path.
+
+---
+
+### 8.2 Target Service Contract
+
+A dedicated service SHALL be introduced.
+
+#### Proposed Service
+
+```text
+KnowledgeBaseService
+```
+
+---
+
+#### Required APIs
+
+**Retrieval APIs**
+
+```text
+FindOptimizationCandidates
+GetOptimizationArtifact
+SearchExecutionPatterns
+```
+
+---
+
+**Ingestion APIs**
+
+```text
+StoreOptimizationOutcome
+StoreExecutionFeedback
+StoreTopologyMetrics
+```
+
+**Explainability APIs**
+
+```text
+ExplainOptimizationDecision
+ReplayOptimizationSelection
+```
+
+---
+
+## 9. Input and Output Contracts
+
+### 9.1 Inputs
+
+#### Planned Canonical Inputs
+
+**Program Signature**
+
+```text
+- source_hash
+- semantic_hash
+- aqo_hash
+- compiler_version
+```
+
+---
+
+**Runtime Context**
+
+```text
+- backend_profile
+- topology_snapshot
+- optimization_goal
+- determinism_mode
+- execution_constraints
+```
+
+---
+
+**Execution Feedback**
+
+```text
+- fidelity
+- latency
+- routing_quality
+- adaptation_events
+- replay_validation
+```
+
+---
+
+### 9.2 Outputs
+
+#### Optimization Candidate
+
+```text
+- artifact_id
+- optimization_type
+- transformation_reference
+- confidence
+- provenance
+- compatibility_window
+- deterministic_digest
+```
+
+---
+
+#### Explainability Payload
+
+```text
+- candidate_source
+- selection_reason
+- rejected_candidates
+- historical_performance
+- optimizer_origin
+```
+
+---
+
+## 10. State and Storage
+
+### 10.1 Current State
+
+Implemented now:
+
+- no KB persistence,
+- no KB schema,
+- no KB artifact lifecycle.
+
+---
+
+### 10.2 Target Storage Architecture
+
+The KB SHALL support:
+
+- structured metadata storage,
+- durable artifact storage,
+- replay-safe history retention,
+- immutable provenance records.
+
+---
+
+#### Proposed Storage Layout
+
+```text
+/qfs/knowledge-base/
+    artifacts/
+    signatures/
+    topology/
+    execution-feedback/
+    optimizer-history/
+    replay/
+```
+
+---
+
+#### Storage Separation
+
+| **Storage Type** | **Purpose** |
+|---|---|
+| Metadata DB | Lookup and indexing |
+| Object Store | Artifacts and replay bundles |
+| Telemetry Store | Historical metrics |
+| Audit Store | Immutable provenance |
+
+---
+
+### 10.3 Versioning Rules
+
+All stored entries MUST include:
+
+- schema version,
+- compiler version,
+- optimizer version,
+- hardware profile version,
+- compatibility window.
+
+---
+
+## 11. Failure Modes
+
+### 11.1 Current Runtime State
+
+No KB runtime failures currently exist because the KB is not active in execution path.
+
+---
+
+### 11.2 Required Failure Taxonomy
+
+| **Failure** | **Description** |
+|---|---|
+| `lookup_miss` | No matching artifact |
+| `low_confidence` | Match confidence insufficient |
+| `artifact_corrupt` | Artifact integrity failure |
+| `schema_incompatible` | Version mismatch |
+| `knowledge_stale` | Optimization no longer valid |
+| `replay_mismatch` | Deterministic replay failure |
+| `provenance_invalid` | Missing or invalid provenance |
+| `storage_unavailable` | Backend unavailable |
+
+---
+
+### 11.3 Mandatory Fallback Policy
+
+When KB retrieval fails, the system MUST:
+
+- fall back to deterministic baseline execution,
+- disable adaptive reuse,
+- emit explicit observability markers,
+- preserve replayability.
+
+The KB MUST NEVER become a hard dependency for baseline execution.
+
+---
+
+## 12. Observability
+
+### 12.1 Current State
+
+Implemented now:
+
+- no KB-specific metrics,
+- no KB-specific tracing,
+- no KB-specific logs.
+
+---
+
+### 12.2 Required Metrics
+
+| **Metric** | **Description** |
+|---|---|
+| `eigen_kb_queries_total` | Lookup count |
+| `eigen_kb_hits_total` | Successful matches |
+| `eigen_kb_misses_total` | Miss count |
+| `eigen_kb_lookup_duration_seconds` | Lookup latency |
+| `eigen_kb_reuse_improvement_total` | Optimization gain |
+| `eigen_kb_fallbacks_total` | Baseline fallback count |
+| `eigen_kb_replay_failures_total` | Replay mismatch count |
+
+---
+
+### 12.3 Tracing
+
+The KB SHALL emit spans for:
+
+- retrieval,
+- ranking,
+- artifact validation,
+- replay validation,
+- feedback ingestion.
+
+Trace correlation MUST include:
+
+```text
+- trace_id
+- job_id
+- artifact_id
+- optimizer_id
+```
+
+---
+
+### 12.4 Auditability
+
+Every KB decision MUST be auditable.
+
+Required fields:
+
+```text
+- selected_candidate
+- rejected_candidates
+- ranking_reason
+- confidence
+- provenance
+- compatibility_constraints
+```
+
+---
+
+## 13. Security and Trust
+
+### 13.1 Integrity Requirements
+
+All KB artifacts MUST support:
+
+- checksums,
+- provenance chains,
+- immutable references,
+- signature validation.
+
+---
+
+### 13.2 Trust Policy
+
+Untrusted optimization artifacts MUST be rejected.
+
+The KB SHALL validate:
+
+- artifact origin,
+- schema compatibility,
+- deterministic replay capability,
+- policy compliance.
+
+---
+
+### 13.3 Data Isolation
+
+Tenant-sensitive metadata MUST remain isolated.
+
+Cross-tenant optimization reuse MUST require:
+
+- explicit policy enablement,
+- anonymization,
+- compatibility validation.
+
+---
+
+## 14. Architectural Invariants
+
+### Determinism Invariant
+
+Knowledge reuse MUST preserve deterministic replay semantics.
+
+### Explainability Invariant
+
+Every optimization decision MUST be explainable.
+
+### Safety Invariant
+
+No optimization artifact may bypass policy validation.
+
+### Compatibility Invariant
+
+All KB artifacts and schemas MUST be versioned.
+
+### Isolation Invariant
+
+The KB MUST NOT become a mandatory runtime dependency for baseline execution.
+
+---
+
+## 15. Final Status Summary
+
+### Implemented Today
+
+- deterministic compiler/runtime baseline,
+- AQO execution pipeline,
+- runtime telemetry persistence,
+- optimizer/plugin groundwork.
+
+### Planned / Not Yet Implemented
+
+- Knowledge Base service,
+- semantic retrieval engine,
+- optimization artifact store,
+- learning feedback loop,
+- explainability contract,
+- Neuro-DPDA persistent memory,
+- GNN optimization history,
+- replay-safe optimization reuse.
+
+### Strategic Direction
+
+The Knowledge Base is the persistent intelligence layer of Eigen OS.
+
+It will provide the reusable optimization memory connecting:
+
+- Neuro-DPDA semantic compilation,
+- GNN hardware optimization,
+- adaptive runtime orchestration,
+- deterministic replay infrastructure,
+- and long-term hybrid quantum optimization intelligence.

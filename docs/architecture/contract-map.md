@@ -1,345 +1,881 @@
-# Eigen OS — MVP Contract Map (end‑to‑end: user → qubit → user)
+# Contract Map
 
->    **Purpose**: A single "interface map" for developers during the architectural design phase. Reflects the agreed-upon contracts after RFC acceptance.
-
-## 0) Boundaries and Versions (MVP Contracts)
-
-**Implementation status (as of 2026-05-08):**
-- ✅ Public proto package uses `eigen.api.v1`; internal packages use `eigen.internal.v1`.
-- ✅ Core service boundaries (System API, Kernel, Compiler, Driver Manager, QFS) are present in repository.
-- TODO: Align legacy naming mentions (`kernel_api.v1/compiler_api.v1/driver_api.v1`) with actual internal package `eigen.internal.v1` everywhere in this document and related diagrams.
-
-### Services/Layers (MVP)
-- **User / SDK / eigen-cli** → **System API** (public entry point, gRPC).
-- **System API** → **Kernel (QRTX)** (internal workflow/DAG orchestrator).
-- **Kernel (QRTX)** → **Compiler service** (Python compilation: Eigen‑Lang/IR → AQO/QASM).
-- **Kernel (QRTX)** → **Driver Manager** (manages drivers and backend connections).
-- **Driver Manager** → **Vendor backend / Simulator / Hardware** (low-level calls, simulator in MVP).
-- **Kernel (QRTX)** ↔ **QFS** (CircuitFS for artifacts and results).
-
-### API Versioning
-- **Public gRPC API**: eigen_api.v1.
-- **Internal gRPC APIs**:
-  - `kernel_api.v1` — KernelGateway (System API ↔ Kernel)
-  - `compiler_api.v1` — CompilerService (Kernel ↔ Compiler)
-  - `driver_api.v1` — DriverManagerService (Kernel ↔ Driver Manager)
-  - **Job Specification Format**: `JobSpec v0.1` (`apiVersion: eigen.os/v0.1`).
-
->    Important: The `monitoring.proto` and `auth.proto` files are **not part of the public gRPC API in MV**P. Metrics are available via HTTP (`/metrics`), authentication is handled by System API interceptors. (RFC 0004). 
+- **Document status:** Normative architecture contract
+- **Contract scope:** MVP → Phase-5 runtime evolution baseline
+- **Contract type:** End-to-end system interface map
+- **Last updated:** 2026-05-24
 
 ---
 
-## 1) Component Diagram (UML / PlantUML)
+## 1. Purpose
 
-**Implementation status (as of 2026-05-08):**
-- ✅ Components from the diagram are implemented as modules/services in `src/services/*` and `src/rust/crates/*`.
-- TODO: Keep diagram labels synchronized with concrete proto/service names (`KernelGatewayService`, `CompilationService`, `DriverManagerService`) and current runtime topology.
+This document defines the canonical end-to-end contract topology of Eigen OS:
 
-```plantuml
-@startuml
-skinparam componentStyle rectangle
-skinparam shadowing false
+```text
+User → SDK/CLI → System API → Kernel/QRTX
+→ Compiler / Driver Manager / Runtime
+→ Backend / Simulator / Hardware
+→ QFS / Results / Observability
+→ User
+```
 
-actor "User" as U
-component "eigen-cli\n(SDK/CLI)" as CLI
-component "System API\n(Public Gateway)\nPython" as API
-component "Kernel / QRTX\n(Rust)" as K
-component "Compiler Service\n(Python)" as C
-component "Driver Manager\n(Python)" as DM
-component "Vendor Backend\n(Simulator/HW)" as B
-database "QFS\n(CircuitFS)\n(S3/MinIO + SQLite)" as QFS
-component "Observability\n(Prometheus + OTel)" as OBS
+The document serves as:
 
-U --> CLI : submit/status/results
-CLI --> API : gRPC (eigen_api.v1)\n+ traceparent + auth
-API --> K : gRPC (kernel_api.v1)\n+ traceparent + claims
-K --> C : gRPC (compiler_api.v1)\n+ traceparent
-K --> DM : gRPC (driver_api.v1)\n+ traceparent
-DM --> B : SDK / REST / gRPC\n(vendor specific)
+- the authoritative architectural interface map,
+- the canonical boundary definition between services,
+- the normative source for API/runtime interaction semantics,
+- the compatibility baseline for MVP and post-MVP evolution.
 
-K --> QFS : write/read artifacts\ncompiled.qasm / results.json
-API --> OBS : metrics/traces/logs
-K --> OBS : metrics/traces/logs
-C --> OBS : metrics/traces/logs
-DM --> OBS : metrics/traces/logs
-@enduml
+This document intentionally includes:
+
+1. required architecture contracts from the original MVP specification,
+2. currently implemented runtime/API behavior,
+3. additive functionality implemented beyond the original MVP scope.
+
+This document is normative unless explicitly marked otherwise.
+
+---
+
+## 2. System Architecture Boundaries
+
+### 2.1 External Client Layer
+
+#### Components
+
+- `eigen-cli`
+- SDKs
+- automation/integration clients
+
+#### Responsibilities
+
+- construct and submit jobs,
+- package JobSpec artifacts,
+- propagate tracing/auth metadata,
+- observe lifecycle/results,
+- interact with public APIs only.
+
+#### Public contract namespace
+
+```text
+eigen.api.v1
 ```
 
 ---
 
-## 2) E2E Flow (sequence) "from user to qubit and back"
+### 2.2 Public Gateway Layer
 
-**Implementation status (as of 2026-05-08):**
-- ✅ Submit → status/watch → results flow is covered by System API E2E tests.
-- ✅ Poll-based update streaming is implemented by `StreamJobUpdates`.
-- TODO: Clarify in this section which steps are synchronous vs queued/asynchronous in production deployment profile.
+#### Component
 
-```plantuml
-@startuml
-autonumber
-actor User
-participant "eigen-cli" as CLI
-participant "System API" as API
-participant "Kernel/QRTX" as K
-participant "Compiler" as C
-participant "Driver Manager" as DM
-participant "Vendor backend\n(sim/hw)" as B
-database "QFS (CircuitFS)" as QFS
+System API
 
-== Submit ==
-User -> CLI: eigen submit --job job.yaml
-CLI -> API: SubmitJob(SubmitJobRequest)\ntraceparent, authorization
-API -> K: EnqueueJob(KernelJob)\ntraceparent, x-eigen-claims
-K -> QFS: write job.yaml (optional)\n+ metadata
-K --> API: JobAccepted(job_id)
+#### Responsibilities
 
-== Compile ==
-K -> C: Compile(program, target, options)
-C --> K: CompiledArtifact(AQO/QASM)\n+ compiler metadata
-K -> QFS: write compiled.qasm\nwrite compiled.aqo.json
+- public gRPC API exposure,
+- authentication/authorization,
+- request validation,
+- request normalization,
+- lifecycle/result serving,
+- trace propagation,
+- orchestration delegation.
 
-== Execute ==
-K -> DM: ExecuteCircuit(device_id,\nCircuitPayload, shots, options)
-DM -> B: vendor SDK call / submit
-B --> DM: raw result / handle
-DM --> K: ExecutionResult(counts, time, metadata)
-K -> QFS: write results.json
-K -> QFS: write run.log (optional)
+#### Contract type
 
-== Observe / Results ==
-User -> CLI: eigen status <job_id>
-CLI -> API: GetJobStatus(job_id)
-API -> K: GetJobStatus(job_id)
-K --> API: JobStatus(state, progress, stage)
-API --> CLI: JobStatus
+Stable public API surface.
 
-User -> CLI: eigen results <job_id>
-CLI -> API: GetJobResults(job_id)
-API -> K: GetJobResults(job_id)
-K -> QFS: read results.json
-K --> API: JobResults
-API --> CLI: JobResults
-CLI --> User: print / save
-@enduml
+---
+
+### 2.3 Orchestration Layer
+
+#### Component
+
+Kernel / QRTX
+
+#### Responsibilities
+
+- job lifecycle orchestration,
+- DAG/state management,
+- runtime scheduling,
+- compiler coordination,
+- execution coordination,
+- distributed runtime orchestration,
+- artifact persistence coordination,
+- queue/resource management.
+
+#### Internal contract namespace
+
+```text
+eigen.internal.v1
 ```
 
-### Task States
-Basic state line (client-facing): `PENDING → COMPILING → QUEUED → RUNNING → DONE/ERROR`.
-Detailed kernel state machine is defined in RFC 0007.
+---
+
+### 2.4 Compilation Layer
+
+#### Component
+
+CompilationService
+
+#### Responsibilities
+
+- Eigen-Lang compilation,
+- AQO/QASM generation,
+- optimization pipeline execution,
+- compilation diagnostics,
+- artifact generation.
 
 ---
 
-## 3) Public API Contracts (System API) — eigen_api.v1
+### 2.5 Execution Layer
 
-**Implementation status (as of 2026-05-08):**
-- ✅ `JobService` and `DeviceService` are implemented in `proto/eigen/api/v1/*` and System API server code.
-- ✅ Public RPCs include `SubmitJob`, `GetJobStatus`, `CancelJob`, `StreamJobUpdates`, `GetJobResults`, `ListDevices`, `GetDeviceStatus`, `ReserveDevice`, and `KnowledgeBaseService` (`UpsertRecord`, `BatchUpsertRecords`, `QueryRecords`, `GetRecord`).
-- ✅ Additional implemented public RPCs beyond original MVP text: `GetDispatchRationale` and `GetDeviceDetails`.
-- TODO: Add explicit contract text for `GetDispatchRationale` and `GetDeviceDetails` in this section to avoid undocumented surface area.
+#### Component
 
-Below is the **"MVP freeze" level contract:** fields, errors, idempotency, side effects.
-(The implementation may proxy to Kernel/Compiler, but the external contract is the same.)
+DriverManagerService
 
-### 3.1 JobService (eigen_api.v0.1)
-**RPC: SubmitJob**
-- **Input**: `SubmitJobRequest`
-  - `name` (string, required)
-  - `program` (oneof): `eigen_lang_source` | `qasm3` | `aqo_json_ref` | …
-  - `target` (string / message): device type or device_id
-  - `priority` (optional)
-  - `compiler_options` (map<string,string>)
-  - `metadata` (map<string,string>)
-- **Output**: `SubmitJobResponse { job_id, accepted_at }`
-- **Idempotency**: It is recommended to accept a `client_request_id` (uuid) in metadata and maintain deduplication (48–72 hours).
-- **Side effects**: Creates a Job record and places JobSpec/artifacts in QFS (optional).
+#### Responsibilities
 
-**RPC: GetJobStatus**
-- **Output**: `JobStatusResponse { job_id, state, stage, progress, updated_at, message }`
-
-**RPC: CancelJob**
-- **Semantics**:
-  - CANCELLED is allowed if job is in PENDING/COMPILING/QUEUED; if RUNNING — best effort.
-  - Returns `FAILED_PRECONDITION` if job is already DONE/ERROR.
-- **Side effects**: Sends cancel to Kernel and marks the job.
-
-**RPC: GetJobResults**
-- **Output**: `JobResultsResponse { job_id, results, artifacts_refs[], metadata }`
-- **Large artifacts**: QFS refs instead of raw bytes.
-
-**RPC: StreamJobUpdates**
-- The MVP implementation uses **poll‑based streaming**: System API polls the Kernel and emits events to the client. (RFC 0004).
-
-### 3.2 DeviceService (eigen_api.v0.1)
-
-**RPC: ListDevices**
-- Returns aggregated view: capabilities + status.
-
-**RPC: GetDeviceStatus(device_id)**
-- Returns `DeviceStatus` (online/offline, queue_depth, estimated_wait, calibration_age…).
-
-**RPC: ReserveDevice(device_id, ttl)**
-- Clear semantics: reserves a scheduler slot in the Kernel Resource Manager, not hardware-wide exclusive lock. (RFC 0004).
-
-### 3.3 KnowledgeBaseService (eigen.api.v1)
-
-- Contract version is frozen at `1.0.0` (RFC 0034).
-- Envelope `ApiContractEnvelope.contract_version` is required in each request to enforce explicit client/server contract binding.
-- Error taxonomy is fixed to: `KB_INVALID_ARGUMENT`, `KB_NOT_FOUND`, `KB_INDEX_UNAVAILABLE`, `KB_RATE_LIMITED`, `KB_INTERNAL`; retry semantics are deterministic (`NEVER`, `SAFE_RETRY`, `RETRY_WITH_BACKOFF`).
-
-### 3.4 CompilationService (eigen_api.v1)
-
-- ✅ Not exposed as public gRPC service in MVP public proto package (matches current architecture intent).
-- TODO: Keep explicit note that local CLI compile path and internal compilation RPC are the supported paths.
-- **Note for MVP**: The `CompilationService` **is not part of the public MVP API**. The `eigen-cli compile` command performs **local compilation**. (RFC 0010, RFC 0004).
+- backend abstraction,
+- vendor integration,
+- execution dispatch,
+- execution normalization,
+- device metadata,
+- calibration/state access.
 
 ---
 
-## 4) Internal Contracts (Inter-service gRPC)
+### 2.6 Backend Layer
 
-**Implementation status (as of 2026-05-08):**
-- ✅ Internal gRPC contracts are defined under `proto/eigen/internal/v1`.
-- ✅ `KernelGatewayService`, `CompilationService`, `DriverManagerService` are present in proto and service implementations.
-- TODO: Replace historical API labels (`kernel_api.v1`, `compiler_api.v1`, `driver_api.v1`) in this section with `eigen.internal.v1` service names to match code.
+#### Components
 
-### 4.1 System API ↔ Kernel: KernelGateway (kernel_api.v1)
-**RPC: EnqueueJob**
-- Input: `KernelJob { job_id?, submitter, program_ref/bytes, target, priority, trace_context, auth_claims }`
-- Output: `EnqueueJobResponse { job_id }`
+- local simulators,
+- vendor simulators,
+- cloud providers,
+- hardware backends.
 
-**RPC: GetJobStatus / CancelJob / GetJobResults**
-- Must **semantically match** the public responses (System API should not "invent" statuses).
+#### Notes
 
-### 4.2 Kernel ↔ Compiler: CompilerService (compiler_api.v1)
-**RPC: Compile**
-- Input: `CompileRequest { job_id, program(oneof), target, options }`
-- Output: `CompileResponse { artifact(oneof ref/bytes), format(enum), stats, metadata }`
-- Output formats must match what Driver Manager understands (`CircuitPayload.format`).
-
-### 4.3 Kernel ↔ Driver Manager: DriverManagerService (driver_api.v1)
-Required minimum (MVP):
-- `ListDevices()` → `ListDevicesResponse { devices[] }`
-- `GetDeviceStatus(device_id)` → `DeviceStatusResponse { status }`
-- `ExecuteCircuit(device_id, payload, shots, options)` → `ExecuteCircuitResponse { results, timing, metadata }`
-- `CalibrateDevice(device_id)` → `CalibrateDeviceResponse { ... }` (can be deferred)
+Backend APIs are vendor-specific and are normalized through Driver Manager contracts before exposure to public/runtime layers.
 
 ---
 
-## 5) Cross-Cutting Rules: Errors, Timeouts, Tracing, Compatibility
+### 2.7 Artifact Layer
 
-**Implementation status (as of 2026-05-08):**
-- ✅ gRPC status-based error handling is implemented in service layers; validation failures map to canonical status codes.
-- ✅ Trace context propagation (`traceparent`) exists in the request flow.
-- TODO: Consolidate a single referenced source for timeout defaults and retry budgets (currently spread across docs/code).
-- TODO: Enforce/verify `buf lint` + `buf breaking` in CI if not already mandatory for all proto changes.
+#### Component
 
-### 5.1 Unified Error Policy
-In gRPC, **an error must be returned as a status code + message**, not as `success=false` in the response.
-For structured details (validation, resources, retry hints), `google.rpc.Status` (rich error model) is recommended.
+QFS (CircuitFS)
 
-**Recommendation for Eigen OS (MVP):**
-- External and internal services:
-  - use gRPC status codes
-  - attach `google.rpc.Status` details if necessary (BadRequest, ErrorInfo, ResourceInfo)
-- "Internal backend errors" (e.g., vendor SDK returned "device busy") should be mapped to:
-  - `FAILED_PRECONDITION` / `RESOURCE_EXHAUSTED` / `UNAVAILABLE` depending on nature.
+#### Responsibilities
 
-**Base Table:**
-- INVALID_ARGUMENT — invalid request fields
-- FAILED_PRECONDITION — valid request, but system in wrong state
-- RESOURCE_EXHAUSTED — quotas/limits/queues exhausted
-- UNAVAILABLE — temporary backend unavailability
-- DEADLINE_EXCEEDED — RPC execution timeout
-- UNAUTHENTICATED / PERMISSION_DENIED — auth/authz
-- NOT_FOUND — job_id/device_id not found
+- durable artifact persistence,
+- compiled artifact storage,
+- execution result storage,
+- logs/error persistence,
+- timeline/provenance persistence.
 
-### 5.2 Timeouts
-- External RPC: client sets deadline; System API propagates it downwards.
-- ExecuteCircuit: almost always async by job_id; "long" operations should not hold a single RPC open unnecessarily.
+#### MVP storage profile
 
-### 5.3 Tracing and Correlation
-OpenTelemetry recommends context propagation via W3C TraceContext (`traceparent`). 
-Recommended policy (MVP):  
-- System API accepts `traceparent` and propagates it to Kernel/Compiler/DriverManager via gRPC metadata.
-- Logs/metrics are enriched with tra`ce_id, `job_id`, `device_id`.
+- S3/MinIO-compatible object storage,
+- SQLite metadata/state layer.
 
-### 5.4 Single Source of Truth for Protobuf + Breaking Check
-To ensure interfaces "always match", establish a single protocol module and CI checks:
+---
+
+## 3. Canonical API Namespaces
+
+### 3.1 Public APIs
+
+Canonical namespace:
+
+```text
+eigen.api.v1
+```
+
+#### Public services
+
+- `JobService`
+- `DeviceService`
+- `KnowledgeBaseService`
+
+---
+
+### 3.2 Internal APIs
+
+Canonical namespace:
+
+```text
+eigen.internal.v1
+```
+
+#### nternal services
+
+- `KernelGatewayService`
+- `CompilationService`
+- `DriverManagerService`
+
+---
+
+## 4. Versioning and Compatibility
+
+### 4.1 Public API Compatibility
+
+Public APIs are treated as stable contracts.
+
+#### Breaking changes require:
+
+- new package version,
+- compatibility coexistence period,
+- explicit migration documentation.
+
+#### Breaking changes include:
+
+- renaming package/service/method,
+- field semantic changes,
+- field removals,
+- incompatible enum/state changes.
+
+---
+
+### 4.2 Non-Breaking Changes
+
+Allowed additive changes:
+
+- optional request/response fields,
+- additional RPCs,
+- additional metadata,
+- additive observability labels with bounded cardinality.
+
+---
+
+### 4.3 Internal Contract Compatibility
+
+Internal APIs follow SemVer-style compatibility discipline and must remain synchronized with runtime orchestration semantics.
+
+---
+
+### 4.4 Job Specification Versioning
+
+Current JobSpec contract:
+
+```yaml
+apiVersion: eigen.os/v0.1
+```
+
+Canonical job descriptor:
+
+```text
+job.yaml
+```
+
+---
+
+## 5. End-to-End Execution Flow
+
+### 5.1 Submit Flow
+
+```text
+Client
+→ SubmitJob
+→ System API
+→ Kernel/QRTX
+→ enqueue lifecycle
+→ persist metadata/artifacts
+```
+
+#### Submit guarantees
+- request validation occurs before orchestration,
+- accepted jobs receive stable `job_id`,
+- trace context is propagated,
+- orchestration state is persisted.
+
+--- 
+
+### 5.2 Compilation Flow
+
+```text
+Kernel/QRTX
+→ CompilationService
+→ compiled artifacts
+→ QFS persistence
+```
+
+#### Generated artifacts may include
+
+- AQO,
+- QASM,
+- compiler metadata,
+- diagnostics,
+- optimization artifacts.
+
+---
+
+### 5.3 Execution Flow
+
+```text
+Kernel/QRTX
+→ DriverManagerService
+→ backend/simulator/hardware
+→ normalized execution result
+```
+
+#### Driver Manager responsibilities
+
+- backend normalization,
+- payload normalization,
+- retry/error normalization,
+- execution metadata normalization.
+
+---
+
+### 5.4 Results Flow
+
+```text
+Client
+→ GetJobResults
+→ System API
+→ Kernel/QRTX
+→ QFS artifact retrieval
+→ normalized response
+```
+
+Large artifacts are returned through QFS references rather than raw payload embedding.
+
+---
+
+## 6. Job Lifecycle Contract
+
+### 6.1 Stable Client-Facing States
+
+Canonical public lifecycle:
+
+```text
+PENDING
+→ COMPILING
+→ QUEUED
+→ RUNNING
+→ DONE | ERROR | CANCELLED
+```
+
+---
+
+### 6.2 Runtime Guarantees
+
+#### PENDING
+
+Job accepted but not yet executing.
+
+#### COMPILING
+
+Compilation pipeline executing.
+
+#### QUEUED
+
+Awaiting runtime/backend scheduling.
+
+#### RUNNING
+
+Execution active on runtime/backend.
+
+#### DONE
+
+Execution completed successfully.
+
+#### ERROR
+
+Terminal failure state with normalized error envelope.
+
+#### CANCELLED
+
+Execution cancelled before completion.
+
+---
+
+## 7. Public API Contracts
+
+### 7.1 JobService
+
+#### Stable RPC Surface
+
+- `SubmitJob`
+- `GetJobStatus`
+- `CancelJob`
+- `StreamJobUpdates`
+- `GetJobResults`
+- `GetDispatchRationale`
+
+---
+
+#### SubmitJob
+
+**Input**
+
+`SubmitJobRequest`
+
+#### Required fields
+
+- `name`
+- `program`
+- `target`
+
+#### Optional fields
+
+- `priority`
+- `compiler_options`
+- `metadata`
+
+**Output**
+
+```text
+SubmitJobResponse {
+  job_id,
+  accepted_at
+}
+```
+
+#### Semantics
+
+- creates orchestration job,
+- validates request before enqueue,
+- may persist artifacts to QFS,
+- propagates trace/auth context.
+
+---
+
+#### GetJobStatus
+
+Returns:
+
+- lifecycle state,
+- progress,
+- stage,
+- timestamps,
+- optional runtime messages.
+
+---
+
+#### CancelJob
+
+**Contract**
+
+Cancellation is:
+
+- allowed for `PENDING`,
+- allowed for `COMPILING`,
+- allowed for `QUEUED`,
+- best-effort for `RUNNING`.
+
+Terminal jobs return deterministic terminal semantics.
+
+---
+
+#### GetJobResults
+
+Returns:
+
+- normalized results,
+- artifact references,
+- execution metadata,
+- async error information when applicable.
+
+---
+
+#### StreamJobUpdates
+
+**MVP implementation**
+
+Poll-based streaming.
+
+**Contract guarantee**
+
+Clients receive ordered lifecycle updates reflecting Kernel runtime state progression.
+
+---
+
+#### GetDispatchRationale
+
+Returns explainability/scheduling rationale metadata for orchestration/runtime decisions.
+
+---
+
+### 7.2 DeviceService
+
+#### Stable RPC Surface
+
+- `ListDevices`
+- `GetDeviceStatus`
+- `GetDeviceDetails`
+- `ReserveDevice`
+
+---
+
+#### Device Metadata
+
+Device contracts may expose:
+
+- availability,
+- queue depth,
+- calibration state,
+- estimated wait,
+- backend capabilities,
+- scheduling metadata.
+
+---
+
+#### ReserveDevice Semantics
+
+Reservation applies to scheduler/runtime orchestration capacity rather than exclusive hardware ownership.
+
+---
+
+### 7.3 KnowledgeBaseService
+
+#### Stable RPC Surface
+
+- `UpsertRecord`
+- `BatchUpsertRecords`
+- `QueryRecords`
+- `GetRecord`
+
+---
+
+#### Contract Version
+
+```text
+1.0.0
+```
+
+---
+
+#### Stable Error Taxonomy
+
+- `KB_INVALID_ARGUMENT`
+- `KB_NOT_FOUND`
+- `KB_INDEX_UNAVAILABLE`
+- `KB_RATE_LIMITED`
+- `KB_INTERNAL`
+
+---
+
+## 8. Internal Service Contracts
+
+### 8.1 KernelGatewayService
+
+#### Responsibilities
+
+- enqueue jobs,
+- expose orchestration lifecycle,
+- cancellation,
+- result retrieval,
+- runtime coordination.
+
+---
+
+#### Semantic Rule
+
+Internal lifecycle semantics must remain compatible with public API semantics.
+
+---
+
+### 8.2 CompilationService
+
+#### Stable Operations
+
+**Compile**
+
+Input:
+
+- program,
+- target,
+- options.
+
+Output:
+
+- compiled artifact,
+- metadata,
+- stats,
+- normalized payload format.
+
+---
+
+### 8.3 DriverManagerService
+
+#### Stable Operations
+
+- `ListDevices`
+- `GetDeviceStatus`
+- `ExecuteCircuit`
+- `CalibrateDevice`
+
+---
+
+#### ExecuteCircuit Responsibilities
+
+- backend dispatch,
+- result normalization,
+- timing metadata,
+- backend error normalization.
+
+---
+
+## 9. QFS Artifact Contract
+
+### Canonical Artifact Types
+
+- compiled circuits,
+- AQO artifacts,
+- results,
+- logs,
+- timelines,
+- diagnostics,
+- error artifacts.
+
+---
+
+### Stable Artifact Expectations
+
+#### Results
+
+```text
+results.json
+```
+
+#### Error artifacts
+
+```text
+results/error.json
+```
+
+#### Timeline artifacts
+
+```text
+timeline.json
+```
+
+---
+
+## 10. Error Contract
+
+Eigen OS uses:
+
+```text
+gRPC-status-first semantics
+```
+
+Transport-level failures must not be encoded through:
+
+```json
+success=false
+```
+
+style wrappers.
+
+---
+
+### Canonical Status Rules
+
+#### INVALID_ARGUMENT
+
+Invalid request independent of runtime state.
+
+#### FAILED_PRECONDITION
+
+Valid request blocked by runtime/system state.
+
+#### RESOURCE_EXHAUSTED
+
+Quota/capacity exhaustion.
+
+#### UNAVAILABLE
+
+Transient backend/runtime unavailability.
+
+#### DEADLINE_EXCEEDED
+
+Timeout/deadline breach.
+
+#### NOT_FOUND
+
+Missing resource identity.
+
+#### UNAUTHENTICATED / PERMISSION_DENIED
+
+Authentication/authorization failures.
+
+---
+
+### Structured Error Details
+
+Recommended structured details:
+
+- `google.rpc.BadRequest`
+- `google.rpc.ErrorInfo`
+- `google.rpc.ResourceInfo`
+- `google.rpc.RetryInfo`
+
+---
+
+### Backend Error Normalization
+
+Vendor/provider failures must be normalized before reaching public contracts.
+
+---
+
+## 11. Tracing and Correlation
+
+### Trace Propagation
+
+Canonical propagation format:
+
+```text
+W3C TraceContext
+```
+
+Primary metadata field:
+
+```text
+traceparent
+```
+
+---
+
+### Required Correlation Metadata
+
+Where applicable:
+
+- `trace_id`
+- `job_id`
+- `device_id`
+- correlation identifiers.
+
+---
+
+## 12. Timeout and Deadline Semantics
+
+### External RPCs
+
+Clients set deadlines.
+
+### Internal propagation
+
+System API propagates deadlines downstream.
+
+### Long-running operations
+
+Long-running execution must use async orchestration semantics rather than indefinite RPC blocking.
+
+---
+
+## 13. Observability Architecture
+
+### Supported telemetry
+
+- Prometheus metrics,
+- OpenTelemetry traces,
+- structured logs.
+
+---
+
+### Observability Coverage Areas
+
+- orchestration observability,
+- runtime observability,
+- intelligent runtime observability,
+- cluster runtime observability,
+- benchmark observability.
+
+---
+
+### Runtime Expectations
+
+All runtime services should expose:
+
+- metrics,
+- traces,
+- lifecycle-correlated logs.
+
+---
+
+## 14. Interface Matrix
+
+### 14.1 External Layer
+
+| **Caller** | **Callee** | **Contract** | **Operations** |
+|---|---|---|---|
+| SDK / CLI | System API | `eigen.api.v1` | submit/status/results |
+| SDK / CLI | System API | `eigen.api.v1` | streaming updates |
+| SDK / CLI | System API | `eigen.api.v1` | device operations |
+
+---
+
+### 14.2 Orchestration Layer
+
+| **Caller** | **Callee** | **Contract** | **Operations** |
+|---|---|---|---|
+| System API | Kernel/QRTX | `eigen.internal.v1` | enqueue/status/results |
+| Kernel/QRTX | CompilationService | `eigen.internal.v1` | compile |
+| Kernel/QRTX | DriverManagerService | `eigen.internal.v1` | execute |
+| Kernel/QRTX | QFS | internal IO | artifacts/results |
+
+---
+
+### 14.3 Backend Layer
+
+| **Caller** | **Callee** | **Contract** |
+|---|---|---|
+| DriverManagerService |backend/vendor | vendor-specific |
+| backend/vendor | DriverManagerService | normalized response |
+
+---
+
+## 15. Operational and CI Requirements
+
+### Proto Compatibility
+
+CI should enforce:
+
 - `buf lint`
-- `buf breaking` against the latest release.
-Buf can detect breaking changes and fits well into CI. (RFC 0004).
+- `buf breaking`
+
+### Contract Consistency
+
+Changes affecting:
+
+- metrics,
+- APIs,
+- runtime semantics,
+- dashboards,
+- alerts,
+
+must be updated in the same change set.
 
 ---
 
-## 6) "Interface Matrix" (Contract Map) — Who Calls Whom and With What
+## 16. Production Hardening Targets
 
-**Implementation status (as of 2026-05-08):**
-- ✅ Matrix relationships generally reflect implemented call paths.
-- TODO: Update matrix naming to exact proto services (`eigen.internal.v1.*`) and include currently implemented extra public methods (`GetDispatchRationale`, `GetDeviceDetails`).
-- TODO: Add explicit note that QFS artifact exchange uses refs and may include multiple backend storage implementations.
+The following remain required for full production-grade contract freeze:
 
-### 6.1 External Layer
-| **Caller** | **Callee** | **Proto/package** | **RPC** | **Type** | **Data** |
-|---|---|---|---|---|---|
-| eigen-cli/SDK | System API | eigen_api.v1 | SubmitJob | sync | JobSpec→SubmitJobRequest |
-| eigen-cli/SDK | System API | eigen_api.v1 | GetJobStatus | sync | job_id |
-| eigen-cli/SDK | System API | eigen_api.v1 | GetJobResults | sync | job_id (+ artifacts refs) |
-| eigen-cli/SDK | System API | eigen_api.v1 | StreamJobUpdates | stream | job_id |
-| eigen-cli/SDK | System API | eigen_api.v1 | ListDevices/GetDeviceStatus | sync | catalog/status |
-
-### 6.2 Orchestration Layer
-| **Caller** | **Callee** | **Proto/package** | **RPC** | **Type** | **Data** |
-|---|---|---|---|---|---|
-| System API | Kernel | kernel_api.v1 | EnqueueJob | sync | job + claims + trace |
-| System API | Kernel | kernel_api.v1 | GetJobStatus/GetJobResults/Cancel | sync | job_id |
-| Kernel | Compiler | compiler_api.v1 | Compile | sync/async | program + target + options |
-| Kernel | Driver Manager | driver_api.v1 | ExecuteCircuit | sync/async | device_id + CircuitPayload |
-| Kernel | QFS | — | read/write | io | compiled.*, results.*, logs |
-
-### 6.3 Low-Level Layer
-| **Caller** | **Callee** | **Contract** | **Type** | **Data** |
-|---|---|---|---|---|
-| Driver Manager | Vendor backend | vendor SDK/REST | sync/async | compiled circuit + shots |
-| Vendor backend | Driver Manager | vendor response | sync/async | raw results / handles |
+1. Full runtime topology synchronization across architecture docs.
+2. Unified retry/deadline governance.
+3. Full cross-service conformance testing.
+4. Runtime/observability contract CI validation.
+5. Distributed runtime orchestration hardening.
+6. Deterministic explainability/runtime reasoning semantics.
 
 ---
 
-## 7) Final Action Plan (State Fixation and Forward TODOs)
+## 17. MVP Success Criterion
 
-**Implementation status (as of 2026-05-08):**
-- ✅ System is already in active implementation; this section is reframed from “before coding” to “what remains to close gaps”.
+The baseline MVP success flow is:
 
-Open TODOs for next iterations:
+```text
+eigen-cli submit --job job.yaml
+```
 
-The RFCs have resolved the architectural misalignments. The final steps are:
+followed by successful:
 
-1) **Formalize RFC Acceptance**: Move key RFCs (0002, 0003, 0004, 0005, 0006, 0007) to "**Accepted**" status. This signals the contract freeze for MVP.
+- validation,
+- orchestration,
+- compilation,
+- execution,
+- result persistence,
+- observability/tracing,
+- result retrieval.
 
-2) **Create Implementation Epic**: Create a master issue "Phase 0: MVP Implementation" and break it down into tasks mirroring the services:
-
-   - system-api (based on RFC 0004, 0009)
-
-   - eigen-kernel (based on RFC 0007)
-
-   - eigen-compiler (based on RFC 0011, 0012)
-
-   - driver-manager (based on RFC 0006)
-
-   - eigen-cli (based on RFC 0010, 0003)
-
-   - observability stack (based on RFC 0008)
-
-3) **Start Coding**: Use this Contract Map and the accepted RFCs as the single source of truth for implementation.
-
-4) **Track Success Criterion**: Focus on the Phase 0 success metric: 
-`eigen-cli submit --job job.yaml` executes a full VQE cycle on a simulator and returns results.
-
----
-
-## 8) Appendix: Rules for Compatible Changes
-
-- Do not rename package/service/method (this is breaking).
-
-- Adding new fields to a request is **not** wire-breaking, but can become behaviorally breaking if the server starts requiring them.
-
-- For breaking changes — use a new package `...v2` and maintain support for v1 alongside it.
-
+The full path must operate deterministically end-to-end across the supported simulator/runtime profile.

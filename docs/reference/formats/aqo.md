@@ -1,168 +1,278 @@
-# AQO v0.1 — Abstract Quantum Operations Format (MVP baseline)
+# AQO (Abstract Quantum Operations) v1.0
 
-> Status snapshot (as of 2026-05-09): this spec is synchronized with current architecture docs and repository behavior. Implemented behavior is marked explicitly; target-state gaps are listed as `TODO`.
+**AQO** is the intermediate representation (IR) of a quantum algorithm between the Eigen-Lang compiler and the runtime layer (kernel/driver). AQO provides deterministic and hardware-agnostic transaction formatting. Version 1.0 defines the JSON document structure describing the device topology and the sequence of quantum operations, as well as the baseline logical operation set and validation rules.
 
-## 1) Summary
+- **Top-level JSON fields:**
 
-AQO (Abstract Quantum Operations) is the compiler/runtime IR exchanged between `eigen-compiler`, `eigen-kernel (QRTX)`, and `driver-manager`, and persisted in QFS artifacts.
+An AQO document contains the mandatory fields:
 
-**Implemented now**
-- Deterministic AQO v0.1 JSON emission is the canonical MVP path.
-- AQO is transported via internal gRPC `CircuitPayload` (`format` + `bytes`).
-- Driver-manager consumes AQO JSON and normalizes execution output to counts + metadata.
+- `version` — format version,
 
-**TODO / not fully implemented yet**
-- Full production parity for AQO protobuf (`AQO_PROTO`) across all runtime paths.
-- Stable contract for advanced AQO extensions (control flow, observables, noise ops).
-- Unified compatibility matrix for every backend/driver vs AQO features.
+- `qubits` — number of logical qubits (`integer >= 1`),
 
-## 2) Purpose and scope
+- `operations` — ordered list of operations.
 
-AQO decouples Eigen‑Lang from hardware-specific circuit formats and enables:
-- deterministic compilation artifacts,
-- optimizer/analysis passes,
-- backend-agnostic execution,
-- reproducible persistence in QFS.
+In version 1.0, the `version` constant may be incremented (for example, `"1.0"`), while preserving the principle of a fixed schema version for deterministic parsing. Additional compilation metadata and checksums may also be included (see the QFS section).
 
-### In scope (MVP)
-- Gate-level circuit IR for supported deterministic compiler subset.
-- Symbolic/numeric parameters.
-- Measurement mapping to classical bits.
-- Validation and compatibility invariants for runtime consumption.
+- **Operation format:**
 
-### Out of scope (MVP)
-- Full OpenQASM3 feature parity.
-- Pulse-level or timing-level vendor controls.
-- General-purpose classical IR.
+Each operation is represented as a JSON object with the following fields (mandatory fields are marked in bold):
 
-## 3) Runtime interfaces that carry AQO
+- `op` (`string`) — operation opcode (e.g. `"RX"`, `"CX"`, `"MEASURE"`).
 
-### 3.1 Compiler output contract
-Compiler returns compile response with:
-- `ir_format` enum (`AQO_JSON`, `AQO_PROTO`, `QASM3_TEXT`, `BACKEND_NATIVE`),
-- `ir_bytes`,
-- metadata map (including AQO hash-related fields where enabled).
+- `q` (`int[]`) — target qubit indices (zero-based).
 
-### 3.2 Kernel → Driver Manager contract
-Kernel sends `CircuitPayload { format, bytes }` to Driver Manager (internal gRPC).
+- `c` (`int[]`, optional) — classical bit indices (used for measurement operations).
 
-### 3.3 Persistence contract (QFS)
-AQO is persisted as compiled artifact under the job artifact directory. Current docs mention both naming variants in circulation:
-- `compiled.aqo.json` / `compiled.aqo.pb` (pipeline-oriented naming),
-- `circuit.aqo.json` / `circuit.aqo.pb` (format-layout naming).
+- `params` (`object`) — parameter map (`name → value`) for parameterized operations.
 
-`TODO`: finalize one canonical naming scheme (and migration note) across all runtime, API, and format docs.
-
-## 4) AQO JSON data model (normative for MVP)
+Example (from v0.1):
 
 ```json
 {
-  "version": "0.1",
-  "qubits": 4,
-  "operations": [
-    {"op": "RZ", "q": [0], "params": {"theta": "p0"}},
-    {"op": "RY", "q": [0], "params": {"theta": 1.570796}},
-    {"op": "CX", "q": [0, 1]},
-    {"op": "MEASURE", "q": [0, 1], "c": [0, 1]}
-  ]
+  "op": "RZ",
+  "q": [0],
+  "params": {
+    "theta": "p0"
+  }
 }
 ```
 
-### 4.1 Top-level fields
-1. `version` — must be `"0.1"` for MVP.
-2. `qubits` — total logical qubits (`int >= 1`).
-3. `operations` — ordered operation list.
+The `params` field accepts numeric values (`int` / `float`) and symbolic identifiers. Version 1.0 may introduce additional parameter keys for new operations and runtime semantics.
 
-### 4.2 Operation fields
-- `op` (`string`) — opcode.
-- `q` (`int[]`) — zero-based qubit indices.
-- `c` (`int[]`, optional) — classical indices (used by `MEASURE`).
-- `params` (`map<string, number|string>`, optional) — gate parameters.
+---
 
-### 4.3 MVP opcode set
-- Single-qubit rotations: `RX`, `RY`, `RZ`
-- Two-qubit entangling: `CX`
-- Measurement: `MEASURE`
-- Reset (optional support): `RESET`
+## Opcode Set (v1.0)
 
-### 4.4 Parameter rules
-- Numeric values: integer/float.
-- Symbolic values: identifier pattern `[a-zA-Z_][a-zA-Z0-9_]*`.
-- `RX/RY/RZ` require `theta`.
+In addition to the MVP (`v0.1`) operations `RX`, `RY`, `RZ`, and `CX`, version 1.0 introduces a broader set of commonly used quantum gates:
 
-### 4.5 Measurement rule
-- `MEASURE` supports `basis` in `params` (`X|Y|Z`), default is `Z`.
-- `len(q)` must equal `len(c)`.
+### Single-Qubit Gates
 
-## 5) Canonical bitstring ordering for counts
+- `X`
 
-When execution returns `counts: map<bitstring,int64>`, canonical encoding is:
-- output bitstring order: `c[n-1] ... c[1] c[0]`,
-- `c[0]` is rightmost (least-significant classical bit).
+- `Y`
 
-Example: `q0->c0=1`, `q1->c1=0` yields key `"01"`.
+- `Z`
 
-This ordering is the normalization target for Driver Manager independent of backend native conventions.
+- `H` (Hadamard)
 
-## 6) Validation invariants (MVP conformance)
+- Optional phase gates:
 
-1. **Qubit bounds**: every `q[i] < qubits`.
-2. **Opcode arity**:
-   - `RX/RY/RZ/RESET`: exactly 1 qubit,
-   - `CX`: exactly 2 qubits,
-   - `MEASURE`: 1..N qubits + same number of classical bits.
-3. **Classical write uniqueness**: no duplicate `c` destinations within one measurement op.
-4. **Parameter legality**:
-   - `RX/RY/RZ`: require `theta`,
-   - `CX/RESET`: no params,
-   - `MEASURE`: only optional basis semantics for MVP.
-5. **Version gating**: unsupported `version` → reject as `INVALID_ARGUMENT`.
+  - `S`
 
-## 7) Error model and status mapping
+  - `T`
 
-- Malformed AQO JSON/protobuf: `INVALID_ARGUMENT`.
-- Unknown opcode / invalid arity: `INVALID_ARGUMENT`.
-- Unsupported payload format in runtime path: `UNIMPLEMENTED`.
-- Backend/runtime incompatibility discovered at execution stage: `FAILED_PRECONDITION` or `UNAVAILABLE` depending on root cause.
+### Parameterized Rotations
 
-## 8) Security, observability, and performance
+- `RX`
 
-### Security
-AQO does not carry secrets by design, but must be treated as executable input:
-- strict validation before execution,
-- no implicit trust of external AQO refs.
+- `RY`
 
-### Observability
-- log AQO hash and payload size,
-- avoid full AQO payload logging by default,
-- include AQO-related identifiers in job metadata for traceability.
+- `RZ`
 
-### Performance
-- JSON is canonical and debug-friendly baseline.
-- `AQO_PROTO` is intended for large circuits and wire efficiency.
-- Driver-manager may cache parsed AQO by content hash.
+These operations require the parameter:
 
-## 9) Current gaps to close
+- `theta`
 
-1. Define and publish one canonical QFS filename convention for AQO artifacts.
-2. Lock protobuf schema details and enforce JSON↔protobuf conformance tests in CI.
-3. Specify forward-compatibility behavior for unknown fields consistently across parser implementations.
-4. Document backend capability flags tied to AQO features (`RESET`, non-Z basis measurement, future ops).
-5. Extend conformance pack with backend-normalization fixtures for bit ordering.
+### Two-Qubit Gates
 
-## 10) Test expectations
+- `CX`
 
-- Round-trip tests: JSON ↔ protobuf (where protobuf path is enabled).
-- Determinism/golden tests: stable AQO bytes and hash for identical inputs.
-- Validation tests: bounds/arity/parameter checks.
-- E2E tests: compiler → kernel → driver-manager with normalized counts.
+- `CZ`
 
-## 11) References
+- `SWAP`
 
-- RFC 0005: AQO format contract.
-- RFC 0006: Driver API and `CircuitPayload` transport.
-- RFC 0007: Kernel/QFS runtime artifact lifecycle.
-- Architecture docs:
-  - `docs/architecture/overview.md`
-  - `docs/architecture/contract-map.md`
-  - `docs/architecture/data-flow.md`
+### Multi-Qubit Gates
+
+- `CCX` (Toffoli)
+
+- `CCZ`
+
+### Measurement
+
+- `MEASURE`
+
+Measurement defaults to the Z basis. The optional parameter:
+
+```json
+{
+  "basis": "X"
+}
+```
+
+may specify basis `"X"`, `"Y"`, or `"Z"`.
+
+### Reset
+
+- `RESET`
+
+Resets the specified qubit(s) into the `|0⟩` state.
+
+---
+
+The new opcode set extends the baseline IR while preserving MVP compatibility:
+
+- `RX`
+
+- `RY`
+
+- `RZ`
+
+- `CX`
+
+- `MEASURE`
+
+- `RESET`
+
+remain mandatory baseline operations, while the additional operations are implementation-dependent extensions
+
+---
+
+## Parameter Rules
+
+Operation parameters are passed via the `params` object.
+
+Version 1.0 continues to support:
+
+- numeric literals (`integer`, `float`)
+
+- symbolic identifiers
+
+Examples:
+
+```json
+{"theta": 3.14}
+```
+
+```json
+{"theta": "p0"}
+```
+
+Future versions may support symbolic expressions and functions, but version 1.0 intentionally preserves MVP determinism constraints.
+
+Validation rules:
+
+- `RX`, `RY`, `RZ` require `theta`
+
+- `X`, `Y`, `Z`, `H`, `CX`, `CZ`, `SWAP`, etc. do not accept parameters
+
+- `MEASURE` only accepts the optional `basis` parameter
+
+---
+
+## Measurement Rules
+
+The `MEASURE` operation must satisfy:
+
+```text
+len(q) == len(c)
+```
+
+By default, measurements are performed in the Z basis unless explicitly overridden via:
+
+```json
+{
+  "basis": "X"
+}
+```
+
+or
+
+```json
+{
+  "basis": "Y"
+}
+```
+
+Measured bits are written into the classical indices defined in `c`.
+
+---
+
+## Canonical Bit Ordering
+
+Execution results (`counts`) use canonical bitstring ordering:
+
+- `c[0]` is the least significant bit (rightmost)
+
+- `c[n-1]` is the most significant bit (leftmost)
+
+Example:
+
+```text
+q0 -> c0 = 1
+q1 -> c1 = 0
+```
+
+produces:
+
+`"01"`
+
+This normalization guarantees backend-independent result formatting.
+
+---
+
+## Validation Invariants
+
+AQO v1.0 must satisfy the following invariants:
+
+- all qubit indices `q[i] < qubits`
+
+- operation arity must match the opcode definition
+
+- `MEASURE` requires equal numbers of quantum and classical indices
+
+- required parameters must not be omitted
+
+- unknown opcodes must be rejected
+
+Invalid AQO payloads must fail compilation/execution with:
+
+`INVALID_ARGUMENT`
+
+---
+
+## Error Model
+
+| **Condition** | **Status** |
+|-------------------|-------------------|
+| Invalid AQO JSON/schema | `INVALID_ARGUMENT` |
+| Unknown opcode | `INVALID_ARGUMENT` |
+| Invalid operation arity | `INVALID_ARGUMENT` |
+| Unsupported AQO transport format | `UNIMPLEMENTED` |
+| Backend incompatibility | `FAILED_PRECONDITION` / `UNAVAILABLE` |
+
+---
+
+## Security and Observability
+
+AQO does not contain secrets by design, but it must be treated as executable input.
+
+Required runtime guarantees:
+
+- strict schema validation before execution
+
+- no implicit trust of external AQO payloads
+
+- deterministic parsing and normalization
+
+Recommended observability:
+
+- log AQO checksum/hash
+
+- log payload size
+
+- avoid full AQO JSON logging by default
+
+- include AQO identifiers in job metadata and tracing systems
+
+---
+
+## Performance Considerations
+
+- JSON AQO remains the canonical debugging and development format.
+
+- `AQO_PROTO` is preferred for large circuits due to lower transport overhead.
+
+- Deterministic AQO JSON generation remains mandatory in version 1.0.
+
+- Driver Manager implementations may cache parsed AQO payloads by content hash to accelerate repeated executions.

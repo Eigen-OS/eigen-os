@@ -1,170 +1,797 @@
 # System API
 
-- Phase: MVP (срез состояния на 2026-05-09)
+- **Phase:** MVP → MVP-3 gateway hardening baseline
+- **Status snapshot date:** 2026-05-25
+- **Source alignment:** RFC 0002, RFC 0004, RFC 0008, RFC 0009, ADR 0002, ADR 0012, ADR 0018, runtime API contracts, System API implementation state
 
 ## Responsibility
 
-The **System API** remains the **sole public ingress** for Eigen OS in MVP and currently provides:
+The System API is the sole public ingress boundary for Eigen OS during MVP and MVP-3 runtime evolution.
 
-1. **Public gRPC interface (implemented)**: exposes `JobService` and `DeviceService` and runs on `SYSTEM_API_GRPC_BIND` (default `0.0.0.0:50051`).
-2. **Authentication & Authorization (implemented in MVP form)**: supports `allow_all` and `static_token` modes, plus coarse RBAC/permission checks.
-3. **Request validation (implemented)**: validates job/device requests and returns canonical gRPC errors.
-4. **Forwarding/execution shim (partially implemented)**: public API behavior is implemented, but direct forwarding to a real Kernel gRPC gateway is not the active path in this service implementation (current behavior is in-process simulated runtime state machine).
-5. **Observability boundary (implemented)**: structured logs, request tracing context extraction, and Prometheus `/metrics` endpoint.
-6. **Security context propagation (partially implemented)**: `x-eigen-*` and `traceparent` are consumed at boundary; full mandatory propagation contract to all downstream internal gRPC hops is defined by RFC/ADR, but this component currently does not yet act as a strict proxy to internal services for every request path.
+It provides:
 
-### TODO (Responsibility)
+- public API exposure,
+- authentication and authorization,
+- request validation,
+- lifecycle ingress handling,
+- observability boundary enforcement,
+- security-context propagation,
+- public contract stability.
 
-- [ ] Replace in-process runtime emulation with strict gateway behavior to Kernel/Compiler for job lifecycle paths while preserving current public contract.
-- [ ] Enforce end-to-end propagation guarantees for `x-eigen-sub`, `x-eigen-roles`, `x-eigen-tenant`, `traceparent` on all internal calls, not only at ingress parsing level.
+Current implementation combines:
+
+- public gRPC API handling,
+- lightweight runtime lifecycle orchestration,
+- in-memory job state tracking,
+- partial forwarding behavior,
+- structured observability instrumentation.
+
+The long-term architecture target is a strictly stateless public gateway that forwards execution responsibility to Kernel/QRTX and associated runtime services.
+
+---
+
+# Responsibility Scope
+
+## Implemented now
+
+### Public gRPC ingress
+
+System API exposes the public Eigen OS gRPC API surface.
+
+Implemented services:
+
+### JobService
+
+- `SubmitJob`
+- `GetJobStatus`
+- `CancelJob`
+- `StreamJobUpdates`
+- `GetJobResults`
+- `GetDispatchRationale`
+
+### DeviceService
+
+- `ListDevices`
+- `GetDeviceDetails`
+- `GetDeviceStatus`
+- `ReserveDevice`
+
+System API runs on:
+
+- `SYSTEM_API_GRPC_BIND`
+
+Default:
+
+```text
+0.0.0.0:50051
+```
+
+---
+
+### Authentication and authorization
+
+Implemented authentication modes:
+
+- `allow_all`
+- `static_token`
+
+Authorization enforcement supports coarse-grained RBAC permissions.
+
+Implemented permission categories include:
+
+- `jobs:submit`
+- `jobs:read`
+- `devices:list`
+- `devices:reserve`
+
+---
+
+### Request validation
+
+Implemented validation includes:
+
+- malformed request rejection,
+- payload-size enforcement,
+- JobSpec validation,
+- request field validation,
+- canonical gRPC error mapping.
+
+Implemented gRPC error classes include:
+
+- `INVALID_ARGUMENT`
+- `UNAUTHENTICATED`
+- `PERMISSION_DENIED`
+- `NOT_FOUND`
+- `FAILED_PRECONDITION`
+
+---
+
+### Runtime lifecycle handling (partial architecture divergence)
+
+Current implementation maintains:
+
+- in-memory job registry,
+- lifecycle progression,
+- modeled runtime execution flow,
+- local lifecycle update streaming.
+
+Current behavior is not yet a strict forwarding-only gateway.
+
+---
+
+### Observability boundary
+
+Implemented observability features include:
+
+- structured JSON logs,
+- request correlation metadata,
+- trace context extraction,
+- Prometheus-compatible `/metrics`,
+- runtime request instrumentation.
+
+---
+
+### Security-context handling
+
+Ingress metadata parsing currently supports:
+
+- `x-eigen-sub`
+- `x-eigen-roles`
+- `x-eigen-tenant`
+- `traceparent`
+
+Partial downstream propagation exists.
+
+Strict end-to-end propagation guarantees are not yet fully enforced across all internal runtime hops.
+
+---
+
+### Required target responsibility (architecture baseline)
+
+The final System API SHALL provide:
+
+#### Stateless gateway behavior
+
+- strict forwarding to Kernel/QRTX,
+- no authoritative lifecycle ownership,
+- no execution-state persistence,
+- deterministic request routing.
+
+#### Public contract enforcement
+
+- canonical public API validation,
+- API-version negotiation,
+- schema compatibility enforcement,
+- backward-compatible API evolution.
+
+#### Security boundary enforcement
+
+- authentication,
+- authorization,
+- policy enforcement,
+- tenant boundary isolation,
+- audit metadata propagation.
+
+#### Runtime ingress orchestration
+
+- job submission ingress,
+- device management ingress,
+- dispatch rationale access,
+- explainability access,
+- runtime policy attachment.
+
+#### Observability ingress
+
+- distributed trace propagation,
+- telemetry correlation,
+- audit-safe request logging,
+- ingress metrics generation.
+
+---
+
+## Architecture Position
+
+System API is the mandatory public ingress layer for Eigen OS.
+
+It integrates with:
+
+- eigen-kernel
+- eigen-compiler
+- driver-manager
+- QFS
+- observability subsystem
+- security-isolation subsystem
+- future neuro-symbolic-core
+- future knowledge-base
+- future adaptive-runtime services
+
+System API is responsible for:
+
+- public API stability,
+- ingress security,
+- request normalization,
+- runtime correlation propagation,
+- deterministic external contract enforcement.
+
+---
 
 ## Interfaces
 
-### Public gRPC API (implemented)
+### 1. Public gRPC Interfaces
 
-Defined in `proto/eigen/api/v1/*.proto` and served by `system-api`:
+#### Implemented now
 
-- **JobService**: `SubmitJob`, `GetJobStatus`, `CancelJob`, `StreamJobUpdates`, `GetJobResults`, `GetDispatchRationale`.
-- **DeviceService**: `ListDevices`, `GetDeviceDetails`, `GetDeviceStatus`, `ReserveDevice`.
+Defined in:
 
-Notes:
-- `GetDispatchRationale` is additive relative to the original MVP RFC 0004 surface.
-- `StreamJobUpdates` currently streams from local job update state (poll/advance model), matching MVP semantics directionally.
+```text
+proto/eigen/api/v1/*.proto
+```
 
-### Public REST API (not implemented)
+Implemented services:
 
-- **Status**: No production REST adapter (FastAPI/Flask public `/api/v1/*`) is wired in current service runtime.
+#### JobService
 
-### TODO (Public REST API)
+- SubmitJob
+- GetJobStatus
+- CancelJob
+- StreamJobUpdates
+- GetJobResults
+- GetDispatchRationale
 
-- [ ] Implement REST adapter (`/api/v1/jobs`, `/api/v1/devices`) with generated gRPC translation and keep parity tests against gRPC responses.
+#### DeviceService
 
-### Internal gRPC clients (partially implemented vs RFC target)
+- ListDevices
+- GetDeviceDetails
+- GetDeviceStatus
+- ReserveDevice
 
-RFC 0004 and architecture docs define System API as thin gateway to Kernel/Compiler internal gRPC.
+---
 
-Current state:
-- **Kernel Gateway client**: not used as universal execution path by current `system-api` service implementation.
-- **Compiler client**: not exposed as dedicated public `CompilationService`; compile flow is represented in lifecycle simulation and broader platform contracts.
-- **Metrics endpoint**: implemented via HTTP `/metrics`.
+#### Current runtime behavior
 
-### TODO (Internal clients)
+`StreamJobUpdates` currently streams from local in-memory lifecycle state.
 
-- [ ] Complete universal forwarding path to internal `KernelGateway` RPCs per RFC 0004 Appendix A.
-- [ ] Reconcile/document the exact split of responsibilities between `system-api`, `kernel`, and `eigen-compiler` once forwarding is primary path.
+`GetDispatchRationale` exists as an additive extension relative to original MVP RFC 0004 surface.
 
-### Configuration File (`config/server.yaml`)
+---
 
-- **Status**: Not the active canonical configuration mechanism for current implementation.
-- Runtime configuration is currently environment-variable based (`SYSTEM_API_*`).
+#### Required target gRPC behavior
 
-### TODO (Configuration)
+System API SHALL provide:
 
-- [ ] Introduce and adopt `config/server.yaml` (or update architecture docs to a finalized env-only contract) to avoid configuration drift.
+- strict gateway forwarding,
+- stable API versioning,
+- backward-compatible contracts,
+- deterministic error semantics,
+- explainability contract propagation.
+
+---
+
+### 2. REST Interfaces
+
+#### Implemented now
+
+No production REST API adapter is currently implemented.
+
+No `/api/v1/*` runtime REST surface is active.
+
+---
+
+#### Required target REST interfaces
+
+**Job endpoints**
+
+- `POST /api/v1/jobs`
+- `GET /api/v1/jobs/{job_id}`
+- `POST /api/v1/jobs/{job_id}/cancel`
+- `GET /api/v1/jobs/{job_id}/results`
+
+**Device endpoints**
+
+- `GET /api/v1/devices`
+- `GET /api/v1/devices/{device_id}`
+- `POST /api/v1/devices/{device_id}/reserve`
+
+**Runtime observability endpoints**
+
+- `GET /metrics`
+- `GET /health`
+- `GET /ready`
+- `GET /live`
+
+---
+
+### 3. Internal Runtime Interfaces
+
+#### Implemented now
+
+Partial integration exists with:
+
+- kernel lifecycle flows,
+- runtime lifecycle simulation,
+- observability instrumentation.
+
+Current implementation does not universally forward all requests to Kernel/QRTX.
+
+----
+
+#### Required target integrations
+
+**Kernel Gateway**
+
+System API SHALL forward lifecycle operations to:
+
+- `KernelGatewayService`
+
+Expected operations:
+
+- `EnqueueJob`
+- `GetJobStatus`
+- `CancelJob`
+- `GetJobResults`
+
+**Compiler integration**
+
+System API SHALL integrate with:
+
+- compilation lifecycle flows,
+- validation/error propagation,
+- dispatch rationale retrieval.
+
+**Runtime propagation**
+
+System API SHALL propagate:
+
+- security metadata,
+- trace metadata,
+- request lineage identifiers,
+- replay correlation identifiers.
+
+---
+
+### 4. Configuration Interfaces
+
+#### Implemented now
+
+Runtime configuration is environment-variable based.
+
+Implemented configuration namespace:
+
+```text
+SYSTEM_API_*
+```
+
+---
+
+#### Required target configuration model
+
+System API SHALL support:
+
+- structured config files,
+- environment overrides,
+- versioned config schema,
+- deployment-safe defaults,
+- runtime policy attachment.
+
+Potential canonical configuration target:
+
+```text
+config/server.yaml
+```
+
+---
 
 ## Inputs / Outputs
 
-| **Input** | **Source** | **Current status** |
-|---|---|---|
-| Client gRPC Request | External client | Implemented. |
-| API Key / Token | gRPC metadata (`authorization`) | Implemented in `static_token` mode; `allow_all` remains supported for local/dev. |
-| JobSpec payload | Client request fields (`jobspec_yaml`, program fields) | Implemented validation + mapping checks. |
-| Security Context | gRPC metadata (`x-eigen-*`, `traceparent`) | Parsed at ingress; partial downstream propagation enforcement in current direct service behavior. |
+### Inputs
+
+#### Implemented now
+
+**Public client inputs**
+
+- gRPC requests
+- authorization metadata
+- JobSpec payloads
+- device-management requests
+
+**Metadata inputs**
+
+- `authorization`
+- `x-eigen-sub`
+- `x-eigen-roles`
+- `x-eigen-tenant`
+- `traceparent`
+
+**Validation inputs**
+
+- source payloads
+- embedded JobSpec YAML
+- runtime options
+- dispatch metadata
 
 ---
-| **Output** | **Destination** | **Current status** |
-|---|---|---|
-| gRPC Response | Client | Implemented. |
-| Internal gRPC Request | Kernel/Compiler | Partially implemented relative to RFC target; not universal path in current runtime. |
-| Security Metadata | Internal headers | RFC/ADR-required, but currently only partially represented in active `system-api` execution model. |
-| Metrics & Logs | Prometheus / log sink | Implemented (`/metrics`, structured logs). |
+
+#### Required target inputs
+
+**Runtime ingress metadata**
+
+- tenant metadata
+- policy metadata
+- replay identifiers
+- optimizer hints
+- explainability context
+
+**Distributed tracing metadata**
+
+- trace lineage
+- correlation IDs
+- runtime propagation headers
+- deterministic replay markers
+
+---
+
+### Outputs
+
+#### Implemented now
+
+Current outputs include:
+
+- public gRPC responses,
+- lifecycle updates,
+- structured logs,
+- metrics payloads,
+- validation errors,
+- authorization failures.
+
+---
+
+#### Required target outputs
+
+**Runtime forwarding outputs**
+
+- KernelGateway RPCs
+- runtime lifecycle requests
+- compiler forwarding requests
+- explainability retrieval requests
+
+**Observability outputs**
+
+- distributed trace metadata
+- ingress metrics
+- structured audit logs
+- replay correlation markers
+
+**Security outputs**
+
+- propagated auth context
+- authorization decisions
+- sanitized telemetry
+- policy metadata
+
+---
 
 ## Storage / State
 
-Current implementation is **not fully stateless**:
+### Implemented now
 
-- In-memory job registry and lifecycle updates are maintained in service process.
-- In-memory idempotency map is maintained.
-- No durable persistence in `system-api` for these records.
+Current implementation maintains:
 
-This differs from the long-term target where Kernel/QFS own authoritative state.
+- in-memory job registry,
+- lifecycle state,
+- idempotency tracking,
+- request correlation state.
 
-### TODO (Storage/State)
+No durable persistence layer exists in System API.
 
-- [ ] Remove authoritative runtime state ownership from `system-api`; move to strict stateless API gateway behavior backed by Kernel/QFS.
-- [ ] If temporary caches remain (token/device/rate-limit), document explicit TTLs and consistency guarantees.
+This differs from target architecture where authoritative runtime state belongs to:
+
+- Kernel/QRTX
+- QFS
+- runtime persistence layers
+
+---
+
+### Required target storage behavior
+
+System API SHALL become:
+
+- stateless,
+- replay-safe,
+- horizontally scalable,
+- forwarding-only for runtime ownership.
+
+Allowed transient state MAY include:
+
+- token caches,
+- rate-limit state,
+- bounded request deduplication caches.
+
+Any retained state SHALL define:
+
+- TTL,
+- consistency guarantees,
+- replay semantics,
+- failure behavior.
+
+---
 
 ## Failure Modes
 
-Implemented and aligned behaviors:
+### Implemented now
 
-| **Failure** | **Detection** | **Current handling** |
-|---|---|---|
-| Invalid/Malformed Request | Field validation | `INVALID_ARGUMENT` with structured details. |
-| Authentication Failure | Auth check | `UNAUTHENTICATED`. |
-| Authorization Failure | RBAC/permission check | `PERMISSION_DENIED`. |
-| Payload/size issues | Validation limits | Rejected as `INVALID_ARGUMENT`. |
-| Missing job/device | Lookup | `NOT_FOUND`. |
-| Results requested too early | Lifecycle state check | `FAILED_PRECONDITION`. |
+#### Validation failures
 
-### TODO (Failure Modes)
+Handled via:
+- canonical request validation
 
-- [ ] Reintroduce/confirm `UNAVAILABLE` and retry behavior against real downstream Kernel/Compiler outages when forwarding path is primary.
-- [ ] Add explicit rate limiter implementation and `RESOURCE_EXHAUSTED` behavior (currently documented target, not fully enforced runtime contract).
+Outputs:
+
+- `INVALID_ARGUMENT`
+
+#### Authentication failures
+
+Outputs:
+
+- `UNAUTHENTICATED`
+
+#### Authorization failures
+
+Outputs:
+
+- `PERMISSION_DENIED`
+
+#### Missing resources
+
+Outputs:
+
+- `NOT_FOUND`
+
+#### Invalid lifecycle access
+
+Outputs:
+
+- `FAILED_PRECONDITION`
+
+---
+
+### Required target failure taxonomy
+
+#### Downstream runtime failures
+
+- Kernel unavailable
+- compiler unavailable
+- driver-manager unavailable
+- timeout propagation failure
+
+#### Capacity failures
+
+- rate-limit exceeded
+- ingress overload
+- resource exhaustion
+
+#### Propagation failures
+
+- trace metadata loss
+- auth-context propagation failure
+- replay correlation inconsistency
+
+---
+
+### Required recovery behavior
+
+System API SHALL support:
+
+- retry-safe forwarding,
+- deterministic error mapping,
+- bounded retries,
+- circuit breakers,
+- replay-safe request handling,
+- graceful degradation.
+
+---
 
 ## Observability
 
-### Metrics (implemented)
+### Metrics
 
-- `/metrics` endpoint is implemented.
-- Request/latency/in-flight/authz-denied style instrumentation is present in service observability module.
+#### Implemented now
 
-### Logs (implemented)
+Implemented metrics include request and authorization instrumentation.
 
-- Structured logs include `service=system-api`, method, request context, and trace correlation fields.
+Prometheus-compatible `/metrics` endpoint exists.
 
-### Traces (implemented at ingress, partial end-to-end by architecture intent)
+---
 
-- `traceparent` and trace identifiers are parsed/extracted at boundary and logged.
+#### Required target metrics
 
-### TODO (Observability)
+**API metrics**
 
-- [ ] Publish and freeze exact metric names/label schema used in code as normative contract in `docs/reference/*`.
-- [ ] Add explicit conformance tests that assert end-to-end trace/security-header propagation through real system-api → kernel → downstream calls.
+- `eigen_api_requests_total`
+- `eigen_api_request_duration_seconds`
+- `eigen_api_requests_inflight`
+- `eigen_api_authz_denied_total`
 
-## RFC / ADR cross-check
+**Gateway metrics**
 
-Checked against:
+- forwarding latency
+- downstream error rate
+- retry count
+- propagation failures
 
-- RFC 0002 (architecture boundaries)
-- RFC 0004 (public gRPC API)
-- RFC 0008 (observability MVP)
-- RFC 0009 (security/isolation MVP)
-- ADR 0002 (MVP1 contract baseline)
-- ADR 0012 (explainability API contract)
-- ADR 0018 (API/contract versioning policy)
+**Security metrics**
 
-Alignment summary:
+- auth failures
+- permission denials
+- validation failures
+- policy rejections
 
-- Public gRPC surface and error-model direction are implemented and extended safely.
-- Explainability endpoint exists (post-RFC0004 additive evolution).
-- Observability boundary exists (`/metrics`, structured logs, trace context parsing).
-- Main gap to RFC architecture target: System API still contains in-process lifecycle/state behavior instead of being a thin, always-forwarding gateway.
+---
 
-### TODO (RFC/ADR closure)
+### Logs
 
-- [ ] Add explicit matrix table (`RFC/ADR requirement` → `implemented in code` → `gap/todo`) and keep it versioned per release phase.
-- [ ] For each non-implemented RFC/ADR item, track corresponding issue IDs directly in this document.
+#### Implemented now
 
-## Implementation Notes for MVP (actual as-is)
+Structured JSON logs include:
 
-1. gRPC server is the primary and implemented interface.
-2. Auth modes are intentionally lightweight (`allow_all`, `static_token`) for MVP/dev ergonomics.
-3. Validation and gRPC status mapping are implemented.
-4. Device APIs are functional but still minimal/stub-like in returned inventory semantics.
-5. Job lifecycle APIs are functionally implemented with in-memory modeled execution progression.
+- service=system-api
+- request identifiers
+- trace correlation fields
+- method names
+- lifecycle metadata
 
-### TODO (Implementation notes)
+---
 
-- [ ] Deliver production-grade device inventory/reservation integration with real Resource Manager/Kernel state.
-- [ ] Eliminate skeleton/stub wording and implementation debt once internal forwarding architecture is fully enforced.
+#### Required target logging
+
+System API SHALL emit:
+
+- ingress audit logs,
+- forwarding lifecycle logs,
+- propagation diagnostics,
+- replay correlation logs,
+- policy evaluation logs.
+
+---
+
+### Traces
+
+#### Implemented now
+
+`traceparent` parsing and trace extraction are implemented at ingress.
+
+---
+
+#### Required target tracing
+
+Distributed tracing SHALL span:
+
+- System API
+- kernel
+- compiler
+- driver-manager
+- adaptive runtime components
+
+Required trace metadata:
+
+- request lineage
+- job lineage
+- dispatch rationale IDs
+- replay identifiers
+- auth context propagation status
+
+---
+
+### Health Checks
+
+#### Implemented now
+
+Basic runtime health behavior exists through service/runtime infrastructure.
+
+---
+
+#### Required target health model
+
+**Gateway health**
+
+- ingress readiness
+- forwarding-path health
+- downstream connectivity
+- auth subsystem health
+
+**Runtime health**
+
+- request backlog
+- propagation integrity
+- replay consistency
+- overload state
+
+---
+
+### Dashboards and Alerts
+
+#### Implemented now
+
+Metrics and structured logs are available through current observability tooling.
+
+---
+
+#### Required target dashboards
+
+**API dashboards**
+
+- ingress throughput
+- request latency
+- downstream failures
+- auth failures
+- request distribution
+
+**Alert categories**
+
+- forwarding failures
+- downstream unavailability
+- propagation loss
+- overload conditions
+- replay inconsistencies
+- security anomalies
+
+---
+
+## Security and Compliance
+
+### Implemented now
+
+Current security baseline includes:
+
+- explicit auth modes,
+- coarse-grained RBAC,
+- payload validation,
+- structured request telemetry.
+
+---
+
+### Required target controls
+
+#### Security controls
+
+- OIDC/JWT federation
+- policy-driven authorization
+- tenant isolation
+- ingress rate limiting
+- audit-grade telemetry
+
+#### Compliance controls
+
+- deterministic replay support
+- immutable audit references
+- versioned API contracts
+- traceable ingress lineage
+
+---
+
+## Alignment Summary
+
+### Implemented and aligned
+
+The following capabilities are implemented:
+
+- public gRPC ingress,
+- validation/error mapping,
+- authentication and coarse authorization,
+- structured observability boundary,
+- metrics endpoint,
+- trace-context parsing,
+- explainability endpoint support.
+
+### Remaining architecture gaps
+
+The following architecture targets remain not fully implemented:
+
+- strict stateless gateway behavior,
+- universal forwarding to Kernel/QRTX,
+- durable downstream propagation guarantees,
+- REST parity layer,
+- production-grade rate limiting,
+- distributed replay-safe forwarding guarantees,
+- fully centralized runtime ownership outside System API.
+
+These gaps remain explicitly preserved as required future work to prevent architecture scope loss.

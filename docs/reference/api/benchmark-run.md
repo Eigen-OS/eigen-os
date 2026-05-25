@@ -1,49 +1,34 @@
-# Benchmark Run API Contract (`/benchmarks/run`)
+# REST API: Benchmark Run (`POST /benchmarks/run`)
 
-- **Endpoint (contract target):** `POST /benchmarks/run`
-- **Current implementation artifact:** `BenchmarkRunApi.run(request: dict) -> dict` in `benchmark_service.run_api`
-- **Contract version:** `1.0.0`
-- **DTO versioning policy:** SemVer (`MAJOR.MINOR.PATCH`)
-- **Current artifact markers:**
-  - `api_version: 1.0.0`
-  - `run.state_contract_version: 1.0.0`
-  - `snapshot.contract_version: 1.0.0`
-  - `snapshot.snapshot_version: 1.0.0`
-  - `snapshot.history_entry_version: 1.0.0`
+## 1. Request Schema
 
-## Purpose and scope
+- **Endpoint:** `POST /benchmarks/run`
 
-This contract documents the stable payload surface for creating benchmark runs in Phase-3 benchmark-service.
+- **Content-Type:** `application/json`
 
-Runtime behavior covered by this contract:
-
-- request validation;
-- idempotent run creation by `idempotency_key`;
-- deterministic snapshot metadata (`request_hash`, canonical `payload`);
-- normalized success/error envelopes.
-
-## Request schema
-
-Required fields:
-
-- `idempotency_key` (`string`, non-empty after `trim`)
-- `config` (`object`, non-empty)
-
-Example:
+- **Request JSON:**
 
 ```json
 {
-  "idempotency_key": "phase3-run-001",
-  "config": {
+  "idempotency_key": "<string>",   // required, non-empty
+  "config": {                      // required, non-empty object
+    // Benchmark configuration parameters (implementation-defined)
     "dataset": "qsbench-core",
     "dataset_version": "2026.04.27",
     "backend": "simulator",
     "seed": 42
+    // ... (other domain-specific keys as needed)
   }
 }
 ```
 
-## Success response schema
+  - `idempotency_key` (string): **required.** A unique client-provided key to ensure idempotent creation. Must be a non-empty string (whitespace trimmed).
+
+  - `config` (object): **required.** Arbitrary JSON with benchmark parameters. Must be a non-empty object.
+
+## 2. Success Response (201 Created)
+
+On successful creation (or retrieval of an existing run with the same idempotency key), returns HTTP 201 and a JSON body:
 
 ```json
 {
@@ -53,30 +38,45 @@ Example:
     "state": "PENDING",
     "state_contract_version": "1.0.0",
     "parent_run_id": null,
-    "idempotency_key": "phase3-run-001"
+    "idempotency_key": "<same as request>"
   },
   "snapshot": {
     "contract_version": "1.0.0",
     "snapshot_version": "1.0.0",
     "history_entry_version": "1.0.0",
     "run_id": "run_...",
-    "request_hash": "<sha256>",
-    "created_at": "2026-04-27T00:00:00+00:00",
-    "payload": "{\"backend\":\"simulator\",...}"
+    "request_hash": "<sha256 of payload>",
+    "created_at": "2026-05-21T12:34:56Z",
+    "payload": "{\"backend\":\"simulator\", ...}" 
   }
 }
 ```
 
-Field notes:
+- **Field notes:**
 
-- `run.run_id` is deterministic for the same start tuple (`scope=start`, `idempotency_key`, canonicalized `config`).
-- `run.state` is always `PENDING` immediately after successful creation.
-- `snapshot.payload` is canonical JSON (`sort_keys=True`, compact separators).
-- `snapshot.request_hash` is SHA-256 of canonical `snapshot.payload`.
+  - `api_version`: API contract version (here `1.0.0`).
 
-## Error envelope
+  - `run.run_id`: Deterministic identifier of the run.
 
-Validation failures map to canonical public style with structured field details:
+  - `run.state`: Always "`PENDING`" immediately after creation.
+
+  - `state_contract_version`: Same as `api_version` (since run states are part of the v1.0.0 contract).
+
+  - `parent_run_id`: Always `null` on creation (reserved for future tree of runs).
+
+  - `snapshot.contract_version`: Semantic version of the request envelope (same as `api_version`).
+
+  - `snapshot.snapshot_version`: Version of the snapshot format (also `1.0.0`).
+
+  - `snapshot.history_entry_version`: Version of history entries (set to `1.0.0`).
+
+  - `snapshot.request_hash`: SHA-256 hash of the canonical JSON payload.
+
+  - `snapshot.payload`: Canonical (sorted keys, no whitespace) JSON string of the `config`.
+
+## 3. Error Response (4xx)
+
+Validation or other request failures return HTTP 400 with a structured JSON error envelope:
 
 ```json
 {
@@ -89,63 +89,64 @@ Validation failures map to canonical public style with structured field details:
         "field": "idempotency_key",
         "message": "idempotency_key is required and must be a non-empty string"
       }
+      // ... potentially multiple field errors
     ]
   }
 }
 ```
 
-Validation rules currently enforced:
+- **Validation rules:**
+  
+  - `idempotency_key` must be a non-empty string.
 
-- `idempotency_key` must be non-empty string;
-- `config` must be non-empty object.
+  - `config` must be a non-empty JSON object.
 
-## Lifecycle linkage
+- On validation failure, `code` is `INVALID_ARGUMENT`. The `message` is a summary, and `details` lists each field error with `field`, `code`, and `message`.
 
-`/benchmarks/run` creates a run in lifecycle state machine `1.0.0`:
+## 4. Lifecycle and Semantics
 
-`PENDING -> PREPARING -> RUNNING -> SUCCEEDED|FAILED|CANCELLED`
+- Runs follow the state machine: `PENDING → PREPARING → RUNNING → SUCCEEDED|FAILED|CANCELLED`.
 
-Transition rules and retry semantics are defined in lifecycle core (`retry_run` allowed only from `FAILED` or `CANCELLED`).
+- The system ensures idempotency by `idempotency_key`: the same key and config will not create duplicate runs.
 
-## Compatibility policy
+- On error during creation or if the run exists, the service handles it as idempotent.
 
-- Removing/changing required request fields without MAJOR bump is prohibited.
-- Optional additive fields use MINOR.
-- PATCH may include only fixes/clarifications without public semantic change.
-- Deprecated fields must live through at least one MINOR release before removal.
+## 5. Versioning and Compatibility
 
-## Implementation status snapshot (фиксируем текущее состояние)
+- **Contract version:** 1.0.0 (breaking changes require v2.0).
 
-Status as of **2026-05-09**:
+- **Field extensions:** Adding new optional fields may use MINOR bumps; removing required fields needs MAJOR bump.
 
-- ✅ Contract-level request/response surface is implemented and covered by fixture tests.
-- ✅ Idempotent start by `idempotency_key` is implemented in lifecycle service.
-- ✅ Deterministic payload canonicalization + hash generation are implemented.
-- ⚠️ HTTP transport binding for `POST /benchmarks/run` is not part of benchmark-service code here; current implementation is a Python contract API object (`BenchmarkRunApi`) invoked directly in tests.
-- ⚠️ No persisted storage in this module: lifecycle store is in-memory, so idempotency/replay guarantees are process-local.
-- ⚠️ No authn/authz, quotas, and rate-limiting rules are specified in this API contract yet.
-- ⚠️ No explicit request size limits / schema-level `config` constraints beyond "non-empty object".
+## 6. Implementation Status & Gaps
 
-## What is missing to reach production-ready endpoint (чего не хватает)
+- **Implemented:**
 
-1. **Transport layer binding**
-   - Explicit HTTP handler/controller that maps `POST /benchmarks/run` to `BenchmarkRunApi.run`.
-2. **Durable state**
-   - Persistent run store + idempotency index (DB-backed) with crash-safe recovery.
-3. **Operational policies**
-   - AuthN/AuthZ, tenant isolation, quotas/rate limits, and audit events.
-4. **Schema hardening**
-   - Structured schema for `config` (required keys, types, allowed ranges).
-5. **SLO/SLA and errors**
-   - Timeout/retry semantics, expanded error taxonomy, and observability SLO instrumentation.
-6. **Backward-compat governance**
-   - Automated SemVer contract check against previous released fixtures/tags.
+  - Contract logic in `BenchmarkRunApi.run()` matches the above schema.
 
-## Contract tests and CI gate
+  - Validation, idempotent run creation, and snapshot generation are implemented (in-memory).
 
-Contract fixture tests are stored under:
+  - Fixture tests (`test_run_api_contract.py`) verify the JSON shapes and idempotency.
 
-- `src/services/benchmark-service/tests/fixtures/contracts/benchmark_run_v1/`
-- `src/services/benchmark-service/tests/test_run_api_contract.py`
+- **Missing / Partial:**
 
-These tests enforce required request/response/error envelope fields and block incompatible changes in CI.
+  - **Transport binding:** No actual HTTP handler is implemented in this repository. The `BenchmarkRunApi` class is a Python object (used in tests) but there is no HTTP endpoint.
+
+  - **Persistence:** Current implementation uses in-memory store; no durable database for run state or idempotency.
+
+  - **AuthN/AuthZ/Quotas:** No authentication or authorization is enforced; multi-tenant isolation or quotas are not implemented.
+
+  - **Size/schema constraints:** No detailed JSON Schema for `config` (all fields allowed), nor request size limits.
+
+- **Tasks to complete:**
+
+  1. **HTTP Handler:** Create a REST controller (e.g. Flask or FastAPI) for `POST /benchmarks/run` that calls `BenchmarkRunApi.run()`. Add routing to expose this endpoint.
+
+  2. **Durable Storage:** Hook up a database (e.g. PostgreSQL or SQLite) for runs and idempotency. Ensure crash recovery and global consistency of `run_id`.
+
+  3. **Security:** Integrate JWT/OAuth2 tokens and ACL checks; ensure only authorized clients can call this endpoint.
+
+  4. **Request Schema:** Define a stricter JSON Schema for `config` (required keys, data types) and enforce it.
+
+  5. **Error taxonomy:** Expand error handling (e.g. return `ALREADY_EXISTS` for duplicate run, `RESOURCE_EXHAUSTED` for quotas, etc.).
+
+  6. **CI Contract Tests:** Add automated tests in CI to catch any JSON contract breaks using the existing fixture tests.
