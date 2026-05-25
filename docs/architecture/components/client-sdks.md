@@ -1,756 +1,791 @@
 # Eigen OS Client SDKs
 
-> **Implementation status snapshot (as of 2026-05-08):**
-> This document is aligned with the current repository state, RFCs, and ADRs. Implemented items are marked as current behavior; missing items are explicitly captured as **TODO** so nothing is lost.
+Status snapshot: updated on 2026-05-25 based on implemented repository state, RFC index, ADR index, integration tests, and architectural contracts.
 
-## 1. Overview and Purpose
+This document is the canonical specification of the Eigen OS Client SDK layer.
+It explicitly separates:
 
-**Client SDK** is a set of client libraries and utilities that provide a unified, consistent interface for interacting with Eigen OS. The SDK offers high-level abstractions for quantum computing tasks, hiding the complexities of protocols and serialization.
+- functionality required by the technical specification (target architecture),
+- functionality already implemented,
+- functionality planned but not yet implemented.
 
-### 1.1 Key Goals
+The document is normative for SDK architecture, public contracts, and integration behavior.
 
-- **Simplified Integration**: Provide developers with intuitive, easy-to-use APIs
+---
 
-- **Multi-language Support**: Availability across different ecosystems (Python, Rust, JavaScript)
+## 1. Purpose
 
-- **Performance**: Minimize client-side overhead
+The Eigen OS Client SDKs provide standardized client interfaces for interacting with the Eigen OS distributed hybrid quantum-classical runtime.
 
-- **Security**: Built-in authentication and authorization mechanisms
+The SDK layer abstracts:
 
-- **Reliability**: Automatic recovery from failures and comprehensive error handling
+- transport protocols,
+- authentication,
+- serialization,
+- job lifecycle management,
+- observability,
+- compatibility handling,
+- backend communication complexity.
 
-## 2. Architectural Principles
+The SDKs are intended for:
 
-### 2.1 Modularity
+- research environments,
+- production orchestration systems,
+- ML/AI pipelines,
+- scientific computing workflows,
+- cloud automation platforms,
+- IDE and notebook integrations.
 
-Each SDK is an independent module with clearly defined boundaries:
+---
 
-- **Core**: Main client logic
+## 2. Scope
 
-- **Transport**: Network layer (gRPC, REST, WebSocket)
+The Client SDK layer is responsible for:
 
-- **Serialization**: Data serialization/deserialization
+- submitting quantum and hybrid jobs,
+- interacting with runtime services,
+- monitoring execution state,
+- retrieving execution results,
+- querying device information,
+- managing authentication and session state,
+- exposing observability hooks,
+- handling retries and transport failures,
+- providing language-native developer ergonomics.
 
-- **Utilities**: Helper functions and utilities
+The SDK layer is **not responsible** for:
 
-### 2.2 Unified API Design
+- executing quantum programs locally,
+- bypassing Eigen OS validation,
+- direct hardware access,
+- server-side scheduling,
+- compilation determinism guarantees,
+- runtime isolation.
 
-All language implementations follow consistent principles:
+Those responsibilities belong to the Eigen OS backend services.
 
-- Identical method and class names
+---
 
-- Similar operation semantics
+## 3. Supported SDKs
 
-- Unified error and exception models
+### 3.1 Current Status
 
-### 2.3 "Transport First" Strategy
+| **SDK** | **Status** | **Notes** |
+|---|---|---|
+| Python SDK | Planned | Primary reference SDK |
+| Rust SDK | Planned | High-performance production integration |
+| JavaScript/TypeScript SDK | Planned | Browser and Node.js support |
+| CLI | Partially implemented | Uses gRPC APIs |
+| Go SDK | Deferred | Not part of MVP |
+| Java SDK | Deferred | Enterprise roadmap item |
 
-- **Primary Transport**: gRPC for maximum performance
+---
 
-- **Fallback Transport**: REST for compatibility
+## 4. Architectural Principles
 
-- **Streaming Transport**: WebSocket for real-time updates
+### 4.1 Unified API Semantics
 
-### 2.4 What is actually implemented now
+All SDKs MUST expose equivalent semantic behavior:
 
-- **Implemented now**: gRPC is the primary implemented transport across public/internal APIs.
-- **Implemented now**: server-streaming updates are available via `StreamJobUpdates` over gRPC.
-- **TODO**: REST fallback transport implementation and compatibility layer.
-- **TODO**: WebSocket transport for real-time updates outside gRPC streaming.
+- identical lifecycle concepts,
+- consistent naming,
+- compatible error categories,
+- equivalent transport behavior,
+- equivalent authentication behavior.
 
-## 3. Responsibility
+Language-specific idioms MAY differ, but behavioral contracts MUST remain equivalent.
 
-The Client SDKs are responsible for:
+---
 
-- **Program Submission**: Packaging and sending quantum programs (Eigen-Lang, QASM) to Eigen OS
+### 4.2 Transport-First Architecture
 
-- **Job Management**: Submitting, monitoring, and retrieving results of quantum jobs
+#### Mandatory transport hierarchy
 
-- **Device Interaction**: Listing available quantum devices, checking status, reserving devices
+| **Priority** | **Transport** | **Status** |
+|---|---|---|
+| Primary | gRPC | Implemented |
+| Secondary | REST | Planned |
+| Streaming | WebSocket | Planned |
 
-- **Circuit Compilation**: Compiling quantum circuits locally or via remote compilation service
+#### Current implementation
 
-- **Authentication**: Managing credentials and authentication tokens
+Implemented now:
 
-- **Error Handling**: Implementing retry logic, circuit breakers, and graceful degradation
+- gRPC transport,
+- protobuf-based serialization,
+- server-streaming job updates.
 
-- **Observability**: Instrumenting client-side metrics, logs, and traces
+Not implemented:
 
-- **Caching**: Implementing multi-level caching for performance optimization
+- REST fallback transport,
+- WebSocket real-time transport,
+- automatic transport failover.
 
-## 4. Interfaces
+---
 
-### 4.1 Public gRPC API (RFC 0004)
+### 4.3 Stateless Client Model
 
-SDKs implement client interfaces for the following services:
+SDK clients SHOULD remain stateless whenever possible.
 
-**JobService**:
+Persistent state MAY include:
 
-- `SubmitJob(SubmitJobRequest) → JobResponse`
+- auth credentials,
+- connection pools,
+- local cache entries,
+- retry metadata.
 
-- `GetJobStatus(JobStatusRequest) → JobStatusResponse`
+Execution state is authoritative only on Eigen OS services.
 
-- `CancelJob(CancelJobRequest) → CancelJobResponse`
+---
 
-- `StreamJobUpdates(JobUpdatesRequest) → stream JobUpdate`
+### 4.4 Versioned Contracts
 
-- `GetJobResults(JobResultsRequest) → JobResultsResponse`
+All SDKs MUST follow versioned API contracts defined by:
 
-**DeviceService**:
+- RFC 0003 — JobSpec,
+- RFC 0004 — Public APIs,
+- RFC 0005 — AQO,
+- RFC 0006 — Driver API,
+- RFC 0011 — Program sources,
+- RFC 0012 — Eigen-Lang subset.
 
-- `ListDevices(ListDevicesRequest) → ListDevicesResponse`
+---
 
-- `GetDeviceDetails(DeviceDetailsRequest) → DeviceDetailsResponse`
+## 5. Implemented Architecture
 
-- `GetDeviceStatus(DeviceStatusRequest) → DeviceStatusResponse`
+### 5.1 Public API Surface
 
-- `ReserveDevice(ReserveDeviceRequest) → ReserveDeviceResponse`
+Implemented public services:
 
-**CompilationService**:
+| **Service** | **Status** |
+|---|---|
+| JobService | Implemented |
+| DeviceService | Implemented |
 
-- `CompileCircuit(CompileCircuitRequest) → CompileCircuitResponse`
+Internal-only services:
 
-- `OptimizeCircuit(OptimizeCircuitRequest) → OptimizeCircuitResponse`
+| **Service** | **Status** |
+|---|---|
+| CompilationService | Internal-only |
 
-- `ValidateCircuit(ValidateCircuitRequest) → ValidateCircuitResponse`
+Compilation APIs are not currently exposed as stable public SDK endpoints.
 
-**Status clarification against RFC 0004 and implementation:**
+---
 
-- **Implemented now (public)**: `JobService` and `DeviceService` in `eigen.api.v1`.
-- **Implemented now (internal only)**: `CompilationService` in `eigen.internal.v1`.
-- **TODO**: If product direction requires public compile endpoints, promote/bridge compilation APIs in a future API version (explicitly deferred in RFCs).
+### 5.2 Transport Layer
 
-### 4.2 Authentication Interfaces
+Implemented:
 
-- **JWT Authentication**: JSON Web Tokens for stateless authentication
+- gRPC channels,
+- protobuf serialization,
+- streaming RPC updates,
+- request validation,
+- status/error propagation.
 
-- **API Key Authentication**: Simple key-based authentication
+Planned:
 
-- **OAuth2 Authentication**: Standard OAuth2 flows
+- REST transport,
+- WebSocket transport,
+- automatic transport downgrade.
 
-- **mTLS Authentication**: Mutual TLS for certificate-based authentication
+---
 
-- **Token Management**: Automatic token refresh and storage
+### 5.3 Authentication Baseline
 
-**Status:**
+Implemented:
 
-- **Implemented now**: Authentication baseline and enforcement exist on service methods.
-- **TODO**: Documented multi-method client auth stack (full JWT/API key/OAuth2/mTLS abstraction inside SDKs) as reusable SDK components.
+- service-side auth enforcement,
+- token propagation,
+- request authorization hooks.
 
-### 4.3 Transport Interfaces
+Not yet standardized across SDKs:
 
-- **gRPC Transport**: Primary transport using Protocol Buffers v3
+- JWT helpers,
+- OAuth2 flows,
+- API key abstraction,
+- mTLS helpers,
+- token refresh lifecycle.
 
-- **REST Transport**: Fallback transport with JSON serialization
+---
 
-- **WebSocket Transport**: Streaming updates and real-time notifications
+### 5.4 Validation
 
-**Status:**
+Implemented:
 
-- **Implemented now**: gRPC.
-- **TODO**: REST transport.
-- **TODO**: WebSocket transport.
+-  JobSpec validation,
+- Eigen-Lang AST restrictions,
+- request schema validation,
+- protobuf validation contracts.
 
-## 5. Inputs / Outputs
+Planned:
 
-### 5.1 Input Formats
+- client-side preflight validation wrappers,
+- unified validation middleware across SDK languages.
 
-**Job Specification (JobSpec v0.1 - RFC 0003):**
+---
+
+### 5.5 Observability
+
+Implemented:
+
+- trace propagation,
+- correlation IDs,
+- structured service logs,
+- OpenTelemetry-compatible tracing.
+
+Planned:
+
+- dedicated SDK telemetry packages,
+- SDK metric exporters,
+- standardized SDK log schemas.
+
+---
+
+## 6. SDK Responsibilities
+
+The SDK layer MUST provide the following capabilities.
+
+### 6.1 Job Submission
+
+The SDK MUST support submission of:
+
+- Eigen-Lang source,
+- OpenQASM 3.0 source,
+- AQO references.
+
+Submission MUST support:
+
+- compiler options,
+- metadata,
+- priority,
+- target backend selection.
+
+---
+
+### 6.2 Job Lifecycle Management
+
+SDKs MUST support:
+
+- job creation,
+- status polling,
+- streaming updates,
+- cancellation,
+- result retrieval.
+
+---
+
+### 6.3 Device Interaction
+
+SDKs MUST support:
+
+- listing devices,
+- querying device status,
+- querying capabilities,
+- device reservation requests.
+
+---
+
+### 6.4 Error Handling
+
+SDKs MUST expose structured error categories.
+
+Mandatory categories:
+
+| **Category** | **Description** |
+|---|---|
+| NetworkError | Transport/connectivity failure |
+| AuthenticationError | Invalid or expired credentials |
+| AuthorizationError | Access denied |
+| ValidationError | Invalid request payload |
+| ResourceError | Quota/device exhaustion |
+| InternalError | Server-side failure |
+| TimeoutError | Deadline exceeded |
+
+---
+
+### 6.5 Observability Hooks
+
+SDKs MUST support:
+
+- trace propagation,
+- metrics emission,
+- structured logging hooks,
+- correlation IDs.
+
+---
+
+## 7. Public Interfaces
+
+### 7.1 JobService
+
+#### SubmitJob
+
+```text
+rpc SubmitJob(SubmitJobRequest)
+    returns (JobResponse);
+```
+
+#### GetJobStatus
+
+```text
+rpc GetJobStatus(JobStatusRequest)
+    returns (JobStatusResponse);
+```
+
+#### CancelJob
+
+```text
+rpc CancelJob(CancelJobRequest)
+    returns (CancelJobResponse);
+```
+
+#### StreamJobUpdates
+
+```text
+rpc StreamJobUpdates(JobUpdatesRequest)
+    returns (stream JobUpdate);
+```
+
+#### GetJobResults
+
+```text
+rpc GetJobResults(JobResultsRequest)
+    returns (JobResultsResponse);
+```
+
+---
+
+### 7.2 DeviceService
+
+#### ListDevices
+
+```text
+rpc ListDevices(ListDevicesRequest)
+    returns (ListDevicesResponse);
+```
+
+#### GetDeviceDetails
+
+```text
+rpc GetDeviceDetails(DeviceDetailsRequest)
+    returns (DeviceDetailsResponse);
+```
+
+#### GetDeviceStatus
+
+```text
+rpc GetDeviceStatus(DeviceStatusRequest)
+    returns (DeviceStatusResponse);
+```
+
+#### ReserveDevice
+
+```text
+rpc ReserveDevice(ReserveDeviceRequest)
+    returns (ReserveDeviceResponse);
+```
+
+---
+
+## 8. Input Formats
+
+### 8.1 JobSpec
+
+Canonical format:
+
 ```yaml
 apiVersion: eigen.os/v0.1
 kind: QuantumJob
 metadata:
-  name: vqe-h2
-  labels:
-    example: "true"
+  name: example-job
+
 spec:
   program: |
-    # Eigen-Lang source
     @hybrid_program
     def main():
-        ...
+        pass
+
   target: sim:local
   priority: 50
-  compiler_options:
-    optimization_level: "1"
-  metadata:
-    shots: "1024"
-    max_iters: "50"
 ```
 
-**Program Sources** (RFC 0011):
+---
 
-- `eigen_lang_source`: Eigen-Lang Python DSL source code
+### 8.2 Supported Program Sources
 
-- `qasm3_source`: OpenQASM 3.0 source code
+| **Source Type** | **Status** |
+|---|---|
+| Eigen-Lang source | Implemented |
+| OpenQASM 3 source | Planned/partial |
+| AQO reference | Implemented internally |
 
-- `aqo_ref`: Reference to pre-compiled AQO in QFS
+---
 
-**Eigen-Lang v0.1** (RFC 0012):
+## 9. Output Formats
 
-- Python DSL with `@hybrid_program decorator`
+### 9.1 Job Results
 
-- Restricted AST nodes and imports
+Result payloads MUST support:
 
-- No execution of user Python code on server
-
-### 5.2 Output Formats
-
-**Job Results:**
-
-- Measurement counts: `map<string, int64>`
-
-- Execution metadata: `map<string, string>`
-
-- Error information: Structured error envelope
-
-**Compilation Results:**
-
-- AQO (Abstract Quantum Operations) format v0.1 (RFC 0005)
-
-- JSON or Protocol Buffers serialization
-
-- Optional QASM3 output for debugging
-
-**Device Information:**
-
-- Device status: `ONLINE`, `OFFLINE`, `CALIBRATING`, `MAINTENANCE`
-
-- Queue depth and estimated wait times
-
-- Hardware capabilities and constraints
-
-## 6. Storage / State
-
-### 6.1 Local Storage
-
-- **Configuration Storage**: `~/.config/eigen/config.toml`
-
-- **Credential Storage**: Encrypted storage of authentication tokens
-
-- **Cache Storage**: Multi-level cache (memory, Redis, disk)
-
-**Status:**
-
-- **TODO**: Standardized SDK-side filesystem config/credential/cache layout is not yet delivered as a unified SDK implementation artifact.
-
-### 6.2 Caching Strategy
-
-**Multi-level Cache:**
-
-1. **L1 (Memory)**: TTL-based cache for frequently accessed data
-
-2. **L2 (Redis)**: Shared cache for distributed clients
-
-3. **L3 (Disk)**: Persistent cache for large artifacts
-
-**Cache Invalidation:**
-
-- Time-based (TTL)
-
-- Event-based (job completion, device status change)
-
-- Manual invalidation via API
-
-**Status:**
-
-- **TODO**: Multi-level SDK cache (L1/L2/L3), invalidation strategies, and API controls are not yet implemented as a shipped SDK capability.
-
-### 6.3 State Management
-
-- **Job State Tracking**: Local tracking of submitted jobs
-
-- **Connection State**: Management of gRPC channel health
-
-- **Authentication State**: Token lifecycle management
-
-**Status:**
-
-- **Implemented now**: Server-side job lifecycle and channel behaviors are implemented.
-- **TODO**: Unified client-side SDK state manager for job tracking, transport health, and credential lifecycle.
-
-## 7. Failure Modes
-
-### 7.1 Error Categories
-
-- **Network Errors**: Connection failures, timeouts, DNS resolution
-
-- **Authentication Errors**: Invalid tokens, expired credentials, permission denied
-
-- **Server Errors**: Internal server errors, service unavailable
-
-- **Validation Errors**: Invalid job specifications, unsupported operations
-
-- **Resource Errors**: Quota exceeded, device unavailable
-
-### 7.2 Retry Strategies
-
-**Exponential Backoff:**
-```python
-class RetryPolicy:
-    def __init__(self):
-        self.max_retries = 3
-        self.initial_delay = 0.1
-        self.max_delay = 10.0
-        self.backoff_factor = 2.0
-        self.retryable_errors = [
-            'UNAVAILABLE',
-            'DEADLINE_EXCEEDED',
-            'RESOURCE_EXHAUSTED',
-            'INTERNAL',
-        ]
-```
-
-**Circuit Breaker Pattern:**
-
-- **Closed**: Normal operation
-
-- **Open**: Fail fast after threshold exceeded
-
-- **Half-Open**: Test recovery after timeout
-
-### 7.3 Error Recovery
-
-- **Automatic Retry**: For transient errors with exponential backoff
-
-- **Fallback Transport**: Switch from gRPC to REST if primary fails
-
-- **Token Refresh**: Automatic re-authentication on token expiration
-
-- **Connection Pooling**: Maintain healthy connections and replace failed ones
-
-**Status:**
-
-- **Implemented now**: Server and tests exercise structured status/error contracts.
-- **TODO**: Productized SDK retry/circuit-breaker/fallback implementations across languages.
-
-## 8. Observability
-
-### 8.1 Metrics
-
-**Client-side Metrics:**
-
-- **eigen_sdk_requests_total{method, status}**: Total SDK requests
-
-- **eigen_sdk_request_duration_seconds{method}**: Request duration histogram
-
-- **eigen_sdk_cache_hits_total{cache_level}**: Cache hit counters
-
-- **eigen_sdk_retries_total{method}**: Retry attempt counters
-
-- **eigen_sdk_circuit_breaker_state{service}**: Circuit breaker state gauges
-
-**Status:**
-
-- **Implemented now**: Service-level observability is present across runtime components and docs/runbooks.
-- **TODO**: Dedicated SDK-emitted telemetry namespace and cross-language parity for the exact `eigen_sdk_*` metric set.
-
-### 8.2 Logging
-
-**Standardized Log Fields** (JSON format):
 ```json
 {
-  "timestamp": "2024-01-10T10:30:00Z",
-  "level": "INFO",
-  "service": "eigen-sdk-python",
-  "trace_id": "00-0af7651916cd43dd8448eb211c80319c-00f067aa0ba902b7-01",
-  "span_id": "00f067aa0ba902b7",
-  "job_id": "job_123456",
-  "device_id": "ibmq_lima",
-  "stage": "submission",
-  "message": "Job submitted successfully",
-  "duration_ms": 145,
-  "user_id": "user_789"
+  "counts": {
+    "00": 512,
+    "11": 512
+  },
+  "metadata": {
+    "shots": "1024"
+  }
 }
 ```
 
-**Status:**
+---
 
-- **Implemented now**: Service-side structured logging with request correlation context.
-- **TODO**: Unified SDK log schema guarantees across published client libraries.
+### 9.2 Device Status
 
-### 8.3 Tracing
+Mandatory statuses:
 
-**OpenTelemetry Integration:**
+- ONLINE
+- OFFLINE
+- CALIBRATING
+- MAINTENANCE
 
-- W3C TraceContext propagation via `traceparent` header
+---
 
-- End-to-end trace correlation with Eigen OS services
+## 10. Client State Management
 
-- Span creation for SDK operations (submission, compilation, execution)
+### 10.1 Current State
 
-**Status:**
+Implemented:
 
-- **Implemented now**: Tracing capabilities are documented and used in service ecosystem.
-- **TODO**: First-class SDK trace instrumentation package(s) with stable semantic conventions.
+- gRPC channel lifecycle,
+- server-side authoritative job states.
 
-### 8.4 Performance Monitoring
+Not implemented:
 
-- **Request Latency**: P50, P90, P99 latency percentiles
+- unified SDK state manager,
+- distributed cache layer,
+- persistent local job registry.
 
-- **Throughput**: Requests per second per endpoint
+---
 
-- **Cache Efficiency**: Hit/miss ratios per cache level
+### 10.2 Planned Cache Architecture
 
-- **Connection Health**: gRPC channel connectivity status
+Target architecture:
 
-## 9. Security
+| **Level** | **Purpose** |
+|---|---|
+| L1 | In-memory TTL cache |
+| L2 | Redis distributed cache |
+| L3 | Persistent disk cache |
 
-### 9.1 Authentication Flow
+This architecture is not yet implemented.
 
-1. **Credential Acquisition**: Obtain tokens via configured method (JWT, API Key, OAuth2)
+---
 
-2. **Token Storage**: Securely store tokens with encryption
+## 11. Failure Handling
 
-3. **Request Signing**: Attach authentication headers to all requests
+### 11.1 Retry Policy
 
-4. **Token Refresh**: Automatically refresh expired tokens
+Target SDK behavior:
 
-5. **Credential Rotation**: Support for periodic credential updates
+- exponential backoff,
+- retry budget limits,
+- retryable gRPC status handling,
+- timeout propagation.
 
-## 9.2 Secure Storage
+Example policy:
 
-- **Encrypted Credential Storage**: Fernet encryption for stored credentials
-
-- **File Permissions**: Restrictive file permissions (600) for credential files
-
-- **Memory Security**: Secure memory handling for sensitive data
-
-- **Key Management**: Integration with system keychains where available
-
-**Status:**
-
-- **TODO**: SDK credential vault/keychain integrations are not yet implemented as a released SDK feature set.
-
-## 9.3 Input Validation
-
-- **Program Source Validation**: AST parsing and restricted import checking
-
-- **JobSpec Validation**: Schema validation against RFC 0003
-
-- **Parameter Validation**: Type and range checking for all inputs
-
-- **Size Limits**: Rejection of oversized payloads to prevent DoS
-
-**Status:**
-
-- **Implemented now**: Core validation contracts exist (JobSpec parsing/validation, Eigen-Lang constraints, service-side request validation).
-- **TODO**: Consistent pre-flight validation wrappers in each public SDK package.
-
-## 10. Integration with External Systems
-
-### 10.1 Quantum Framework Integration
-
-**Qiskit Integration:**
-```python
-class EigenBackend(QiskitBackend):
-    def __init__(self, target='simulator', **kwargs):
-        self.eigen_client = EigenClient()
-        self.target = target
-    
-    def run(self, circuit, shots=1024, **kwargs):
-        eigen_program = self.convert_qiskit_to_eigen(circuit)
-        job = self.eigen_client.jobs.submit(
-            program=eigen_program,
-            target=self.target,
-            shots=shots
-        )
-        results = job.wait_for_completion()
-        return self.convert_eigen_to_qiskit_results(results)
-```
-
-**PyTorch Integration:**
-```python
-class QuantumLayer(torch.nn.Module):
-    def __init__(self, n_qubits, ansatz_type, observable):
-        super().__init__()
-        self.n_qubits = n_qubits
-        self.eigen_client = EigenClient()
-        self.quantum_params = torch.nn.Parameter(torch.randn(num_params))
-    
-    def forward(self, x):
-        circuit = self.build_circuit(self.quantum_params)
-        results = self.eigen_client.jobs.submit(
-            program=circuit,
-            target='simulator',
-            parameters={'input': x}
-        ).wait_for_completion()
-        return self.postprocess(results)
-```
-
-**Status:**
-
-- **TODO**: Qiskit and PyTorch integrations shown below are target examples; they are not currently delivered as maintained SDK adapters in-repo.
-
-### 10.2 IDE Integration
-
-- **Jupyter Notebook:** Magic commands and cell integration
-
-- **VS Code Extension**: Syntax highlighting, IntelliSense, job submission
-
-- **PyCharm Plugin**: Code completion, debugging tools
-
-**Status:**
-
-- **TODO**: Jupyter magics and IDE plugins/extensions are planned but not implemented in this repository.
-
-## 11. Testing
-
-### 11.1 Test Strategies
-
-- **Unit Tests**: Individual component testing with mocked dependencies
-
-- **Integration Tests**: End-to-end tests against mock or test Eigen OS instances
-
-- **Contract Tests**: Verify compatibility with Eigen OS API specifications
-
-- **Performance Tests**: Load and stress testing of SDK operations
-
-- **Security Tests**: Authentication, encryption, and validation testing
-
-### 11.2 Mock Server
-```python
-class MockEigenServer:
-    def __init__(self):
-        self.port = self.find_free_port()
-        self.server = grpc.aio.server()
-        self.server.add_insecure_port(f'[::]:{self.port}')
-        
-    async def start(self):
-        await self.server.start()
-        return self
-    
-    async def stop(self):
-        await self.server.stop(grace=None)
-    
-    @property
-    def endpoint(self):
-        return f'localhost:{self.port}'
-    
-    def set_response(self, method, response):
-        self.responses[method] = response
-```
-
-**Status:**
-
-- **Implemented now**: Extensive service-level unit/integration/e2e tests for gRPC APIs and contracts.
-- **TODO**: Dedicated SDK test harnesses per language, including reusable mock server package for SDK consumer testing.
-
-## 12. Configuration
-
-### 12.1 Configuration Sources (in order of precedence)
-
-1. **Command-line Arguments**: Highest priority
-
-2. **Environment Variables**: EIGEN_ENDPOINT, EIGEN_TOKEN, etc.
-
-3. **Configuration File**: ~/.config/eigen/config.toml
-
-4. **Default Values**: Built-in sensible defaults
-
-### 12.2 Configuration Schema
-```toml
-[eigen.client]
-endpoint = "https://api.example.com:50051"
-timeout = 30
+```Python
 max_retries = 3
-
-[eigen.client.auth]
-method = "jwt"
-token_file = "~/.eigen/token"
-
-[eigen.client.transport]
-primary = "grpc"
-fallback = "rest"
-
-[eigen.client.cache]
-enabled = true
-ttl = 300
-max_size = 1000
-
-[eigen.client.metrics]
-enabled = true
-port = 9090
-
-[eigen.client.logging]
-level = "INFO"
-format = "json"
+initial_delay = 0.1
+max_delay = 10.0
+backoff_factor = 2.0
 ```
 
-**Status:**
+Not yet standardized across released SDKs.
 
-- **Implemented now**: Runtime/services support environment-driven configuration patterns.
-- **TODO**: Canonical end-user SDK config loader/merging implementation matching this exact precedence and schema across all SDK languages.
+---
 
-## 13. Examples
+### 11.2 Circuit Breaker
 
-### 13.1 Python SDK Example
-```python
-import asyncio
-from eigen_sdk import EigenClient
-from eigen_sdk.models import QuantumProgram
+Planned states:
 
-async def main():
-    async with EigenClient.from_config() as client:
-        # List available devices
-        devices = await client.devices.list()
-        simulator = next(d for d in devices if "simulator" in d.name)
-        
-        # Create and submit quantum program
-        program = QuantumProgram(
-            name="vqe-hydrogen",
-            code="""
-            @hybrid_program(target="simulator")
-            def calculate_energy():
-                hamiltonian = make_molecular_hamiltonian("H2")
-                ansatz = create_hea_ansatz(4, depth=3)
-                
-                @cost_function
-                def energy(params):
-                    return ExpectationValue(ansatz, hamiltonian)
-                
-                result = minimize(energy, [0.1, 0.2, 0.3])
-                return result.optimal_value
-            """
-        )
-        
-        job = await client.jobs.submit(
-            program=program,
-            target=simulator.id,
-            priority=80
-        )
-        
-        # Monitor job progress
-        async with job.monitor() as monitor:
-            async for update in monitor:
-                print(f"Progress: {update.progress:.1f}%")
-                if update.has_results:
-                    results = await update.get_results()
-                    print(f"Energy: {results.get('energy'):.6f} Ha")
+- CLOSED,
+- OPEN,
+- HALF_OPEN.
 
-asyncio.run(main())
+Not yet implemented in released SDK packages.
+
+---
+
+### 11.3 Transport Fallback
+
+Planned behavior:
+
+- fallback from gRPC to REST,
+- degraded-mode operation.
+
+Not implemented.
+
+---
+
+## 12. Observability
+
+### 12.1 Metrics
+
+Planned SDK metrics namespace:
+
+```text
+eigen_sdk_requests_total
+eigen_sdk_request_duration_seconds
+eigen_sdk_retries_total
+eigen_sdk_cache_hits_total
 ```
 
-### 13.2 Rust SDK Example
-```rust
-use eigen_sdk::{EigenClient, ClientConfig};
+Current status:
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let config = ClientConfig::from_env()?;
-    let client = EigenClient::new(config).await?;
-    
-    let devices = client.devices().list().await?;
-    let simulator = devices.iter()
-        .find(|d| d.name.contains("simulator"))
-        .unwrap();
-    
-    let program = QuantumProgram::new(
-        "vqe-hydrogen",
-        r#"
-        @hybrid_program(target="simulator")
-        def calculate_energy():
-            hamiltonian = make_molecular_hamiltonian("H2")
-            ansatz = create_hea_ansatz(4, depth=3)
-            
-            @cost_function
-            def energy(params):
-                return ExpectationValue(ansatz, hamiltonian)
-            
-            result = minimize(energy, [0.1, 0.2, 0.3])
-            return result.optimal_value
-        "#
-    );
-    
-    let job = client.jobs()
-        .submit(program)
-        .target(simulator.id.clone())
-        .priority(80)
-        .send()
-        .await?;
-    
-    let mut monitor = job.monitor().await?;
-    while let Some(update) = monitor.next().await {
-        println!("Progress: {:.1}%", update.progress);
-        if update.has_results() {
-            let results = update.results().await?;
-            println!("Energy: {:.6} Ha", results.get("energy"));
-        }
-    }
-    
-    Ok(())
-}
+- service-side metrics exist,
+- SDK metric packages are not yet released.
+
+---
+
+### 12.2 Logging
+
+Mandatory structured fields:
+
+| **Field** | **Required** |
+|---|---|
+| timestamp | Yes |
+| level | Yes |
+| trace_id | Yes |
+| span_id | Yes |
+| job_id | Optional |
+| device_id | Optional |
+| message | Yes |
+
+---
+
+### 12.3 Tracing
+
+Implemented:
+
+- OpenTelemetry-compatible tracing,
+- trace propagation through services.
+
+Planned:
+
+- SDK instrumentation packages,
+- semantic span conventions.
+
+---
+
+## 13. Security
+
+### 13.1 Mandatory Security Requirements
+
+SDKs MUST support:
+
+- TLS transport,
+- authenticated requests,
+- secure credential handling,
+- request validation,
+- payload size limits.
+
+---
+
+### 13.2 Planned Credential Features
+
+Not yet implemented:
+
+- encrypted credential vault,
+- OS keychain integration,
+- automatic token refresh manager.
+
+---
+
+## 14. Integration Targets
+
+### 14.1 Planned Framework Integrations
+
+Target integrations:
+
+- Qiskit,
+- PyTorch,
+- Jupyter,
+- VS Code,
+- CI/CD tooling.
+
+These integrations are architectural targets and are not currently delivered as maintained SDK adapters.
+
+---
+
+## 15. Testing Requirements
+
+SDK implementations MUST include:
+
+| **Test Type** | **Required** |
+|---|---|
+| Unit tests | Yes |
+| Integration tests | Yes |
+| Contract tests | Yes |
+| Security tests | Yes |
+| Performance tests | Yes |
+
+---
+
+## 16. Configuration
+
+### 16.1 Configuration Sources
+
+Order of precedence:
+
+1. CLI arguments
+2. Environment variables
+3. Config file
+4. Built-in defaults
+
+---
+
+### 16.2 Standard Environment Variables
+
+```text
+EIGEN_ENDPOINT
+EIGEN_TOKEN
+EIGEN_TIMEOUT
+EIGEN_LOG_LEVEL
 ```
 
-**Status:**
+---
 
-- **TODO**: Python/Rust snippets describe intended SDK ergonomics; formal SDK crates/packages with these interfaces are not yet published from this repository.
+## 17. Compatibility Policy
 
-## 14. Performance Characteristics
+### 17.1 Semantic Versioning
 
-### 14.1 Expected Performance (MVP)
+SDKs MUST follow semantic versioning.
 
-- **Submission Latency**: < 100ms for local network
+| **Version Type** | **Compatibility** |
+|---|---|
+| Major | Breaking changes allowed |
+| Minor | Backward compatible |
+| Patch | Bug fixes only |
 
-- **Compilation Throughput**: 10+ concurrent compilation requests
+---
 
-- **Result Retrieval**: < 50ms for typical result sets
+### 17.2 Minimum Supported Platform
 
-- **Connection Pooling**: 10-100 concurrent connections per client
+| **Component** | **Minimum** |
+|---|---|
+| Eigen OS | v0.1 |
+| Python | 3.12+ |
+| Rust | 1.92+ |
 
-### 14.2 Resource Utilization
+---
 
-- **Memory Usage**: < 50MB baseline, scales with cache size
+## 18. Performance Targets
 
-- **CPU Utilization**: Minimal for typical usage patterns
+### 18.1 MVP Targets
 
-- **Network Bandwidth**: Efficient binary protocols (gRPC, Protocol Buffers)
+| **Metric** | **Target** |
+|---|---|
+| Submission latency | <100 ms |
+| Result retrieval | <50 ms |
+| Concurrent connections | 10–100 |
+| Baseline memory usage | <50 MB |
 
-## 15. Compatibility and Versioning
+These are target engineering requirements, not guaranteed achieved benchmarks.
 
-### 15.1 Backward Compatibility
+---
 
-- **Major Versions (v1.0, v2.0)**: May break API compatibility
+## 19. Architectural Constraints
 
-- **Minor Versions (v1.1, v1.2)**: Add features, maintain compatibility
+The SDK layer MUST obey the following invariants.
 
-- **Patch Versions (v1.1.1)**: Bug fixes only, full compatibility
+### 19.1 No User Code Execution
 
-### 15.2 Eigen OS Version Support
+SDKs MUST NOT execute arbitrary user code received from remote services.
 
-- **Minimum Supported Version**: Eigen OS v0.1 (MVP)
+---
 
-- **Feature Detection**: Runtime capability negotiation
+### 19.2 Transport Isolation
 
-- **Fallback Behavior**: Graceful degradation for missing features
+Transport implementations MUST remain replaceable without changing public SDK semantics.
 
-**Status:**
+---
 
-- **Implemented now**: API and contract versioning policy is defined at architecture/process level.
-- **TODO**: SDK-specific compatibility matrix and automated capability negotiation layer in released SDK clients.
+### 19.3 API Compatibility
 
-## 16. Conclusion
+SDKs MUST remain compatible with declared Eigen OS API versions.
 
-The Eigen OS Client SDKs provide a comprehensive, multi-language interface for interacting with quantum computing resources through Eigen OS. By abstracting the complexities of quantum programming, network communication, and system integration, the SDKs enable developers to focus on solving domain problems rather than infrastructure concerns.
+---
 
-**Key Advantages:**
+### 19.4 Observability Consistency
 
-- **Unified Experience**: Consistent API across all supported languages
+All SDK-generated telemetry MUST propagate:
 
-- **Enterprise Ready**: Production-grade reliability, security, and observability
+- trace_id,
+- request correlation context,
+- service boundaries.
 
-- **Extensible Architecture**: Easy integration with existing quantum and classical workflows
+---
 
-- **Community Focus**: Open source with clear contribution guidelines and documentation
+## 20. Current Repository Status Summary
 
-**Usage Recommendations:**
+### Implemented
 
-- **Researchers & Data Scientists**: Python SDK with Jupyter integration
+- gRPC public APIs,
+- protobuf contracts,
+- JobService,
+- DeviceService,
+- streaming updates,
+- service-side validation,
+- tracing infrastructure,
+- structured observability,
+- contract-based architecture,
+- integration/e2e test coverage.
 
-- **Production Systems**: Rust SDK for maximum performance and safety
+---
 
-- **Web Applications**: JavaScript/TypeScript SDK with React components
+### Partially Implemented
 
-- **DevOps & Automation**: CLI for scripting and CI/CD pipelines
+- authentication abstraction,
+- OpenQASM support,
+- CLI tooling,
+- observability standardization.
 
-The SDKs will evolve alongside Eigen OS, with regular updates to support new quantum hardware, algorithms, and system features while maintaining backward compatibility for existing users.
+---
+
+### Planned
+
+- official SDK packages,
+- REST transport,
+- WebSocket transport,
+- retry/circuit breaker libraries,
+- IDE integrations,
+- cache layers,
+- framework adapters,
+- credential vault integration,
+- compatibility negotiation layer.
+
+---
+
+## 21. Conclusion
+
+The Eigen OS Client SDK architecture defines a unified, transport-oriented, contract-driven client layer for interacting with distributed hybrid quantum-classical infrastructure.
+
+The current implementation already provides:
+
+- stable gRPC contracts,
+- production-oriented service interfaces,
+- deterministic validation boundaries,
+- structured observability,
+- integration-grade APIs.
+
+The remaining roadmap primarily concerns:
+
+- SDK productization,
+- multi-language packaging,
+- transport expansion,
+- developer ergonomics,
+- advanced reliability tooling.
+
+This document is the authoritative specification for SDK behavior, integration contracts, and implementation boundaries.

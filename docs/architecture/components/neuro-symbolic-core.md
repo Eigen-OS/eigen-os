@@ -1,166 +1,662 @@
-# Neuro-Symbolic Core (state snapshot)
+# Neuro-Symbolic Core
 
-- **Phase target:** Post-MVP / Phase 1+ evolution track.
-- **Snapshot date:** 2026-05-08.
-- **Current implementation state:** **not implemented as an active runtime component**; architecture intent is preserved across RFC and architecture docs, while runtime currently executes without a dedicated neuro-symbolic service.
+- **Phase:** Phase 1+ / Post-MVP strategic runtime capability.
+- **Status:** Architectural component defined by target specification; partial ecosystem prerequisites exist, but no standalone runtime service is currently active in production execution flow.
+- **Specification scope:** This document defines the normative target architecture, contracts, responsibilities, integration boundaries, and implementation requirements for the Eigen OS Neuro-Symbolic Core (NSC), including alignment with deterministic compilation, DPDA-based semantic control, Knowledge Base integration, and hardware-aware GNN optimization.
+
+---
+
+# 1. Purpose
+
+The Neuro-Symbolic Core (NSC) is the central intelligent decision subsystem of Eigen OS responsible for combining:
+
+1. symbolic reasoning,
+2. deterministic compiler/runtime constraints,
+3. neural inference models,
+4. graph-based hardware optimization,
+5. adaptive execution policies,
+6. knowledge retrieval and reuse,
+
+into a unified decision framework for compilation and execution optimization.
+
+The NSC operates as a bounded intelligent orchestration layer above deterministic baseline runtime behavior.
+
+The deterministic execution path remains authoritative at all times.
+
+---
+
+# 2. Architectural Role
+
+The Neuro-Symbolic Core is responsible for:
+
+- semantic enrichment of compiler/runtime decisions,
+- symbolic validation and constraint reasoning,
+- hardware-aware optimization planning,
+- adaptive execution recommendations,
+- topology-aware backend selection,
+- optimization strategy scoring,
+- integration with Knowledge Base retrieval,
+- orchestration of GNN-based hardware optimization,
+- deterministic fallback preservation.
+
+The NSC never bypasses:
+- compiler safety policies,
+- deterministic AQO guarantees,
+- runtime isolation boundaries,
+- policy enforcement layers.
+
+---
+
+# 3. Current Implementation Status
+
+## 3.1 Implemented Today
+
+The following prerequisite or adjacent capabilities already exist in the repository/runtime:
+
+### Compiler and runtime baseline
+
+- Deterministic AST-only compilation path.
+- AQO canonical lowering pipeline.
+- Kernel execution orchestration.
+- Driver-manager execution abstraction.
+- Structured runtime metadata propagation.
+- VQE iterative optimization metadata flow.
+
+### Ecosystem and governance groundwork
+
+- Plugin architecture includes `optimizer` plugin category.
+- Phase-6 plugin governance framework exists.
+- Runtime tracing and structured logging exist.
+- RFC/ADR synchronization workflow exists.
+
+### Existing intelligent-adjacent behavior
+
+- Simple heuristic optimization loops exist in VQE execution path.
+- Backend capability metadata is available through runtime contracts.
+- Runtime telemetry propagation exists in limited form.
+
+---
+
+## 3.2 Not Yet Implemented
+
+The following are NOT currently implemented:
+
+- standalone `neuro-symbolic-core` service,
+- dedicated protobuf/gRPC API,
+- runtime neural inference engine,
+- DPDA semantic engine,
+- GNN hardware optimizer runtime,
+- knowledge-driven optimization retrieval,
+- explainability engine,
+- model registry,
+- adaptive runtime orchestration,
+- confidence-aware decision pipeline,
+- deterministic rollback controller.
+
+Current production execution does not depend on NSC availability.
+
+---
+
+# 4. Core Architectural Principles
+
+## 4.1 Deterministic Baseline First
+
+The deterministic compiler/runtime path remains authoritative.
+
+Neuro-symbolic decisions:
+- may recommend,
+- may rank,
+- may enrich,
+- may optimize,
+
+but must never invalidate deterministic correctness guarantees.
+
+If uncertainty, timeout, policy violation, or runtime degradation occurs, the system MUST revert to deterministic baseline execution.
+
+---
+
+## 4.2 Bounded Intelligence
+
+The NSC operates only inside explicitly defined policy boundaries.
+
+The NSC:
+- cannot mutate source semantics,
+- cannot bypass compiler validation,
+- cannot introduce unsafe runtime behavior,
+- cannot emit unverifiable transformations,
+- cannot violate tenant/runtime policies.
+
+---
+
+## 4.3 Explainability Required
+
+Every optimization or recommendation produced by NSC must include:
+
+- provenance,
+- model version,
+- confidence score,
+- reasoning metadata,
+- fallback eligibility,
+- reproducibility hash.
+
+Opaque optimization decisions are prohibited.
+
+---
+
+# 5. Major Internal Subsystems
+
+The Neuro-Symbolic Core consists of the following logical subsystems.
+
+---
+
+# 5.1 Symbolic Reasoning Engine
 
 ## Responsibility
 
-### Implemented now (what exists in codebase)
+Provides deterministic symbolic reasoning and semantic validation.
 
-- There is **no standalone `neuro-symbolic-core` service/crate/module** in the runtime path (`system-api → eigen-kernel → eigen-compiler/driver-manager`).
-- Existing runtime behavior uses deterministic MVP compilation and kernel execution contracts; neuro-symbolic decisions are not part of released execution-critical logic.
-- Some adjacent concepts exist as placeholders or non-core naming:
-  - plugin manifest type `optimizer` is implemented at CLI/contract level (Phase-6 plugin surface), but this is **not** the neuro-symbolic core.
-  - simple optimization metadata is present in kernel VQE-flow related fields, but no hybrid neural-symbolic policy engine is wired.
+## Responsibilities include
 
-### TODO (missing responsibility to implement)
+- semantic constraint evaluation,
+- optimization legality checks,
+- policy validation,
+- symbolic transformation verification,
+- compiler/runtime rule enforcement,
+- explainability support.
 
-- TODO: introduce explicit bounded responsibility of Neuro-Symbolic Core as a first-class component (compile-time + run-time adaptation scope split).
-- TODO: define deterministic safety envelope for when neuro-symbolic recommendations are advisory vs authoritative.
-- TODO: specify integration contract with `eigen-compiler` (AST/AQO enrichment), `eigen-kernel` (scheduling/routing hints), and `knowledge-base` (retrieval/writeback loop).
-- TODO: define lifecycle states for model artifacts (train/candidate/active/rollback).
+## DPDA Integration (Mandatory Requirement)
 
-## RFC / ADR alignment re-check
+The symbolic engine SHALL include a deterministic pushdown automaton (DPDA)-based semantic controller.
 
-### Confirmed status in repository indexes
+The DPDA layer is responsible for:
 
-- `docs/rfcs-pointer.md` marks:
-  - MVP-2/3 and Phase-3/4/5 contract sets as implemented/accepted with ADR sync.
-  - Phase-6 plugin package prepared/accepted in pointer, with ADR sync pending for that phase.
-  - Phase-7 policy/toolchain RFCs accepted with ADR sync.
-- No dedicated RFC/ADR currently declares a released neuro-symbolic runtime core as implemented.
-- Neuro-symbolic capabilities remain roadmap/target architecture items (including architecture overview and goals/mission docs), not current runtime closure artifacts.
+- deterministic grammar-state tracking,
+- semantic transition validation,
+- constrained symbolic reasoning,
+- state-safe transformation approval,
+- runtime-safe adaptive transition validation.
 
-### TODO (RFC/ADR work items)
+The DPDA subsystem is authoritative for:
+- semantic admissibility,
+- transformation legality,
+- deterministic rollback boundaries.
 
-- TODO: create a dedicated Neuro-Symbolic Core RFC package (minimum: service contract, safety policy, observability, rollback/versioning).
-- TODO: add synchronized ADR(s) once RFC status reaches Accepted/Implemented.
-- TODO: add phase gap-analysis document specifically for neuro-symbolic rollout readiness and dependency gates.
-- TODO: bind neuro-symbolic claims in `docs/architecture/overview.md` to explicit acceptance criteria and closure artifact links.
+Neural inference may propose transformations.
+Only symbolic validation may authorize them.
 
-## Interfaces
+---
 
-### Implemented now
+# 5.2 Neural Inference Layer
 
-- No gRPC service, REST endpoint, or internal RPC owned by a neuro-symbolic-core component.
-- No protobuf package, no service discovery registration, and no CLI command targeting a dedicated neuro-symbolic service.
-- No plugin runtime interface currently maps to a concrete neuro-symbolic execution contract.
+## Responsibility
 
-### TODO
+Provides learned scoring and optimization recommendation capabilities.
 
-- TODO: define `NeuroSymbolicService` gRPC API (recommended initial methods):
-  - `ScoreCompilationPlan`
-  - `SelectOptimizationStrategy`
-  - `RecommendBackendMapping`
-  - `ExplainDecision`
-- TODO: define strict request/response schemas with versioned confidence, provenance, and determinism fields.
-- TODO: formalize timeout, fallback, and error-handling semantics so kernel/compiler remain operational if service is unavailable.
-- TODO: define compatibility profile with Phase-7 versioning policy (deprecation, additive fields, feature flags).
+## Responsibilities include
 
-## Inputs / Outputs
+- optimization ranking,
+- backend scoring,
+- heuristic prediction,
+- execution strategy selection,
+- adaptive recommendation generation,
+- confidence estimation.
 
-### Implemented now
+## Requirements
 
-- No executable neuro-symbolic input contract exists in current runtime.
-- Inputs that *could* be candidates in future (AST, AQO, backend metrics, topology) are processed today by other components under their own contracts.
-- No structured neuro-symbolic decision artifact is emitted to QFS or result APIs.
+- inference must be side-effect free,
+- all outputs must be reproducible,
+- all decisions must be traceable,
+- confidence metadata is mandatory,
+- deterministic fallback path is mandatory.
 
-### TODO
+---
 
-- TODO: define canonical input bundles:
-  - compiler-side: normalized AST features + candidate AQO variants,
-  - runtime-side: backend capability snapshots, noise/topology telemetry, SLO constraints,
-  - historical-side: knowledge-base retrieval candidates.
-- TODO: define output artifact schema:
-  - ranked action set,
-  - confidence + uncertainty,
-  - explainability payload,
-  - policy compliance flags.
-- TODO: persist output artifact in QFS (Level 3) with replay metadata for audit/reproducibility.
+# 5.3 GNN Hardware Optimizer
 
-## Storage / State
-### Implemented now
+## Responsibility
 
-- No dedicated persistent state/schema/table/object-store namespace for neuro-symbolic core.
-- No model registry path, feature store, or decision cache wired in runtime.
-- No periodic training/evaluation job contract in scheduler/runtime for this component.
+The GNN Hardware Optimizer is the graph-based hardware adaptation subsystem integrated into NSC.
 
-### TODO
+It performs:
 
-- TODO: define storage split:
-  - online inference cache,
-  - offline training datasets,
-  - model registry and signed model manifests,
-  - policy/rules snapshot storage.
-- TODO: define migration/versioning policy for feature schemas and model metadata.
-- TODO: define retention/privacy/security controls for telemetry-derived training data.
-- TODO: add backup/restore and rollback playbooks for model + rules state.
+- qubit placement optimization,
+- routing optimization,
+- topology-aware transformation scoring,
+- hardware-noise-aware mapping,
+- backend adaptation planning,
+- coupling-map optimization.
 
-## Failure modes
-### Implemented now
+---
 
-- Since component is not active, there are no runtime failure modes attributable to neuro-symbolic core.
-- Existing runtime failures are handled by compiler/kernel/driver-manager contracts independently.
+## Inputs
 
-### TODO
+The GNN optimizer consumes:
 
-- TODO: define explicit failure taxonomy:
-  - inference timeout,
-  - low-confidence/no-decision,
-  - stale model,
-  - policy violation,
-  - KB retrieval miss,
-  - incompatible feature schema.
-- TODO: define mandatory fallback behavior per call site (compiler and kernel paths).
-- TODO: define circuit-breaker and degraded-mode policy (deterministic baseline fallback).
-- TODO: define operator runbook and automated remediation signals.
+- AQO graph projections,
+- backend topology,
+- calibration metadata,
+- noise metrics,
+- coupling maps,
+- queue pressure signals,
+- execution policy constraints.
 
-## Observability
+---
 
-### Implemented now
+## Outputs
 
-- No component-scoped metrics/logs/traces for neuro-symbolic core are emitted.
-- Current observability available in system pertains to existing services only.
+The optimizer emits:
 
-### TODO
+- routing plans,
+- placement maps,
+- scored alternatives,
+- topology transformations,
+- optimization confidence,
+- explainability metadata,
+- deterministic replay hashes.
 
-- TODO: define minimal metrics set:
-  - request count/latency/error rate,
-  - fallback rate,
-  - confidence distribution,
-  - decision acceptance/rejection ratio,
-  - drift indicators.
-- TODO: define trace spans and correlation propagation to compiler/kernel traces.
-- TODO: define explainability and audit log requirements (who/what model/version/why decision).
-- TODO: define SLOs and alert thresholds before production enablement.
+---
 
-## Security and governance
+## Deterministic Safety Requirement
 
-### Implemented now
+The GNN optimizer is advisory unless explicitly enabled by policy.
 
-- No dedicated security perimeter exists because service is absent.
-- Global platform security controls apply only to currently running components.
+If:
+- confidence is insufficient,
+- topology is stale,
+- inference fails,
+- determinism validation fails,
 
-### TODO
+the runtime MUST revert to deterministic heuristic routing.
 
-- TODO: define signed model artifact verification and provenance policy.
-- TODO: define RBAC for model promotion/rollback and policy edits.
-- TODO: define isolation boundaries for inference runtime and plugin interactions.
-- TODO: define red-team and adversarial robustness validation requirements.
+---
 
-## Incremental rollout plan (documentation-preserving TODO backlog)
+# 5.4 Knowledge Base Integration Layer
 
-1. TODO: **Contract phase** — publish RFC(s) + protobuf draft + compatibility matrix.
-2. TODO: **Shadow phase** — run passive scoring against live traffic with deterministic baseline untouched.
-3. TODO: **Advisory phase** — emit recommendations + explanations, no automatic actuation.
-4. TODO: **Guarded actuation phase** — limited-scope enablement under policy gates and rollback switch.
-5. TODO: **General availability** — conformance tests, SLO closure, ADR synchronization, release readiness report.
+## Responsibility
 
-## Traceability checklist (to avoid losing scope)
+Provides retrieval and writeback integration with the Eigen Knowledge Base.
 
-- [x] Explicitly recorded that component is currently non-implemented in runtime.
-- [x] Preserved target architecture intent from overview/mission/goals docs.
-- [x] Re-checked RFC/ADR pointer alignment and marked missing neuro-symbolic contract package.
-- [x] Added section-level TODOs for every missing capability area (interfaces, I/O, storage, failures, observability, security).
-- [x] Added phased backlog so next stage can continue without scope loss.
+## Responsibilities include
+
+- historical optimization retrieval,
+- reusable transformation lookup,
+- prior execution reuse,
+- optimization feedback ingestion,
+- confidence enrichment,
+- replay trace generation.
+
+## Integration model
+
+The Knowledge Base is optional.
+
+Failure or unavailability MUST NOT block execution.
+
+---
+
+# 5.5 Explainability Engine
+
+## Responsibility
+
+Provides operator-visible reasoning traces.
+
+## Output includes
+
+- why a decision was selected,
+- why alternatives were rejected,
+- model provenance,
+- policy constraints applied,
+- fallback reasons,
+- confidence breakdown,
+- deterministic replay identifiers.
+
+---
+
+# 6. Interfaces
+
+## 6.1 gRPC Service
+
+The NSC SHALL expose a dedicated internal service:
+
+`NeuroSymbolicService`
+
+---
+
+## 6.2 Required RPC Methods
+
+### Compilation and optimization
+
+- `ScoreCompilationPlan`
+- `SelectOptimizationStrategy`
+- `RecommendBackendMapping`
+- `OptimizeHardwareTopology`
+- `ValidateAdaptiveTransformation`
+
+### Explainability
+
+- `ExplainDecision`
+- `GetDecisionTrace`
+
+### Knowledge integration
+
+- `RetrieveOptimizationCandidates`
+- `PublishOptimizationFeedback`
+
+---
+
+# 6.3 Required Request Metadata
+
+All requests MUST support:
+
+- trace_id,
+- policy context,
+- determinism mode,
+- tenant context,
+- feature schema version,
+- timeout budget,
+- replay identifier.
+
+---
+
+# 6.4 Required Response Metadata
+
+All responses MUST include:
+
+- confidence,
+- provenance,
+- model version,
+- deterministic compatibility flag,
+- fallback eligibility,
+- explainability payload,
+- reproducibility hash.
+
+---
+
+# 7. Integration Boundaries
+
+## 7.1 Compiler Integration
+
+The compiler may invoke NSC for:
+
+- optimization scoring,
+- AQO transformation ranking,
+- hardware-aware compilation hints,
+- semantic enrichment.
+
+Compiler validation remains authoritative.
+
+---
+
+## 7.2 Kernel Integration
+
+The kernel may invoke NSC for:
+
+- backend selection,
+- adaptive runtime policy,
+- routing recommendations,
+- execution retry recommendations,
+- hardware adaptation decisions.
+
+Kernel execution contracts remain authoritative.
+
+---
+
+## 7.3 Driver-Manager Integration
+
+NSC may consume:
+- topology,
+- queue depth,
+- noise data,
+- capability metadata.
+
+NSC cannot directly invoke vendor SDKs.
+
+---
+
+## 7.4 HWE Integration
+
+HWE remains authoritative for:
+- execution lifecycle,
+- hardware orchestration,
+- live adaptation.
+
+NSC provides recommendations only.
+
+---
+
+# 8. Inputs and Outputs
+
+## 8.1 Canonical Inputs
+
+### Compiler-side
+
+- AST features,
+- AQO IR,
+- semantic signatures,
+- optimization candidates.
+
+### Runtime-side
+
+- backend topology,
+- noise/calibration telemetry,
+- queue metrics,
+- execution constraints,
+- policy hints.
+
+### Knowledge-side
+
+- historical optimization traces,
+- reusable patterns,
+- prior execution metrics.
+
+---
+
+## 8.2 Canonical Outputs
+
+- ranked optimization actions,
+- routing recommendations,
+- backend mapping suggestions,
+- hardware adaptation plans,
+- confidence metadata,
+- symbolic validation state,
+- explainability payload,
+- deterministic replay digest.
+
+---
+
+# 9. Storage and State
+
+## 9.1 Required Storage Domains
+
+The NSC architecture SHALL support:
+
+### Online inference cache
+
+- low-latency recommendation caching.
+
+### Model registry
+
+- signed model manifests,
+- version pinning,
+- rollback tracking.
+
+### Feature store
+
+- normalized runtime/compiler features.
+
+### Decision trace store
+
+- explainability artifacts,
+- replay bundles,
+- audit history.
+
+### Offline training datasets
+
+- telemetry-derived training inputs,
+- evaluation corpora.
+
+---
+
+## 9.2 QFS Integration
+
+NSC artifacts SHALL support persistence in QFS Level-3 object layout.
+
+Artifacts may include:
+- model references,
+- decision traces,
+- replay bundles,
+- explainability payloads,
+- topology snapshots.
+
+---
+
+# 10. Failure Modes
+
+## 10.1 Mandatory Failure Classes
+
+The NSC SHALL define explicit handling for:
+
+- inference timeout,
+- low-confidence result,
+- model incompatibility,
+- stale model,
+- policy violation,
+- invalid topology,
+- DPDA semantic rejection,
+- Knowledge Base miss,
+- feature-schema mismatch,
+- explainability generation failure.
+
+---
+
+## 10.2 Fallback Policy
+
+The mandatory fallback chain is:
+
+1. deterministic symbolic validation,
+2. heuristic optimizer,
+3. compiler baseline,
+4. runtime baseline.
+
+Neural inference failure MUST NEVER block execution.
+
+---
+
+# 11. Observability
+
+## 11.1 Required Metrics
+
+The NSC SHALL emit:
+
+- request counts,
+- latency,
+- fallback rate,
+- confidence distribution,
+- topology optimization improvement,
+- inference failures,
+- DPDA rejection counts,
+- model drift indicators,
+- replay consistency violations.
+
+---
+
+## 11.2 Tracing
+
+Tracing MUST correlate:
+
+- compiler phases,
+- kernel execution,
+- optimizer decisions,
+- hardware adaptation,
+- Knowledge Base retrieval,
+- replay validation.
+
+---
+
+## 11.3 Explainability Logging
+
+Every accepted optimization MUST be auditable.
+
+Logs MUST include:
+- model version,
+- confidence,
+- policy context,
+- symbolic validation result,
+- replay digest.
+
+---
+
+# 12. Security and Governance
+
+## 12.1 Model Trust
+
+All active models MUST support:
+
+- signature verification,
+- provenance validation,
+- rollback support,
+- compatibility verification.
+
+Unsigned models MUST NOT execute.
+
+---
+
+## 12.2 Isolation
+
+Inference runtime SHALL support:
+
+- sandboxed execution,
+- policy isolation,
+- resource quotas,
+- deterministic execution constraints.
+
+---
+
+## 12.3 Governance Controls
+
+The platform SHALL support:
+
+- feature flags,
+- advisory-only mode,
+- tenant-level disablement,
+- deterministic-only mode,
+- rollback enforcement.
+
+---
+
+# 13. Compliance Status Snapshot
+
+## Implemented
+
+- deterministic compiler/runtime baseline,
+- AQO pipeline,
+- plugin governance groundwork,
+- optimization metadata propagation,
+- runtime tracing/logging infrastructure.
+
+## Defined but not implemented
+
+- DPDA semantic engine,
+- neural inference runtime,
+- GNN optimizer,
+- NeuroSymbolicService,
+- explainability engine,
+- model registry,
+- Knowledge Base integration,
+- adaptive runtime orchestration.
+
+---
+
+# 14. Traceability Requirements
+
+Future implementation MUST preserve:
+
+- deterministic execution guarantees,
+- explainability requirements,
+- rollback capability,
+- policy isolation,
+- compiler/runtime authority boundaries,
+- symbolic validation precedence,
+- GNN optimizer fallback behavior,
+- DPDA semantic validation authority.
+
+No future implementation may bypass these guarantees.

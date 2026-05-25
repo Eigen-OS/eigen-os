@@ -1,326 +1,841 @@
-# Eigen OS — Data Flow Specification (MVP)
+# Eigen OS — Data Flow Specification
 
-## 1. Overview
-
-> **Status snapshot (as of 2026-05-08):** this document is aligned with the current repository implementation. Each section explicitly marks gaps as `TODO` without removing target architecture details.
-
-This document describes the end-to-end data flow within Eigen OS for the Minimum Viable Product (MVP). It details how data moves through the system, transforming from high-level user intent into executable quantum operations and, ultimately, computed results.
-
-The primary focus is on two critical workflows:
-
-1. **Linear Job Execution**: The fundamental path of submitting, compiling, executing, and retrieving results for a single quantum circuit.
-
-2. **Hybrid Iterative Loop**: The extended flow for variational algorithms like the Variational Quantum Eigensolver (VQE), which involves classical optimization of quantum circuit parameters.
-
-### 1.1. Conceptual Data Flow
-
-The following diagram illustrates the high-level stages of data transformation and the main system components involved.
-
-```text
-flowchart TD
-    A[User: JobSpec & Eigen-Lang] --> B[System API]
-    B -- SubmitJob --> C{Kernel QRTX}
-    
-    C -- Validate --> D[CircuitFS]
-    C -- Enqueue --> E{Orchestration Pipeline}
-    
-    subgraph E [Kernel Orchestration Pipeline]
-        F[Compile<br>AST → AQO]
-        G[Allocate<br>Device & Qubits]
-        H[Execute<br>on Backend]
-        I[Process<br>Results]
-    end
-    
-    E --> J[Results & Artifacts]
-    J --> D
-    
-    D --> K[User: Get Results]
-    
-    L[Classical Optimizer] -- New Parameters --> E
-    I -- Expectation Value --> L
-    
-    style F fill:#e1f5fe
-    style H fill:#f3e5f5
-    style L fill:#f1f8e9
-```
-
-**Flow Summary:**
-
-- **Solid Lines (Linear Job)**: Data moves from user submission through orchestration to final results.
-
-- **Dashed Lines (Hybrid Loop)**: A classical optimizer receives quantum results, calculates new parameters, and feeds them back into the pipeline for the next iteration.
-
-### 2. Component & Data Format Reference
-
-Before detailing the flows, here are the key components and data formats they exchange.
-
-| **Component** | **Primary Responsibility** | **Key Inputs** | **Key Outputs** | **Relevant RFC** |
-|---|---|---|---|---|
-| `eigen-cli` | User interaction, local file packaging, local compile/visualize helpers. | `job.yaml`, `program.eigen.py` | `SubmitJobRequest` (gRPC envelope), local artifacts | RFC 0010, RFC 0003 |
-| **System API** | Public gateway, auth mode checks, validation, routing to kernel. | `SubmitJobRequest` | `EnqueueJobRequest` (internal gRPC) | RFC 0004 |
-| **Kernel (QRTX)** | Central orchestrator, state machine, storage. | `KernelJob` | Calls to Compiler & Driver Manager | RFC 0007 |
-| **Compiler Service** | Source parsing, circuit generation. | Eigen-Lang source | `AQO` (Abstract Quantum Operations) | RFC 0011, RFC 0005 |
-| **Driver Manager** | Driver lifecycle, backend abstraction. | `CircuitPayload` (contains AQO) | `ExecutionResult` (counts) | RFC 0006 |
-| **QFS (CircuitFS)** | Persistent artifact storage. | All intermediate artifacts | Stored files (JSON, QASM, etc.) | RFC 0007 |
+- **Document status:** Normative MVP architecture contract
+- **Contract scope:** End-to-end runtime and artifact flow
+- **Snapshot date:** 2026-05-24
+- **Compatibility target:** Eigen OS MVP / Phase-0 and validated Phase-1 - extensions
 
 ---
 
-| **Data Format** | **Description** | **Typical Representation** | **Purpose** |
-|---|---|---|---|
-| `JobSpec` | User job description. | `job.yaml` file | Define program, target, options. |
-| **Eigen-Lang** | Hybrid quantum-classical DSL. | 	`program.eigen.py` file | Express the computational problem. |
-| `AQO` | Platform-independent intermediate representation. | JSON or Protobuf | Bridge between compiler and hardware backends. |
-| `CircuitPayload` | Wrapper for executable circuit. | Protobuf message (`format` + `bytes`) | Transport AQO to the Driver Manager. |
-| `ExecutionResult` | Raw results from backend. | Protobuf message (`counts` map) | Structured measurement results. |
-| `JobResults` | Final, enriched results for user. | JSON stored in QFS | Final output of a job. |
+## 1. Purpose and Scope
 
-## 3. Primary Flow: Linear Job Execution
+This document defines the canonical end-to-end data flow contract for Eigen OS.
 
-### 3.1. Step-by-Step Sequence
+It serves four purposes simultaneously:
 
-> Implemented now: end-to-end `SubmitJob -> Kernel -> Compiler -> Driver Manager -> Results` path, including status polling and result retrieval.
->
-> TODO: richer API capabilities described in long-term docs (full REST adapter, multi-provider auth, advanced scheduling policies) remain post-MVP.
+1. Defines the intended architectural flow required by the technical specification (ТЗ).
+2. Captures the implementation state already present in the repository.
+3. Fixes current runtime and artifact semantics so downstream components can rely on stable behavior.
+4. Explicitly separates stable MVP guarantees from future-phase TODO items.
+
+The document covers:
+
+- user submission flow,
+- compilation flow,
+- execution flow,
+- result retrieval flow,
+- hybrid/VQE iterative orchestration,
+- artifact persistence semantics,
+- observability and trace propagation.
+
+This specification is aligned with:
+
+- `docs/architecture/contract-map.md`
+- `docs/reference/jobspec.md`
+- `docs/reference/error-model.md`
+- `docs/reference/error-mapping.md`
+
+---
+
+## 2. Architectural Scope
+
+### 2.1 Runtime Components
+
+| **Component** | **Responsibility** | **Current State** |
+|---|---|---|
+| `eigen-cli` | User interaction, packaging, local compile helpers | Implemented |
+| System API | Public gRPC gateway, auth, validation | Implemented |
+| Kernel (QRTX) | Orchestration, lifecycle, persistence coordination | Implemented |
+| Compiler Service | AST-based compilation to AQO/QASM | Implemented |
+| Driver Manager | Backend abstraction and execution | Implemented |
+| Vendor Backend / Simulator | Actual execution target | Implemented |
+| QFS (CircuitFS) | Artifact and result persistence | Implemented |
+| Observability stack | Metrics, tracing, structured logs | Partially implemented |
+
+### 2.2 Primary Data Domains
+
+| **Data Domain** | **Description** |
+|---|---|
+| Job specification | User submission descriptor (`job.yaml`) |
+| Program source | Eigen-Lang source (`program.eigen.py`) |
+| Intermediate representation | AQO / QASM artifacts |
+| Execution payload | Driver-consumable circuit payload |
+| Runtime state | Job lifecycle and orchestration metadata |
+| Result artifacts | Counts, metadata, derived outputs |
+| Telemetry | Metrics, traces, structured logs |
+
+---
+
+## 3. High-Level Data Flow
+
+### 3.1 Canonical Runtime Flow
+
 ```text
-sequenceDiagram
-    actor User
-    participant CLI as eigen-cli
-    participant API as System API
-    participant Kernel as Kernel (QRTX)
-    participant Compiler as Compiler Service
-    participant DManager as Driver Manager
-    participant Backend as Simulator (e.g., Qiskit Aer)
-    participant QFS as QFS (CircuitFS)
-
-    Note over User, QFS: 1. SUBMISSION & VALIDATION
-    User->>CLI: eigen submit --job vqe-h2.yaml
-    CLI->>CLI: Read & parse job.yaml, program.eigen.py
-    CLI->>API: SubmitJob(SubmitJobRequest)
-    API->>API: Authenticate/Authorize request
-    API->>Kernel: EnqueueJob(KernelJob)
-    Kernel->>Kernel: Create Job Record, assign ID
-    Kernel->>QFS: Store original job.yaml / source
-    Kernel-->>API: JobAccepted(job_id)
-    API-->>CLI: SubmitJobResponse(job_id)
-    CLI-->>User: Job submitted: job_id=job_123
-
-    Note over User, QFS: 2. COMPILATION
-    Kernel->>Compiler: Compile(source, target, options)
-    Compiler->>Compiler: Parse AST, validate, optimize
-    Compiler->>Compiler: Generate AQO
-    Compiler-->>Kernel: CompileResponse(AQO_JSON)
-    Kernel->>QFS: Store compiled.aqo.json
-
-    Note over User, QFS: 3. EXECUTION
-    Kernel->>Kernel: Allocate resource (sim:local)
-    Kernel->>DManager: ExecuteCircuit(job_id, device_id, CircuitPayload(AQO), shots)
-    DManager->>DManager: Load simulator driver
-    DManager->>Backend: execute(circuit, shots) [Vendor SDK]
-    Backend-->>DManager: raw results
-    DManager->>DManager: Normalize to counts map
-    DManager-->>Kernel: ExecuteCircuitResponse(counts, metadata)
-    Kernel->>QFS: Store results.json
-    Kernel->>Kernel: Update Job State → DONE
-
-    Note over User, QFS: 4. RESULT RETRIEVAL
-    User->>CLI: eigen results job_123
-    CLI->>API: GetJobResults(job_id)
-    API->>Kernel: GetJobResults(job_id)
-    Kernel->>QFS: Fetch results.json
-    Kernel-->>API: JobResults
-    API-->>CLI: JobResults
-    CLI-->>User: Display results
+User
+  │
+  ▼
+eigen-cli / SDK
+  │
+  ▼
+System API
+  │
+  ▼
+Kernel (QRTX)
+  ├──► Compiler Service
+  │         │
+  │         ▼
+  │      AQO/QASM
+  │
+  ├──► Driver Manager
+  │         │
+  │         ▼
+  │   Vendor Backend / Simulator
+  │
+  ▼
+QFS (CircuitFS)
+  │
+  ▼
+User Results
 ```
 
-### 3.2. Detailed Data Transformation
+### 3.2 Contracted Runtime Stages
 
-#### Step 1: Submission & Packaging
+The canonical client-visible lifecycle is:
 
-1. **User Input**: A `job.yaml` file and a `program.eigen.py` file.
-```yaml
-# job.yaml
+```text
+PENDING → COMPILING → QUEUED → RUNNING → DONE | ERROR | CANCELLED
+```
+
+Additional internal orchestration substates may exist but must not violate the public lifecycle contract.
+
+---
+
+## 4. Core Data Formats
+
+### 4.1 JobSpec (`job.yaml`)
+
+Canonical MVP submission descriptor.
+
+Reference:
+
+- `docs/reference/jobspec.md`
+
+Current MVP rules:
+
+- `apiVersion: eigen.os/v0.1`
+- `kind: QuantumJob`
+- file-backed source packaging is canonical
+- inline source parsing exists but submission rejection is currently enforced
+
+Example:
+
+```text
 apiVersion: eigen.os/v0.1
 kind: QuantumJob
 metadata:
   name: h2-ground-state
 spec:
-  program: |
-    @hybrid_program(target="sim:local", shots=1024)
-    def main():
-        # ... Eigen-Lang code ...
   target: sim:local
-  compiler_options:
-    optimization_level: "1"
+  entrypoint: main
+  program_path: program.eigen.py
 ```
 
-2. **CLI Action**: `eigen-cli` reads both files. The `program` field can be inlined (as above) or passed as a reference. It constructs a `SubmitJobRequest` Protobuf message.
+---
 
-3. **System API**: Validates the request, performs authentication, and forwards it as a `KernelJob` message to the Kernel. The auth context (`x-eigen-sub`) is added to the metadata.
+### 4.2 Eigen-Lang Source
 
-4. **Kernel (QRTX)**: Creates a job record with state `PENDING` and stores source bundle + compiled/result artifacts in QFS under `circuit_fs/{job_id}/` (including `results.parquet`, `results/result.json`, `results/manifest.json`)
+Primary hybrid quantum-classical source representation.
 
-#### Step 2: Compilation (Eigen-Lang → AQO)
+Typical file:
 
-1. **Kernel** transitions the job state to `COMPILING` and calls the **Compiler Service** via gRPC.
+```text
+program.eigen.py
+```
 
-2. **Compiler** receives the source. Its workflow is strictly **AST-based (no execution)** and currently enforces source/AST safety limits:
+Current compiler pipeline characteristics:
 
-- **Parse**: Uses Python's `ast.parse()` on the source code.
+- AST-based parsing only,
+- no arbitrary runtime execution,
+- import allowlist enforcement,
+- `@hybrid_program` validation,
+- entrypoint validation.
 
-- **Validate**: Checks for a single `@hybrid_program` decorator and enforces import allowlists (RFC 0012).
+---
 
-- **Transform**: Converts high-level constructs (e.g., `ExpectationValue`) into circuit operations.
+### 4.3 AQO (Abstract Quantum Operations)
 
-- **Generate**: Outputs the circuit in **AQO v0.1 JSON** format.
+Primary intermediate representation exchanged between compiler and runtime.
+
+Current MVP representation:
+
+- JSON payload,
+- optionally protobuf-wrapped,
+- persisted in QFS.
+
+Example:
+
 ```json
 {
   "version": "0.1",
-  "qubits": 4,
+  "qubits": 2,
   "operations": [
-    {"op": "RY", "q": [0], "params": {"theta": "p0"}},
-    {"op": "CX", "q": [0, 1]},
-    {"op": "MEASURE", "q": [0, 1], "c": [0, 1]}
+    {"op": "H", "q": [0]},
+    {"op": "CX", "q": [0,1]},
+    {"op": "MEASURE", "q": [0,1], "c": [0,1]}
   ]
 }
 ```
 
-3. The compiled `AQO` is returned to the Kernel, which stores it in QFS.
+---
 
-#### Step 3: Execution (AQO → Results)
+### 4.4 CircuitPayload
 
-1. **Kernel** transitions the job through `QUEUED` and `RUNNING`, resolves target/device, and calls the **Driver Manager**.
+Canonical Driver Manager execution envelope.
 
-2. **Driver Manager** receives a `CircuitPayload` message containing the AQO bytes and a format enum (`AQO_JSON`). It loads the appropriate driver plugin (e.g., `SimulatorDriver`).
+Logical structure:
 
-3. **Driver** translates the AQO into the backend's native format (e.g., a Qiskit `QuantumCircuit` object) and calls the vendor SDK's `execute` method.
+- `format`
+- `payload bytes/ref`
+- `shots`
+- execution options
+- optional metadata
 
-4. **Backend** (Simulator) runs the circuit for the specified number of shots and returns raw data (e.g., a dictionary of bitstrings).
+Current supported formats:
 
-5. **Driver Manager** normalizes this data into a structured `ExecutionResult` with a `counts` map and metadata.
-
-   TODO: unify and enforce a stable execution-time field naming contract across all drivers/backends (currently backend metadata is partially driver-specific).
-```json
-{
-  "counts": {"00": 512, "11": 512},
-  "execution_time_sec": 0.45,
-  "metadata": {"backend": "qiskit_aer_simulator"}
-}
-```
-
-6. **Kernel** receives the result, stores it in QFS as `results.json`, and transitions the job state to `DONE`.
-
-#### Step 4: Result Retrieval
-
-1. The user queries for results via `eigen-cli results job_123`.
-
-2. The request traverses back through the **System API** and **Kernel**, which reads the final `results.json` from **QFS** and returns it in a `JobResults` response.
-
-## 4. Hybrid Loop Flow: Variational Quantum Eigensolver (VQE)
-
-This flow extends the linear flow with a classical feedback loop, which is essential for hybrid algorithms.
-```text
-flowchart TD
-    A[Start: Initial Parameters] --> B[Quantum Sub-Job]
-    B --> C{Execute Circuit<br>on Backend}
-    C --> D[Compute Expectation Value<br>⟨ψ(θ)|H|ψ(θ)⟩]
-    D --> E{Classical Optimizer<br>COBYLA, SPSA...}
-    E --> F{Check Convergence?}
-    
-    F -- No --> G[Generate New Parameters]
-    G --> B
-    
-    F -- Yes --> H[Return Final Result:<br>Min Energy, Optimal Params]
-```
-
-**Key Difference from Linear Flow**: Steps B-D (the "Quantum Sub-Job") are essentially the entire Linear Job Flow (compile + execute), but they are repeated in a loop with different input parameters each iteration.
-
-### 4.2. Eigen OS Orchestration of a VQE Loop
-
-Current codebase supports **both** external orchestration and a kernel-managed MVP VQE loop path for recognized hybrid programs. There are two active/target patterns:
-
-#### Pattern A: External Orchestration (Implemented and supported)
-
-- **Description**: A classical script (e.g., in Python, running on the user's machine) acts as the "orchestrator". It uses the Eigen OS SDK (`eigen-cli` or a gRPC client) to submit each iteration as a separate job.
-
-- **Data Flow:**
-
-1. Orchestrator sets initial parameters `θ_i`.
-
-2. It creates a **JobSpec**, **embedding** `θ_i` **as constants** in the `spec.inputs` map or directly in the source code.
-
-3. It calls `eigen-cli submit` and polls for `JobResults`.
-
-4. From the results (`counts`), it calculates the expectation value `⟨H⟩`.
-
-5. The classical optimizer (e.g., SciPy) running locally produces new parameters `θ_i+1`.
-
-6. Steps 2-5 repeat until convergence.
-
-**System Role**: Eigen OS is treated as a **stateless job execution service**. Each iteration is independent.
-
-#### Pattern B: Kernel-managed Hybrid Loop (Partially implemented in MVP, expanded post-MVP)
-
-- **Description (Post-MVP)**: A single "parent" job is submitted, which defines the variational ansatz and optimizer. The Kernel manages the iteration loop, submitting "child" quantum execution jobs internally.
-
-- **Data Flow:**
-
-1. User submits one **VQE Job**.
-
-2. Kernel identifies it as a hybrid loop, starts a **Classical Runner** task.
-
-3. For each iteration, the Classical Runner:
-
-    - Generates a parameterized **AQO** (with symbolic params).
-
-    - Calls the Driver Manager with the **AQO and concrete parameters** `θ_i`.
-
-    - Receives `counts`, computes `⟨H⟩`.
-
-    - Runs optimizer logic to get `θ_i+1`.
-
-4. Final energy and parameters are stored as the job result.
-
-**Implementation Note (current state)**: Pattern A is fully supported and remains the safest integration contract for clients. Pattern B has an MVP implementation path for VQE-like loops (kernel persists VQE metrics and final parameter metadata), but broader hybrid-loop generalization is still `TODO` for Phase 1+ (multi-algorithm loop planner, child-job lineage model, optimizer plugin framework).
-
-## 5. Observability Data Flow
-
-Telemetry data flows in parallel to the main business logic, providing insights into system health and performance.
-```text
-    Main Flow Components              Observability Pipeline
-    ──────────────────────────────────────────────────────────
-    [eigen-cli]                      ───> [Stdout Logs]
-           │                                   │
-           v                                   v
-    [System API] ───[traceparent]──> [Structured Logs] ───> [Loki]
-           │              │                         │
-           v              v                         v
-    [Kernel]    ───[metrics]──────> [Prometheus]   │
-           │              │                         │
-           v              v                         v
-    [Compiler]  ───[logs/spans]──> [OpenTelemetry Collector]
-           │                                   │
-           v                                   v
-    [Driver Manager]                         [Grafana]
-           │
-           v
-    [Backend]
-```
-
-- **Trace Propagation**: A unique `trace_id` (via the `traceparent` header) is generated at the first API call and passed through all gRPC calls (RFC 0008). This allows linking all logs and events related to a single user request (`job_id`).
-
-- **Logging**: Structured logs and trace propagation are implemented for the core pipeline (System API → Kernel → Compiler → Driver Manager).
-
-  TODO: standardize full production log shipping/retention topology (Loki/OTel deployment profile is environment-dependent and not fully hardwired by MVP code).
-
-- **Metrics**: `/metrics` endpoints and Prometheus-oriented metrics are implemented across services.
-
-  TODO: finalize a single canonical metric catalog and SLO alert set for all services (some runtime/cluster metrics are still evolving).
-
-- **Correlation**: In Grafana dashboards, a user can start from a high-level job error, use the `trace_id` to find the corresponding logs from the Kernel, Compiler, and Driver Manager, and pinpoint the exact failure stage.
+- AQO JSON
+- QASM (limited/partial depending on backend)
 
 ---
 
-**Version**: 1.0
-**Status**: MVP reference baseline (maintained)
-**Compatibility**: Eigen OS MVP (Phase 0)
-**Related Documents**: [RFC 0002: Architecture Boundaries](https://github.com/Eigen-OS/eigen-os/blob/main/rfcs/0002-%20architecture-boundaries.md), [RFC 0007: QRTX MVP](https://github.com/Eigen-OS/eigen-os/blob/main/rfcs/0007-qrtx-mvp.md), [MVP Contract Map](https://github.com/Eigen-OS/eigen-os/blob/main/docs/architecture/contract-map.md)
+### 4.5 ExecutionResult
+
+Normalized execution response returned by Driver Manager.
+
+Example:
+
+```json
+{
+  "counts": {
+    "00": 512,
+    "11": 512
+  },
+  "execution_time_sec": 0.45,
+  "metadata": {
+    "backend": "qiskit_aer_simulator"
+  }
+}
+```
+
+Current implementation state:
+
+- counts normalization exists,
+- backend metadata exists,
+- metadata naming is not yet fully standardized across all drivers.
+
+---
+
+### 4.6 JobResults
+
+Final user-facing result envelope.
+
+Contains:
+
+- execution results,
+- artifact references,
+- runtime metadata,
+- optional error metadata.
+
+Large artifacts must be referenced through QFS refs instead of embedded raw payloads.
+
+---
+
+## 5. Primary Flow — Linear Job Execution
+
+### 5.1 Flow Summary
+
+The MVP execution path is:
+
+```text
+Submit → Validate → Persist → Compile → Execute → Persist Results → Retrieve
+```
+
+The current repository already implements:
+
+- submission,
+- compilation,
+- execution,
+- polling/status,
+- result retrieval,
+- artifact persistence.
+
+Advanced scheduling and multi-provider orchestration remain future-phase extensions.
+
+---
+
+### 5.2 Detailed Runtime Sequence
+
+```text
+User
+  │
+  ▼
+eigen-cli
+  │ Read job.yaml + source
+  ▼
+System API
+  │ Validate/authenticate
+  ▼
+Kernel (QRTX)
+  │ Persist source bundle
+  │ Create job state
+  │
+  ├──► Compiler Service
+  │         │ Compile
+  │         ▼
+  │      AQO/QASM
+  │
+  ├──► QFS
+  │      compiled artifacts
+  │
+  ├──► Driver Manager
+  │         │ Execute
+  │         ▼
+  │   Vendor Backend
+  │
+  ├──► QFS
+  │      results.json
+  │
+  ▼
+System API
+  │
+  ▼
+User Results
+```
+
+---
+
+### 5.3 Submission and Packaging Flow
+
+#### Input Artifacts
+
+Required MVP artifacts:
+
+- `job.yaml`
+- `program.eigen.py`
+
+Current canonical packaging model:
+
+- source is file-backed,
+- CLI reads source locally,
+- SHA-256 checksum is generated,
+- source bundle is forwarded through `SubmitJobRequest`.
+
+#### CLI Responsibilities
+
+The CLI currently:
+
+1. Parses `job.yaml`.
+2. Resolves `program_path`.
+3. Loads source bytes.
+4. Computes source checksum.
+5. Builds `SubmitJobRequest`.
+6. Sends request to System API.
+
+Current implementation note:
+
+- inline source mode is parsed but rejected during mapping/packaging.
+
+---
+
+### 5.4 System API Flow
+
+The System API acts as the public gateway.
+
+Responsibilities:
+
+- request validation,
+- auth/authz enforcement,
+- trace propagation,
+- gRPC contract enforcement,
+- forwarding to Kernel.
+
+Current implementation state:
+
+- gRPC public API exists,
+- validation exists,
+- trace propagation exists,
+- canonical gRPC status mapping exists.
+
+Errors follow:
+
+- `INVALID_ARGUMENT`
+- `FAILED_PRECONDITION`
+- `NOT_FOUND`
+- `UNAVAILABLE`
+- other canonical mappings from `error-model.md`.
+
+---
+
+### 5.5 Kernel (QRTX) Orchestration Flow
+
+Kernel responsibilities:
+
+- lifecycle management,
+- orchestration,
+- persistence coordination,
+- compiler execution coordination,
+- backend execution coordination,
+- artifact management.
+
+Current implemented behavior:
+
+1. Create job record.
+2. Assign `job_id`.
+3. Persist submission artifacts.
+4. Transition lifecycle states.
+5. Call compiler.
+6. Call Driver Manager.
+7. Persist results.
+8. Surface status/results.
+
+Current persistent artifacts include:
+
+```text
+qfs://jobs/<job_id>/
+```
+
+Typical artifact layout:
+
+```text
+job.yaml
+source/program.eigen.py
+compiled/compiled.aqo.json
+compiled/compiled.qasm
+results/results.json
+results/error.json
+logs/run.log
+```
+
+Some paths may vary slightly by deployment profile.
+
+---
+
+### 5.6 Compilation Flow
+
+#### Compiler Responsibilities
+
+Compiler Service performs:
+
+- parsing,
+- validation,
+- transformation,
+- AQO/QASM generation.
+
+#### Compiler Validation Rules
+
+Current implementation enforces:
+
+- AST-based parsing,
+- single `@hybrid_program`,
+- import restrictions,
+- entrypoint existence checks,
+- basic semantic validation.
+
+Current implementation limitations:
+
+- validation is not yet fully AST-semantic,
+- some checks are still substring/textual,
+- size-limit enforcement is incomplete.
+
+#### Compiler Output
+
+Compiler returns:
+
+- AQO payload,
+- optional QASM,
+- compiler metadata,
+- statistics.
+
+Artifacts are persisted into QFS.
+
+---
+
+### 5.7 Execution Flow
+
+#### Driver Manager Responsibilities
+
+Driver Manager:
+
+- abstracts vendor backends,
+- manages driver lifecycle,
+- normalizes backend responses,
+- maps backend failures to canonical runtime errors.
+
+#### Execution Pipeline
+
+1. Kernel selects/resolves target.
+2. Driver Manager receives `CircuitPayload`.
+3. Backend-specific driver is loaded.
+4. AQO/QASM translated into backend-native representation.
+5. Vendor SDK/runtime invoked.
+6. Raw results normalized.
+7. Normalized result returned to Kernel.
+
+#### Backend Types
+
+Current MVP supports:
+
+- simulator backends,
+- local execution profiles.
+
+Hardware integration exists architecturally but is deployment/provider dependent.
+
+---
+
+### 5.8 Result Persistence and Retrieval
+
+#### Result Persistence
+
+Kernel persists:
+
+- normalized results,
+- metadata,
+- optional logs,
+- optional error artifacts.
+
+Current durable error artifact contract:
+
+```text
+results/error.json
+```
+
+#### Result Retrieval
+
+The retrieval flow is:
+
+```text
+User → CLI/SDK → System API → Kernel → QFS
+```
+
+Current implemented retrieval capabilities:
+
+- polling status,
+- result retrieval,
+- artifact references,
+- stream-like poll-based updates.
+
+---
+
+## 6. Hybrid/VQE Iterative Flow
+
+### 6.1 Scope
+
+Eigen OS supports hybrid quantum-classical workloads.
+
+Primary MVP example:
+
+- Variational Quantum Eigensolver (VQE)
+
+The system currently supports two orchestration models.
+
+---
+
+### 6.2 Pattern A — External Orchestration (Stable MVP Contract)
+
+This is the canonical and safest integration model.
+
+#### Flow
+
+1. External optimizer computes parameters.
+2. Parameters injected into job input/source.
+3. Job submitted.
+4. Quantum execution performed.
+5. Results retrieved.
+6. Optimizer computes next iteration.
+7. Loop repeats.
+
+#### System Semantics
+
+Eigen OS acts as:
+
+- stateless execution substrate,
+- independent-job runtime.
+
+Each iteration is treated as a separate job.
+
+#### Current State
+- fully supported,
+- production-safe,
+- primary recommended integration model.
+
+---
+
+### 6.3 Pattern B — Kernel-Managed Hybrid Loop
+
+#### Scope
+
+Kernel-managed loops are partially implemented.
+
+Current MVP support exists for:
+
+- recognized VQE-like execution paths,
+- persisted iteration metadata,
+- final optimizer state persistence.
+
+#### Planned Expanded Semantics
+
+Future phases intend:
+
+- generalized hybrid-loop orchestration,
+- child-job lineage,
+- optimizer plugins,
+- parameterized AQO reuse,
+- orchestration DAG execution.
+
+#### Current Limitation
+
+Pattern B must not yet be treated as a fully generalized stable contract.
+
+Pattern A remains the normative external integration contract.
+
+---
+
+## 7. QFS (CircuitFS) Persistence Contract
+
+### Purpose
+
+QFS is the canonical persistence layer for:
+
+- source artifacts,
+- compiled artifacts,
+- runtime outputs,
+- logs,
+- error artifacts,
+- lineage metadata.
+
+### Current MVP Backends
+
+Typical implementations:
+
+- S3/MinIO object storage,
+- SQLite metadata/indexing.
+
+Alternative backend implementations are allowed if they preserve artifact semantics.
+
+### Artifact Guarantees
+
+Current repository direction guarantees:
+
+- stable job artifact namespace,
+- durable result storage,
+- durable error artifacts,
+- artifact retrieval by refs.
+
+---
+
+## 8. Error and Failure Data Flow
+
+### Canonical Rule
+
+All runtime failures follow:
+
+- gRPC status-first semantics,
+- normalized backend errors,
+- durable async error persistence.
+
+Reference documents:
+
+- `docs/reference/error-model.md`
+- `docs/reference/error-mapping.md`
+
+### Async Failure Contract
+
+Async execution failures surface through:
+
+- lifecycle state `ERROR`,
+- `error_code`,
+- `error_summary`,
+- `error_details_ref`.
+
+### Backend Failure Normalization
+
+Driver/provider-native failures are normalized into canonical Eigen status classes.
+
+Examples:
+
+| **Failure** | **Canonical Mapping** |
+|---|---|
+| Provider unavailable | `UNAVAILABLE` |
+| Quota exceeded | `RESOURCE_EXHAUSTED` |
+| Invalid auth | `UNAUTHENTICATED` |
+| Access denied | `PERMISSION_DENIED` |
+| Internal backend fault | `INTERNAL` |
+
+---
+
+## 9. Observability and Telemetry Flow
+
+### 9.1 Trace Propagation
+
+Trace propagation uses:
+
+- W3C TraceContext,
+- `traceparent` propagation across services.
+
+Current implemented flow:
+
+```text
+CLI → System API → Kernel → Compiler → Driver Manager
+```
+
+Telemetry enrichment includes:
+
+- `trace_id`,
+- `job_id`,
+- `device_id`.
+
+---
+
+### 9.2 Logging
+
+Structured logging exists across core services.
+
+Current implementation state:
+
+- structured logs implemented,
+- trace correlation implemented,
+- deployment topology for centralized collection remains environment-specific.
+
+Current supported integrations may include:
+
+- OpenTelemetry collector,
+- Loki,
+- Grafana.
+
+---
+
+### 9.3 Metrics
+
+Prometheus-oriented metrics are implemented.
+
+Current contract areas include:
+
+- orchestration metrics,
+- intelligent-runtime metrics,
+- runtime execution metrics.
+
+Related contracts:
+
+- `orchestration-observability-contract.md`
+- `intelligent-runtime-observability-contract.md`
+
+Current limitation:
+
+- some metric families and exporter wiring remain partially implemented.
+
+---
+
+## 10. Current MVP Guarantees
+
+The following behaviors are considered stable MVP contract surface:
+
+1. gRPC-based submission flow.
+2. File-backed `job.yaml` packaging.
+3. Kernel-managed lifecycle states.
+4. Compiler AQO generation flow.
+5. Driver Manager abstraction layer.
+6. QFS artifact persistence.
+7. Poll-based update streaming.
+8. Canonical gRPC error semantics.
+9. Trace propagation across runtime services.
+10. Durable result and error artifacts.
+
+---
+
+## 11. Known Gaps and Future Hardening
+
+The following areas remain intentionally incomplete or partially frozen.
+
+### Runtime and Scheduling
+
+- advanced scheduling policies,
+- full multi-provider orchestration,
+- dynamic backend health scoring,
+- generalized hybrid orchestration DAGs.
+
+### Compiler
+
+- fully semantic AST validation,
+- stronger type/schema validation,
+- stricter source/resource limits.
+
+### Driver Layer
+
+- fully standardized backend metadata schema,
+- richer execution telemetry,
+- broader hardware-provider coverage.
+
+### Observability
+
+- unified canonical metric catalog,
+- finalized SLO definitions,
+- deployment-standardized telemetry topology.
+
+### Hybrid Runtime
+
+- generalized optimizer plugin model,
+- parameterized AQO reuse semantics,
+- stable child-job lineage contract.
+
+---
+
+## 12. Compatibility and Evolution Rules
+
+### Stable Contract Areas
+
+The following are considered public/runtime contract surface:
+
+- public gRPC semantics,
+- lifecycle states,
+- AQO handoff semantics,
+- QFS artifact semantics,
+- canonical error mappings.
+
+### Compatibility Rules
+
+- additive fields are backward compatible,
+- breaking protocol/runtime semantic changes require version bump,
+- public gRPC contract changes require compatibility review.
+
+---
+
+## 13. Final State Summary
+
+Eigen OS currently implements a complete MVP execution pipeline:
+
+```text
+Submit → Compile → Execute → Persist → Retrieve
+```
+
+The repository already includes:
+
+- public API contracts,
+- orchestration runtime,
+- compiler pipeline,
+- driver abstraction layer,
+- artifact persistence,
+- observability foundations,
+- hybrid execution foundations.
+
+Remaining work is primarily:
+
+- hardening,
+- normalization,
+- CI conformance coverage,
+- production-grade policy freezing,
+- advanced orchestration expansion.
+
+The data-flow model defined in this document is therefore treated as:
+
+- the normative MVP architectural baseline,
+- the reference integration model for SDK/runtime work,
+- the authoritative runtime flow contract unless superseded by a versioned successor specification.
