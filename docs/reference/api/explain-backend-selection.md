@@ -1,36 +1,30 @@
-# Explain API — Backend Selection (`/explain/backend-selection`)
+# REST API: Explain Backend Selection (`POST /explain/backend-selection`)
 
-This page records the current state of the explain contract for backend selection and its coverage in code/tests.
+**Purpose:** Explain why a given backend was selected for a quantum job. It returns decision rationale including candidate scores and contributions.
 
-## Current implementation status (as of 2026-05-09)
+## 1. Implementation Status
 
-- Status: **implemented at domain/service layer** in `resource-manager` as a stable versioned DTO + deterministic mapper.
-- Status: **conformance covered** by golden-fixture and deterministic replay tests.
-- Status: **transport binding is not documented/locked here** (there is no separate HTTP/gRPC handler contract locked on this page).
+- The *domain/service layer* exists (Rust) that builds the `ExplainBackendSelectionResponse` from a stored decision.
 
-Primary implementation points:
+- Versioned DTOs exist (`ExplainBackendSelectionRequest/Response`, v1.0.0) with deterministic mapping logic (`explain_backend_selection` function).
 
-- Request DTO: `ExplainBackendSelectionRequest`.  
-- Response DTO: `ExplainBackendSelectionResponse`.  
-- Builder/mapper: `explain_backend_selection(request, decision)`.  
-- Version constants: request/response/scoring contracts are pinned to `1.0.0`.  
+- Golden-fixture and replay tests (`explain_backend_selection_contract.rs`) enforce response stability and schema.
 
+**Note: No transport-level endpoint is yet defined**. The current code does not expose an HTTP/gRPC API for this explain functionality; it's only used internally in Rust tests.
 
-## Contract versions
+## 2. Contract Versioning
 
-- Explain request DTO version: `1.0.0`
-- Explain response envelope version: `1.0.0`
-- Explain contract version marker (`explain_contract_version`): `1.0.0`
-- Referenced backend scoring contract: `1.0.0`
-- Profile schema version (from decision artifact): `1.0.0`
+- **Explain API request version:** `1.0.0`
 
-SemVer policy:
+- **Explain API response (envelope) version:** `1.0.0` (fields in payload)
 
-- breaking envelope or semantic changes require `MAJOR`;
-- additive optional fields require `MINOR`;
-- fixes without public semantic changes require `PATCH`.
+- **Backend scoring contract version:** `1.0.0` (the decision artifact format)
 
-## Request schema
+- **Profile schema version:** `1.0.0` (the schema of the scoring profile)
+
+Versioning is SemVer: breaking changes need MAJOR bump.
+
+## 3. Request Schema
 
 ```json
 {
@@ -41,14 +35,15 @@ SemVer policy:
 }
 ```
 
-### Fields
+- `request_version`: (string) API request version (must be "`1.0.0`").
 
-- `request_version` (string, required): request DTO version marker.
-- `response_version` (string, required): expected response DTO version marker.
-- `decision_id` (string, required): identifier of persisted scoring decision artifact.
-- `include_rejected_candidates` (boolean, required): include ineligible candidates in `candidate_scores` when true.
+- `response_version`: (string) Target response version (must be "`1.0.0`").
 
-## Response schema
+- `decision_id`: (string) Identifier of a stored backend selection decision.
+
+- `include_rejected_candidates`: (boolean) If `true`, include ineligible candidates in the output lists; if `false`, omit them.
+
+## 4. Response Schema
 
 ```json
 {
@@ -69,8 +64,10 @@ SemVer policy:
       "ineligibility_reason": null,
       "feature_contributions": [
         {"feature": "queue_length", "contribution_millis": 197}
+        // ... other feature contributions
       ]
     }
+    // ... other candidates
   ],
   "factor_contributions": [
     {
@@ -78,6 +75,7 @@ SemVer policy:
       "factor": "queue_length",
       "contribution_millis": 197
     }
+    // ... potentially multiple entries
   ],
   "confidence": {
     "score_margin_millis": 3,
@@ -88,70 +86,70 @@ SemVer policy:
 }
 ```
 
-### Fields
+- `explain_contract_version`: API response envelope version (1.0.0).
 
-- `explain_contract_version` (string, required): explain envelope version marker.
-- `request_version` (string, required): echoed request version.
-- `response_version` (string, required): echoed response target version.
-- `scoring_contract_version` (string, required): version of source scoring artifact.
-- `profile_schema_version` (string, required): scoring profile schema version.
-- `profile_version` (string, required): concrete profile version used for scoring.
-- `decision_id` (string, required): stable source decision identifier.
-- `selected_backend_id` (string|null, required): winning backend or `null` when no eligible candidate exists.
-- `tie_break_trace` (array<string>, required): deterministic tie-break trace.
-- `candidate_scores` (array<object>, required): per-candidate score snapshot.
-- `factor_contributions` (array<object>, required): flattened ordered factor contributions.
-- `confidence` (object, required): confidence metadata from score margin.
+- `request_version` / `response_version`: Echoed from request, must both be "1.0.0".
 
-## Runtime semantics (фиксируем текущее поведение)
+- `scoring_contract_version`: Version of the referenced scoring decision (1.0.0).
 
-1. Confidence computes only over **eligible** candidates.
-2. `selected_score_millis = 0` yields `confidence = 0.0`.
-3. If `include_rejected_candidates=false`, rejected candidates are removed from:
-   - `candidate_scores`,
-   - and therefore from `factor_contributions` as well.
-4. `factor_contributions` are sorted deterministically by:
-   - `backend_id` (asc), then
-   - `factor` (asc).
-5. `tie_break_trace` is copied from the scoring artifact (not recomputed by explain layer).
+- `profile_schema_version` / `profile_version`: Version of the scoring profile used.
 
-## Determinism and compatibility gate
+- `decision_id`: The same ID from the request.
 
-Contract stability is enforced by fixture-based tests:
+- `selected_backend_id`: The winning backend ID (or `null` if none eligible).
 
-- `src/rust/crates/resource-manager/tests/explain_backend_selection_contract.rs`
-- `src/rust/crates/resource-manager/tests/fixtures/explain_contracts/backend_selection_explain_v1_0_0.json`
-- `src/rust/crates/resource-manager/tests/deterministic_replay_gate.rs`
+- `tie_break_trace`: Array of strings showing deterministic tie-break steps (copied from decision).
 
-The suite guards:
+- `candidate_scores`: List of candidates with fields:
 
-1. exact response shape/value stability against golden fixture,
-2. deterministic replay for identical decision artifacts,
-3. explicit pinned version markers.
+  - `backend_id`, `score_millis` (raw score),
 
-## Known gaps / what is missing
+  - `eligible`: boolean,
 
-Чтобы зафиксировать состояние системы, ниже список пробелов между текущей реализацией и целевой архитектурной картиной (`docs/architecture/*`):
+  - `ineligibility_reason`: null or string if not eligible,
 
-1. **Transport-level contract binding is under-specified**
-   - Эта страница описывает domain DTO, но не фиксирует wire-level endpoint contract (HTTP/gRPC mapping, status codes, error envelope) для `/explain/backend-selection`.
+  - `feature_contributions`: list of `{feature, contribution_millis}` entries that sum to the candidate’s score.
 
-2. **Error model alignment is not fully specified for explain path**
-   - Не описано поведение для cases вроде `decision_id not found`, version mismatch, corrupted artifact; отсутствует явная ссылка на mapping в error-model/error-mapping для этого endpoint.
+- `factor_contributions`: Flattened list of all feature contributions, sorted by `backend_id` and `factor`.
 
-3. **Observability contract for explain requests is missing**
-   - Нет фиксированного набора span/event names, metrics и audit fields именно для explain-вызовов.
+- `confidence`: Contains:
 
-4. **Security and access-control requirements are not fixed in this API page**
-   - Не закреплены authn/authz, tenancy boundaries и redaction policy для explain payloads.
+  - `score_margin_millis`, `selected_score_millis`, `runner_up_score_millis`, `confidence` (a float between 0 and 1).
 
-5. **Cross-component explainability linkage remains partial**
-   - В архитектуре есть TODO по explainability в HWE/GNN/Neuro-symbolic слоях; для backend-selection explain нет единого end-to-end trace contract между compile intent → decision artifact → backend invocation.
+## 5. Runtime Semantics
 
-## Recommended next documentation steps
+Based on current implementation:
 
-1. Add transport binding subsection here (or separate page) with canonical wire schema + errors.
-2. Cross-link to `docs/reference/error-model.md` + `docs/reference/error-mapping.md` with endpoint-specific cases.
-3. Define explain observability mini-contract (trace/span/metrics/audit keys).
-4. Add explicit security section (auth scopes, tenant isolation, sensitive fields policy).
-5. Add integration test matrix for negative scenarios (`missing decision`, `bad versions`, `no eligible backend`).
+- Confidence is computed only among *eligible* candidates (ineligible are ignored).
+
+- If `selected_score_millis` is 0 (no selection), `confidence` is 0.0.
+
+- If `include_rejected_candidates` is `false`, any `eligible: false` entries are omitted from both `candidate_scores` and `factor_contributions`.
+
+- `factor_contributions` entries are sorted by `backend_id` (lexicographically), then `factor` (lexicographically).
+
+- `tie_break_trace` is directly copied from the decision record; the explain API does not recompute it.
+
+## 6. Observations and Gaps
+
+- **Transport:** No HTTP or gRPC endpoint is defined. We need to decide on a transport (e.g. add `POST /explain/backend-selection`) and implement it.
+
+- **Errors:** Not specified how errors are reported (e.g. decision ID not found, version mismatch, etc.). We should define error codes and mapping in the Error Model (e.g. a 404 NOT_FOUND for unknown `decision_id`).
+
+- **Observability:** No fixed tracing or metrics contract for explain calls. We should define span names and events (for auditing usage).
+
+- **Security:** No authN/authZ is specified. We should require the same token scopes as for other scheduler or QA APIs.
+
+- **End-to-End Explainability:** There’s no integrated trace linking from job submission → scheduling decision → explain endpoint. We should plan how to propagate context/IDs for full auditing.
+
+**Tasks to complete:**
+
+1. **Define Endpoint:** Add a REST handler (or gRPC) for `POST /explain/backend-selection`. Map JSON to `ExplainBackendSelectionRequest` and call into Rust logic.
+
+2. **Error Handling:** Specify HTTP status codes and error envelopes for cases like `NOT_FOUND`, `INVALID_ARGUMENT`, etc., and implement them.
+
+3. **Metrics/Tracing:** Decide on telemetry keys (e.g. `explain.backend_selection.request`) and ensure instrumentation is in code.
+
+4. **Security Policy:** Assign an auth scope (e.g. `jobs:explain`) and enforce it.
+
+5. **Integrate with KB:** Optionally expose result storage or auditing of explain calls.

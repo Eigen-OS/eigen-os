@@ -1,160 +1,111 @@
-# Internal gRPC APIs (MVP snapshot)
+# gRPC Internal API (eigen.internal.v1)
 
-- **Phase**: MVP
-- **Snapshot date**: 2026-05-09
-- **Proto source of truth**: `proto/eigen/internal/v1/*`
+This section captures the implemented internal gRPC contracts (used between Eigen OS services) and highlights missing pieces. The canonical `.proto` files (`proto/eigen/internal/v1/*.proto`) are the source of truth.
 
-This document fixes the **actual current internal gRPC contract** and explicitly marks what is still missing relative to architecture/RFC intent.
+## 1. Services and Methods
 
-## Package and service map
+- **KernelGatewayService:** (System API → Kernel)
 
-Implemented package:
-- `eigen.internal.v1`
+   - `EnqueueJob(EnqueueJobRequest) → EnqueueJobResponse`
 
-Implemented services:
-- `KernelGatewayService` (`kernel_gateway.proto`)
-- `CompilationService` (`compilation_service.proto`)
-- `DriverManagerService` (`driver_manager_service.proto`)
-- `OptimizerService` (`optimizer_service.proto`)
+   - `GetJobStatus(GetJobStatusRequest) → GetJobStatusResponse`
 
-Common shared types:
-- `CircuitPayload`, `CircuitFormat`, `DeviceInfo`, `DeviceStatus` (`types.proto`)
+   - `CancelJob(CancelJobRequest) → CancelJobResponse`
 
-## 1) KernelGatewayService (System API ↔ Kernel)
+   - `GetJobResults(GetJobResultsRequest) → GetJobResultsResponse` *State enum: TASK_STATE_(PENDING, COMPILING, QUEUED, RUNNING, DONE, ERROR, CANCELLED, TIMEOUT).*
 
-### Implemented RPCs
-- `EnqueueJob`
-- `GetJobStatus`
-- `CancelJob`
-- `GetJobResults`
+- **CompilationService:** (Kernel → Compiler)
 
-### Implemented contract details
-- Package/name in code is `KernelGatewayService` (not legacy `KernelGateway`).
-- `EnqueueJobRequest` accepts normalized program bytes: `program` + `program_format`.
-- `EnqueueJobResponse` returns `job_id`, `state`, `created_at`.
-- `GetJobStatusResponse` includes lifecycle fields plus error payload fields (`error_code`, `error_summary`, `error_details_ref`).
-- `GetJobResultsResponse` returns `counts`, `metadata`, completion timestamp, and optional error payload fields.
-- Internal task enum includes: `PENDING`, `COMPILING`, `QUEUED`, `RUNNING`, `DONE`, `ERROR`, `CANCELLED`, `TIMEOUT`.
+   - `CompileCircuit(CompileCircuitRequest) → CompileCircuitResponse`
 
-### Missing / gaps
-- `PollJobUpdates` is **not** part of this internal proto; streaming/poll adaptation is implemented in public API flow.
-- Explicit auth-context fields (`subject/roles/tenant`) are not encoded as request fields in this proto; propagation is expected via metadata/pipeline policy.
-- Contract-level documentation for idempotency keys on internal submit path is still missing.
+   - `CompileJob(CompileJobRequest) → CompileJobResponse`
 
-## 2) CompilationService (Kernel ↔ Compiler)
+   - `OptimizeCircuit(OptimizeCircuitRequest) → OptimizeCircuitResponse` *(stub)*
 
-### Implemented RPCs
-- `CompileCircuit`
-- `CompileJob`
-- `OptimizeCircuit`
-- `ValidateCircuit`
+   - `ValidateCircuit(ValidateCircuitRequest) → ValidateCircuitResponse` *(stub)*
 
-### Implemented contract details
-- Supports direct source bytes or QFS-like `source_ref` via oneof input.
-- `CompileCircuitResponse`/`CompileJobResponse` return `CircuitPayload` + metadata map.
-- `CircuitPayload.format` comes from shared `CircuitFormat` enum (`AQO_JSON`, `AQO_PROTO`, `QASM3_TEXT`, `BACKEND_NATIVE`).
+- **DriverManagerService:** (Kernel → Driver Manager)
 
-### Missing / gaps
-- Runtime behavior currently keeps `OptimizeCircuit` and `ValidateCircuit` as `UNIMPLEMENTED` in compiler service implementation (API surface exists, production behavior incomplete).
-- No frozen schema yet for compiler `options` map keys/values (currently open-ended).
-- Source dereference lifecycle for `source_ref` is not fully standardized in this document (ownership/timeouts/error mapping still needs freeze).
+   - `ListDevices(ListDevicesRequest) → ListDevicesResponse`
 
-## 3) DriverManagerService (Kernel ↔ Driver Manager)
+   - `GetDeviceStatus(GetDeviceStatusRequest) → GetDeviceStatusResponse`
 
-### Implemented RPCs
-- `ListDevices`
-- `GetDeviceStatus`
-- `ExecuteCircuit`
-- `CalibrateDevice`
+   - `ExecuteCircuit(ExecuteCircuitRequest) → ExecuteCircuitResponse`
 
-### Implemented contract details
-- `ExecuteCircuitRequest` includes `job_id`, `device_id`, `payload`, `shots`, `options`.
-- `ExecuteCircuitResponse` normalizes backend output into `counts`, `execution_time_sec`, `metadata`.
-- Device discovery/status uses shared `DeviceInfo`/`DeviceStatus` types.
+   - `CalibrateDevice(CalibrateDeviceRequest) → CalibrateDeviceResponse`
 
-### Missing / gaps
-- Service method `CalibrateDevice` exists in proto, but current MVP runtime behavior is documented as `UNIMPLEMENTED` in component status docs.
-- Async/long-running execution interface is not present yet (single unary execute RPC in MVP).
-- Standardized cross-driver metadata keys for execution diagnostics are not frozen.
+- **OptimizerService:** (Compiler/Kernel → GNN Optimizer)
 
-## 4) OptimizerService (Compiler/Kernel ↔ Optimizer)
+   - `OptimizeCircuit(OptimizeCircuitRequest) → OptimizeCircuitResponse`
 
-### Implemented RPCs
-- `OptimizeCircuit`
+Common types (`types.proto`) include `CircuitPayload`, `CircuitFormat`, `DeviceInfo`, `DeviceStatus`, etc.
 
-### Implemented contract details
-- Request carries explicit SemVer envelope (`OptimizerContractEnvelope.contract_version`).
-- Request locks deterministic replay input set: `input_aqo`, `topology`, `objective`, `deterministic_seed`.
-- Response includes deterministic echo (`deterministic_seed`), fallback markers (`fallback_used`, `fallback_reason`), and trace/performance fields (`trace_id`, `optimizer_latency_ms`, `scoring_latency_ms`, `mapping_latency_ms`).
-- Canonical reason codes: `OPT_INVALID_AQO`, `OPT_TOPOLOGY_MISSING`, `OPT_MODEL_UNAVAILABLE`, `OPT_TIMEOUT`, `OPT_INTERNAL`.
+## 2. Detailed Notes
 
-### Missing / gaps
-- Runtime implementation for model execution path is not yet wired in this repository snapshot (contract frozen first).
-- Confidence-threshold policy table (preset-specific thresholds) still needs an explicit reference artifact.
+- **KernelGatewayService:**
 
-## 5) Shared enums/types alignment notes
+   - **Implemented:** Submit, status, cancel, results RPCs.
 
-### Implemented now
-- Internal enums are prefixed and explicit (`TASK_STATE_*`, `DEVICE_STATUS_*`, `CIRCUIT_FORMAT_*`).
-- `DEVICE_STATUS_ERROR_STATUS` naming differs from historical shorthand (`ERROR`) used in earlier docs.
+   - **Missing:** There is *no* `PollJobUpdates` RPC here; streaming is done via public API instead.
 
-### Missing / gaps
-- Some architecture text still uses legacy service/version labels (`kernel_api.v1`, etc.) and non-prefixed enum examples; full doc harmonization is still required.
+   - **Auth:** No auth fields in requests (we rely on gRPC metadata for internal trust). We should ensure metadata propagation (user/tenant context) on all calls.
 
-## 6) Error model and cross-cutting behavior
+   - **Idempotency:** Not defined here; higher-level (System API) handles idempotency.
 
-### Implemented direction
-- Internal APIs use canonical gRPC status model (not `success=false` payload flags).
-- Validation/state/backend failures are expected to map to standard status codes.
+- **CompilationService:**
 
-Recommended canonical set for MVP operations:
-- `INVALID_ARGUMENT`
-- `NOT_FOUND`
-- `FAILED_PRECONDITION`
-- `RESOURCE_EXHAUSTED`
-- `UNAVAILABLE`
-- `UNIMPLEMENTED`
-- `DEADLINE_EXCEEDED`
+   - **Implemented:** `CompileCircuit`, `CompileJob`. The code returns a `CircuitPayload` and metadata.
 
-### Missing / gaps
-- A single normative table that maps **every RPC + failure class → exact gRPC code + details type** is still absent.
-- Retry/deadline budgets are not frozen in one reference doc for all internal callers.
+   - **Stubbed:** `OptimizeCircuit` and `ValidateCircuit` exist in proto but are currently not implemented (they return UNIMPLEMENTED).
 
-## 7) Security and observability contract status
+   - **Options:** The `options` map in requests is currently unstructured; we should eventually define specific compiler flags or remove it if unused.
 
-### Implemented/active baseline
-- Internal APIs are intended for private service-to-service use only.
-- Trace propagation uses metadata (`traceparent` / trace id context in runtime).
-- Service-level metrics/logging endpoints exist across components.
+   - **Source refs:** CompileJob can accept `source_ref` but the ownership/timeout is not documented here.
 
-### Missing / gaps
-- mTLS is not yet mandatory end-to-end in MVP baseline.
-- No conformance test matrix is frozen yet for mandatory propagation of `x-eigen-*` security headers on every internal hop.
-- Metric names/labels for internal RPCs are not yet frozen as a reference API contract.
+- **DriverManagerService:**
 
-## 8) Architecture drift checklist (to keep docs/code synchronized)
+   - **Implemented:** List, status, execute; the response normalizes backend output into `counts`, `execution_time_sec`, etc.
 
-Open items to close after this snapshot:
-1. Replace residual legacy names in docs with concrete proto names:
-   - `KernelGatewayService`, `CompilationService`, `DriverManagerService`
-   - package `eigen.internal.v1`
-2. Add explicit per-RPC behavior matrix: implemented vs stub vs planned.
-3. Add conformance checks in CI for:
-   - internal proto breaking changes,
-   - required metadata propagation,
-   - canonical error mapping consistency.
-4. Freeze internal options/metadata key dictionaries where interoperability is required.
+   - **CalibrateDevice:** Exists in proto but the driver manager’s current behavior is unimplemented.
 
----
+   - **Async exec:** Currently only synchronous unary `ExecuteCircuit`. A future should be an async/streaming interface for long jobs.
 
-## References
+   - **Metadata:** We should standardize keys like `"noise_level"` or `"gate_errors"` in `metadata`.
 
-- `proto/eigen/internal/v1/kernel_gateway.proto`
-- `proto/eigen/internal/v1/compilation_service.proto`
-- `proto/eigen/internal/v1/driver_manager_service.proto`
-- `proto/eigen/internal/v1/types.proto`
-- `docs/architecture/contract-map.md`
-- `docs/architecture/components/system-api.md`
-- `docs/architecture/components/compiler.md`
-- `docs/architecture/components/driver-manager.md`
-- `docs/architecture/components/hwe.md`
+- **OptimizerService:**
+
+   - **Implemented RPC:** `OptimizeCircuit`.
+
+   - **Protocol details:** The request contains a semver envelope for replay (`contract_version`), topology, objective, deterministic seed.
+
+   - **Response:** Echoes seed, plus `fallback_used`/`fallback_reason` if a default algorithm was used, timing metrics (`optimizer_latency_ms`, etc.), and trace ID.
+
+   - **Reason codes:** The proto defines codes like `OPT_INVALID_AQO`, `OPT_TIMEOUT`, etc. These should be used on failure.
+
+   - **Missing:** The actual ML model execution path is not yet wired (only stub).
+
+   - **Thresholds:** There is mention of confidence thresholds (e.g. fallback) but no frozen table of values.
+
+## 3. Cross-cutting
+
+- **Error Model:** Internal APIs use gRPC status codes (no `success=false` fields). We should use standard codes: `INVALID_ARGUMENT`, `NOT_FOUND`, `FAILED_PRECONDITION`, `RESOURCE_EXHAUSTED`, `UNAVAILABLE`, `DEADLINE_EXCEEDED`, `UNIMPLEMENTED`. A global error mapping table (per-RPC and failure type) is not documented yet.
+
+- **Retries:** No common retry budgets are documented; each caller must decide per status. We should define recommended retry behavior for idempotent calls.
+
+- **Observability:** Trace context (W3C `traceparent`) flows by metadata. Metrics exist but naming is not standardized in docs.
+
+- **Security:** Internal calls are currently unsecured (mTLS optional). We should enforce mutual TLS and propagate a service identity token on all hops.
+
+## 4. Action Items
+
+1. **Sync Names:** Update docs and code to consistently use `KernelGatewayService`, `CompilationService`, etc. (vs. legacy names).
+
+2. **Metadata Fields:** Freeze required gRPC metadata keys (e.g. `x-eigen-user`, `x-eigen-tenant`) and enforce them.
+
+3. **Error Table:** Create a reference table mapping each RPC and error condition to gRPC codes.
+
+4. **CI Checks:** Add Buf or custom checks to catch proto changes in CI and verify metadata propagation in tests.
+
+5. **Complete Stubs:** Implement or remove the stub RPCs (`OptimizeCircuit`, `ValidateCircuit`, `CalibrateDevice`).
+
+6. **Opcodes:** Freeze any constant options (like compiler flags keys) that must be interoperable.

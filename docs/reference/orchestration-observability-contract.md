@@ -1,72 +1,800 @@
 # Orchestration Observability Contract
 
-**Status:** Phase-2 stable contract for exported orchestrator metrics.  
-**Implementation state:** exporter and monitoring assets are implemented; runtime wiring of real scheduler signals is still partial.
+- **Subsystem:** Scheduler and orchestration control plane
+- **Contract type:** Stable observability contract
+- **Contract version:** `3.0.0`
+- **Applies to:** Scheduler, Queue Manager, Fairness Controller, Quota Manager, Rebalancer, Runtime Dispatcher
+- **Last updated:** 2026-05-24
 
-## Version
+---
 
-- Contract marker metric: `eigen_orch_contract_info{version="2.3.0"} 1`
-- Current SemVer line: **2.3.x**
+## 1. Purpose
 
-SemVer policy for orchestration observability:
+This document defines the normative observability contract for the Eigen OS orchestration layer.
 
-- **MAJOR** — rename/remove a public metric, or change its meaning/type.
-- **MINOR** — add backward-compatible metrics or labels.
-- **PATCH** — implementation/documentation fixes without public semantic changes.
+The contract standardizes:
 
-## Stable Metrics (Public Surface)
+- scheduler telemetry,
+- queue health metrics,
+- fairness enforcement visibility,
+- quota enforcement telemetry,
+- starvation prevention monitoring,
+- rebalance operations,
+- orchestration latency monitoring,
+- control-plane SLO monitoring,
+- operational dashboards and alerts.
 
-All names below are **stable** and must be treated as public API:
+This contract defines the stable public metrics surface for all orchestration-related runtime telemetry.
 
-- `eigen_orch_queue_depth` (gauge)
-- `eigen_orch_queue_oldest_age_seconds` (gauge)
-- `eigen_orch_queue_avg_age_seconds` (gauge)
-- `eigen_orch_fairness_lag_millis_total` (counter)
-- `eigen_orch_fairness_lag_millis_max` (gauge)
-- `eigen_orch_quota_denied_tenant_total` (counter)
-- `eigen_orch_quota_denied_project_total` (counter)
-- `eigen_orch_rebalance_trigger_total` (counter)
-- `eigen_orch_starvation_prevention_total` (counter)
+---
 
-## Label/Type Contract
+## 2. Scope
 
-- `eigen_orch_contract_info` has exactly one required label: `version`.
-- Other Phase-2 orchestration metrics are currently exported **without labels** (single global time series per metric).
-- Metric type declarations in Prometheus text output are part of compatibility expectations.
-- Any future label introduction must keep cardinality bounded and deterministic.
+The orchestration observability contract applies to:
 
-## Source of Truth in Repository
+- queue management,
+- scheduling,
+- dispatch coordination,
+- fairness enforcement,
+- quota enforcement,
+- shard assignment,
+- rebalance operations,
+- starvation mitigation,
+- orchestration retries,
+- scheduling policy execution.
 
-- Export format and metric list: `monitoring/metrics/prometheus/exporter.py`.
-- Prometheus alert rules consuming this contract: `monitoring/metrics/prometheus/orchestrator-alerts.yaml`.
-- Dashboard consuming this contract: `monitoring/dashboards/orchestration_dashboard.json`.
-- Contract coverage tests: `monitoring/metrics/tests/test_stage_observability.py`.
-- Operational runbook: `docs/howto/orchestrator-observability-runbook.md`.
+This contract does not define:
 
-## What Is Implemented Now
+- intelligent runtime scoring metrics,
+- benchmark telemetry,
+- cluster-runtime telemetry,
+- backend-provider telemetry.
 
-1. A dedicated `OrchestrationTelemetryExporter` with an immutable snapshot model and explicit contract version `2.3.0`.
-2. Prometheus text exposition includes `# TYPE` lines for every public orchestration metric.
-3. Alerting and dashboard assets are aligned to the exact stable metric names above.
-4. Repository tests assert the contract marker and all Phase-2 orchestration metrics.
+Those are defined in separate contracts.
 
-## Known Gaps / Missing Pieces
+---
 
-The contract surface is stable, but system-level observability completeness is still evolving:
+## 3. Contract versioning
 
-1. **Runtime signal wiring is partial.**
-   The exporter supports snapshot updates, but end-to-end automatic feeding from full production-grade scheduler/orchestrator flows is not fully documented as complete in architecture/runtime docs.
-2. **No tenant/project label breakdown yet.**
-   Quota/fairness metrics are global counters in the current public surface; per-tenant/per-project slicing is not exposed in this contract version.
-3. **No histogram distribution metrics for queue/fairness.**
-   Only global gauges/counters are exported; deeper percentile distributions for queue age/fairness lag are not part of v2.3.0.
-4. **No explicit stale-data freshness guard metric.**
-   The contract currently lacks a dedicated “last snapshot update timestamp/age” metric.
+### Current version
 
-## Compatibility Rules
+```text
+eigen_orch_contract_info{version="3.0.0"} 1
+```
 
-1. Metrics listed in this document are public contract surface.
-2. Label cardinality must remain bounded and deterministic.
-3. Deprecation requires at least one **MINOR** cycle before removal.
-4. Alerts/dashboards/tests must be updated in the same change set when contract additions are introduced.
-5. Contract marker version must be bumped on every contract-level SemVer change and reflected consistently in docs, tests, and exporter defaults.
+### SemVer policy
+
+#### MAJOR
+
+Required for:
+
+- metric rename/removal,
+- metric semantic changes,
+- metric type changes,
+- incompatible label changes.
+
+#### MINOR
+
+Used for:
+
+- additive metrics,
+- additive labels,
+- histogram additions,
+- bounded-cardinality extensions.
+
+#### PATCH
+
+Used for:
+
+- documentation corrections,
+- alert tuning,
+- dashboard fixes,
+- implementation fixes without public semantic changes.
+
+---
+
+## 4. Observability architecture
+
+The orchestration observability pipeline is:
+
+```text
+Scheduler
+  ↓
+Orchestration Telemetry Exporter
+  ↓
+Prometheus
+  ↓
+Alert Rules
+  ↓
+Grafana Dashboards
+  ↓
+Operational Runbooks
+```
+
+The orchestration exporter MUST expose:
+
+- stable Prometheus metric families,
+- explicit metric typing,
+- bounded-cardinality labels,
+- deterministic metric naming.
+
+---
+
+## 5. Stable public metrics surface
+
+All metric names in this section are stable public API.
+
+---
+
+## 6. Queue health metrics
+
+### Queue depth
+
+```text
+eigen_orch_queue_depth
+```
+
+Type:
+
+```text
+gauge
+```
+
+Meaning:
+
+- current number of queued orchestration tasks.
+
+---
+
+### Oldest queue age
+
+```text
+eigen_orch_queue_oldest_age_seconds
+```
+
+Type:
+
+```text
+gauge
+```
+
+Meaning:
+
+- age of the oldest queued item.
+
+---
+
+### Average queue age
+
+```text
+eigen_orch_queue_avg_age_seconds
+```
+
+Type:
+
+```text
+gauge
+```
+
+Meaning:
+
+- moving average queue wait duration.
+
+---
+
+### Queue enqueue throughput
+
+```text
+eigen_orch_queue_enqueue_total
+```
+
+Type:
+
+```text
+counter
+```
+
+Meaning:
+
+- total enqueue operations.
+
+---
+
+### Queue dequeue throughput
+
+```text
+eigen_orch_queue_dequeue_total
+```
+
+Type:
+
+```text
+counter
+```
+
+Meaning:
+
+- total dequeue operations.
+
+---
+
+### Queue dispatch latency
+
+```text
+eigen_orch_dispatch_latency_ms
+```
+
+Type:
+
+```text
+histogram
+```
+
+Meaning:
+
+- scheduler-to-runtime dispatch latency.
+
+---
+
+## 7. Fairness enforcement metrics
+
+### Fairness lag cumulative
+
+```text
+eigen_orch_fairness_lag_millis_total
+```
+
+Type:
+
+```text
+counter
+```
+
+Meaning:
+
+- accumulated fairness delay introduced by scheduling policy.
+
+---
+
+### Maximum fairness lag
+
+```text
+eigen_orch_fairness_lag_millis_max
+```
+
+Type:
+
+```text
+gauge
+```
+
+Meaning:
+
+- highest observed fairness lag.
+
+---
+
+### Fairness correction events
+
+```text
+eigen_orch_fairness_corrections_total
+```
+
+Type:
+
+```text
+counter
+```
+
+Meaning:
+
+- number of fairness rebalance corrections applied.
+
+---
+
+## 8. Quota enforcement metrics
+
+### Tenant quota denials
+
+```text
+eigen_orch_quota_denied_tenant_total
+```
+
+Type:
+
+```text
+counter
+```
+
+Meaning:
+
+- rejected operations due to tenant quota limits.
+
+---
+
+### Project quota denials
+
+```text
+eigen_orch_quota_denied_project_total
+```
+
+Type:
+
+```text
+counter
+```
+
+Meaning:
+
+rejected operations due to project quota limits.
+
+---
+
+### Runtime quota throttling
+
+```text
+eigen_orch_quota_throttled_total
+```
+
+Type:
+
+```text
+counter
+```
+
+Meaning:
+
+- operations delayed due to soft quota throttling.
+
+---
+
+## 9. Rebalancing metrics
+
+### Rebalance triggers
+
+```text
+eigen_orch_rebalance_trigger_total
+```
+
+Type:
+
+```text
+counter
+```
+
+Meaning:
+
+- number of scheduler rebalance operations initiated.
+
+---
+
+### Rebalance duration
+
+```text
+eigen_orch_rebalance_duration_ms
+```
+
+Type:
+
+```text
+histogram
+```
+
+Meaning:
+
+- rebalance execution duration.
+
+---
+
+### Rebalance failures
+
+```text
+eigen_orch_rebalance_failures_total
+```
+
+Type:
+
+```text
+counter
+```
+
+Meaning:
+
+- failed rebalance operations.
+
+---
+
+## 10. Starvation prevention metrics
+
+### Starvation prevention actions
+
+```text
+eigen_orch_starvation_prevention_total
+```
+
+Type:
+
+```text
+counter
+```
+
+Meaning:
+
+- starvation mitigation interventions.
+
+---
+
+### Long-wait task count
+
+```text
+eigen_orch_starved_tasks
+```
+
+Type:
+
+```text
+gauge
+```
+
+Meaning:
+
+- currently starved queued tasks.
+
+---
+
+## 11. Scheduler health metrics
+
+### Scheduling decisions
+
+```text
+eigen_orch_scheduler_decisions_total
+```
+
+Type:
+
+```text
+counter
+```
+
+Meaning:
+
+- completed scheduler decisions.
+
+---
+
+### Scheduler failures
+
+```text
+eigen_orch_scheduler_failures_total
+```
+
+Type:
+
+```text
+counter
+```
+
+Meaning:
+
+- internal scheduler failures.
+
+---
+
+### Scheduling latency
+
+```text
+eigen_orch_scheduler_latency_ms
+```
+
+Type:
+
+```text
+histogram
+```
+
+Meaning:
+
+- scheduling evaluation latency.
+
+---
+
+## 12. Runtime coordination metrics
+
+### Assignment operations
+
+```text
+eigen_orch_assignments_total
+```
+
+Type:
+
+```text
+counter
+```
+
+Meaning:
+
+- orchestration assignment operations.
+
+---
+
+### Assignment failures
+
+```text
+eigen_orch_assignment_failures_total
+```
+
+Type:
+
+```text
+counter
+```
+
+Meaning:
+
+- failed runtime assignments.
+
+---
+
+## 13. Snapshot freshness metrics
+
+### Last snapshot timestamp
+
+```text
+eigen_orch_snapshot_timestamp_seconds
+```
+
+Type:
+
+```text
+gauge
+```
+
+Meaning:
+
+- last successful exporter snapshot timestamp.
+
+---
+
+### Snapshot age
+
+```text
+eigen_orch_snapshot_age_seconds
+```
+
+Type:
+
+```text
+gauge
+```
+
+Meaning:
+
+- current snapshot staleness.
+
+---
+
+## 14. Label contract
+
+### Stable labels
+
+The following labels are allowed:
+
+| **Label** | **Meaning** |
+|---|---|
+| `queue` | Queue identifier |
+| `tenant` | Tenant identifier |
+| `project` | Project identifier |
+| `policy_mode` | Scheduler policy |
+| `reason` | Failure/rebalance reason |
+
+---
+
+### Label cardinality rules
+
+All labels MUST:
+
+- remain bounded,
+- remain deterministic,
+- avoid unbounded user-generated values,
+- avoid trace-level identifiers.
+
+Forbidden labels:
+
+- `job_id`
+- `trace_id`
+- `request_id`
+- arbitrary user input
+
+---
+
+## 15. Metric type guarantees
+
+Metric types are part of the compatibility contract.
+
+Prometheus exposition MUST include:
+
+```text
+# TYPE
+```
+
+declarations for every public metric.
+
+Changing metric type requires a MAJOR version bump.
+
+---
+
+## 16. Histogram bucket policy
+
+Histogram metrics SHOULD use stable buckets.
+
+Recommended latency buckets:
+
+```yaml
+[1, 5, 10, 25, 50, 100, 250, 500, 1000, 5000]
+```
+
+Units:
+
+- milliseconds for latency histograms,
+- seconds for age gauges.
+
+---
+
+## 17. Source of truth
+
+Normative assets:
+
+| **Artifact** | **Path** |
+|---|---|
+| Exporter | `monitoring/metrics/prometheus/exporter.py` |
+| Alerts | `monitoring/metrics/prometheus/orchestrator-alerts.yaml` |
+| Dashboard | `monitoring/dashboards/orchestration_dashboard.json` |
+| Tests | `monitoring/metrics/tests/test_stage_observability.py` |
+| Runbook | `docs/howto/orchestrator-observability-runbook.md` |
+
+---
+
+## 18. Alert contract
+
+### Critical alerts
+
+The orchestration stack MUST support alerts for:
+
+- queue stall,
+- scheduler outage,
+- rebalance failures,
+- starvation surge,
+- quota denial spike,
+- assignment failure rate breach,
+- stale telemetry snapshots.
+
+### Warning alerts
+
+Warning-level alerts SHOULD include:
+
+- elevated queue age,
+- fairness lag increase,
+- dispatch latency degradation,
+- rebalance frequency increase.
+
+---
+
+## 19. Dashboard contract
+
+The orchestration dashboard MUST expose:
+
+- queue depth,
+- queue age,
+- scheduling latency,
+- fairness lag,
+- rebalance activity,
+- starvation events,
+- quota denials,
+- orchestration throughput,
+- snapshot freshness,
+- contract version visibility.
+
+---
+
+20. Runtime implementation requirements
+
+Conformant implementations MUST:
+
+1. Export all required metrics.
+2. Expose valid Prometheus text format.
+3. Preserve metric type stability.
+4. Preserve label cardinality guarantees.
+5. Export contract marker metric.
+6. Maintain deterministic metric semantics.
+
+---
+
+## 21. CI and conformance requirements
+
+CI MUST validate:
+
+- required metric presence,
+- metric type consistency,
+- contract version marker,
+- dashboard query validity,
+- alert query validity,
+- exporter scrape success.
+
+Golden tests SHOULD validate:
+
+- scheduler fairness behavior,
+- starvation prevention metrics,
+- quota enforcement telemetry,
+- rebalance instrumentation,
+- histogram bucket consistency.
+
+---
+
+## 22. Migration policy
+
+### Backward compatibility
+
+Existing orchestration metric families MUST remain compatible across MINOR releases.
+
+### Deprecation policy
+
+Metrics MAY only be removed after:
+
+1. explicit deprecation marking,
+2. at least one MINOR release cycle,
+3. dashboard/alert migration guidance.
+
+---
+
+## 23. Operational requirements
+
+Production deployments SHOULD:
+
+1. scrape orchestration metrics continuously,
+2. preserve long-term queue latency history,
+3. alert on stale exporter snapshots,
+4. correlate orchestration metrics with cluster-runtime telemetry,
+5. preserve fairness and starvation audit history.
+
+---
+
+## 24. Security considerations
+
+The observability pipeline MUST avoid exposing:
+
+- sensitive tenant identifiers,
+- authentication material,
+- user payload data,
+- backend credentials,
+- unbounded runtime metadata.
+
+Metrics MUST remain operationally safe for multi-tenant deployments.
+
+---
+
+## 25. Future evolution
+
+Planned future extensions include:
+
+- topology-aware scheduling metrics,
+- weighted fairness telemetry,
+- per-tenant SLO metrics,
+- adaptive queue analytics,
+- orchestration trace correlation,
+- scheduling replay telemetry,
+- predictive starvation analytics.
+
+---
+
+## 26. Invariants
+
+The following invariants are mandatory:
+
+1. Public metric names are stable.
+2. Metric semantics are deterministic.
+3. Metric types are immutable within MAJOR versions.
+4. Label cardinality remains bounded.
+5. Alerts and dashboards MUST evolve together with metric changes.
+6. Contract version markers MUST remain synchronized across code,  dashboards, tests, and documentation.
+7. Orchestration telemetry MUST remain replay-safe and operationally auditable.

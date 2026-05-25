@@ -1,78 +1,52 @@
-# Public gRPC API — `eigen.api.v1`
+# gRPC Public API (eigen.api.v1)
 
-## Purpose
+The public gRPC API (`eigen.api.v1`) is the user-facing interface. It is frozen at v1.0.0 (breaking changes require v2). The `.proto` files are the source of truth (`proto/eigen/api/v1/*.proto`).
 
-This document fixes the **current public gRPC contract state** for Eigen OS and highlights what is missing relative to the target architecture.
+## 1. Services and Methods
 
-**Normative source of truth:** `proto/eigen/api/v1/*.proto`.
+- **JobService:**
 
----
+   - `SubmitJob(SubmitJobRequest) → SubmitJobResponse`
 
-## Package and proto layout
+   - `GetJobStatus(GetJobStatusRequest) → GetJobStatusResponse`
 
-- Proto package: `eigen.api.v1`.
-- Public API files:
-  - `proto/eigen/api/v1/job_service.proto`
-  - `proto/eigen/api/v1/device_service.proto`
-  - `proto/eigen/api/v1/types.proto`
-  - `proto/eigen/api/v1/knowledge_base_service.proto`
+   - `CancelJob(CancelJobRequest) → CancelJobResponse`
 
-> Note: older references to `eigen_api.v1` are stale; the current package name in proto is `eigen.api.v1`.
+   - `StreamJobUpdates(StreamJobUpdatesRequest) → stream StreamJobUpdatesResponse`
 
----
+   - `GetJobResults(GetJobResultsRequest) → GetJobResultsResponse`
 
-## Public services (implemented contract surface)
+   - `GetDispatchRationale(GetDispatchRationaleRequest) → GetDispatchRationaleResponse`
 
-### 1) `JobService`
+- **DeviceService:**
 
-```proto
-service JobService {
-  rpc SubmitJob(SubmitJobRequest) returns (SubmitJobResponse);
-  rpc GetJobStatus(GetJobStatusRequest) returns (GetJobStatusResponse);
-  rpc CancelJob(CancelJobRequest) returns (CancelJobResponse);
-  rpc StreamJobUpdates(StreamJobUpdatesRequest) returns (stream StreamJobUpdatesResponse);
-  rpc GetJobResults(GetJobResultsRequest) returns (GetJobResultsResponse);
-  rpc GetDispatchRationale(GetDispatchRationaleRequest) returns (GetDispatchRationaleResponse);
-}
-```
+   - `ListDevices(ListDevicesRequest) → ListDevicesResponse`
 
-### 2) `DeviceService`
+   - `GetDeviceDetails(GetDeviceDetailsRequest) → GetDeviceDetailsResponse`
 
-```proto
-service DeviceService {
-  rpc ListDevices(ListDevicesRequest) returns (ListDevicesResponse);
-  rpc GetDeviceDetails(GetDeviceDetailsRequest) returns (GetDeviceDetailsResponse);
-  rpc GetDeviceStatus(GetDeviceStatusRequest) returns (GetDeviceStatusResponse);
-  rpc ReserveDevice(ReserveDeviceRequest) returns (ReserveDeviceResponse);
-}
-```
+   - `GetDeviceStatus(GetDeviceStatusRequest) → GetDeviceStatusResponse`
 
-### 3) `KnowledgeBaseService`
+   - `ReserveDevice(ReserveDeviceRequest) → ReserveDeviceResponse`
 
-```proto
-service KnowledgeBaseService {
-  rpc UpsertRecord(UpsertRecordRequest) returns (UpsertRecordResponse);
-  rpc BatchUpsertRecords(BatchUpsertRecordsRequest) returns (BatchUpsertRecordsResponse);
-  rpc QueryRecords(QueryRecordsRequest) returns (QueryRecordsResponse);
-  rpc GetRecord(GetRecordRequest) returns (GetRecordResponse);
-}
-```
+- **KnowledgeBaseService:** (frozen by RFC 0034 at v1.0.0)
 
-Compatibility + error contract for this service is frozen at **v1.0.0** and defined in RFC 0034 (`rfcs/0034-phase8a-knowledge-base-api-contract-v1.md`) and the proto schema (`proto/eigen/api/v1/knowledge_base_service.proto`).
+   - `UpsertRecord(UpsertRecordRequest) → UpsertRecordResponse`
 
-Deterministic reason codes: `KB_INVALID_ARGUMENT`, `KB_NOT_FOUND`, `KB_INDEX_UNAVAILABLE`, `KB_RATE_LIMITED`, `KB_INTERNAL`. Retry semantics are encoded per error as `NEVER`, `SAFE_RETRY`, or `RETRY_WITH_BACKOFF`.
+   - `BatchUpsertRecords(BatchUpsertRecordsRequest) → BatchUpsertRecordsResponse`
 
-### 4) Compilation API status
+   - `QueryRecords(QueryRecordsRequest) → QueryRecordsResponse`
 
-Compilation is **not** part of the public frozen contract for `eigen.api.v1` and remains an internal surface.
+   - `GetRecord(GetRecordRequest) → GetRecordResponse`
 
----
+   - `AppendDecisionLog(…)` (not listed, if present for linking decisions, check proto)
 
-## Key request/response shapes (current)
+*Compilation APIs are internal and **not** exposed publicly.*
 
-### `SubmitJobRequest`
+## 2. Key Messages
 
-```proto
+**SubmitJobRequest**
+
+```text
 message SubmitJobRequest {
   string name = 1;
   oneof program {
@@ -81,128 +55,134 @@ message SubmitJobRequest {
     AqoRef aqo_ref = 4;
   }
   string target = 5;
-  int32 priority = 6;
-  map<string, string> compiler_options = 7;
-  map<string, string> metadata = 8;
+  int32 priority = 6;                // [0..100], default 50
+  map<string,string> compiler_options = 7;
+  map<string,string> metadata = 8;
   repeated string dependencies = 9;
+  // (Optional) Tenant quotas envelope:
+  message TenantQuotaEnvelope {
+    string contract_version = 1;
+    string tenant_id = 2;
+    string project_id = 3;
+    uint32 tenant_max_queued_jobs = 4;
+    uint32 project_max_queued_jobs = 5;
+  }
+  TenantQuotaEnvelope tenant = 10;
 }
 ```
 
-### `SubmitJobResponse`
+- `name` (string): Job name.
 
-```proto
+- `program`: Exactly one of `eigen_lang` (embedded DSL source), `qasm` (Quantum Assembly text), or `aqo_ref` (IR reference).
+
+- `target` (string): Backend target ID (e.g. `"sim:local"`, `"vendor:device"`).
+
+- `priority` (int): 0–100, default 50.
+
+- `compiler_options`, `metadata`: Arbitrary key-value maps.
+
+- `dependencies`: List of other `job_ids` this job depends on.
+
+- `tenant`: Optional quotas envelope (can be omitted).
+
+**SubmitJobResponse**
+
+```text
 message SubmitJobResponse {
   string job_id = 1;
   JobStatus status = 2;
 }
 ```
 
-### `JobStatus` and `JobUpdate`
+- `job_id`: Assigned job identifier (globally unique).
 
-- `JobStatus` contains lifecycle fields (`state`, `stage`, `progress`, `message`), timestamps, error envelope fields (`error_code`, `error_summary`, `error_details_ref`) and topology lineage (`topology`).
-- `JobUpdate` carries streaming event data with `event_seq`, `timestamp`, and `topology`.
+- `status`: The initial job status (likely `PENDING`).
 
-### Enums (important naming detail)
+**CancelJobRequest / Response**
 
-In proto, enum values are prefixed and include explicit UNSPECIFIED variants:
+```text
+message CancelJobRequest {
+  string job_id = 1;
+}
+message CancelJobResponse {
+  bool accepted = 1; // true if cancellation was accepted
+}
+```
 
-- `JobState`: `JOB_STATE_UNSPECIFIED`, `JOB_STATE_PENDING`, …, `JOB_STATE_TIMEOUT`
-- `DeviceStatus`: `DEVICE_STATUS_UNSPECIFIED`, `DEVICE_STATUS_ONLINE`, …, `DEVICE_STATUS_ERROR_STATUS`
+- Cancels only valid jobs.
 
-> Any docs/SDK examples using short forms like `PENDING` or `ONLINE` should treat them as display aliases, not canonical wire names.
+**StreamJobUpdatesRequest / Response**
 
----
+```text
+message StreamJobUpdatesRequest {
+  string job_id = 1;
+  uint64 last_event_seq = 2;  // (Optional) resume from next event
+}
+message StreamJobUpdatesResponse {
+  JobUpdate update = 1;
+}
+```
 
-## Behavioral contract (MVP)
+- Returns a stream of `JobUpdate` messages in order.
 
-## 1) Job lifecycle
+- Clients can supply `last_event_seq` to resume a stream (best-effort).
 
-1. `SubmitJob` returns `job_id` and initial `status`.
-2. Client either polls `GetJobStatus` or subscribes to `StreamJobUpdates`.
-3. On terminal success state, client fetches payload via `GetJobResults`.
-4. `CancelJob` is accepted only for cancellable states.
+**GetDispatchRationale**
 
-## 2) Streaming semantics
+(Returns scheduling rationale, not fully detailed here.)
 
-- Ordering is per `job_id`.
-- `last_event_seq` is a **best-effort resume point**.
-- Terminal transition should be emitted once in stream semantics.
+## 3. Behavioral Contracts
 
-## 3) Device reservation
+- **Job Lifecycle:**
 
-- `ReserveDevice` reserves scheduling capacity, not global hardware lock.
-- Response contains `reservation_id` and `expires_at`.
+   1. `SubmitJob` returns a new `job_id` and status.
 
-## 5) Error signaling
+   2. Clients poll `GetJobStatus` or use `StreamJobUpdates` to track progress.
 
-- Success = gRPC `OK`.
-- Failure = non-`OK` status (optionally enriched with structured details).
-- Response bodies should not introduce ad-hoc `success=false` wrappers.
+   3. Once `state=SUCCEEDED` or `FAILED`, call `GetJobResults` for outputs.
 
----
+   4. `CancelJob` may be called on `PENDING`/`QUEUED`/`RUNNING` tasks; it is ignored in final states.
 
-## Authentication and authorization (MVP)
+- **Reservation:** `ReserveDevice` reserves capacity but does not guarantee exclusive lock; returning `reservation_id`, `expires_at`.
 
-- Bearer token expected in metadata header: `authorization: Bearer <token>`.
-- No public auth management RPC is part of `eigen.api.v1`.
+- **Errors:** Use standard gRPC status codes (not a separate `success=false`). Example:
 
-Permission model by method group:
+   - Invalid input → `INVALID_ARGUMENT` with ErrorDetail.
 
-- Jobs: `jobs:submit`, `jobs:read`, `jobs:cancel`
-- Devices: `devices:list`, `devices:reserve`
+   - Not found → `NOT_FOUND`.
 
----
+   - Unavailable hardware → `UNAVAILABLE`.
 
-## Versioning and compatibility
+## 4. Identified Gaps
 
-- Product/API line: MVP `0.1`.
-- gRPC transport namespace: `eigen.api.v1`.
-- JobSpec YAML/API versioning remains `eigen.os/v0.1` for the spec side.
-- Additive changes only inside v1 (new optional fields, new RPC methods).
-- Breaking changes require v2.
+1. **Idempotency Key:** The public API proto does not include an idempotency field. (Currently, idempotency is handled via metadata `client_request_id` if at all.) We should define a standard idempotency mechanism or require clients to use `client_request_id` header.
 
----
+2. **Cancel Semantics:** The allowed states for cancellation should be documented (e.g. cannot cancel a DONE or ERROR job). An explicit matrix in docs is needed.
 
-## Current gaps and missing pieces (we fix what's missing)
+3. **Dispatch Rationale:** If no rationale exists, it's unclear whether `GetDispatchRationale` returns an empty message or a NOT_FOUND error. We should clarify: e.g. return NOT_FOUND if no rationale, or an empty response with `NULL`.
 
-The proto contract is present, but several system-level guarantees are still underspecified or intentionally MVP-limited.
+4. **Error Details:** We need to align with the overall Error Model. For each RPC, specify how to return structured `ErrorDetail` messages. Example: field-wise errors vs. status code vs. application errors.
 
-### A) Contract clarity gaps
+5. **Stream Replay:** The retention or replay limits for `StreamJobUpdates` (how long events are kept) are not specified. We should document any window or retries.
 
-1. **Idempotency key contract is not explicit in proto fields**
-   - Convention exists via metadata (`client_request_id`) and source hash fallback, but not encoded as first-class field.
-2. **Terminal-state matrix for `CancelJob` is not formalized in proto comments**
-   - Needs explicit allowed/forbidden state table in API contract tests/docs.
-3. **`GetDispatchRationale` availability conditions are not normalized**
-   - Need clear behavior when rationale is unavailable (`NOT_FOUND` vs empty payload policy).
+6. **Reservation Binding:** The protocol is unclear on how to enforce a `ReserveDevice` with subsequent `SubmitJob`. E.g. if a reservation is held, how does the next `SubmitJob` use it? The `SubmitJobRequest` has no `reservation_id` field. We may need a feature to bind them.
 
-### B) Interoperability gaps
+7. **SLA/SLO:** Performance expectations (e.g. `SubmitJob` <100ms, status fetch <50ms) are not documented. We should consider adding service-level targets.
 
-1. **Public error detail schema is not pinned in this document**
-   - Need fixed mapping to `docs/reference/error-model.md` + examples per RPC.
-2. **Streaming replay durability bounds are not specified**
-   - `last_event_seq` is best-effort, but retention window/replay guarantees are missing.
-3. **Reservation-to-submit binding is not standardized**
-   - `reservation_id` is returned, but public submit path does not yet define a canonical request field for hard binding.
+8. **Auth Model:** The expected JWT scopes are only partially documented. We should list required OAuth scopes or RBAC roles for each method (e.g. `jobs:submit`, `devices:list`).
 
-### C) Operational readiness gaps
+9. **SDK Conformance:** There is no formal test suite for language SDKs or CLI. We should publish example requests/responses or WireMock tests for clients.
 
-1. **No documented SLA/SLO by RPC**
-   - Timeouts, expected latency bands, and retry budgets are not fixed in public contract.
-2. **Auth claims/roles schema is not documented as a stable contract**
-   - Header format is defined, claim semantics are not.
-3. **No public conformance profile for SDK generators**
-   - Need a minimal compliance matrix for CLI/Python/Go clients.
+## 5. Action Items
 
----
+- **Idempotency:** Consider adding a `string client_request_id = 12`; to `SubmitJobRequest` (and update versions accordingly), or clearly document use of metadata: {"x-client-request-id": ...}.
 
-## Required follow-up artifacts
+- **Cancel Logic:** Document in reference (and possibly enforce in code) which states can be cancelled.
 
-1. Add API conformance examples for each RPC (request/response + error cases).
-2. Add an explicit “state machine and cancellation legality” appendix.
-3. Add a replay/retention policy note for `StreamJobUpdates`.
-4. Add dispatch rationale error behavior matrix.
-5. Add security appendix for token claim requirements.
+- **Detail Examples:** Add rich examples for each RPC, including error cases, in the docs.
 
-These follow-ups should be tracked as contract hardening tasks before any post-MVP freeze widening of public API.
-    
+- **Appendix:** Include a state machine diagram and a cancellation legality table in docs.
+
+- **Replay Policy:** Clarify and codify `last_event_seq` behavior and event retention (e.g. keep logs for 24h or 1000 events).
+
+- **Auth Appendix:** Add a security section in docs describing required tokens/claims (e.g. `sub`, `roles`, `aud`).
