@@ -180,6 +180,7 @@ This document is a ready-to-use set of GitHub issues for the **Phase-9C** stage 
 **RFC link**
 - `rfcs/0048-phase9c-multitenant-plugin-boundary-contract-v1.md`
 - `rfcs/0031-phase6-plugin-compatibility-and-trust-policy-contract-v1.md`
+- Implementation notes and workflow: `docs/development/phase-9c/p9c-06-plugin-sdk-policy-templates-and-conformance-harness-update.md`
 
 ---
 
