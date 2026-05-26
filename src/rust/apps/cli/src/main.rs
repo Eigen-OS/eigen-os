@@ -9,8 +9,8 @@ use std::time::Duration;
 const EXIT_USER_ERROR: i32 = 2;
 const EXIT_NETWORK_ERROR: i32 = 3;
 const EXIT_SERVER_ERROR: i32 = 4;
-const PLUGIN_MANIFEST_SCHEMA_VERSION: &str = "2.0.0";
-const PLUGIN_API_VERSION: &str = "2.0.0";
+const PLUGIN_MANIFEST_SCHEMA_VERSION: &str = "2.1.0";
+const PLUGIN_API_VERSION: &str = "2.1.0";
 const EIGEN_OS_VERSION: &str = "0.6.0";
 const CLI_VERSION: &str = "0.16.0";
 const EIGEN_LANG_VERSION: &str = "0.1.0";
@@ -134,7 +134,7 @@ fn run_plugin(args: &[String]) -> Result<(), String> {
 fn run_plugin_scaffold(args: &[String]) -> Result<(), String> {
     if args.len() != 2 {
         return Err(
-            "usage: eigen plugin scaffold <plugin_dir> <driver|compiler_backend|optimizer>"
+            "usage: eigen plugin scaffold <plugin_dir> <driver|compiler_backend|optimizer|policy>"
                 .to_string(),
         );
     }
@@ -151,7 +151,7 @@ fn run_plugin_scaffold(args: &[String]) -> Result<(), String> {
             .unwrap_or("plugin")
     );
     let manifest = format!(
-        "manifest_schema_version = \"{PLUGIN_MANIFEST_SCHEMA_VERSION}\"\nplugin_id = \"{plugin_id}\"\nplugin_version = \"0.1.0\"\nplugin_type = \"{plugin_type}\"\nplugin_api_version = \"{PLUGIN_API_VERSION}\"\neigen_os_compatibility = \">=0.6.0,<1.0.0\"\neigen_lang_version = \"{EIGEN_LANG_VERSION}\"\n\n[capabilities]\nhooks = []\n"
+        "manifest_schema_version = \"{PLUGIN_MANIFEST_SCHEMA_VERSION}\"\nplugin_id = \"{plugin_id}\"\nplugin_version = \"0.1.0\"\nplugin_type = \"{plugin_type}\"\nplugin_api_version = \"{PLUGIN_API_VERSION}\"\neigen_os_compatibility = \">=0.6.0,<1.0.0\"\neigen_lang_version = \"{EIGEN_LANG_VERSION}\"\nsignature_bundle_ref = \"oci://signatures/{plugin_id}.sig\"\n\n[capabilities]\nhooks = []\n\n[policy]\nreason_codes = [\"POLICY_TIMEOUT\", \"POLICY_OUTPUT_INVALID\"]\ntimeout_ms = 500\nfallback_mode = \"deterministic_kernel\"\n"
     );
     std::fs::write(plugin_dir.join("plugin.toml"), manifest)
         .map_err(|e| format!("failed to write plugin.toml: {e}"))?;
@@ -509,14 +509,55 @@ fn validate_plugin_manifest(manifest: &str) -> Result<(), String> {
         }
     }
     let plugin_type = extract_toml_string(manifest, "plugin_type").unwrap_or_default();
-    validate_plugin_type(&plugin_type)
+    validate_plugin_type(&plugin_type)?;
+    if plugin_type == "policy" {
+        validate_policy_plugin_manifest(manifest)?;
+    }
+    Ok(())
 }
 
 fn validate_plugin_type(plugin_type: &str) -> Result<(), String> {
     match plugin_type {
-        "driver" | "compiler_backend" | "optimizer" => Ok(()),
+        "driver" | "compiler_backend" | "optimizer" | "policy" => Ok(()),
         other => Err(format!(
-            "manifest validation failed: unsupported plugin_type '{other}', allowed: driver, compiler_backend, optimizer"
+            "manifest validation failed: unsupported plugin_type '{other}', allowed: driver, compiler_backend, optimizer, policy"
+        )),
+    }
+}
+
+fn validate_policy_plugin_manifest(manifest: &str) -> Result<(), String> {
+    let reason_codes = extract_toml_array(manifest, "reason_codes").ok_or_else(|| {
+        "manifest validation failed: missing required [policy].reason_codes".to_string()
+    })?;
+    if reason_codes.is_empty() {
+        return Err("manifest validation failed: [policy].reason_codes must be non-empty".to_string());
+    }
+    for code in reason_codes {
+        if !code.starts_with("POLICY_")
+            || !code
+                .chars()
+                .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+        {
+            return Err(format!(
+                "manifest validation failed: invalid policy reason code '{code}'"
+            ));
+        }
+    }
+    let timeout_ms = extract_toml_u64(manifest, "timeout_ms").ok_or_else(|| {
+        "manifest validation failed: missing required [policy].timeout_ms".to_string()
+    })?;
+    if !(10..=5000).contains(&timeout_ms) {
+        return Err(
+            "manifest validation failed: [policy].timeout_ms must be within 10..=5000".to_string(),
+        );
+    }
+    let fallback_mode = extract_toml_string(manifest, "fallback_mode").ok_or_else(|| {
+        "manifest validation failed: missing required [policy].fallback_mode".to_string()
+    })?;
+    match fallback_mode.as_str() {
+        "deterministic_kernel" | "deterministic_core" => Ok(()),
+        other => Err(format!(
+            "manifest validation failed: unsupported [policy].fallback_mode '{other}', allowed: deterministic_kernel, deterministic_core"
         )),
     }
 }
@@ -526,6 +567,30 @@ fn extract_toml_string(doc: &str, key: &str) -> Option<String> {
     let start = doc.find(&marker)? + marker.len();
     let end = doc[start..].find('\"')? + start;
     Some(doc[start..end].to_string())
+}
+
+fn extract_toml_array(doc: &str, key: &str) -> Option<Vec<String>> {
+    let marker = format!("{key} = [");
+    let start = doc.find(&marker)? + marker.len();
+    let end = doc[start..].find(']')? + start;
+    let body = &doc[start..end];
+    Some(
+        body.split(',')
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+            .map(|item| item.trim_matches('"').to_string())
+            .collect(),
+    )
+}
+
+fn extract_toml_u64(doc: &str, key: &str) -> Option<u64> {
+    let marker = format!("{key} = ");
+    let start = doc.find(&marker)? + marker.len();
+    let end = doc[start..]
+        .find('\n')
+        .map(|idx| start + idx)
+        .unwrap_or(doc.len());
+    doc[start..end].trim().parse().ok()
 }
 
 fn run_benchmark(args: &[String]) -> Result<(), String> {
@@ -1291,7 +1356,12 @@ mod tests {
             .join("fixtures")
             .join("plugins");
 
-        for file in ["driver.toml", "compiler_backend.toml", "optimizer.toml"] {
+        for file in [
+            "driver.toml",
+            "compiler_backend.toml",
+            "optimizer.toml",
+            "policy.toml",
+        ] {
             let manifest =
                 std::fs::read_to_string(fixture_dir.join(file)).expect("fixture manifest");
             validate_plugin_manifest(&manifest).expect("ga type should validate");
@@ -1308,14 +1378,21 @@ mod tests {
             std::fs::read_to_string(fixture_dir.join("scheduler.toml")).expect("fixture manifest");
         let err = validate_plugin_manifest(&manifest).expect_err("scheduler type must be rejected");
         assert!(err.contains("unsupported plugin_type 'scheduler'"));
-        assert!(err.contains("driver, compiler_backend, optimizer"));
+        assert!(err.contains("driver, compiler_backend, optimizer, policy"));
     }
 
     #[test]
     fn plugin_manifest_rejects_non_ga_type() {
-        let manifest = "manifest_schema_version = \"2.0.0\"\nplugin_id = \"io.eigen.x\"\nplugin_version = \"0.1.0\"\nplugin_type = \"analyzer\"\nplugin_api_version = \"2.0.0\"\neigen_os_compatibility = \">=0.6.0,<1.0.0\"\neigen_lang_version = \"0.1.0\"\nsignature_bundle_ref = \"oci://sig\"\n";
+        let manifest = "manifest_schema_version = \"2.1.0\"\nplugin_id = \"io.eigen.x\"\nplugin_version = \"0.1.0\"\nplugin_type = \"analyzer\"\nplugin_api_version = \"2.1.0\"\neigen_os_compatibility = \">=0.6.0,<1.0.0\"\neigen_lang_version = \"0.1.0\"\nsignature_bundle_ref = \"oci://sig\"\n";
         let err = validate_plugin_manifest(manifest).expect_err("should fail");
         assert!(err.contains("unsupported plugin_type 'analyzer'"));
+    }
+
+     #[test]
+    fn policy_manifest_requires_policy_contract_fields() {
+        let manifest = "manifest_schema_version = \"2.1.0\"\nplugin_id = \"io.eigen.x\"\nplugin_version = \"0.1.0\"\nplugin_type = \"policy\"\nplugin_api_version = \"2.1.0\"\neigen_os_compatibility = \">=0.6.0,<1.0.0\"\neigen_lang_version = \"0.1.0\"\nsignature_bundle_ref = \"oci://sig\"\n\n[policy]\ntimeout_ms = 9\nfallback_mode = \"best_effort\"\n";
+        let err = validate_plugin_manifest(manifest).expect_err("should fail");
+        assert!(err.contains("[policy].reason_codes"));
     }
 
     #[test]

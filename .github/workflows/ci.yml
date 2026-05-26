@@ -74,6 +74,11 @@ jobs:
       - name: Run CLI conformance tests
         run: cargo test -p cli --locked
 
+      - name: Run policy plugin conformance tests
+        run: |
+          cargo test -p cli --locked plugin_ga_types_contract_fixtures_are_accepted
+          cargo test -p cli --locked policy_manifest_requires_policy_contract_fields
+
   python-components:
     name: Python components install + tests
     runs-on: ubuntu-latest
