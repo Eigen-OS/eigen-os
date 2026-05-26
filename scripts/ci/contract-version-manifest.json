@@ -7,7 +7,7 @@
     },
     {
       "path": "proto/eigen/api/v1/job_service.proto",
-      "sha256": "1966cca61a0de1d492cebcecaccf04c674d8e16e36262f5f5d599bde6b00992e"
+      "sha256": "5349c394003f94e3fdac0b29998291278ba7aa0c5718a3023d6bbd5ed908dfcd"
     },
     {
       "path": "proto/eigen/api/v1/knowledge_base_service.proto",

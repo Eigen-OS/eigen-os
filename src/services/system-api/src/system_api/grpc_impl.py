@@ -642,7 +642,7 @@ class JobService:
         if topology_telemetry:
             topology_fallback_reason = "NO_FALLBACK"
         dispatch_rationale = {
-           "version": "2.4.0",
+           "version": "2.3.0",
             "policy_version": metadata.get("dispatch_policy_version", "2.2.0"),
             "reason_codes": ["WEIGHTED_FAIRNESS", "DEVICE_SCORE", "PRIORITY_QUOTA", "SINGLE_DISPATCH"],
             "selected_backend": request.target or "sim:local",
@@ -915,10 +915,14 @@ class JobService:
         else:
             record.dispatch_rationale["attributes"]["quota_state"] = "eligible"
             record.dispatch_rationale["attributes"]["quota_penalty_slots"] = "0"
+            
             queued_for_tenant = sum(
             1
             for rec in self._jobs.values()
-            if rec.job_id != record.job_id and rec.owner_tenant == record.owner_tenant and rec.updates and rec.updates[-1].stage == "QUEUED"
+            if rec.job_id != record.job_id
+            and rec.owner_tenant == record.owner_tenant
+            and rec.updates
+            and rec.updates[-1].stage == "QUEUED"
         )
         if queued_for_tenant >= record.tenant_quota_limit:
             record.dispatch_rationale["reason_codes"].append("TENANT_BASELINE_QUOTA_DELAY")

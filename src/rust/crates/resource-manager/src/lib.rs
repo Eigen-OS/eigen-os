@@ -2878,54 +2878,6 @@ pub fn explain_backend_selection(
     let project_id = request.tenant_context.project_id.trim();
     let redacted_tenant = redact_identifier(tenant_id);
     let redacted_project = redact_identifier(project_id);
-    evidence_schema_version: "2.0.0",
-        decision_provenance: ExplainDecisionProvenance {
-            tenant_context: ExplainTenantEvidence {
-                tenant_id: redacted_tenant.clone(),
-                project_id: redacted_project.clone(),
-                quota_trace: vec![
-                    format!("quota:tenant:{}/{}", request.tenant_context.quota_snapshot.tenant_used, request.tenant_context.quota_snapshot.tenant_limit),
-                    format!("quota:project:{}/{}", request.tenant_context.quota_snapshot.project_used, request.tenant_context.quota_snapshot.project_limit),
-                    format!("quota:admitted:{}", request.tenant_context.quota_snapshot.admitted),
-                    format!("quota:reason:{:?}", request.tenant_context.quota_snapshot.reason_code),
-                ],
-                redactions_applied: if request.tenant_context.sensitivity_labels.is_empty() {
-                    Vec::new()
-                } else {
-                    request
-                        .tenant_context
-                        .sensitivity_labels
-                        .iter()
-                        .map(|label| format!("redact:{label}"))
-                        .collect()
-                },
-            },
-            policy_context: ExplainPolicyEvidence {
-                policy_bundle_id: request.policy_context.policy_bundle_id.clone(),
-                policy_bundle_version: request.policy_context.policy_bundle_version.clone(),
-                transition_reason_code: request.policy_context.transition_reason_code,
-                fallback_applied: request.policy_context.fallback_applied,
-                fallback_reason: request.policy_context.fallback_reason.clone(),
-                plugin_trace: request.policy_context.plugin_trace.clone(),
-            },
-            evidence_ids: vec![
-                format!("backend-decision:{}", decision.decision_id),
-                format!("tenant:{}:project:{}", redacted_tenant, redacted_project),
-                format!(
-                    "policy:{}@{}",
-                    request.policy_context.policy_bundle_id, request.policy_context.policy_bundle_version
-                ),
-                format!("reason:{:?}", request.policy_context.transition_reason_code),
-            ],
-        },
-    }
-}
-
-fn redact_identifier(value: &str) -> String {
-    if value.len() <= 4 {
-        "***".to_string()
-    } else {
-        format!("{}***", &value[..4])
     let mut eligible_scores: Vec<u64> = decision
         .candidates
         .iter()
@@ -2980,12 +2932,72 @@ fn redact_identifier(value: &str) -> String {
         tie_break_trace: decision.tie_break_trace.clone(),
         candidate_scores,
         factor_contributions,
+        evidence_schema_version: "2.0.0",
+        decision_provenance: ExplainDecisionProvenance {
+            tenant_context: ExplainTenantEvidence {
+                tenant_id: redacted_tenant.clone(),
+                project_id: redacted_project.clone(),
+                quota_trace: vec![
+                    format!(
+                        "quota:tenant:{}/{}",
+                        request.tenant_context.quota_snapshot.tenant_used,
+                        request.tenant_context.quota_snapshot.tenant_limit
+                    ),
+                    format!(
+                        "quota:project:{}/{}",
+                        request.tenant_context.quota_snapshot.project_used,
+                        request.tenant_context.quota_snapshot.project_limit
+                    ),
+                    format!("quota:admitted:{}", request.tenant_context.quota_snapshot.admitted),
+                    format!(
+                        "quota:reason:{:?}",
+                        request.tenant_context.quota_snapshot.reason_code
+                    ),
+                ],
+                redactions_applied: if request.tenant_context.sensitivity_labels.is_empty() {
+                    Vec::new()
+                } else {
+                    request
+                        .tenant_context
+                        .sensitivity_labels
+                        .iter()
+                        .map(|label| format!("redact:{label}"))
+                        .collect()
+                },
+            },
+            policy_context: ExplainPolicyEvidence {
+                policy_bundle_id: request.policy_context.policy_bundle_id.clone(),
+                policy_bundle_version: request.policy_context.policy_bundle_version.clone(),
+                transition_reason_code: request.policy_context.transition_reason_code,
+                fallback_applied: request.policy_context.fallback_applied,
+                fallback_reason: request.policy_context.fallback_reason.clone(),
+                plugin_trace: request.policy_context.plugin_trace.clone(),
+            },
+            evidence_ids: vec![
+                format!("backend-decision:{}", decision.decision_id),
+                format!("tenant:{}:project:{}", redacted_tenant, redacted_project),
+                format!(
+                    "policy:{}@{}",
+                    request.policy_context.policy_bundle_id,
+                    request.policy_context.policy_bundle_version
+                ),
+                format!("reason:{:?}", request.policy_context.transition_reason_code),
+            ],
+        },
         confidence: ExplainConfidenceMetadata {
             score_margin_millis,
             selected_score_millis,
             runner_up_score_millis,
             confidence,
         },
+    }
+}
+
+fn redact_identifier(value: &str) -> String {
+    if value.len() <= 4 {
+        "***".to_string()
+    } else {
+        format!("{}***", &value[..4])
     }
 }
 
