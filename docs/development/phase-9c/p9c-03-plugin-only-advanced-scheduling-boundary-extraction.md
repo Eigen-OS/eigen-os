@@ -19,7 +19,7 @@ The core scheduler MUST remain fully deterministic and functional when no policy
 ## Versioning & Compatibility
 
 - **Version impact:** MINOR
-- **Compatibility matrix artifact:** `policy_capability_matrix.v1` introduced as `1.0.0`.
+- **Compatibility matrix artifact:** `policy_capability_matrix.v1` introduced as `1.1.0`.
 - **Breaking marker:** false
 - **Migration notes:** None
 
@@ -32,7 +32,7 @@ Rationale:
 
 Authoritative fixture:
 
-- `docs/development/fixtures/phase9c/policy_capability_matrix_v1_0_0.json`
+- `docs/development/fixtures/phase9c/policy_capability_matrix_v1_1_0.json`
 
 Declared capabilities:
 

@@ -1,0 +1,48 @@
+{
+  "schema_version": "policy_capability_matrix.v1",
+  "matrix_version": "1.1.0",
+  "stage": "phase-9c",
+  "ownership": {
+    "core": [
+      "deterministic_weighted_fair_queueing",
+      "tenant_project_quota_admission",
+      "starvation_prevention",
+      "kernel_fallback_reason_resolution"
+    ],
+    "plugin": [
+      "batch_dispatch",
+      "preemption",
+      "backfill",
+      "drift_aware_scoring"
+    ]
+  },
+  "contracts": {
+    "policy_plugin_api_version": "1.0.0",
+    "fallback_reason_schema_version": "1.1.0"
+  },
+  "fallback_semantics": {
+    "timeout": {
+      "kernel_action": "fallback_to_core_policy",
+      "deterministic_reason_code": "PLUGIN_TIMEOUT_FALLBACK"
+    },
+    "crash": {
+      "kernel_action": "fallback_to_core_policy",
+      "deterministic_reason_code": "PLUGIN_CRASH_FALLBACK"
+    },
+    "malformed_output": {
+      "kernel_action": "fallback_to_core_policy",
+      "deterministic_reason_code": "PLUGIN_MALFORMED_OUTPUT_FALLBACK"
+    }
+  },
+  "determinism_guards": [
+    "core_scheduler_operates_with_plugins_disabled",
+    "plugin_timeout_isolation_with_deterministic_fallback",
+    "plugin_crash_isolation_with_deterministic_fallback",
+    "plugin_malformed_output_isolation_with_reason_codes"
+  ],
+  "evidence_bundle": {
+    "phase_release_checklist": "docs/development/phase-9c/phase-9c-release-readiness-checklist.md",
+    "compatibility_report": "docs/development/phase-9c/phase-9c-compatibility-report.md",
+    "exit_evidence_bundle": "docs/development/phase-9c/phase-9c-exit-evidence-bundle.md"
+  }
+}
