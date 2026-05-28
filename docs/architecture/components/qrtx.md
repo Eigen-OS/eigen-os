@@ -1,89 +1,204 @@
 # Kernel (QRTX)
 
-- **Phase:** MVP → Phase-1 evolution baseline
-- **Status snapshot date:** 2026-05-25
-- **Implementation state:** Partially implemented as the active runtime orchestration kernel in `src/rust/crates/eigen-kernel`.
-
----
-
-# Responsibility
+- **Document status:** Normative architecture + runtime orchestration contract (MVP → Phase-1 baseline)
+- **Snapshot date:** 2026-05-25
+- **Contract version:** 1.0.0
+- **Implementation state:** Partially implemented as the active runtime orchestration kernel in src/rust/crates/eigen-kernel
 
 QRTX (Kernel) is the core runtime orchestration layer responsible for deterministic execution lifecycle management across compilation, execution, artifact persistence, and runtime coordination.
 
-The current implementation provides a reduced but functional orchestration pipeline for MVP runtime execution.
+This document is **normative** for:
 
-The long-term architecture target extends QRTX into a production-grade orchestration runtime with durable state, adaptive scheduling, queue/resource semantics, deterministic replay support, and hardware-aware execution coordination.
+- kernel lifecycle semantics exposed via internal APIs,
+- mapping between kernel state and **public** lifecycle states,
+- kernel persistence obligations to QFS,
+- kernel failure/timeout semantics and async failure visibility,
+- kernel observability requirements and conformance expectations.
 
 ---
 
-# Responsibility Scope
+## 1. Contract Versioning
 
-## Implemented now
+### 1.1 Contract marker
 
-### Runtime orchestration
-
-QRTX currently orchestrates the execution lifecycle:
+Kernel implementations SHOULD export a marker metric:
 
 ```text
-compile → execute → persist artifacts/results
+eigen_kernel_contract_info{version="1.0.0"} 1
 ```
 
-The kernel coordinates with:
+---
+
+### 1.2 SemVer policy
+
+#### MAJOR
+
+- changes to public lifecycle mapping,
+- changes to terminalization semantics,
+- changes to QFS required artifacts produced by kernel,
+- incompatible change to internal orchestration API semantics.
+
+#### MINOR
+
+- additive internal substates,
+- additive kernel metrics,
+- additive QFS artifacts,
+- additive orchestration metadata (bounded).
+
+#### PATCH
+
+- implementation fixes and documentation corrections without semantic change.
+
+---
+
+## 2. Responsibility
+
+QRTX is the authoritative coordinator for a job’s runtime lifecycle. It:
+
+- validates/normalizes internal execution requests (after System API validation),
+- orchestrates compilation and execution calls,
+- enforces lifecycle transitions,
+- persists artifacts and durable failure evidence to QFS,
+- propagates trace/auth correlation context across services,
+- surfaces status/results consistently through internal APIs (and therefore public APIs).
+
+QRTX MUST NOT:
+
+- expose internal substates as new public lifecycle states,
+- bypass deterministic compiler safety policies,
+- bypass Driver Manager backend normalization,
+- encode transport failures in response bodies (must use gRPC status + details),
+- invent results without QFS-backed persistence for terminal outcomes.
+
+---
+
+## 3. Architecture Position
+
+QRTX is the central orchestration component.
+
+It integrates with:
+
+- `system-api` (public gateway; forwards to kernel)
+- `eigen-compiler` (CompilationService)
+- `driver-manager` (DriverManagerService)
+- `qfs` (CircuitFS / QFSStore facade)
+- future: `hwe`, `gnn-optimizer`, `knowledge-base`, `neuro-symbolic-core`
+
+Canonical runtime pipeline:
+
+```text
+System API
+  ↓
+QRTX (Kernel)
+  ├──► CompilationService
+  ├──► DriverManagerService
+  └──► QFS
+```
+
+---
+
+## 4. Lifecycle Contract
+
+### 4.1 Canonical public lifecycle (MUST remain stable)
+
+Client-visible lifecycle states are:
+
+```text
+PENDING → COMPILING → QUEUED → RUNNING → DONE | ERROR | CANCELLED
+```
+
+---
+
+### 4.2 Kernel internal states (allowed)
+
+Kernel MAY use internal substates for orchestration, but MUST map them deterministically to the public lifecycle.
+
+#### Allowed internal state set (recommended baseline):
+
+```text
+PENDING
+COMPILING
+QUEUED
+RUNNING
+DONE
+ERROR
+CANCELLED
+```
+
+#### Optional internal substates (internal-only, additive):
+
+- `VALIDATING`
+- `ALLOCATING`
+- `EXECUTING` (substate of RUNNING)
+- `COMPLETING` (substate of RUNNING)
+- `TIMEOUT_INTERNAL` (internal terminal reason, not a public lifecycle state)
+
+---
+
+### 4.3 Mapping rules (normative)
+
+| **Kernel internal** | **Public lifecycle** | **Notes** |
+|---|---|---|
+| `PENDING` | `PENDING` | accepted, not yet compiling |
+| `VALIDATING` | `PENDING` | internal-only; never exposed |
+| `COMPILING` | `COMPILING` | compilation in progress |
+| `QUEUED` | `QUEUED` | awaiting execution scheduling/dispatch |
+| `ALLOCATING` | `QUEUED` | internal-only; never exposed |
+| `RUNNING` / `EXECUTING` / `COMPLETING` | `RUNNING` | execution active |
+| `DONE` | `DONE` | terminal success |
+| `CANCELLED` | `CANCELLED` | terminal cancellation |
+| `ERROR` | `ERROR` | terminal failure |
+| `TIMEOUT_INTERNAL` | `ERROR` | MUST surface as `ERROR` with `DEADLINE_EXCEEDED` semantics |
+
+---
+
+### 4.4 Terminalization invariants (MUST)
+
+1. Terminal states are immutable:
+    - `DONE`, `ERROR`, `CANCELLED` MUST NOT transition to any other state.
+2. Terminalization MUST be idempotent:
+    - repeated terminalization requests/events MUST produce the same terminal outcome.
+3. Public lifecycle MUST be monotonic:
+    - no backwards public transitions (e.g., `RUNNING → QUEUED`) are allowed.
+4. Timeouts are failures:
+    - any timeout MUST become `ERROR` (public) with canonical timeout semantics (see `§8`).
+
+---
+
+## 5. Implemented Baseline (Current Repository)
+
+### 5.1 Runtime orchestration (implemented)
+
+QRTX orchestrates: `compile → execute → persist artifacts/results`
+
+Coordinates with:
 
 - `CompilationService`
 - `DriverManagerService`
-- QFS (`CircuitFsLocal`)
+- QFS (`CircuitFsLocal` / QFS facade)
 
 ---
 
-### Job lifecycle management
+### 5.2 Job lifecycle (implemented but MUST align to public mapping)
 
-Current implemented lifecycle states:
+Repository snapshot indicates internal states include:
 
 ```text
-Pending
-Compiling
-Running
-Done
-Error
-Cancelled
-Timeout
+Pending, Compiling, Running, Done, Error, Cancelled, Timeout
 ```
 
----
+Contract correction (normative):
 
-### Artifact persistence
-
-Kernel integrates with QFS for:
-
-- compiled artifacts,
-- runtime metadata,
-- execution results,
-- error payload persistence.
+- `Timeout` MUST NOT be exposed as a public lifecycle state.
+- Internally, represent timeout as `TIMEOUT_INTERNAL` (reason) and map to public `ERROR` with `DEADLINE_EXCEEDED`.
 
 ---
 
-### Runtime coordination
+### 5.3 Internal orchestration API (implemented)
 
-Kernel manages:
+Implemented gRPC service: `KernelGatewayService`
 
-- compilation invocation,
-- backend execution invocation,
-- terminalization handling,
-- structured runtime errors,
-- request correlation propagation.
-
----
-
-### Internal orchestration API
-
-Implemented gRPC service:
-
-```text
-KernelGatewayService
-```
-
-Methods:
+Methods (implemented):
 
 - `EnqueueJob`
 - `GetJobStatus`
@@ -92,746 +207,322 @@ Methods:
 
 ---
 
-### Runtime observability
+## 6. Interfaces
 
-Kernel emits:
+### 6.1 Inbound gRPC: KernelGatewayService (normative behavior)
 
-- structured tracing spans,
-- correlated runtime logs,
-- propagated `traceparent` / `trace_id`,
-- stage-level runtime diagnostics.
+#### EnqueueJob
 
----
+- creates job record and stable `job_id`
+- persists required submission artifacts to QFS
+- returns accepted response with `job_id`
+- MUST propagate trace context
 
-## Required target responsibility (architecture baseline)
+#### GetJobStatus
 
-The production QRTX runtime SHALL provide:
+returns public lifecycle state + timestamps + optional progress fields
+MUST NOT expose internal-only substates as new public states
 
-### Full lifecycle orchestration
+#### CancelJob
 
-Expanded lifecycle chain:
+- allowed for non-terminal jobs
+- best-effort for RUNNING
+- MUST be idempotent
 
-```text
-Pending
-Validating
-Compiling
-Queued
-Allocating
-Executing
-Completing
-Completed
-Cancelled
-Timeout
-Error
-```
+#### GetJobResults
 
-Including documented sub-states and transition semantics.
+- for `DONE`: returns results + QFS refs
+- for `ERROR`: returns async failure visibility fields + QFS error ref
+- for non-terminal: MUST use `FAILED_PRECONDITION` (results not ready)
 
 ---
 
-### Queue and scheduling semantics
+### 6.2 Outbound gRPC integrations (implemented)
 
-The kernel SHALL support:
+#### CompilationService
 
-- queue depth management,
-- resource reservation,
-- allocation strategies,
-- scheduling priority,
-- fairness policies,
-- deterministic queue replay.
+- compile invocation
+- validation paths (where present)
+
+#### DriverManagerService
+
+- device status retrieval
+- execution dispatch
+- calibration request (may be UNIMPLEMENTED)
 
 ---
 
-### Durable orchestration state
+### 6.3 Required future kernel API extensions (target)
 
-The kernel SHALL support:
+KernelGatewayService MAY add (MINOR):
 
-- persistent job state,
+- `StreamJobEvents` / `SubscribeToJobUpdates` (true streaming)
+- `QueryExecutionLineage`
+- `ExportReplayBundle` / `VerifyReplayConsistency`
+
+Scheduler/runtime coordination APIs (Phase-1+):
+
+- `QueueJob`
+- `AllocateResources`
+- `PauseJob` / `ResumeJob`
+- `AbortExecution`
+
+Adaptive-runtime integration APIs (Phase-1+):
+
+- `RequestHardwareAdaptation`
+- `SubmitOptimizerHints`
+- `AttachReplayMetadata`
+
+---
+
+## 7. QFS Persistence Contract (Kernel Obligations)
+
+QRTX is responsible for ensuring that terminal outcomes are **durably inspectable** via QFS.
+
+### 7.1 Canonical job namespace
+
+Kernel MUST persist under: `qfs://jobs/<job_id>/`
+
+---
+
+### 7.2 Required artifacts (minimum)
+
+On enqueue:
+
+- `qfs://jobs/<job_id>/input/job.yaml` (or canonical JobSpec payload)
+- `qfs://jobs/<job_id>/source/...` (source bundle or resolved program content)
+
+On successful compile:
+
+- `qfs://jobs/<job_id>/compiled/compiled.aqo.json`
+- `qfs://jobs/<job_id>/compiled/compiled.qasm` (optional)
+
+On success:
+
+- `qfs://jobs/<job_id>/results/results.json`
+
+On failure:
+
+- `qfs://jobs/<job_id>/results/error.json` (**SHOULD**; treated as required for async failure visibility)
+
+Recommended:
+
+- `qfs://jobs/<job_id>/timeline/timeline.json`
+- `qfs://jobs/<job_id>/logs/run.log` (deployment dependent)
+
+---
+
+## 8. Failure and Timeout Semantics
+
+### 8.1 Canonical error model
+
+Kernel MUST follow the system error model:
+
+- gRPC-status-first
+- structured-details-first
+- deterministic mapping
+
+Kernel MUST NOT encode “success=false” transport wrappers in payloads.
+
+---
+
+### 8.2 Timeout semantics (normative)
+
+If execution or orchestration exceeds the configured deadline:
+
+- public lifecycle MUST become `ERROR`
+- gRPC status MUST be `DEADLINE_EXCEEDED` for synchronous surfaces
+- async error artifact MUST include a stable error code (e.g., `EIGEN_TIMEOUT`) and reference
+
+---
+
+### 8.3 Async failure visibility (minimum)
+
+When lifecycle is `ERROR`, status/results surfaces MUST include:
+
+| **Field** | **Purpose** |
+|---|---|
+| `error_code` | stable machine-readable code |
+| `error_summary` | human-readable summary |
+| `error_details_ref` | durable QFS reference (e.g., `qfs://jobs/<job_id>/results/error.json`) |
+
+Kernel MUST ensure these fields are consistent with `error-model.md`.
+
+---
+
+## 9. Storage / State
+
+### 9.1 Implemented now
+
+- In-memory `JobStore` containing:
+    - job state,
+    - timestamps,
+    - runtime metadata,
+    - error payload pointers.
+
+Terminalization behavior:
+
+- invalid transitions are rejected,
+- terminal transitions are idempotent for matching terminalization events.
+
+---
+
+### 9.2 Required target state (Phase-1+)
+
+Kernel SHALL add:
+
+- durable state backend (DB/event log),
 - restart recovery,
-- checkpointing,
-- replay-safe recovery,
-- resumable orchestration.
+- replay-safe orchestration recovery,
+- scheduler coordination state (queue depth, reservations, fairness),
+- replay lineage indexes and checkpoints.
 
 ---
 
-### Adaptive runtime coordination
+## 10. Observability
 
-The kernel SHALL integrate with:
+Kernel observability MUST align with:
 
-- future HWE,
-- future GNN optimizer,
-- future neuro-symbolic runtime,
-- future Knowledge Base.
-
----
-
-### Deterministic replay
-
-The kernel SHALL preserve:
-
-- replay-safe execution lineage,
-- deterministic transition logs,
-- runtime provenance,
-- audit-safe orchestration metadata.
+- orchestration observability contract (`orchestration-observability-contract.md`) for control-plane scheduling metrics where applicable,
+- global observability expectations (`observability.md`),
+- intelligent runtime observability where decisioning is involved (`intelligent-runtime-observability-contract.md`) once integrated.
 
 ---
 
-### Production orchestration guarantees
+### 10.1 Implemented now
 
-The kernel SHALL support:
-
-- timeout enforcement,
-- retry policies,
-- circuit breakers,
-- graceful degradation,
-- failure isolation,
-- runtime SLO enforcement.
+- structured logs with correlation
+- trace propagation (`traceparent`, `trace_id`)
+- stage-oriented spans (where instrumented)
 
 ---
 
-## Architecture Position
+### 10.2 Required target metrics (normative names)
 
-QRTX is the central runtime orchestration component.
+Kernel SHOULD export:
 
-It integrates with:
-
-- `system-api`
-- `eigen-compiler`
-- `driver-manager`
-- `qfs`
-- future `hwe`
-- future `gnn-optimizer`
-- future `knowledge-base`
-- future `neuro-symbolic-core`
-
-QRTX acts as the authoritative runtime execution coordinator.
-
----
-
-## Interfaces
-
-### 1. gRPC Interfaces
-
-#### Implemented now
-
-**KernelGatewayService**
-
-Current implemented methods:
+#### Lifecycle
 
 ```text
-EnqueueJob
-GetJobStatus
-CancelJob
-GetJobResults
+eigen_kernel_job_state_transitions_total{from,to}
+eigen_kernel_active_jobs{state}
+eigen_kernel_stage_duration_seconds_bucket{stage}
+eigen_kernel_stage_duration_seconds_sum{stage}
+eigen_kernel_stage_duration_seconds_count{stage}
 ```
 
----
-
-#### Outbound runtime integrations
-
-Kernel uses outbound gRPC clients for:
-
-**CompilationService**
-
-Used for:
-
-- compile requests,
-- validation paths.
-
-**DriverManagerService**
-
-Used for:
-
-- device status retrieval,
-- execution requests,
-- calibration requests.
-
----
-
-#### Required target gRPC interfaces
-
-**KernelGatewayService extensions**
-
-Future required methods:
+#### Queue / scheduling (when implemented)
 
 ```text
-ListDevices
-StreamJobEvents
-SubscribeToJobUpdates
-ReplayExecution
-QueryExecutionLineage
+eigen_kernel_queue_depth{queue}
+eigen_kernel_queue_wait_seconds_bucket{queue}
+eigen_kernel_scheduler_latency_seconds_bucket
 ```
 
-**Scheduler/runtime coordination APIs**
-
-Required future interfaces:
+#### Replay (when implemented)
 
 ```text
-AllocateResources
-QueueJob
-PauseJob
-ResumeJob
-AbortExecution
+eigen_kernel_replay_requests_total{mode}
+eigen_kernel_replay_divergence_total{reason}
 ```
 
-**Adaptive-runtime integration APIs**
+Label rules:
 
-Required future integrations:
-
-```text
-RequestHardwareAdaptation
-SubmitOptimizerHints
-AttachReplayMetadata
-```
-
-**Deterministic replay APIs**
-
-Required future support for:
-
-```text
-ExportReplayBundle
-VerifyReplayConsistency
-```
+- MUST be bounded/enumerable.
+- MUST NOT include `job_id`, `trace_id`, tenant/user identifiers.
 
 ---
 
-### 2. Runtime Integration Interfaces
+### 10.3 Logging requirements (target)
 
-#### Implemented now
+Logs SHOULD include:
 
-**QFS integration**
-
-Kernel integrates with:
-
-```text
-CircuitFsLocal
-```
-
-for:
-
-- artifact persistence,
-- result persistence,
-- metadata persistence,
-- error persistence.
-
-**Compiler integration**
-
-Current integration supports:
-
-- compile invocation,
-- validation invocation.
-
-**Driver Manager integration**
-
-Current integration supports:
-
-- device status retrieval,
-- execution dispatch,
-- backend execution lifecycle.
+- `trace_id`, `job_id`, `stage`, `state`
+- terminal outcomes with stable error codes
+- QFS refs for results/error artifacts (as log fields, not metric labels)
 
 ---
 
-#### Required future integrations
+### 10.4 Tracing requirements (target)
 
-**HWE integration**
+Distributed tracing SHOULD cover:
 
-Kernel SHALL integrate with future HWE for:
+- System API → Kernel → Compiler → Driver Manager → QFS
 
-- hardware adaptation,
-- runtime rerouting,
-- telemetry-aware execution decisions.
+Spans SHOULD include:
 
-**GNN optimizer integration**
-
-Kernel SHALL support:
-
-- routing hints,
-- placement recommendations,
-- topology-aware optimization metadata.
-
-**Neuro-symbolic integration**
-
-Kernel SHALL support:
-
-- advisory optimization decisions,
-- explainability metadata,
-- deterministic fallback handling.
-
-**Knowledge Base integration**
-
-Kernel SHALL support:
-
-- reusable execution heuristics,
-- replay-aware optimization retrieval,
-- runtime feedback ingestion.
+- stage timing,
+- backend selection (when applicable),
+- persistence actions,
+- deterministic fallback events (future).
 
 ---
 
-## Inputs / Outputs
+## 11. Health
 
-### Inputs
+### 11.1 Implemented now
 
-#### Implemented now
-
-**Runtime requests**
-
-Current inputs include:
-
-EnqueueJobRequest
-
-**Fields include:**
-
-- program,
-- target backend,
-- runtime options,
-- metadata.
-
-**Status and control requests**
-
-- `GetJobStatusRequest`
-- `CancelJobRequest`
-- `GetJobResultsRequest`
-
-**Runtime service responses**
-
-Inputs from:
-
-- compiler responses,
-- driver execution responses,
-- QFS persistence responses.
+Service-level health endpoints exist (deployment dependent).
 
 ---
 
-#### Required target inputs
+### 11.2 Required target health model
 
-**Scheduler/runtime metadata**
-
-Future inputs SHALL include:
-
-- queue metadata,
-- reservation policies,
-- execution priorities,
-- tenant/runtime constraints.
-
-**Hardware telemetry**
-
-Future inputs SHALL include:
-
-- topology snapshots,
-- noise metrics,
-- queue pressure,
-- calibration freshness.
-
-**Adaptive-runtime metadata**
-
-Future inputs SHALL include:
-
-- optimizer recommendations,
-- neuro-symbolic advisories,
-- deterministic replay metadata,
-- fallback markers.
-
----
-
-### Outputs
-
-#### Implemented now
-
-**Runtime responses**
-
-Kernel emits:
-
-- job status,
-- terminal result payloads,
-- structured error payloads.
-
-**QFS artifacts**
-
-Persisted outputs include:
-
-- compiled AQO,
-- compiled QASM,
-- execution results,
-- counts,
-- metadata,
-- error artifacts.
-
-**Runtime tracing/logging**
-
-Outputs include:
-
-- stage traces,
-- correlated runtime logs,
-- request lineage metadata.
-
----
-
-#### Required target outputs
-
-**Replay artifacts**
-
-Future outputs SHALL include:
-
-- deterministic replay bundles,
-- orchestration lineage,
-- scheduler replay metadata.
-
-**Adaptive-runtime telemetry**
-
-Future outputs SHALL include:
-
-- optimizer decision traces,
-- adaptation history,
-- replay-safe fallback metadata.
-
-**Runtime analytics**
-
-Future outputs SHALL include:
-
-- execution timelines,
-- queue diagnostics,
-- orchestration SLO telemetry.
-
----
-
-## Storage / State
-
-### Internal State
-
-#### Implemented now
-
-**JobStore**
-
-Current implementation uses:
-
-```text
-in-memory JobStore
-```
-
-containing:
-
-- job state,
-- timestamps,
-- counts,
-- runtime metadata,
-- error payloads.
-
-**Terminalization semantics**
-
-Implemented behavior:
-
-- terminal states reject invalid transitions,
-- idempotent re-terminalization is supported for matching events.
-
----
-
-#### Required target internal state
-
-**Durable orchestration state**
-
-Future runtime SHALL support:
-
-- persistent state backend,
-- recovery-safe orchestration state,
-- distributed coordination state.
-
-**Scheduler state**
-
-Required future state:
-
-- queue depth,
-- reservations,
-- allocation state,
-- fairness tracking.
-
-**Replay state**
-
-Required future state:
-
-- replay lineage,
-- deterministic checkpoints,
-- execution provenance indexes.
-
----
-
-### External Storage
-
-#### Implemented now
-
-**QFS persistence**
-
-Kernel persists runtime artifacts under:
-
-```text
-jobs/<job_id>/
-```
-
-using canonical QFS layouts.
-
----
-
-#### Required target storage
-
-**Durable orchestration persistence**
-
-Future runtime SHALL support:
-
-- DB-backed state,
-- event-log persistence,
-- replay-safe storage.
-
-**Distributed runtime storage**
-
-Future runtime SHALL support:
-
-- clustered coordination state,
-- failover-safe orchestration persistence,
-- distributed replay lineage.
-
----
-
-## Failure Modes
-
-### Implemented now
-
-#### Compiler failures
-
-Compiler errors transition jobs to:
-
-```text
-Error
-```
-
-with structured error payloads.
-
-#### Driver execution failures
-
-Execution/connectivity failures transition jobs to:
-
-```text
-Error
-```
-
-#### QFS failures
-
-Persistence/layout failures result in:
-
-- runtime error propagation,
-- terminal error state.
-
-#### Cancellation support
-
-Non-terminal jobs may be cancelled.
-
-#### Timeout state
-
-`Timeout` exists in current state model.
-
----
-
-### Required target failure taxonomy
-
-#### Scheduling failures
-
-Future runtime SHALL classify:
-
-- allocation failure,
-- queue starvation,
-- reservation timeout.
-
-#### Distributed runtime failures
-
-Future runtime SHALL classify:
-
-- network partitions,
-- orchestration split-brain,
-- replay divergence.
-
-#### Adaptive-runtime failures
-
-Future runtime SHALL classify:
-
-- optimizer timeout,
-- adaptation conflict,
-- replay inconsistency,
-- deterministic safety violation.
-
-#### Persistence failures
-
-Future runtime SHALL classify:
-
-- durable state corruption,
-- replay checkpoint mismatch,
-- storage exhaustion.
-
----
-
-### Recovery and fallback requirements
-
-The kernel SHALL support:
-
-- bounded retries,
-- backoff policies,
-- circuit breakers,
-- replay-safe recovery,
-- deterministic fallback execution,
-- degraded execution modes.
-
----
-
-## Observability
-
-### Metrics
-
-#### Implemented now
-
-Kernel currently emits:
-
-- runtime traces,
-- structured logs,
-- stage-oriented spans.
-
----
-
-#### Required target metrics
-
-**Runtime lifecycle metrics**
-
-```text
-eigen_kernel_job_state_transitions_total
-eigen_kernel_stage_duration_seconds
-eigen_kernel_queue_depth
-eigen_kernel_active_jobs
-```
-
-**Scheduler metrics**
-
-```text
-eigen_kernel_scheduler_latency_seconds
-eigen_kernel_resource_allocations_total
-eigen_kernel_queue_wait_seconds
-```
-
-**Replay metrics**
-
-```text
-eigen_kernel_replay_requests_total
-eigen_kernel_replay_divergence_total
-```
-
-**Adaptive-runtime metrics**
-
-```text
-eigen_kernel_adaptive_fallback_total
-eigen_kernel_optimizer_hint_usage_total
-```
-
----
-
-### Logs
-
-#### Implemented now
-
-Structured runtime logging exists with:
-
-- trace correlation,
-- request lineage metadata,
-- stage-oriented diagnostics.
-
----
-
-#### Required target logging
-
-Future logging SHALL include:
-
-- scheduler decisions,
-- allocation diagnostics,
-- replay lineage,
-- adaptation decisions,
-- optimizer advisory traces,
-- deterministic fallback events.
-
----
-
-### Traces
-
-#### Implemented now
-
-Trace propagation exists through:
-
-- runtime pipeline spans,
-- `traceparent`,
-- `trace_id`.
-
----
-
-#### Required target tracing
-
-Distributed tracing SHALL cover:
-
-- System API,
-- Compiler,
-- Kernel,
-- Driver Manager,
-- HWE,
-- optimizer,
-- neuro-symbolic runtime,
-- QFS persistence.
-
-Required trace metadata:
-
-- job lineage,
-- scheduling decisions,
-- backend mapping,
-- replay identifiers,
-- optimizer confidence metadata.
-
----
-
-## Health Checks
-
-### Implemented now
-
-Runtime health visibility exists through service-level health endpoints.
-
----
-
-### Required target health model
-
-Kernel SHALL expose:
+Kernel SHOULD expose:
 
 - orchestration health,
-- scheduler health,
-- queue saturation state,
-- replay consistency validation,
-- persistence backend health.
+- dependency health (compiler/driver/qfs reachability),
+- queue saturation (when applicable),
+- persistence backend health,
+- replay consistency checks (when applicable).
 
 ---
 
-## Alignment Summary
+## 12. Conformance Requirements
 
-### Implemented and aligned
+An implementation is conformant if it:
 
-The following runtime capabilities are implemented and aligned with MVP baseline requirements:
+1. Preserves the stable public lifecycle mapping:
+    - no public `TIMEOUT` state; timeouts map to public `ERROR`.
+2. Enforces terminal immutability and idempotent terminalization.
+3. Persists required QFS artifacts for:
+    - submission inputs,
+    - compile outputs,
+    - results or durable error artifacts.
+4. Uses canonical gRPC status semantics and structured error details.
+5. Provides async failure visibility fields for terminal `ERROR`.
+6. Preserves trace propagation across kernel-managed calls.
+7. Exports bounded-cardinality metrics (no correlation IDs as labels).
 
-- internal orchestration pipeline,
+Minimum required tests:
+
+- invalid transition rejection,
+- terminal idempotency,
+- results-before-ready → `FAILED_PRECONDITION`,
+- timeout → public `ERROR` + `DEADLINE_EXCEEDED` semantics + `results/error.json`,
+- QFS missing artifact handling → `NOT_FOUND`,
+- trace propagation smoke test.
+
+---
+
+## 13. Alignment Summary
+
+#### Implemented and aligned (MVP baseline)
+
+- orchestration pipeline (compile → execute → persist),
 - compiler and driver-manager integration,
-- QFS artifact persistence,
-- runtime tracing/logging,
+- QFS artifact persistence baseline,
+- runtime tracing/logging foundations,
 - terminal error handling,
-- structured runtime lifecycle APIs.
+- internal lifecycle/status/results APIs.
 
-### Remaining architecture gaps
-
-The following architecture targets remain not fully implemented:
+#### Remaining architecture gaps (explicit)
 
 - durable orchestration state,
-- full RFC lifecycle state machine,
-- scheduler/resource allocation subsystem,
+- full queue/scheduler/resource allocation subsystem,
 - deterministic replay infrastructure,
 - distributed orchestration recovery,
-- adaptive-runtime integrations,
-- replay-safe recovery semantics,
-- production-grade queue/resource coordination.
+- adaptive runtime integrations (HWE/NSC/GNN/KB),
+- production-grade retries/circuit breakers and degraded modes.
 
-These gaps remain explicitly preserved as required future work to prevent architecture scope loss.
+These gaps are intentionally preserved as required Phase-1+ work and MUST NOT be erased by documentation drift.

@@ -1,188 +1,628 @@
 # gRPC Public API (eigen.api.v1)
 
-The public gRPC API (`eigen.api.v1`) is the user-facing interface. It is frozen at v1.0.0 (breaking changes require v2). The `.proto` files are the source of truth (`proto/eigen/api/v1/*.proto`).
+**Status**: Normative Contract  
+**Contract Version**: 1.0.0  
+**Protocol**: gRPC / Protocol Buffers  
+**Namespace**: `eigen.api.v1`  
+**Source of Truth**: `proto/eigen/api/v1/*.proto`
 
-## 1. Services and Methods
+This document defines the public gRPC API exposed to external clients of Eigen OS.  
+All breaking changes require a **MAJOR** version increment (v2).
 
-- **JobService:**
+---
 
-   - `SubmitJob(SubmitJobRequest) → SubmitJobResponse`
+## 1. Scope
 
-   - `GetJobStatus(GetJobStatusRequest) → GetJobStatusResponse`
+The public gRPC API provides:
 
-   - `CancelJob(CancelJobRequest) → CancelJobResponse`
+- Job submission and orchestration
+- Job lifecycle monitoring
+- Device discovery and reservation
+- Dispatch rationale and explainability
+- Knowledge Base access
 
-   - `StreamJobUpdates(StreamJobUpdatesRequest) → stream StreamJobUpdatesResponse`
+Compilation, optimizer internals, scheduler internals, and driver coordination are **intentionally excluded** from the public surface.
 
-   - `GetJobResults(GetJobResultsRequest) → GetJobResultsResponse`
+---
 
-   - `GetDispatchRationale(GetDispatchRationaleRequest) → GetDispatchRationaleResponse`
+## 2. Transport & Protocol Requirements
 
-- **DeviceService:**
+### 2.1 Protocol
 
-   - `ListDevices(ListDevicesRequest) → ListDevicesResponse`
+- **Transport**: gRPC over HTTP/2
+- **Serialization**: Protocol Buffers v3
+- **Encoding**: binary protobuf only
+- **JSON transcoding**: NOT part of the v1 contract
 
-   - `GetDeviceDetails(GetDeviceDetailsRequest) → GetDeviceDetailsResponse`
+--
 
-   - `GetDeviceStatus(GetDeviceStatusRequest) → GetDeviceStatusResponse`
+### 2.2 Authentication
 
-   - `ReserveDevice(ReserveDeviceRequest) → ReserveDeviceResponse`
+All public RPCs **REQUIRE** authentication.
 
-- **KnowledgeBaseService:** (frozen by RFC 0034 at v1.0.0)
+Supported mechanisms:
+- OAuth2 Bearer JWT
+- mTLS service identity (internal trusted clients only)
 
-   - `UpsertRecord(UpsertRecordRequest) → UpsertRecordResponse`
+JWTs **MUST** include:
 
-   - `BatchUpsertRecords(BatchUpsertRecordsRequest) → BatchUpsertRecordsResponse`
+| **Claim**     | **Required** | **Description** |
+|---------------|----------|-----------|
+| `sub`         | YES      | Subject / principal |
+| `aud`         | YES      | Must include Eigen API audience |
+| `exp`         | YES      | Expiration timestamp |
+| `tenant_id`   | YES      | Tenant isolation identifier |
+| `roles` / `scopes` | YES | Authorization scopes |
 
-   - `QueryRecords(QueryRecordsRequest) → QueryRecordsResponse`
+---
 
-   - `GetRecord(GetRecordRequest) → GetRecordResponse`
+### 2.3 Required Metadata
 
-   - `AppendDecisionLog(…)` (not listed, if present for linking decisions, check proto)
+Clients **SHOULD** send:
 
-*Compilation APIs are internal and **not** exposed publicly.*
+| **Metadata Key**      | **Required** | **Description** |
+|-----------------------|--------------|-----------|
+| `x-request-id`        | YES          | Client correlation ID |
+| `x-idempotency-key`   | CONDITIONAL  | Required for idempotent submit |
+| `traceparent`         | RECOMMENDED  | W3C trace propagation |
+| `x-client-version`    | OPTIONAL     | SDK/client version |
 
-## 2. Key Messages
+---
 
-**SubmitJobRequest**
+## 3. Services Overview
 
-```text
+### 3.1 JobService
+
+```protobuf
+service JobService {
+  rpc SubmitJob(SubmitJobRequest) returns (SubmitJobResponse);
+  rpc GetJobStatus(GetJobStatusRequest) returns (GetJobStatusResponse);
+  rpc CancelJob(CancelJobRequest) returns (CancelJobResponse);
+  rpc StreamJobUpdates(StreamJobUpdatesRequest) returns (stream StreamJobUpdatesResponse);
+  rpc GetJobResults(GetJobResultsRequest) returns (GetJobResultsResponse);
+  rpc GetDispatchRationale(GetDispatchRationaleRequest) returns (GetDispatchRationaleResponse);
+}
+```
+
+---
+
+### 3.2 DeviceService
+
+```protobuf
+service DeviceService {
+  rpc ListDevices(ListDevicesRequest) returns (ListDevicesResponse);
+  rpc GetDeviceDetails(GetDeviceDetailsRequest) returns (GetDeviceDetailsResponse);
+  rpc GetDeviceStatus(GetDeviceStatusRequest) returns (GetDeviceStatusResponse);
+  rpc ReserveDevice(ReserveDeviceRequest) returns (ReserveDeviceResponse);
+}
+```
+
+---
+
+### 3.3 KnowledgeBaseService
+
+```protobuf
+service KnowledgeBaseService {
+  rpc UpsertRecord(UpsertRecordRequest) returns (UpsertRecordResponse);
+  rpc BatchUpsertRecords(BatchUpsertRecordsRequest) returns (BatchUpsertRecordsResponse);
+  rpc QueryRecords(QueryRecordsRequest) returns (QueryRecordsResponse);
+  rpc GetRecord(GetRecordRequest) returns (GetRecordResponse);
+  rpc AppendDecisionLog(AppendDecisionLogRequest) returns (AppendDecisionLogResponse);
+}
+```
+
+---
+
+## 4. Versioning Policy
+
+| **Change Type**          | **Version Impact** |
+|--------------------------|----------------|
+| Add optional field       | MINOR          |
+| Add new RPC              | MINOR          |
+| Remove field             | MAJOR          |
+| Change field meaning     | MAJOR          |
+| Rename enum value        | MAJOR          |
+| Change wire number       | FORBIDDEN      |
+
+---
+
+## 5. JobService Contracts
+
+### 5.1 SubmitJob
+
+#### Request
+
+```protobuf
 message SubmitJobRequest {
   string name = 1;
+
   oneof program {
     EigenLangSource eigen_lang = 2;
     QasmSource qasm = 3;
     AqoRef aqo_ref = 4;
   }
+
   string target = 5;
-  int32 priority = 6;                // [0..100], default 50
+  int32 priority = 6;
   map<string,string> compiler_options = 7;
   map<string,string> metadata = 8;
   repeated string dependencies = 9;
-  // (Optional) Tenant quotas envelope:
-  message TenantQuotaEnvelope {
-    string contract_version = 1;
-    string tenant_id = 2;
-    string project_id = 3;
-    uint32 tenant_max_queued_jobs = 4;
-    uint32 project_max_queued_jobs = 5;
-  }
   TenantQuotaEnvelope tenant = 10;
+  string reservation_id = 11;
 }
 ```
 
-- `name` (string): Job name.
+#### Field Semantics
 
-- `program`: Exactly one of `eigen_lang` (embedded DSL source), `qasm` (Quantum Assembly text), or `aqo_ref` (IR reference).
+| **Field** | **Required** | **Notes** |
+|-------------|------------|-----------|
+| `name` | YES | Human-readable job name |
+| `program` | YES | Exactly one variant required |
+| `target` | YES | Backend/device identifier |
+| `priority` | NO | Range `[0..100]`, default `50` |
+| `compiler_options` | NO | Compiler-specific tuning |
+| `metadata` | NO | Arbitrary client metadata |
+| `dependencies` | NO | Parent job IDs |
+| `tenant` | NO | Quota envelope |
+| `reservation_id` | NO | Binds submission to reserved capacity |
 
-- `target` (string): Backend target ID (e.g. `"sim:local"`, `"vendor:device"`).
+**Idempotency**: Required for production use via `x-idempotency-key` header.
 
-- `priority` (int): 0–100, default 50.
+Rules:
 
-- `compiler_options`, `metadata`: Arbitrary key-value maps.
+- Same key + same request body MUST return same logical job
+- Same key + different payload MUST return:
+  - `ALREADY_EXISTS`
+  - or `INVALID_ARGUMENT`
+- Idempotency retention window MUST be at least 24h
 
-- `dependencies`: List of other `job_ids` this job depends on.
+#### Validation Rules
 
-- `tenant`: Optional quotas envelope (can be omitted).
+| **Rule** | **Error** |
+|----------|-----------|
+| Missing program | `INVALID_ARGUMENT` |
+| Multiple oneof values | `INVALID_ARGUMENT` |
+| Priority outside range | `INVALID_ARGUMENT` |
+| Unknown target | `NOT_FOUND` |
+| Invalid reservation | `FAILED_PRECONDITION` |
 
-**SubmitJobResponse**
 
-```text
+#### Response
+
+```protobuf
 message SubmitJobResponse {
   string job_id = 1;
   JobStatus status = 2;
 }
 ```
 
-- `job_id`: Assigned job identifier (globally unique).
+#### Runtime Semantics
 
-- `status`: The initial job status (likely `PENDING`).
-
-**CancelJobRequest / Response**
+Submission lifecycle:
 
 ```text
+SubmitJob
+  -> PENDING
+  -> QUEUED
+  -> RUNNING
+  -> SUCCEEDED | FAILED | CANCELLED | TIMEOUT
+```
+
+The response MUST contain the canonical assigned `job_id`.
+
+---
+
+## 5.2 GetJobStatus
+
+Returns current job state.
+
+#### Guarantees
+
+- Read-after-write consistency for same client session
+- Eventually consistent across replicas
+- Final states are immutable
+
+---
+
+### 5.3 CancelJob
+
+#### Request
+
+```protobuf
 message CancelJobRequest {
   string job_id = 1;
 }
+```
+
+#### Response
+
+```protobuf
 message CancelJobResponse {
-  bool accepted = 1; // true if cancellation was accepted
+  bool accepted = 1;
 }
 ```
 
-- Cancels only valid jobs.
+#### Cancellation Matrix
 
-**StreamJobUpdatesRequest / Response**
+| **Current State** | **Allowed** |
+|----------|-----------|
+| `PENDING` | YES |
+| `QUEUED` | YES |
+| `RUNNING` | BEST-EFFORT |
+| `SUCCEEDED` | NO |
+| `FAILED` | NO |
+| `CANCELLED` | NO |
+| `TIMEOUT` | NO |
 
-```text
+#### Semantics
+
+- `accepted=true` means cancellation request entered processing
+- It does NOT guarantee cancellation success
+- Cancellation is idempotent
+
+---
+
+### 5.4 StreamJobUpdates
+
+#### Request
+
+```protobuf
 message StreamJobUpdatesRequest {
   string job_id = 1;
-  uint64 last_event_seq = 2;  // (Optional) resume from next event
+
+  uint64 last_event_seq = 2;
 }
+```
+
+#### Response
+
+```protobuf
 message StreamJobUpdatesResponse {
   JobUpdate update = 1;
 }
 ```
 
-- Returns a stream of `JobUpdate` messages in order.
+#### Ordering Guarantees
 
-- Clients can supply `last_event_seq` to resume a stream (best-effort).
+- Events MUST be delivered in ascending sequence order
+- Sequence numbers are monotonically increasing
+- Duplicate delivery MAY occur during reconnects
+- Clients MUST de-duplicate by sequence number
 
-**GetDispatchRationale**
+#### Replay Semantics
 
-(Returns scheduling rationale, not fully detailed here.)
+`last_event_seq` requests replay starting from the NEXT sequence number.
 
-## 3. Behavioral Contracts
+Replay retention policy:
 
-- **Job Lifecycle:**
+| **Policy** | **Value** |
+|----------|-----------|
+| Minimum retention | 24h |
+| Minimum retained events | 1000 |
+| Replay guarantee | Best-effort |
 
-   1. `SubmitJob` returns a new `job_id` and status.
+If replay window expired:
 
-   2. Clients poll `GetJobStatus` or use `StreamJobUpdates` to track progress.
+- server returns `OUT_OF_RANGE`
+- client must re-sync via `GetJobStatus`
 
-   3. Once `state=SUCCEEDED` or `FAILED`, call `GetJobResults` for outputs.
+---
 
-   4. `CancelJob` may be called on `PENDING`/`QUEUED`/`RUNNING` tasks; it is ignored in final states.
+### 5.5 GetJobResults
 
-- **Reservation:** `ReserveDevice` reserves capacity but does not guarantee exclusive lock; returning `reservation_id`, `expires_at`.
+Returns immutable final outputs.
 
-- **Errors:** Use standard gRPC status codes (not a separate `success=false`). Example:
+#### Preconditions
 
-   - Invalid input → `INVALID_ARGUMENT` with ErrorDetail.
+Job MUST be in terminal state:
 
-   - Not found → `NOT_FOUND`.
+- SUCCEEDED
+- FAILED
+- CANCELLED
+- TIMEOUT
 
-   - Unavailable hardware → `UNAVAILABLE`.
+Otherwise:
 
-## 4. Identified Gaps
+```text
+FAILED_PRECONDITION
+```
 
-1. **Idempotency Key:** The public API proto does not include an idempotency field. (Currently, idempotency is handled via metadata `client_request_id` if at all.) We should define a standard idempotency mechanism or require clients to use `client_request_id` header.
+MUST be returned.
 
-2. **Cancel Semantics:** The allowed states for cancellation should be documented (e.g. cannot cancel a DONE or ERROR job). An explicit matrix in docs is needed.
+---
 
-3. **Dispatch Rationale:** If no rationale exists, it's unclear whether `GetDispatchRationale` returns an empty message or a NOT_FOUND error. We should clarify: e.g. return NOT_FOUND if no rationale, or an empty response with `NULL`.
+### 5.6 GetDispatchRationale
 
-4. **Error Details:** We need to align with the overall Error Model. For each RPC, specify how to return structured `ErrorDetail` messages. Example: field-wise errors vs. status code vs. application errors.
+Returns scheduler explanation for backend selection.
 
-5. **Stream Replay:** The retention or replay limits for `StreamJobUpdates` (how long events are kept) are not specified. We should document any window or retries.
+#### Semantics
 
-6. **Reservation Binding:** The protocol is unclear on how to enforce a `ReserveDevice` with subsequent `SubmitJob`. E.g. if a reservation is held, how does the next `SubmitJob` use it? The `SubmitJobRequest` has no `reservation_id` field. We may need a feature to bind them.
+| **Case** | **Behavior** |
+|----------|-----------|
+| Rationale exists | Return rationale |
+| Unknown job | `NOT_FOUND` |
+| No rationale retained | `FAILED_PRECONDITION` |
 
-7. **SLA/SLO:** Performance expectations (e.g. `SubmitJob` <100ms, status fetch <50ms) are not documented. We should consider adding service-level targets.
+#### Consistency
 
-8. **Auth Model:** The expected JWT scopes are only partially documented. We should list required OAuth scopes or RBAC roles for each method (e.g. `jobs:submit`, `devices:list`).
+Dispatch rationale MUST match:
 
-9. **SDK Conformance:** There is no formal test suite for language SDKs or CLI. We should publish example requests/responses or WireMock tests for clients.
+- backend actually used
+- scheduler decision artifact
+- stored audit logs
 
-## 5. Action Items
+---
 
-- **Idempotency:** Consider adding a `string client_request_id = 12`; to `SubmitJobRequest` (and update versions accordingly), or clearly document use of metadata: {"x-client-request-id": ...}.
+## 6. DeviceService Contracts
 
-- **Cancel Logic:** Document in reference (and possibly enforce in code) which states can be cancelled.
+### 6.1 ListDevices
 
-- **Detail Examples:** Add rich examples for each RPC, including error cases, in the docs.
+Returns all visible devices for caller tenant.
 
-- **Appendix:** Include a state machine diagram and a cancellation legality table in docs.
+Filtering MAY include:
 
-- **Replay Policy:** Clarify and codify `last_event_seq` behavior and event retention (e.g. keep logs for 24h or 1000 events).
+- backend type
+- simulator/hardware
+- capabilities
+- topology
 
-- **Auth Appendix:** Add a security section in docs describing required tokens/claims (e.g. `sub`, `roles`, `aud`).
+---
+
+### 6.2 GetDeviceDetails
+
+Returns static metadata:
+
+- qubit count
+- topology
+- vendor
+- calibration timestamp
+- supported gates
+- capability flags
+
+---
+
+### 6.3 GetDeviceStatus
+
+Returns dynamic runtime information:
+
+- availability
+- queue depth
+- health
+- estimated latency
+- maintenance state
+
+---
+
+### 6.4 ReserveDevice
+
+Creates temporary scheduling reservation.
+
+#### Reservation Semantics
+
+Reservation does NOT guarantee exclusive hardware ownership unless explicitly configured by backend policy.
+
+Reservation MUST include:
+
+| **Field** | **Description** |
+|----------|-----------|
+| `reservation_id` | Unique identifier |
+| `expires_at` | Expiration timestamp |
+| `device_id` | Reserved device |
+
+
+#### Reservation Binding
+
+`SubmitJobRequest.reservation_id` binds a job to a reservation.
+
+If reservation expired:
+
+```text
+FAILED_PRECONDITION
+```
+
+MUST be returned.
+
+---
+
+## 7. KnowledgeBaseService Contracts
+
+### 7.1 UpsertRecord
+
+Creates or updates a KB record atomically.
+
+---
+
+### 7.2 BatchUpsertRecords
+
+Bulk variant of `UpsertRecord`.
+
+Atomicity:
+
+| **Mode** | **Behavior** |
+|----------|-----------|
+| Full atomic | Optional |
+| Partial success | Allowed if documented |
+
+If partial success is enabled:
+
+- per-record errors MUST be returned
+
+---
+
+### 7.3 QueryRecords
+
+Supports:
+
+- vector similarity
+- metadata filtering
+- pagination
+- ordering
+
+---
+
+### 7.4 GetRecord
+
+Returns canonical stored record.
+
+---
+
+### 7.5 AppendDecisionLog
+
+Appends immutable audit/event log entries.
+
+Retention MUST follow audit policy.
+
+---
+
+## 8. Error Model
+
+Public APIs use canonical gRPC status codes.
+
+#### Allowed Status Codes
+
+| **Code** | **Meaning** |
+|----------|-----------|
+| `INVALID_ARGUMENT` | Validation failure |
+| `UNAUTHENTICATED` | Missing/invalid auth |
+| `PERMISSION_DENIED` | Insufficient scope |
+| `NOT_FOUND` | Missing resource |
+| `FAILED_PRECONDITION` | Invalid state transition |
+| `RESOURCE_EXHAUSTED` | Quota exceeded |
+| `UNAVAILABLE` | Backend unavailable |
+| `DEADLINE_EXCEEDED` | Timeout |
+| `ALREADY_EXISTS` | Idempotency conflict |
+| `INTERNAL` | Unexpected failure |
+
+#### Error Details
+
+Structured protobuf error details SHOULD be attached:
+
+- field violations
+- quota failures
+- retry hints
+- resource metadata
+
+---
+
+## 9. Retry Policy
+
+#### Safe To Retry
+
+| **RPC** | **Retryable** |
+|----------|-----------|
+| `GetJobStatus` | YES |
+| `ListDevices` | YES |
+| `GetDeviceStatus` | YES |
+| `GetRecord` | YES |
+
+#### Conditionally Retryable
+
+| **RPC** | **Notes** |
+|----------|-----------|
+| `SubmitJob` | ONLY with idempotency key |
+| `CancelJob` | Idempotent |
+| `ReserveDevice` | Depends on backend |
+
+---
+
+## 10. Observability
+
+#### Required Trace Propagation
+
+All services MUST propagate:
+
+```text
+traceparent
+```
+
+metadata.
+
+#### Metrics
+
+Minimum metrics:
+
+| **Metric** | **Type** |
+|----------|-----------|
+| `grpc.requests_total` | Counter |
+| `grpc.request_duration_ms` | Histogram |
+| `jobs.submitted_total` | Counter |
+| `jobs.cancelled_total` | Counter |
+| `stream.replay_requests_total` | Counter |
+
+#### Audit Logging
+
+The following operations MUST be auditable:
+
+- SubmitJob
+- CancelJob
+- ReserveDevice
+- AppendDecisionLog
+- GetDispatchRationale
+
+---
+
+## 11. SLA / SLO Targets
+
+| **Operation** | **Target** |
+|----------|-----------|
+| SubmitJob p95 | <100ms |
+| GetJobStatus p95 | <50ms |
+| Stream reconnect | <5s |
+| Device list p95 | <100ms |
+
+These are operational targets, not protocol guarantees.
+
+---
+
+## 12. Security Requirements
+
+#### Authorization Scopes
+
+| **RPC Group** | **Required Scope** |
+|----------|-----------|
+| Job submission | `jobs:submit` |
+| Job status/results | `jobs:read` |
+| Job cancellation | `jobs:cancel` |
+| Dispatch rationale | `jobs:explain` |
+| Device access | `devices:read` |
+| Device reservation | `devices:reserve` |
+| Knowledge Base write | `kb:write` |
+| Knowledge Base read | `kb:read` |
+
+#### Multi-Tenant Isolation
+
+Servers MUST enforce:
+
+- tenant isolation
+- project isolation
+- quota isolation
+- audit partitioning
+
+Cross-tenant reads are forbidden unless explicitly authorized.
+
+---
+
+## 13. Compatibility Guarantees
+
+The following are frozen in v1:
+
+- Service names
+- RPC names
+- Field numbers
+- Enum numeric values
+- Streaming ordering semantics
+- Idempotency behavior
+- Error status semantics
+
+---
+
+## 14. CI / Contract Enforcement
+
+The following CI checks are REQUIRED:
+
+- Buf breaking-change validation
+- Golden response fixtures
+- SDK compatibility tests
+- Stream replay tests
+- Auth enforcement tests
+- Idempotency replay tests

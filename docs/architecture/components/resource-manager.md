@@ -1,162 +1,136 @@
 # Resource Manager
 
-- **Phase:** MVP → Phase-1 evolution baseline
-- **Status snapshot date:** 2026-05-25
-- **Implementation state:** Partially implemented through `system-api`, `driver-manager`, and kernel-adjacent runtime logic; no standalone Resource Manager service currently exists.
+- **Document status:** Normative architecture + contract specification (device capacity, reservation lifecycle, allocation coordination)
+- **Contract version:** `1.0.0`
+- **Snapshot date:** 2026-05-25
+- **Implementation state:** Partially implemented through system-api, driver-manager, and kernel-adjacent runtime logic; no standalone Resource Manager service currently exists.
 
 ---
 
-# Responsibility
+## 1. Purpose
 
-The Resource Manager subsystem is responsible for hardware resource allocation, reservation lifecycle management, runtime scheduling coordination, and device-capacity visibility across Eigen OS execution environments.
+The Resource Manager subsystem is responsible for:
 
-Current implementation provides minimal public device-management APIs and placeholder reservation behavior sufficient for MVP runtime flows.
+- hardware resource visibility (devices, capabilities, health),
+- allocation and reservation lifecycle management,
+- runtime scheduling coordination inputs (capacity, queue pressure),
+- deterministic resource decisioning surfaces that other components can rely on,
+- multi-tenant isolation and fairness enforcement (Phase-1+).
 
-The long-term architecture target is a deterministic, production-grade resource orchestration layer integrated with QRTX, adaptive runtime systems, and hardware-aware execution policies.
+**MVP reality:** the repository currently exposes minimal device APIs and a **placeholder reservation flow** sufficient for MVP runtime flows, but does not yet implement:
+
+- slot accounting,
+- enforced reservations,
+- kernel-backed allocation state,
+- durable reservation registry,
+- queue-aware scheduling integration.
+
+This document freezes:
+
+1. what exists today and its semantics, and
+2. the required target architecture for TЗ compliance, without pretending it is already implemented.
 
 ---
 
-# Responsibility Scope
+## 2. Contract Versioning
 
-## Implemented now
+### 2.1 Contract marker (recommended)
 
-### Public device APIs
+Conformant implementations SHOULD export:
 
-`system-api` currently exposes public `DeviceService` handlers for:
-
-```text id="cax2o7"
-ListDevices
-GetDeviceDetails
-GetDeviceStatus
-ReserveDevice
+```text
+eigen_resource_contract_info{version="1.0.0"} 1
 ```
 
-### Device visibility
+---
 
-Current responses provide simplified/static runtime information including:
+### 2.2 SemVer policy
 
-- `sim:local`
-- online status
-- queue depth = `0`
+#### MAJOR
 
-### Reservation flow
+- reservation semantics change incompatibly (e.g., placeholder → enforced changes without compatibility mode),
+- label meaning changes incompatibly,
+- required APIs removed or renamed,
+- allocation invariants change.
 
-`ReserveDevice` currently:
+#### MINOR
 
-- validates requests,
-- generates `reservation_id`,
-- returns reservation timestamps.
+- new optional fields / labels (bounded),
+- additive reservation lifecycle APIs,
+- additional device/queue visibility endpoints,
+- additive allocation metadata.
 
-Current implementation does not bind reservations to:
+#### PATCH
 
-- scheduler state,
-- runtime capacity,
-- execution queues,
-- kernel slot accounting.
-
-### Runtime integration
-
-Current device information partially integrates with:
-
-- `driver-manager`
-- `system-api`
-
-but is not fully coordinated through kernel runtime state.
-
-### Runtime observability
-
-Structured request logging exists in service handlers.
-
-General runtime observability exists across runtime services.
+- documentation fixes,
+- bug fixes without semantic change,
+- dashboard/alert tuning.
 
 ---
 
-## Required target responsibility (architecture baseline)
+## 3. Responsibility
 
-The production Resource Manager SHALL provide:
+### 3.1 What Resource Manager owns (target)
 
-### Deterministic resource allocation
+Resource Manager SHALL be the authoritative coordination layer for:
 
-Support for:
-
-- device slot accounting,
-- queue-aware scheduling,
-- reservation lifecycle enforcement,
-- fairness and isolation policies.
-
-### Runtime coordination
-
-The subsystem SHALL coordinate with:
-
-- QRTX,
-- Driver Manager,
-- future HWE,
-- adaptive runtime systems,
-- scheduler components.
-
-### Hardware-aware scheduling
-
-Support for:
-
-- queue pressure evaluation,
-- calibration freshness,
-- topology availability,
-- runtime degradation awareness,
-- hardware capability constraints.
-
-### Reservation lifecycle ownership
-
-The subsystem SHALL manage:
-
-- reservation creation,
-- reservation expiration,
-- release/revocation,
-- reservation recovery after restart,
-- replay-safe reservation auditing.
-
-### Production scheduling guarantees
-
-The subsystem SHALL support:
-
-- deterministic scheduling,
-- bounded queue latency,
-- reservation isolation,
-- replay-safe allocation history,
-- multi-tenant policy enforcement.
+- device slot/capacity accounting,
+- enforced reservation lifecycle,
+- queue pressure and estimated wait visibility,
+- allocation fairness and isolation,
+- replay-safe allocation audit lineage,
+- coordination with kernel scheduler and (future) HWE/adaptive routing.
 
 ---
 
-## Architecture Position
+### 3.2 What Resource Manager does NOT own
 
-Resource Manager is a runtime orchestration subsystem positioned between:
+Resource Manager MUST NOT:
 
-- `system-api`
-- `eigen-kernel`
-- `driver-manager`
-- future `hwe`
+- execute workloads (that is Kernel + Driver Manager),
+- compile programs (Compiler),
+- bypass backend normalization (Driver Manager),
+- leak provider-native semantics to public contracts,
+- encode transport failures in response bodies (must use gRPC status + structured details).
 
-It acts as the authoritative runtime resource coordination layer.
+---
 
-The subsystem is required for:
+## 4. Architecture Position
+
+Resource Manager sits between:
+
+```text
+Client SDKs / CLI
+    ↓
+System API (public)
+    ↓
+QRTX Kernel (orchestration, scheduler)
+    ↓
+Resource Manager (allocation & reservations)
+    ↓
+Driver Manager (execution abstraction)
+    ↓
+Backends / Simulators / Hardware
+```
+
+**Current MVP wiring reality:** there is **no dedicated Resource Manager service**; parts of the surface exist in System API and Driver Manager, with limited kernel coordination.
+
+Resource Manager is required (target) for:
 
 - device scheduling,
 - reservation tracking,
 - runtime allocation decisions,
-- queue-depth visibility,
+- queue depth visibility,
 - execution fairness,
-- adaptive runtime coordination.
+- adaptive runtime coordination (Phase-1+).
 
 ---
 
-## Interfaces
+## 5. Current Implemented Baseline (Repository Truth)
 
-### 1. Public APIs
+### 5.1 Public device APIs (implemented in `system-api`)
 
-#### Implemented now
-
-**DeviceService**
-
-Current public APIs:
+System API exposes public `DeviceService` handlers for:
 
 ```text
 ListDevices
@@ -165,21 +139,121 @@ GetDeviceStatus
 ReserveDevice
 ```
 
-**Current behavior**
+---
 
-Current responses are placeholder/runtime-simplified and are not fully backed by:
+### 5.2 Device visibility (current behavior)
 
-- kernel scheduling state,
-- runtime slot accounting,
-- reservation registries.
+Current responses provide simplified/static runtime info (MVP-safe baseline), typically including:
+
+- a small set of known devices (e.g., `sim:local`),
+- online/offline status,
+- queue depth often reported as `0` (placeholder).
 
 ---
 
-#### Required target public APIs
+### 5.3 Reservation flow (placeholder semantics)
 
-**Reservation lifecycle APIs**
+`ReserveDevice` currently:
 
-Future APIs SHALL include:
+- validates request shape,
+- generates `reservation_id`,
+- returns timestamps / expiry-like metadata (deployment-dependent).
+
+#### Normative clarification (important):
+
+- The current reservation is **NOT enforced** against scheduler/kernel capacity.
+- The current reservation does **NOT** guarantee exclusive access, slot ownership, or priority.
+- The reservation MUST be treated as a **client-visible token** only, suitable for future compatibility, not a hard allocation.
+
+If a client requests enforced reservation semantics (Phase-1 features) against an MVP deployment, the system SHOULD return:
+
+- `UNIMPLEMENTED` (preferred) or `FAILED_PRECONDITION`,
+with structured details indicating “reservations not enforced in this deployment”.
+
+---
+
+### 5.4 Runtime integration (partial)
+
+- Device inventory and status are partially sourced from `driver-manager`.
+- Kernel does not currently own reservation lifecycle or slot accounting.
+
+---
+
+### 5.5 Observability baseline (implemented)
+
+- Structured request logging exists in service handlers.
+- Trace context propagation exists across the runtime (see `observability.md`).
+
+---
+
+## 6. Target Responsibilities
+
+### 6.1 Deterministic resource allocation
+
+Resource Manager SHALL implement:
+
+- device slot accounting,
+- queue-aware placement decisions,
+- deterministic allocation under deterministic mode,
+- fairness/isolation policies (tenant/project),
+- bounded, replay-safe scheduling inputs.
+
+---
+
+### 6.2 Reservation lifecycle ownership
+
+Resource Manager SHALL own:
+
+- reservation creation,
+- reservation expiry and sweeps,
+- release/revocation,
+- extension (where allowed),
+- restart recovery,
+- audit-safe history retention,
+- replay-safe reservation lineage.
+
+---
+
+### 6.3 Hardware-aware scheduling inputs
+
+Resource Manager SHALL expose normalized signals:
+
+- queue pressure,
+- calibration freshness,
+- topology availability,
+- maintenance state,
+- device capability constraints,
+- outage markers / degradation states.
+
+---
+
+### 6.4 Coordination with runtime components
+
+Resource Manager SHALL coordinate with:
+
+- **QRTX Kernel** (scheduler and lifecycle owner),
+- **Driver Manager** (device truth + execution abstraction),
+- future **HWE** (adaptation/reroute),
+- future intelligent runtime (policy/scoring).
+
+---
+
+## 7. Interfaces
+
+### 7.1 Public APIs (DeviceService)
+
+#### Implemented now
+
+```text
+ListDevices
+GetDeviceDetails
+GetDeviceStatus
+ReserveDevice
+```
+
+#### Required target public APIs (additive)
+
+**Reservation lifecycle**
 
 ```text
 ReleaseReservation
@@ -188,9 +262,7 @@ GetReservationStatus
 ListReservations
 ```
 
-**Queue visibility APIs**
-
-Future APIs SHALL expose:
+**Queue visibility**
 
 ```text
 GetQueueDepth
@@ -198,9 +270,7 @@ GetEstimatedWaitTime
 GetSchedulerPressure
 ```
 
-**Adaptive-runtime APIs**
-
-Future APIs SHALL support:
+**Adaptive-runtime allocation (Phase-1+)**
 
 ```text
 RequestAdaptiveAllocation
@@ -210,44 +280,29 @@ AttachExecutionPriority
 
 ---
 
-### 2. Internal Runtime Interfaces
+### 7.2 Internal runtime interfaces (target)
 
-#### Implemented now
+#### Driver Manager integration (exists partially)
 
-**Driver Manager integration**
+Current internal sources include:
 
-Current runtime integrations:
+- `DriverManagerService.ListDevices`
+- `DriverManagerService.GetDeviceStatus`
 
-```text
-ListDevices
-GetDeviceStatus
-```
+#### Kernel integration (current limitation)
 
-through Driver Manager.
+Kernel currently exposes `KernelGatewayService` for job lifecycle:
 
-**Kernel integration**
+- `EnqueueJob`
+- `GetJobStatus`
+- `CancelJob`
+- `GetJobResults`
 
-Current kernel integration is limited.
-
-`KernelGatewayService` currently exposes:
-
-```text
-Kernel integration
-
-Current kernel integration is limited.
-
-KernelGatewayService currently exposes:
-```
-
-and does not expose reservation lifecycle APIs.
-
----
+Kernel does not currently expose reservation or allocation lifecycle APIs.
 
 #### Required target internal interfaces
 
-**Kernel reservation APIs**
-
-Future kernel integrations SHALL include:
+**Kernel ↔ Resource Manager (Phase-1+)**
 
 ```text
 ReserveExecutionSlot
@@ -256,462 +311,294 @@ GetAllocationState
 SubscribeToQueueUpdates
 ```
 
-**Runtime aggregation APIs**
-
-Future runtime aggregation SHALL support:
+#### Aggregation / telemetry inputs
 
 - hardware availability,
 - scheduler pressure,
 - queue depth,
-- adaptive allocation state.
+- allocation state.
 
-**HWE integration**
+#### HWE integration (Phase-1+)
 
-Future HWE integration SHALL support:
-
-- hardware adaptation decisions,
-- degraded hardware routing,
-- reroute recommendations,
-- topology-aware allocation.
+- reroute / substitution requests,
+- topology-aware allocation,
+- degraded-mode routing coordination.
 
 ---
 
-## Inputs / Outputs
+## 8. Inputs / Outputs
 
-### Inputs
+### 8.1 Inputs
 
 #### Implemented now
-
-**Public API requests**
-
-Inputs currently include:
 
 - device queries,
 - reservation requests,
-- status requests.
-
-**Runtime metadata**
-
-Inputs currently derive partially from:
-
-- driver-manager device visibility,
-- runtime request metadata.
-
----
+- status requests,
+- limited device inventory/status pulled from driver-manager.
 
 #### Required target inputs
 
-**Scheduler/runtime metadata**
-
-Future inputs SHALL include:
-
-- queue state,
-- reservation pressure,
-- execution priority,
-- tenant/runtime constraints.
-
-**Hardware telemetry**
-
-Future inputs SHALL include:
-
-- device availability,
-- queue pressure,
-- topology degradation,
-- calibration freshness,
-- outage markers.
-
-**Adaptive-runtime metadata**
-
-Future inputs SHALL include:
-
-- optimizer routing hints,
-- HWE adaptation requests,
-- deterministic replay markers.
+- queue state and allocation pressure,
+- execution priority and fairness context,
+- tenant/project constraints,
+- topology + calibration snapshots,
+- outage/degradation markers,
+- deterministic replay markers (when enabled),
+- optimizer/HWE hints (Phase-1+).
 
 ---
 
-### Outputs
+### 8.2 Outputs
 
 #### Implemented now
 
-**Device responses**
-
-Current outputs include:
-
-- device metadata,
-- online/offline state,
-- generated reservation identifiers.
-
-**Reservation responses**
-
-Current reservation responses include:
-
-- reservation ID,
-- timestamp.
-
-Current responses are not tied to actual runtime allocation state.
-
----
+- device metadata and status,
+- generated reservation identifiers (placeholder tokens).
 
 #### Required target outputs
 
-**Deterministic allocation responses**
-
-Future outputs SHALL include:
-
-- allocation acceptance/denial,
-- reservation expiration,
-- queue placement,
-- estimated execution timing.
-
-**Runtime coordination metadata**
-
-Future outputs SHALL include:
-
-- scheduler diagnostics,
-- runtime pressure indicators,
-- adaptive-routing metadata.
-
-**Replay-safe allocation artifacts**
-
-Future outputs SHALL include:
-
-- reservation lineage,
-- allocation audit metadata,
-- deterministic replay identifiers.
+- allocation accept/deny decisions,
+- reservation expiration and enforced ownership semantics,
+- queue placement and estimated wait,
+- scheduler diagnostics and pressure indicators,
+- replay-safe allocation artifacts and lineage references.
 
 ---
 
-## Storage / State
+## 9. State and Storage
 
-### Internal State
+### 9.1 Implemented now
 
-#### Implemented now
-
-**Current reservation behavior**
-
-Current reservation flow is effectively stateless beyond response generation.
-
+Reservation behavior is effectively **stateless** beyond response generation.
 No durable reservation registry exists.
 
 ---
 
-#### Required target internal state
+### 9.2 Required target internal state
 
-**Reservation registry**
+Resource Manager SHALL maintain:
 
-Future runtime SHALL maintain:
-
-```text
-reservation_id
-job_id
-device_id
-expires_at
-allocation_state
-```
-
-**Scheduler state**
-
-Future runtime SHALL maintain:
-
-- queue depth,
-- active allocations,
-- pending reservations,
-- fairness tracking.
-
-**Replay state**
-
-Future runtime SHALL support:
-
-- deterministic allocation lineage,
-- reservation replay validation,
-- execution/resource provenance.
+- `reservation_id`, `device_id`, `owner`, `expires_at`, `state`, `constraints`,
+- active allocations and slots,
+- fairness tracking,
+- queue history window (bounded),
+- replay lineage for deterministic mode.
 
 ---
 
-### External Storage
+### 9.3 Required target external storage
 
-#### Implemented now
-
-No dedicated persistent Resource Manager storage backend exists.
-
----
-
-#### Required target storage
-
-**Reservation persistence**
-
-Future runtime SHALL support:
-
-- durable reservation storage,
-- restart recovery,
-- audit-safe allocation history.
-
-**Runtime analytics storage**
-
-Future runtime SHALL support:
-
-- queue history,
-- allocation metrics,
+- durable reservation store (DB),
+- audit-safe allocation history,
+- queue/allocation analytics history (bounded retention),
 - replay-safe scheduling history.
 
 ---
 
-## Failure Modes
+## 10. Error Semantics (Normative)
 
-### Implemented now
+All failures MUST follow the Eigen OS error model (`error-model.md`):
 
-#### Validation and authorization failures
-
-Handled at the `system-api` layer.
-
-#### Runtime limitations
-
-Current implementation does not support:
-
-- stale reservation cleanup,
-- offline-device reconciliation,
-- queue consistency guarantees,
-- runtime partition handling.
+- **gRPC status-first**
+- structured details (e.g., `google.rpc.ErrorInfo`, `RetryInfo`, `ResourceInfo`)
+- deterministic mapping.
 
 ---
 
-### Required target failure taxonomy
+### 10.1 Common mappings
 
-#### Reservation failures
-
-Future runtime SHALL classify:
-
-- reservation denied,
-- reservation expired,
-- reservation conflict,
-- stale reservation.
-
-#### Hardware/runtime failures
-
-Future runtime SHALL classify:
-
-- device offline,
-- queue saturation,
-- scheduler overload,
-- allocation timeout.
-
-#### Distributed runtime failures
-
-Future runtime SHALL classify:
-
-- network partitions,
-- inconsistent queue state,
-- replay divergence,
-- allocation desynchronization.
+- Invalid request / invalid identifiers: `INVALID_ARGUMENT` (+ `google.rpc.BadRequest`)
+- Unsupported reservation semantics in MVP deployment: `UNIMPLEMENTED` (+ `ErrorInfo.reason`)
+- Device not found: `NOT_FOUND` (+ `ResourceInfo`)
+- Capacity/quota exceeded: `RESOURCE_EXHAUSTED` (+ `RetryInfo`)
+- Temporary subsystem outage: `UNAVAILABLE` (+ `RetryInfo`)
+- Unauthorized: `UNAUTHENTICATED` / `PERMISSION_DENIED`
 
 ---
 
-### Recovery and fallback requirements
+### 10.2 Retryability
 
-The Resource Manager SHALL support:
+- `UNAVAILABLE`, `RESOURCE_EXHAUSTED`, `ABORTED`, `DEADLINE_EXCEEDED` are typically retryable.
+- `FAILED_PRECONDITION` / `NOT_FOUND` are conditionally retryable depending on eventual consistency / state.
+- `INVALID_ARGUMENT` is non-retryable.
 
-- reservation expiry sweepers,
+---
+
+## 11. Failure Modes (Target Taxonomy)
+
+### 11.1 Reservation failures
+
+- `reservation_denied`
+- `reservation_expired`
+- `reservation_conflict`
+- `stale_reservation`
+- `reservation_leak_detected`
+
+---
+
+### 11.2 Hardware/runtime failures
+
+- `device_offline`
+- `queue_saturated`
+- `scheduler_overloaded`
+- `allocation_timeout`
+
+---
+
+### 11.3 Distributed coordination failures
+
+- `network_partition`
+- `inconsistent_queue_state`
+- `allocation_desync`
+- `replay_divergence` (deterministic mode)
+
+---
+
+### 11.4 Recovery and fallback (required)
+
+- expiry sweepers,
 - stale cleanup,
-- bounded retries,
+- bounded retries + backoff,
 - degraded scheduling modes,
-- replay-safe recovery,
-- deterministic fallback allocation policies.
+- deterministic fallback allocation policies,
+- replay-safe recovery when deterministic mode is enabled.
 
 ---
 
-## Observability
+## 12. Observability
 
-### Metrics
+Resource Manager observability MUST remain compatible with:
 
-#### Implemented now
-
-General runtime observability exists across services.
-
-Structured request logging exists in handlers.
+- `observability.md` (global)
+- orchestration observability contract for scheduler/control-plane (`orchestration-observability-contract.md`) where applicable.
 
 ---
 
-#### Required target metrics
+### 12.1 Label cardinality rules (mandatory)
 
-**Resource allocation metrics**
+Metric labels MUST be bounded and MUST NOT include:
+
+- `job_id`, `trace_id`, `request_id`, `user_id`,
+- arbitrary freeform strings.
+
+**Note on** `device_id`:
+
+- Allowed only if the device catalog is **bounded and enumerable** for the deployment.
+- If device IDs are highly dynamic/unbounded, metrics MUST use bounded dimensions instead (e.g., `backend_type`, `region`, `queue`, `class`).
+
+---
+
+### 12.2 Implemented now
+
+- structured request logs,
+- trace propagation across runtime services.
+
+---
+
+### 12.3 Required target metrics (namespaced)
+
+#### Reservation and allocation
 
 ```text
-eigen_kernel_device_slots_total{device_id}
-eigen_kernel_device_slots_available{device_id}
-eigen_kernel_reservations_active
-eigen_kernel_reservation_duration_seconds
+eigen_resource_reservations_active
+eigen_resource_reservations_total{result}
+eigen_resource_reservation_duration_seconds_bucket
+eigen_resource_allocation_attempts_total{result,reason}
+eigen_resource_allocation_latency_seconds_bucket
 ```
 
-**Scheduler metrics**
+#### Capacity and queue
 
 ```text
-eigen_kernel_queue_depth
-eigen_kernel_scheduler_pressure
-eigen_kernel_allocation_failures_total
+eigen_resource_device_slots_total{device_class}
+eigen_resource_device_slots_available{device_class}
+eigen_resource_queue_depth{queue}
+eigen_resource_scheduler_pressure{queue}
 ```
 
-**Adaptive-runtime metrics**
+#### Consistency / replay (when enabled)
 
 ```text
-eigen_hwe_adaptive_allocations_total
-eigen_runtime_reroutes_total
+eigen_resource_allocation_desync_total{reason}
+eigen_resource_replay_mismatch_total{reason}
 ```
 
 ---
 
-### Logs
+### 12.4 Required target logging (structured)
 
-#### Implemented now
+Logs SHOULD include fields (as log attributes, not metric labels):
 
-Structured request logging exists.
-
----
-
-#### Required target logging
-
-Future logging SHALL include:
-
-- `device_id`
-- `reservation_id`
-- `job_id`
-- allocation decisions
-- queue diagnostics
-- adaptive routing decisions
-- reservation lifecycle events
+- `device_id`, `reservation_id`, `job_id` (when relevant),
+- allocation decision, denial reason,
+- queue snapshot summary,
+- adaptive routing markers (Phase-1+).
 
 ---
 
-### Traces
+### 12.5 Required target tracing
 
-#### Implemented now
-
-General runtime tracing exists across runtime services.
-
----
-
-#### Required target tracing
-
-Distributed tracing SHALL include:
+Distributed tracing SHALL cover:
 
 - reservation lifecycle,
-- scheduler decisions,
+- allocation decisions,
 - queue placement,
-- hardware adaptation events,
-- deterministic replay lineage.
-
-Required trace metadata:
-
-- device mapping,
-- allocation state,
-- reservation lineage,
-- queue pressure snapshot.
+- HWE adaptation events (Phase-1+),
+- replay lineage spans (deterministic mode).
 
 ---
 
-### Health Checks
+## 13. Security and Isolation (Target)
 
-#### Implemented now
+### 13.1 Reservation isolation
 
-General runtime health endpoints exist.
+Resource Manager SHALL enforce:
 
----
-
-#### Required target health model
-
-The subsystem SHALL expose:
-
-- scheduler health,
-- queue saturation state,
-- reservation consistency validation,
-- hardware availability aggregation,
-- replay consistency validation.
+- tenant/project isolation,
+- ownership validation on reservation operations,
+- authorization for reservation and allocation actions.
 
 ---
 
-### Dashboards and Alerts
+### 13.2 Auditability
 
-#### Implemented now
-
-Repository-level runtime dashboards/runbooks exist.
-
----
-
-#### Required target dashboards
-
-**Operational dashboards**
-
-- device availability
-- queue depth
-- reservation pressure
-- scheduler latency
-- allocation fairness
-- adaptive routing decisions
-
-**Alert categories**
-
-- reservation starvation
-- leaked reservations
-- queue saturation
-- hardware outage
-- replay inconsistency
-- allocation desynchronization
-
----
-
-## Security and Isolation
-
-### Required target controls
-
-#### Reservation isolation
-
-The subsystem SHALL enforce:
-
-- tenant isolation,
-- allocation ownership validation,
-- reservation authorization policies.
-
-#### Runtime auditability
-
-The subsystem SHALL support:
+Resource Manager SHALL support:
 
 - immutable allocation audit trails,
 - replay-safe reservation history,
-- allocation provenance tracking.
-
-#### Adaptive-runtime governance
-
-The subsystem SHALL support:
-
-- policy-controlled adaptive allocation,
-- deterministic fallback enforcement,
-- scheduler override auditability.
+- provenance tracking for overrides and degraded modes.
 
 ---
 
-## Alignment Summary
+### 13.3 Adaptive-runtime governance
 
-### Implemented and aligned
+Resource Manager SHALL support:
 
-The following MVP-aligned functionality is implemented:
+- policy-controlled adaptive allocation,
+- deterministic fallback enforcement,
+- auditable manual overrides.
+
+---
+
+## 14. Alignment Summary
+
+#### Implemented and aligned (MVP baseline)
 
 - public device APIs,
-- placeholder reservation flow,
-- driver-manager device visibility,
-- structured runtime logging,
-- runtime observability baseline.
+- placeholder reservation token flow (non-enforced),
+- driver-manager device visibility inputs,
+- structured logging and trace propagation baseline.
 
-### Remaining architecture gaps
-
-The following architecture targets remain not fully implemented:
+#### Remaining architecture gaps (explicit)
 
 - kernel-backed resource accounting,
-- deterministic reservation lifecycle,
-- queue-depth aggregation,
-- durable reservation persistence,
-- scheduler/resource orchestration,
-- adaptive-runtime allocation integration,
-- replay-safe allocation lineage,
-- production-grade fairness/isolation policies.
+- enforced reservation lifecycle,
+- queue-depth aggregation + estimated wait,
+- durable reservation persistence + recovery,
+- fairness/isolation enforcement,
+- adaptive-runtime allocation integration (HWE),
+- replay-safe allocation lineage and determinism controls,
+- production-grade scheduling coordination.
 
-These gaps remain explicitly preserved as required future work to prevent architecture scope loss.
+These gaps are intentionally preserved as required Phase-1+ work to prevent architecture scope loss.

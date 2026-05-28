@@ -2,10 +2,10 @@
 
 **Document status:** Stable
 **Subsystem:** Distributed Runtime & Cluster Control Plane
-**Contract version:** `1.0.0`
+**Contract version:** 1.0.0
 **Applies to:** Eigen OS 1.0
 
-This document defines the normative observability contract for distributed runtime execution, cluster scheduling, queue semantics, worker lifecycle management, tracing continuity, and control-plane reliability in Eigen OS.
+This document defines the normative observability contract for distributed runtime execution, cluster scheduling, queue semantics, worker lifecycle management, tracing continuity, control-plane reliability, and distributed orchestration visibility in Eigen OS.
 
 This contract specifies:
 
@@ -14,12 +14,16 @@ This contract specifies:
 - worker health telemetry,
 - distributed execution visibility,
 - tracing continuity guarantees,
+- structured logging requirements,
 - exporter semantics,
 - alert compatibility,
 - dashboard compatibility,
+- telemetry cardinality constraints,
 - and operational SRE invariants.
 
 All metrics defined here are part of the stable public observability surface of Eigen OS 1.0.
+
+---
 
 ## 1. Contract Marker
 
@@ -28,6 +32,13 @@ All cluster-runtime exporters MUST expose:
 ```text
 eigen_cluster_runtime_contract_info{version="1.0.0"} 1
 ```
+This metric is mandatory and serves as the compatibility marker for:
+
+- dashboards,
+- alerting systems,
+- CI validation,
+- telemetry conformance,
+- runtime compatibility verification.
 
 ### SemVer Policy
 
@@ -39,7 +50,8 @@ Breaking changes:
 - metric removal,
 - semantic/type changes,
 - incompatible label changes,
-- queue semantic changes.
+- queue semantic changes,
+- histogram incompatibility.
 
 #### MINOR
 
@@ -48,7 +60,8 @@ Backward-compatible additions:
 - additive metrics,
 - additive labels,
 - additive histogram buckets,
-- new delivery telemetry dimensions.
+- delivery telemetry dimensions,
+- trace attributes.
 
 #### PATCH
 
@@ -57,7 +70,8 @@ Non-semantic corrections:
 - exporter fixes,
 - alert tuning,
 - dashboard corrections,
-- documentation clarifications.
+- documentation clarifications,
+- typo fixes.
 
 ---
 
@@ -74,7 +88,11 @@ This contract governs observability for:
 - dead-letter processing,
 - distributed tracing continuity,
 - cluster assignment latency,
-- runtime orchestration health.
+- runtime orchestration health,
+- replay/recovery workflows,
+- autoscaling behavior,
+- cluster failover visibility,
+- distributed artifact persistence.
 
 The contract applies to:
 
@@ -82,7 +100,8 @@ The contract applies to:
 - multi-node runtime clusters,
 - hybrid execution environments,
 - elastic autoscaling deployments,
-- replay/recovery environments.
+- replay/recovery environments,
+- staging and canary environments.
 
 ---
 
@@ -90,19 +109,63 @@ The contract applies to:
 
 The following repository artifacts are normative:
 
-- `monitoring/metrics/prometheus/exporter.py`
-- `monitoring/metrics/prometheus/cluster-runtime-alerts.yaml`
-- `monitoring/dashboards/cluster_runtime_sre_dashboard.json`
-- `monitoring/metrics/tests/test_stage_observability.py`
-- `docs/howto/cluster-runtime-observability-runbook.md`
+```text
+monitoring/metrics/prometheus/exporter.py
+monitoring/metrics/prometheus/cluster-runtime-alerts.yaml
+monitoring/dashboards/cluster_runtime_sre_dashboard.json
+monitoring/metrics/tests/test_stage_observability.py
+docs/howto/cluster-runtime-observability-runbook.md
+```
+
+Architecture references:
+
+```text
+docs/architecture/components/observability.md
+docs/architecture/runtime/distributed-runtime.md
+docs/architecture/contracts/telemetry.md
+docs/architecture/runtime/queue-runtime.md
+```
+
+If implementation and documentation diverge:
+
+1. exporter behavior,
+2. CI validation,
+3. Prometheus scrape output
+
+take precedence over prose documentation.
 
 ---
 
-## 4. Required Metrics
+## 4. Telemetry Architecture Requirements
+
+Cluster-runtime observability MUST support:
+
+- Prometheus metrics,
+- distributed tracing,
+- structured logs,
+- replay diagnostics,
+- deterministic runtime auditing,
+- distributed correlation propagation.
+
+Telemetry MUST remain operational during:
+
+- scheduler degradation,
+- partial node failures,
+- worker restarts,
+- queue failover,
+- rolling deployments,
+- partition recovery,
+- exporter refreshes.
+
+Observability systems MUST NOT become blocking dependencies for runtime execution.
+
+---
+
+## 5. Required Metrics
 
 All metric families defined below are mandatory.
 
-### 4.1 Worker Liveness & Node Availability
+### 5.1 Worker Liveness & Node Availability
 
 #### Worker heartbeats
 
@@ -116,9 +179,11 @@ Type:
 
 Labels:
 
-- `worker_id`
-- `node`
 - `role`
+
+Optional bounded labels:
+
+- `node_class`
 
 Definition:
 
@@ -129,6 +194,8 @@ Purpose:
 - liveness validation,
 - cluster availability tracking,
 - partition detection.
+
+`worker_id` MUST NOT be exposed as a metric label.
 
 #### Worker flap events
 
@@ -142,7 +209,6 @@ Type:
 
 Labels:
 
-- `worker_id`
 - `reason`
 
 Allowed `reason` examples:
@@ -213,9 +279,23 @@ Definition:
 
 - workers quarantined due to reliability or policy violations.
 
+#### Worker restart events
+
+```text
+eigen_cluster_worker_restarts_total
+```
+
+Type:
+
+- counter
+
+Definition:
+
+- runtime worker process restarts.
+
 ---
 
-### 4.2 Control Plane & Assignment Path
+### 5.2 Control Plane & Assignment Path
 
 #### Assignment latency
 
@@ -254,6 +334,8 @@ Required buckets:
 10000
 +Inf
 ```
+
+Histogram boundaries MUST remain backward-compatible within MAJOR version `1.x`.
 
 #### Assignment failures
 
@@ -301,7 +383,23 @@ Definition:
 
 - cluster scheduling outcomes.
 
-### 4.3 Queue Reliability & Delivery Semantics
+#### Scheduler evaluation latency
+
+```text
+eigen_cluster_scheduler_evaluation_latency_ms
+```
+
+Type:
+
+- histogram
+
+Definition:
+
+- scheduler policy evaluation duration.
+
+---
+
+### 5.3 Queue Reliability & Delivery Semantics
 
 #### Queue backlog depth
 
@@ -468,9 +566,23 @@ Definition:
 
 - replay/recovery queue reinsertions.
 
+#### Queue replay failures
+
+```text
+eigen_cluster_queue_replay_failures_total
+```
+
+Type:
+
+- counter
+
+Definition:
+
+- replay/recovery failures during queue restoration.
+
 ---
 
-### 4.4 Distributed Execution Reliability
+### 5.4 Distributed Execution Reliability
 
 #### Runtime execution failures
 
@@ -520,7 +632,7 @@ Type:
 
 Definition:
 
-- conflicting ownership/lease acquisition attempts.
+- conflicting ownership or lease acquisition attempts.
 
 #### Node partition detections
 
@@ -536,9 +648,23 @@ Definition:
 
 - detected cluster network partition events.
 
+#### Orchestrator failover events
+
+```text
+eigen_cluster_orchestrator_failover_total
+```
+
+Type:
+
+- counter
+
+Definition:
+
+- orchestrator leadership or control-plane failover events.
+
 ---
 
-### 4.5 Distributed Tracing Continuity
+### 5.5 Distributed Tracing Continuity
 
 #### Trace continuity breakage
 
@@ -590,22 +716,85 @@ Definition:
 
 ---
 
-## 5. Label Contract
+## 6. Distributed Tracing Contract
+
+Cluster-runtime services MUST support:
+
+- W3C `traceparent`,
+- W3C `tracestate`.
+
+Required trace spans:
+
+| **Span Name** | **Description** |
+|----------|----------|
+| `cluster.schedule` | scheduling decision |
+| `cluster.assign` | worker assignment |
+| `cluster.dispatch` | queue dispatch |
+| `cluster.execute` | distributed execution |
+| `cluster.retry` | retry orchestration |
+| `cluster.replay` | replay/recovery flow |
+| `cluster.persist` | distributed persistence |
+
+Required trace attributes:
+
+- `cluster.worker_role`
+- `cluster.queue`
+- `cluster.policy`
+- `cluster.contract_version`
+- `cluster.execution_state`
+
+Trace continuity MUST survive:
+
+- retries,
+- queue redelivery,
+- worker reassignment,
+- replay recovery.
+
+---
+
+## 7. Structured Logging Contract
+
+Structured logs MUST use deterministic machine-readable formats.
+
+Recommended formats:
+
+- JSON Lines,
+- OpenTelemetry structured logs.
+
+Required log fields:
+
+| **Field** | **Description** |
+|----------|----------|
+| `timestamp` | UTC RFC3339 timestamp |
+| `severity` | log severity |
+| `service` | runtime component |
+| `event` | deterministic event name |
+| `trace_id` | distributed trace identifier |
+| `queue` | logical queue identifier |
+
+Sensitive information MUST NOT be logged.
+
+Raw payloads MUST NOT be fully logged by default.
+
+---
+
+## 8. Label Contract
 
 Label cardinality MUST remain bounded and deterministic.
 
-### 5.1 Forbidden Labels
+### 8.1 Forbidden Labels
 
 The following MUST NOT be used as metric labels:
 
 - raw `job_id`
+- `worker_id`
 - `trace_id`
 - `request_id`
 - `correlation_id`
-- arbitrary tenant identifiers,
-- arbitrary user identifiers,
-- payload-derived identifiers,
-- dynamic shard identifiers.
+- arbitrary tenant identifiers
+- arbitrary user identifiers
+- payload-derived identifiers
+- dynamic shard identifiers
 
 These belong in:
 
@@ -614,12 +803,12 @@ These belong in:
 - QFS artifacts,
 - audit streams.
 
-### 5.2 Allowed Bounded Labels
+---
 
-Examples:
+### 8.2 Allowed Bounded Labels
 
 | **Label** | **Bound Type** |
-|---|---|
+|----------|----------|
 | `queue` | finite configured queues |
 | `reason` | stable enum taxonomy |
 | `role` | finite worker roles |
@@ -628,7 +817,17 @@ Examples:
 
 ---
 
-## 6. Queue Delivery Semantics
+### 8.3 Label Stability
+
+Existing labels:
+
+- MUST NOT change semantic meaning,
+- MUST NOT become unbounded,
+- MUST remain backward-compatible within MAJOR version `1.x`.
+
+---
+
+## 9. Queue Delivery Semantics
 
 This contract assumes the Eigen OS distributed queue model supports:
 
@@ -648,30 +847,34 @@ Telemetry MUST reflect:
 - replay events,
 - dead-letter transitions.
 
+Queue telemetry MUST remain deterministic under replay and failover.
+
 ---
 
-## 7. Exporter Requirements
+## 10. Exporter Requirements
 
 Cluster-runtime exporters MUST:
 
 1. expose valid Prometheus text exposition,
 2. export all required metric families,
-3. emit `# TYPE` declarations,
+3. emit # TYPE declarations,
 4. expose contract marker metric,
 5. preserve snapshot consistency,
 6. tolerate partial subsystem failures,
-7. avoid blocking runtime execution paths.
+7. avoid blocking runtime execution paths,
+8. avoid unbounded series generation.
 
 Exporters MUST NOT:
 
 - panic during scrape,
 - emit unbounded labels,
 - expose malformed histogram families,
-- dynamically mutate metric semantics.
+- dynamically mutate metric semantics,
+- emit inconsistent snapshots.
 
 ---
 
-## 8. Alert Compatibility Contract
+## 11. Alert Compatibility Contract
 
 Prometheus alert rules are maintained in:
 
@@ -679,7 +882,7 @@ Prometheus alert rules are maintained in:
 monitoring/metrics/prometheus/cluster-runtime-alerts.yaml
 ```
 
-### 8.1 Critical Alerts
+### 11.1 Critical Alerts
 
 #### Queue stall
 
@@ -687,7 +890,7 @@ Triggers when:
 
 - queue age exceeds SLO,
 - dispatch throughput collapses,
-- or queue backlog grows uncontrollably.
+- queue backlog grows uncontrollably.
 
 #### Redelivery-rate breach
 
@@ -719,9 +922,17 @@ Triggers when:
 
 - dead-letter growth exceeds error budget.
 
+#### Exporter health degradation
+
+Triggers when:
+
+- scrape failures occur,
+- contract marker disappears,
+- telemetry freshness exceeds threshold.
+
 ---
 
-### 8.2 Warning Alerts
+### 11.2 Warning Alerts
 
 #### Worker flap increase
 
@@ -743,7 +954,7 @@ Triggers when:
 
 ---
 
-## 9. Dashboard Compatibility Contract
+## 12. Dashboard Compatibility Contract
 
 Grafana dashboard:
 
@@ -764,11 +975,14 @@ Dashboard MUST include:
 - retry rates,
 - partition events,
 - trace continuity health,
+- exporter health,
 - contract marker visibility.
+
+Dashboards MUST remain backward-compatible within MAJOR version `1.x`.
 
 ---
 
-## 10. Runtime Integration Requirements
+## 13. Runtime Integration Requirements
 
 At least one live runtime environment MUST export all required metrics end-to-end.
 
@@ -787,11 +1001,14 @@ Metrics MUST survive:
 - node replacement,
 - partition recovery,
 - queue replay,
-- exporter refreshes.
+- exporter refreshes,
+- orchestrator failover.
+
+Observability MUST degrade gracefully under overload conditions.
 
 ---
 
-## 11. CI & Conformance Requirements
+## 14. CI & Conformance Requirements
 
 CI MUST validate:
 
@@ -801,7 +1018,8 @@ CI MUST validate:
 4. contract marker version,
 5. alert query compatibility,
 6. dashboard query compatibility,
-7. bounded-label enforcement.
+7. bounded-label enforcement,
+8. trace propagation compatibility.
 
 Required conformance tests:
 
@@ -810,11 +1028,15 @@ Required conformance tests:
 - replay metric validation,
 - dead-letter metric validation,
 - redelivery semantic validation,
-- trace continuity validation.
+- trace continuity validation,
+- histogram validation,
+- label-cardinality validation.
+
+CI failures MUST block incompatible observability changes.
 
 ---
 
-## 12. Operational Invariants
+## 15. Operational Invariants
 
 The following invariants are mandatory.
 
@@ -840,17 +1062,39 @@ Telemetry failures MUST NOT terminate runtime execution.
 
 #### Replay visibility
 
-Replay/recovery operations MUST remain observable.
+Replay and recovery operations MUST remain observable.
+
+#### Trace continuity
+
+Distributed trace propagation MUST remain deterministic across retries and redelivery paths.
 
 ---
 
-## 13. Migration Rules
+## 16. Security & Isolation
+
+Observability systems MUST:
+
+- isolate tenant telemetry,
+- prevent unauthorized metric exposure,
+- prevent trace leakage across tenants,
+- sanitize structured logs,
+- redact sensitive metadata.
+
+Exporters SHOULD support:
+
+- TLS transport,
+- authenticated scraping,
+- RBAC-compatible dashboard access.
+
+---
+
+## 17. Migration Rules
 
 #### Additive migration
 
 New metrics MAY be introduced in MINOR releases.
 
-####Deprecation policy
+#### Deprecation policy
 
 Deprecated metrics MUST remain available for at least one MINOR release.
 
@@ -868,26 +1112,12 @@ Breaking changes require:
 - exporter updates,
 - dashboard updates,
 - alert updates,
-- migration documentation.
+- migration documentation,
+- CI compatibility updates.
 
 ---
 
-## 14. Minimum Closure Criteria
-
-The cluster-runtime observability contract is considered fully realized only when:
-
-1. all required metrics are exported by live runtime services,
-2. contract marker metric is emitted,
-3. queue delivery telemetry is wired end-to-end,
-4. trace continuity telemetry is fully operational,
-5. CI validates live scrape completeness,
-6. dashboards validate against runtime scrape output,
-7. alert rules validate against runtime scrape output,
-8. replay/recovery paths expose observability coverage.
-
----
-
-## 15. Compatibility Guarantees
+## 18. Compatibility Guarantees
 
 Eigen OS guarantees:
 
@@ -904,4 +1134,6 @@ These guarantees apply to:
 - dashboards,
 - alerting systems,
 - distributed runtime tooling,
-- enterprise monitoring integrations.
+- enterprise monitoring integrations,
+- replay tooling,
+- cluster orchestration systems.

@@ -3,6 +3,7 @@
 **Document status:** Normative
 **Subsystem:** Public API, Internal API, Runtime, Compiler, Driver Manager, Distributed Runtime
 **Contract version:** `1.0.0`
+**Applies to:** Eigen OS 1.0
 
 This document defines the canonical error model for Eigen OS 1.0.
 
@@ -96,11 +97,7 @@ Determinism is mandatory across:
 
 ### 1.3 Structured Error Semantics
 
-Structured semantics SHOULD be encoded via:
-
-```text
-google.rpc.Status
-```
+Structured semantics SHOULD be encoded via: `google.rpc.Status`
 
 using standardized detail types.
 
@@ -134,6 +131,50 @@ Minimum required visibility:
 
 ---
 
+### 1.5 Security & Information Disclosure
+
+Errors MUST be safe for external exposure.
+
+Implementations MUST:
+
+- avoid leaking secrets,
+- avoid exposing credentials,
+- avoid exposing provider-private payloads,
+- avoid exposing filesystem internals,
+- avoid exposing unsafe stack traces to untrusted clients.
+
+Production deployments SHOULD:
+
+- redact sensitive metadata,
+- sanitize provider diagnostics,
+- sanitize backend payload fragments,
+- sanitize internal infrastructure identifiers.
+
+Structured diagnostics MAY contain internal metadata only in trusted/internal environments.
+
+---
+
+### 1.6 Deterministic Serialization
+
+Structured error serialization MUST be deterministic.
+
+Requirements:
+
+- stable field ordering where serialization format permits,
+- deterministic reason-code emission,
+- deterministic structured-detail ordering,
+- canonical UTF-8 encoding,
+- stable enum serialization.
+
+This guarantees:
+
+- reproducible diagnostics,
+- deterministic replay behavior,
+- stable SDK behavior,
+- stable audit artifacts.
+
+---
+
 ## 2. Canonical Status Model
 
 ### 2.1 INVALID_ARGUMENT
@@ -148,7 +189,10 @@ Examples:
 - invalid syntax,
 - unsupported format version,
 - invalid field ranges,
-- malformed resource references.
+- malformed resource references,
+- invalid AQO payload,
+- invalid Eigen-Lang AST,
+- invalid distributed merge envelope.
 
 Characteristics:
 
@@ -175,7 +219,9 @@ Examples:
 - illegal lifecycle transition,
 - unavailable prerequisite artifact,
 - merge quorum not satisfied,
-- invalid runtime phase.
+- invalid runtime phase,
+- restore attempted before checkpoint availability,
+- cluster worker not ready.
 
 Characteristics:
 
@@ -199,14 +245,38 @@ Examples:
 - unknown job,
 - missing artifact,
 - unknown shard,
-- missing runtime resource.
+- missing runtime resource,
+- unknown worker,
+- deleted execution context.
 
 Characteristics:
 
 - deterministic,
 - potentially retryable under eventual consistency.
 
-### 2.4 RESOURCE_EXHAUSTED
+---
+
+#### 2.4 ALREADY_EXISTS
+
+Use when:
+
+- resource creation conflicts with existing resource.
+
+Examples:
+
+- duplicate artifact upload,
+- duplicate registration,
+- duplicate queue creation,
+- duplicate checkpoint generation.
+
+Characteristics:
+
+- deterministic,
+- non-retryable unless identity changes.
+
+---
+
+### 2.5 RESOURCE_EXHAUSTED
 
 Use when:
 
@@ -220,7 +290,9 @@ Examples:
 - backend quota exceeded,
 - cluster saturation,
 - memory exhaustion,
-- queue capacity exhaustion.
+- queue capacity exhaustion,
+- checkpoint budget exceeded,
+- artifact size budget exceeded.
 
 Required details:
 
@@ -228,7 +300,7 @@ Required details:
 
 ---
 
-### 2.5 UNAVAILABLE
+### 2.6 UNAVAILABLE
 
 Use when:
 
@@ -239,7 +311,8 @@ Examples:
 - provider outage,
 - runtime unavailable,
 - cluster partition,
-- transient network failure.
+- transient network failure,
+- queue backend unavailable.
 
 Required details:
 
@@ -247,7 +320,7 @@ Required details:
 
 ---
 
-### 2.6 DEADLINE_EXCEEDED
+### 2.7 DEADLINE_EXCEEDED
 
 Use when:
 
@@ -258,11 +331,12 @@ Examples:
 - execution timeout,
 - scheduling timeout,
 - distributed merge timeout,
-- backend response timeout.
+- backend response timeout,
+- replay timeout.
 
 ---
 
-### 2.7 UNAUTHENTICATED
+### 2.8 UNAUTHENTICATED
 
 Use when:
 
@@ -276,7 +350,7 @@ Examples:
 
 ---
 
-### 2.8 PERMISSION_DENIED
+### 2.9 PERMISSION_DENIED
 
 Use when:
 
@@ -290,7 +364,7 @@ Examples:
 
 ---
 
-### 2.9 UNIMPLEMENTED
+### 2.10 UNIMPLEMENTED
 
 Use when:
 
@@ -300,11 +374,13 @@ Examples:
 
 - unsupported compiler feature,
 - unsupported backend capability,
-- unavailable orchestration policy.
+- unavailable orchestration policy,
+- unsupported AQO transport format,
+- unsupported observability contract version.
 
 ---
 
-### 2.10 INTERNAL
+### 2.11 INTERNAL
 
 Use when:
 
@@ -315,7 +391,8 @@ Examples:
 - runtime panic,
 - corrupted scheduler state,
 - impossible execution state,
-- invariant violation.
+- invariant violation,
+- corrupted replay state.
 
 Internal failures SHOULD expose:
 
@@ -325,7 +402,7 @@ Internal failures SHOULD expose:
 
 ---
 
-### 2.11 ABORTED
+### 2.12 ABORTED
 
 Use when:
 
@@ -336,10 +413,11 @@ Examples:
 - lease conflicts,
 - optimistic concurrency conflicts,
 - transactional race conditions.
+- merge ownership conflicts.
 
 ---
 
-### 2.12 CANCELLED
+### 2.13 CANCELLED
 
 Use when:
 
@@ -359,17 +437,9 @@ Eigen OS standardizes the following structured detail types.
 
 ### 3.1 Validation Failures
 
-Validation failures MUST include:
+Validation failures MUST include: `google.rpc.BadRequest`
 
-```text
-google.rpc.BadRequest
-```
-
-with one or more:
-
-```text
-FieldViolation
-```
+with one or more: `FieldViolation`
 
 entries.
 
@@ -384,27 +454,20 @@ Each violation MUST contain:
 
 ### 3.2 Retry Semantics
 
-Retryable failures SHOULD include:
-
-```text
-google.rpc.RetryInfo
-```
+Retryable failures SHOULD include: `google.rpc.RetryInfo`
 
 Retry metadata MAY include:
 
 - retry delay,
 - retry class,
-- retry budget hints.
+- retry budget hints,
+- recommended backoff strategy.
 
 ---
 
 ### 3.3 Resource Context
 
-Resource-oriented failures SHOULD include:
-
-```text
-google.rpc.ResourceInfo
-```
+Resource-oriented failures SHOULD include: `google.rpc.ResourceInfo`
 
 Examples:
 
@@ -412,16 +475,13 @@ Examples:
 - artifact references,
 - queue references,
 - worker identity.
+- shard identifiers.
 
 ---
 
 ### 3.4 Stable Machine Semantics
 
-Machine-readable semantics MUST use:
-
-```text
-google.rpc.ErrorInfo
-```
+Machine-readable semantics MUST use: `google.rpc.ErrorInfo`
 
 Required fields:
 
@@ -435,17 +495,40 @@ Required fields:
 
 ### 3.5 Diagnostic Context
 
-Internal/runtime failures MAY include:
-
-```text
-google.rpc.DebugInfo
-```
+Internal/runtime failures MAY include: `google.rpc.DebugInfo`
 
 Production deployments SHOULD redact:
 
 - secrets,
 - credentials,
-- unsafe provider payloads.
+- unsafe provider payloads,
+- filesystem paths,
+- infrastructure-sensitive identifiers.
+
+---
+
+### 3.6 Remediation Guidance
+
+Operator-facing failures SHOULD include: `google.rpc.Help`
+
+Examples:
+
+- runbook URLs,
+- remediation instructions,
+- support references,
+- migration documentation.
+
+---
+
+### 3.7 Localization Safety
+
+User-facing messages MAY include: `google.rpc.LocalizedMessage`
+
+Localized messages MUST NOT alter:
+
+- reason codes,
+- retryability semantics,
+- structured machine-readable semantics.
 
 ---
 
@@ -461,11 +544,7 @@ Raw provider semantics MUST NOT directly leak into:
 
 ### 4.1 Normalized Backend Envelope
 
-Backend-facing failures MUST include:
-
-```text
-google.rpc.ErrorInfo
-```
+Backend-facing failures MUST include: `google.rpc.ErrorInfo`
 
 with:
 
@@ -492,6 +571,8 @@ Allowed normalized taxonomy values:
 - `capacity`
 - `runtime`
 - `internal`
+
+Unknown taxonomy values MUST NOT be emitted in MAJOR version `1.x`.
 
 ---
 
@@ -522,7 +603,8 @@ Examples:
 - queue unavailable,
 - queue overload,
 - invalid lease state,
-- replay corruption.
+- replay corruption,
+- dead-letter exhaustion.
 
 Canonical statuses:
 
@@ -539,6 +621,7 @@ Examples:
 - lease expiration,
 - lease ownership conflict,
 - concurrent merge conflict.
+- replay ownership race.
 
 Canonical statuses:
 
@@ -570,12 +653,32 @@ Examples:
 - worker unavailable,
 - node partition,
 - scheduling collapse,
-- orchestration saturation.
+- orchestration saturation,
+- runtime quarantine.
 
 Canonical statuses:
 
 - UNAVAILABLE
 - RESOURCE_EXHAUSTED
+
+---
+
+### 5.5 Replay & Recovery Failures
+
+Examples:
+
+- replay divergence,
+- checkpoint corruption,
+- restore validation failure,
+- lineage mismatch.
+
+Canonical statuses:
+
+- `FAILED_PRECONDITION`
+- `INVALID_ARGUMENT`
+- `INTERNAL`
+
+Replay failures MUST remain inspectable through durable error artifacts.
 
 ---
 
@@ -599,6 +702,8 @@ Artifacts MAY include:
 - retry metadata,
 - execution lineage,
 - shard failure context.
+- replay diagnostics,
+- orchestration metadata.
 
 ---
 
@@ -610,6 +715,26 @@ Distributed failures SHOULD expose:
 - trace ID,
 - shard lineage,
 - execution timeline references.
+
+---
+
+### 6.3 Error Artifact Stability
+
+Error artifacts MUST remain:
+
+- schema-versioned,
+- backward-compatible within MAJOR versions,
+- deterministic in structure,
+- safe for long-term inspection.
+
+Artifacts SHOULD include:
+
+```json
+{
+  "schema_version": "1.0",
+  "error_code": "EIGEN_BACKEND_TIMEOUT"
+}
+```
 
 ---
 
@@ -662,6 +787,20 @@ Typically non-retryable:
 
 ---
 
+### 8.3 Backoff Requirements
+
+Retryable failures SHOULD use:
+
+- exponential backoff,
+- jitter,
+- bounded retry budgets.
+
+Clients MUST honor: google.rpc.RetryInfo
+
+when provided.
+
+---
+
 ## 9. Conformance Requirements
 
 CI MUST validate:
@@ -684,6 +823,8 @@ Required golden tests:
 - merge conflicts,
 - lease conflicts,
 - distributed runtime failures.
+- replay failures,
+- artifact corruption failures.
 
 ---
 
@@ -715,11 +856,30 @@ Async failures MUST remain durable and inspectable.
 
 Distributed/runtime failures MUST remain traceable across services.
 
+#### Bounded Diagnostics
+
+Error metadata MUST remain bounded in size.
+
+Systems MUST avoid:
+
+- unbounded stack traces,
+- unlimited provider payload embedding,
+- recursive diagnostic structures.
+
+#### Safe Observability
+
+Observability pipelines MUST NOT leak secrets through:
+
+- metrics,
+- logs,
+- traces,
+- structured error details.
+
 ---
 
 ## 11. Compatibility & Evolution
 
-### 1.1 Additive Evolution
+### 11.1 Additive Evolution
 
 MINOR releases MAY add:
 
@@ -749,18 +909,3 @@ Breaking changes require:
 - CLI compatibility updates,
 - migration documentation,
 - conformance test updates.
-
----
-
-## 12. Minimum Closure Criteria
-
-The Eigen OS error model is considered fully realized only when:
-
-1. all services use deterministic canonical mapping,
-2. structured detail schemas are frozen,
-3. retryability semantics are standardized,
-4. distributed-runtime failures are fully normalized,
-5. backend/provider normalization is complete,
-6. SDKs expose consistent structured semantics,
-7. CI validates end-to-end conformance,
-8. async failures remain durable and inspectable.
