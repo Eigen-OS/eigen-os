@@ -1,12 +1,10 @@
 # QFS (Quantum Data Fabric)
 
+- **Document status:** Normative architecture + storage contract (MVP → Phase-1 baseline)
 - **Phase:** MVP (Phase 0) → Phase-1 evolution baseline
-- **Status snapshot date:** 2026-05-25
-- **Implementation status:** Partially implemented
-
----
-
-# Responsibility
+- **Snapshot date:** 2026-05-25
+- **Contract version:** `1.0.0`
+- **Implementation status:** Partially implemented (Level-3 baseline + API facade)
 
 QFS (Quantum Data Fabric) is the persistent artifact, execution-state, and runtime data-management subsystem of Eigen OS.
 
@@ -14,95 +12,76 @@ QFS provides deterministic storage, retrieval, lineage tracking, replay support,
 
 The long-term QFS architecture is divided into three logical levels:
 
-| Level | Component | Responsibility |
+| **Level** | **Component** | **Responsibility** |
 |---|---|---|
-| L1 | LiveQubitManager | Live qubit/feed-forward runtime state |
-| L2 | StateStore | Distributed runtime/session/state coordination |
-| L3 | CircuitFS | Persistent immutable artifact storage |
+| L1 | `LiveQubitManager` | Live qubit / feed-forward runtime state |
+| L2 | `StateStore` | Distributed runtime/session/state coordination |
+| L3 | `CircuitFS` | Persistent artifact storage + job-scoped layout |
 
-Current implementation includes a partially implemented Level-3 storage layer and System API QFS facade functionality.
+Current implementation includes a partially implemented **Level-3** storage layer and a **System API QFS facade** used by runtime flows.
 
 ---
 
-# Responsibility Scope
+## 1. Contract Versioning
 
-## Implemented now
+### 1.1 Contract marker
 
-### CircuitFS (Level 3)
+All components exporting QFS metrics MUST emit:
 
-- QFS is implemented as a simplified Level-3 `CircuitFS` subsystem in Rust via `CircuitFsLocal`.
-- Deterministic job artifact persistence exists on local filesystem storage.
-- Default storage root:
-  - `/var/lib/eigen/circuit_fs`
-- Configurable through:
-  - `EIGEN_QFS_ROOT`
+```text
+eigen_qfs_contract_info{version="1.0.0"} 1
+```
 
-### System API QFS facade
+---
 
-System API implements a `QFSStore` abstraction supporting:
+### 1.2 SemVer policy
 
-- local in-memory storage,
-- optional S3-compatible storage backend,
-- retry behavior,
-- failover logic,
-- `qfs://...` artifact references.
+#### MAJOR
 
-### Runtime artifact persistence
+- changes to canonical artifact paths that break readers,
+- incompatible reference grammar changes (`qfs://...`),
+- incompatible artifact handle schema changes,
+- immutable/atomic semantics changes.
 
-Artifacts currently persisted include:
+#### MINOR
 
-- source payloads,
-- compiled AQO artifacts,
+- new optional metadata fields,
+- new artifact kinds/paths (additive),
+- new backends (additive),
+- new conformance checks (additive).
+
+#### PATCH
+
+- documentation and implementation fixes without semantic changes.
+
+---
+
+## 2. Responsibility
+
+QFS is the **canonical persistence layer** for:
+
+- submission inputs (JobSpec + sources),
+- compiler outputs (AQO/QASM + diagnostics),
+- runtime orchestration artifacts (manifests, timelines),
 - execution results,
-- metadata blobs,
-- runtime logs,
-- manifests,
-- parquet exports.
+- error artifacts,
+- explainability artifacts (where enabled),
+- split/merge lineage artifacts (where enabled),
+- replay and audit evidence.
 
-### Runtime integration
-
-QFS artifacts are actively used as the source of truth between:
-
-- System API,
-- Eigen Kernel,
-- Compiler runtime,
-- Result retrieval flows,
-- CLI/runtime integration tests.
+QFS is not a general-purpose database API exposed to end users. Public APIs expose **artifact references**, not raw storage internals.
 
 ---
 
-## Required target responsibility
+## 3. Architecture Position
 
-The final QFS subsystem SHALL provide:
-
-- Unified persistent artifact management across all runtime stages.
-- Immutable deterministic artifact storage.
-- Cross-service artifact lineage tracking.
-- Deterministic replay support.
-- Distributed execution-state coordination.
-- Runtime adaptive-state persistence.
-- Feed-forward/live-qubit state lifecycle management.
-- Optimizer and neuro-symbolic artifact persistence.
-- Replay/audit evidence preservation.
-- Multi-backend storage abstraction.
-- Cross-cluster artifact consistency guarantees.
-
----
-
-# Architecture Position
-
-QFS is a foundational runtime infrastructure subsystem.
-
-It integrates with:
+QFS integrates with:
 
 - `system-api`
-- `eigen-kernel`
+- `eigen-kernel` (QRTX)
 - `eigen-compiler`
 - `driver-manager`
-- future `hwe`
-- future `gnn-optimizer`
-- future `knowledge-base`
-- future `neuro-symbolic-core`
+- future: `hwe`, `gnn-optimizer`, `knowledge-base`, `neuro-symbolic-core`
 
 QFS is mandatory infrastructure for:
 
@@ -111,26 +90,23 @@ QFS is mandatory infrastructure for:
 - adaptive-runtime auditability,
 - optimizer trace preservation,
 - execution lineage reconstruction,
-- distributed runtime coordination,
+- distributed runtime coordination (Phase-1+),
 - rollback verification,
 - release-readiness evidence.
 
 ---
 
-# QFS Levels
+## 4. QFS Levels
 
-# Level 1 — LiveQubitManager
+### 4.1 Level 1 — LiveQubitManager
 
-## Implemented now
+#### Implemented now
 
 - Not implemented.
 - No production runtime component currently exists.
 
----
-
-## Required target responsibility
-
-The Level-1 subsystem SHALL manage:
+#### Required target responsibility
+Level-1 SHALL manage:
 
 - live qubit handles,
 - feed-forward execution state,
@@ -138,137 +114,184 @@ The Level-1 subsystem SHALL manage:
 - low-latency runtime synchronization,
 - transient hardware execution state.
 
-### Required future capabilities
-
-- live-qubit session tracking,
-- feed-forward synchronization,
-- hardware-state mutation tracking,
-- transient runtime consistency guarantees,
-- adaptive runtime state propagation.
+This capability is post-MVP.
 
 ---
 
-# Level 2 — StateStore
+### 4.2 Level 2 — StateStore
 
-## Implemented now
+#### Implemented now
 
 - Not implemented as a production subsystem.
-- MVP contracts still treat Level-2 behavior as stub/no-op functionality.
+- MVP treats Level-2 behavior as stub/no-op.
 
----
+#### Required target responsibility
+Level-2 SHALL provide:
 
-## Required target responsibility
-
-The Level-2 subsystem SHALL provide:
-
-- distributed runtime coordination,
-- execution-state persistence,
-- adaptive-runtime state management,
+- distributed runtime coordination state,
+- session/state persistence,
 - scheduler coordination state,
-- replay correlation state,
-- optimizer and neuro-symbolic state persistence.
-
-### Required future capabilities
-
-- distributed consistency model,
 - runtime leases/locks,
-- replay lineage indexes,
-- topology snapshots,
-- adaptive-runtime state coordination.
+- replay correlation indexes,
+- topology snapshot indexes (for adaptive routing),
+- split/merge coordination state (where enabled).
+
+This capability is post-MVP / Phase-1.
 
 ---
 
-# Level 3 — CircuitFS
+### 4.3 Level 3 — CircuitFS
 
-## Implemented now
+#### Implemented now (baseline)
 
-### Rust implementation
+- Implemented as a simplified Level-3 subsystem in Rust via `CircuitFsLocal`.
+- Deterministic job artifact persistence exists on local filesystem storage.
+- Default storage root:
+  - `/var/lib/eigen/circuit_fs`
+- Configurable through:
+  - `EIGEN_QFS_ROOT`
 
-Implemented through:
+#### System API facade (implemented)
+System API implements a `QFSStore` abstraction supporting:
 
-- `CircuitFsLocal`
+- local backend,
+- optional S3-compatible backend,
+- bounded retry behavior,
+- `qfs://...` artifact references and resolution.
 
-Capabilities include:
+#### Required target responsibility
+CircuitFS SHALL evolve into:
 
-- deterministic filesystem artifact persistence,
-- canonical runtime layout,
-- artifact loading/retrieval,
-- atomic writes,
-- metadata persistence.
+- immutable artifact storage semantics,
+- content-addressed persistence,
+- integrity verification (checksums),
+- cross-region replication support,
+- replay-safe artifact resolution,
+- deterministic lineage graphs.
 
-### Current artifact layout
+---
 
-Current canonical layout includes:
+## 5. Canonical Reference Model
+
+### 5.1 Artifact reference grammar
+
+QFS references are opaque strings of the form: `qfs://<namespace>/<path>`
+
+Constraints:
+
+- `<namespace>` and `<path>` MUST be ASCII and URL-safe.
+- `..` traversal is forbidden.
+- References MUST be deterministic and stable once published.
+- References MUST NOT embed secrets or credentials.
+
+---
+
+### 5.2 Canonical job namespace
+
+For job-scoped artifacts: `qfs://jobs/<job_id>/<relative_path>`
+
+`<job_id>` is the runtime-assigned stable job identifier.
+
+---
+
+## 6. Canonical Job Artifact Layout (Normative)
+
+QFS MUST expose a stable layout under `qfs://jobs/<job_id>/` for the following top-level categories:
 
 ```text
 input/
+source/
 compiled/
 results/
 logs/
 meta/
+timeline/
 ```
-
-### Canonical artifacts
-
-Examples include:
-
-```text
-compiled/circuit.aqo.json
-compiled/circuit.qasm
-results/result.json
-results/results.parquet
-results/manifest.json
-```
-
-#### System API integration
-
-System API `QFSStore` supports:
-
-- local backend,
-- optional S3-compatible backend,
-- retry/failover behavior,
-- artifact reference resolution.
 
 ---
 
-## Required target responsibility
+### 6.1 Minimum required artifacts
 
-CircuitFS SHALL evolve into:
+#### Submission
 
-- immutable artifact storage,
-- content-addressed artifact persistence,
-- cross-region replication support,
-- distributed artifact consistency,
-- deterministic artifact lineage tracking,
-- replay-safe artifact retrieval.
+- `qfs://jobs/<job_id>/input/job.yaml` (or equivalent canonical JobSpec payload)
+- `qfs://jobs/<job_id>/source/<program>` (canonical source bundle or resolved program)
+
+#### Compilation
+
+- `qfs://jobs/<job_id>/compiled/compiled.aqo.json` (or stable AQO ref)
+- `qfs://jobs/<job_id>/compiled/compiled.qasm` (optional; backend dependent)
+- `qfs://jobs/<job_id>/compiled/diagnostics.json` (optional)
+
+#### Results
+
+- `qfs://jobs/<job_id>/results/results.json` (normalized result envelope)
+- `qfs://jobs/<job_id>/results/error.json` (durable failure artifact when job is ERROR)
+
+#### Timeline
+
+- `qfs://jobs/<job_id>/timeline/timeline.json` (recommended; may be partial in MVP)
+
+#### Logs
+
+- `qfs://jobs/<job_id>/logs/run.log` (optional; deployment dependent)
 
 ---
 
-## Interfaces
+### 6.2 Async failure artifact requirement
 
-### 1. Runtime APIs
+If job lifecycle reaches terminal `ERROR`, the system SHOULD persist: `qfs://jobs/<job_id>/results/error.json`
 
-#### Implemented now
+This is aligned with the error contract and is the canonical durable failure location.
 
-**Rust APIs**
+---
 
-`CircuitFsLocal` methods include:
+## 7. Artifact Semantics
+
+### 7.1 Determinism requirements
+
+QFS storage MUST preserve:
+
+- deterministic bytes for identical inputs (when upstream packaging is deterministic),
+- stable naming and paths under the canonical layout,
+- stable checksum computation for integrity verification.
+
+---
+
+### 7.2 Immutability rules
+
+- Artifacts under `compiled/` and `results/` SHOULD be treated as immutable once published.
+- If regeneration is required, it MUST produce a new versioned artifact (Phase-1 content-addressing) or a new job scope (MVP).
+
+---
+
+### 7.3 Atomicity rules (MVP baseline)
+
+For a single artifact write operation:
+
+- writes MUST be atomic from the perspective of readers (no partial reads).
+- implementations MAY use temp-write + rename (local FS) or multipart upload + finalize (object store).
+
+---
+
+## 8. Interfaces
+
+### 8.1 Runtime APIs (implemented)
+
+#### Rust (`CircuitFsLocal`)
 
 - `store_*`
 - `load_*`
-- layout/path helpers
+- path/layout helpers
+- atomic write behavior (implementation dependent)
 
-**Python APIs**
-
-QFSStore supports:
+#### System API (`QFSStore`)
 
 - `put`
 - `get`
 - `list`
-- `delete`
+- `delete` (subject to policy; see §12)
 - `atomic_write`
-
-#### Runtime wiring
 
 Kernel initializes QFS through:
 
@@ -277,361 +300,271 @@ Kernel initializes QFS through:
 
 ---
 
-#### Required target runtime APIs
-
-QFS SHALL expose:
-
-- stable artifact handles,
-- immutable retrieval APIs,
-- replay-safe artifact resolution,
-- deterministic lineage APIs,
-- adaptive-runtime artifact APIs.
-
----
-
-### 2. gRPC Interfaces
+### 8.2 gRPC Interfaces (target)
 
 #### Implemented now
 
-- No standalone `QfsService` gRPC service currently exists.
-- No protobuf service contract is implemented for QFS runtime access.
-
----
+- No standalone `QfsService` gRPC service exists.
 
 #### Required target gRPC API
-
-The future centralized QFS subsystem SHALL expose:
+A future centralized QFS subsystem SHALL expose:
 
 `QfsService`
 
-**Required methods**
+Required methods:
 
 - `StoreArtifact`
 - `LoadArtifact`
-- `DeleteArtifact`
 - `ListArtifacts`
 - `ResolveReference`
-- `PinArtifact`
+- `PinArtifact` (prevent GC)
 - `CreateSnapshot`
-- `ReplayBundle`
+- `GetSnapshot`
 - `HealthCheck`
+
+`DeleteArtifact` MAY exist internally but MUST be policy-gated and never allow deletion of required audit artifacts.
 
 ---
 
-#### Required artifact contract
+## 9. ArtifactHandle Schema (Target Contract)
 
-**Canonical ArtifactHandle**
+Canonical handle:
 
 ```text
 ArtifactHandle {
-  hash,
-  size,
-  path,
-  format,
-  lineage,
-  version
+  ref,                    // qfs://... reference (opaque)
+  digest,                 // sha256:<hex> (or future multihash)
+  size_bytes,
+  content_type,           // e.g. application/json
+  created_at_ms,
+  producer,               // service name
+  schema_version,         // for structured artifacts
+  lineage: {
+    job_id,
+    parent_refs[],        // producing inputs
+    stage                // compile/execute/merge/etc.
+  }
 }
 ```
 
-**Required metadata**
+Minimum metadata for structured artifacts SHOULD include:
 
 - deterministic digest,
-- replay lineage ID,
-- creation timestamp,
 - producing component,
-- runtime environment,
-- compatibility version.
+- creation timestamp,
+- compatibility/schema version,
+- lineage identifiers.
 
 ---
 
-## Inputs / Outputs
+## 10. Failure Model and Error Semantics
 
-### Inputs
+QFS operations MUST use the canonical error model:
 
-#### Implemented now
+- `NOT_FOUND` for missing artifacts or missing job scope
+- `INVALID_ARGUMENT` for malformed refs, forbidden paths, invalid digests
+- `FAILED_PRECONDITION` for illegal lifecycle actions (e.g., reading results before available where applicable)
+- `RESOURCE_EXHAUSTED` for quota/capacity limits
+- `UNAVAILABLE` for transient backend outage
+- `DEADLINE_EXCEEDED` for operation timeouts
+- `PERMISSION_DENIED` / `UNAUTHENTICATED` for access control
 
-Current inputs include:
+Structured error details SHOULD include:
 
-- source artifacts,
-- compiled artifacts,
-- execution results,
-- metadata payloads,
-- JSON/YAML/Parquet artifacts,
-- optional binary payloads.
-
----
-
-#### Required target inputs
-
-**Runtime artifacts**
-
-- AQO IR,
-- compiler AST snapshots,
-- optimizer traces,
-- neuro-symbolic decisions,
-- hardware telemetry snapshots,
-- replay bundles.
-
-**Adaptive-runtime artifacts**
-
-- HWE decisions,
-- GNN optimizer outputs,
-- routing plans,
-- fallback activation traces,
-- deterministic replay metadata.
+- `google.rpc.ResourceInfo` (artifact ref context)
+- `google.rpc.ErrorInfo` (stable `EIGEN_*` reason)
+- `google.rpc.RetryInfo` for retryable failures
+- `google.rpc.DebugInfo` only for internal deployments (redacted)
 
 ---
 
-### Outputs
+## 11. Storage Backends
 
-#### Implemented now
+### 11.1 Implemented now
 
-Current outputs include:
+#### Local filesystem backend
 
-- persisted artifacts,
-- deterministic filesystem references,
-- in-memory blob retrieval,
-- stable runtime retrieval behavior.
+Default root: `/var/lib/eigen/circuit_fs`
 
----
+#### Optional S3-compatible backend
 
-#### Required target outputs
+May be enabled via environment/configuration such as: `EIGEN_QFS_BACKEND=s3`
 
-**Persistent artifacts**
-
-- immutable runtime artifacts,
-- replay bundles,
-- optimizer audit traces,
-- topology snapshots,
-- neuro-symbolic explainability payloads.
-
-**Replay artifacts**
-
-- deterministic execution traces,
-- runtime lineage metadata,
-- backend mapping history,
-- adaptive-runtime decisions.
+(Exact flags are deployment-specific; behavior must remain contract-compatible.)
 
 ---
 
-## Storage / State
+### 11.2 Required target storage
 
-### Internal State
-
-#### Implemented now
-
-**Existing runtime state**
-
-- Local filesystem persistence.
-- In-memory storage backends.
-- Retry/failover metadata.
-- Artifact path indexing.
-
----
-
-#### Required target internal state
-
-**Artifact indexing**
-
-- content-addressed indexes,
-- lineage graphs,
-- replay correlation indexes,
-- topology snapshot indexes.
-
-**Runtime coordination state**
-
-- adaptive-runtime coordination state,
-- distributed runtime leases,
-- replay validation indexes.
-
----
-
-### External Storage
-
-#### Implemented now
-
-**Local filesystem backend**
-
-Default:
-
-```text
-/var/lib/eigen/circuit_fs
-```
-
-**Optional S3 backend**
-
-Configured through:
-
-```text
-EIGEN_QFS_BACKEND=s3
-```
-
----
-
-#### Required target storage
-
-**Artifact storage**
+QFS SHALL support:
 
 - immutable object storage,
-- distributed filesystem support,
 - multi-region replication,
-- content-addressed storage.
-
-**Replay/audit storage**
-
-- deterministic replay traces,
-- optimizer decision history,
-- neuro-symbolic artifacts,
-- hardware adaptation lineage.
+- content-addressed storage,
+- integrity verification,
+- replication lag visibility,
+- policy-driven retention.
 
 ---
 
-## Caching
+## 12. Retention, Deletion, and Pinning
 
-### Implemented now
+### 12.1 MVP baseline
 
-- No dedicated shared caching subsystem is implemented.
+Retention is deployment-configured; deletion behavior may exist for local dev, but MUST NOT compromise:
+
+- job results,
+- error artifacts,
+- audit/replay evidence.
 
 ---
 
-### Required target caches
+### 12.2 Target rules (normative)
+
+- Required audit artifacts MUST NOT be deletable without elevated operator policy.
+- `PinArtifact` MUST be supported for:
+  - replay bundles,
+  - compliance retention,
+  - long-running investigations.
+- GC policies MUST be deterministic and auditable.
+
+---
+
+## 13. Caching (Target)
+
+#### Implemented now
+
+- No dedicated shared caching subsystem.
+
+#### Required target caches
 
 - hot artifact cache,
-- replay artifact cache,
+- replay bundle cache,
 - topology snapshot cache,
 - optimizer artifact cache,
 - adaptive-runtime telemetry cache.
 
----
-
-## Failure Modes
-
-### Implemented now
-
-#### Existing failure handling
-
-- Retry/failover behavior exists in `QFSStore`.
-- Invalid job identifiers are explicitly modeled.
-- Missing artifact behavior is handled in runtime flows.
+Caching MUST NOT break determinism or serve stale artifacts without explicit staleness indicators.
 
 ---
 
-### Required target failure taxonomy
+## 14. Observability
 
-#### Storage failures
+### 14.1 Implemented now
 
-- backend unavailable,
-- object corruption,
-- replication lag,
-- consistency violation.
-
-#### Runtime failures
-
-- replay mismatch,
-- lineage inconsistency,
-- artifact version conflict,
-- cache corruption.
-
-#### Distributed consistency failures
-
-- partial replication,
-- stale reads,
-- split-brain coordination state,
-- replay divergence.
-
----
-
-### Recovery and fallback requirements
-
-The QFS subsystem SHALL support:
-
-- bounded retries,
-- deterministic recovery,
-- immutable rollback snapshots,
-- replay-safe restoration,
-- artifact integrity verification,
-- degraded-mode local persistence.
-
----
-
-## Observability
-
-### Implemented now
-
-- QFS references are surfaced in runtime/API metadata.
+- QFS references are surfaced in runtime/API metadata where applicable.
 - Runtime tests validate artifact retrieval behavior.
 
 ---
 
-### Required target observability
+### 14.2 Required target metrics (normative names)
 
-#### Metrics
+QFS implementations MUST export the following metric families (exact labels MUST remain bounded):
 
-Required metrics include:
+```text
+eigen_qfs_artifact_store_total{backend,kind}
+eigen_qfs_artifact_load_total{backend,kind}
+eigen_qfs_artifact_bytes_total{backend,kind}
+eigen_qfs_operation_duration_seconds_bucket{op,backend}
+eigen_qfs_operation_duration_seconds_sum{op,backend}
+eigen_qfs_operation_duration_seconds_count{op,backend}
+eigen_qfs_integrity_failures_total{backend}
+eigen_qfs_replication_lag_seconds{backend,region}          // where replication exists
+eigen_qfs_replay_bundles_total{kind}                       // where replay exists
+```
 
-- `qfs_artifact_store_total`
-- `qfs_artifact_retrieve_total`
-- `qfs_artifact_size_bytes`
-- `qfs_operation_duration_seconds`
-- `qfs_replay_bundle_total`
-- `qfs_replication_lag_seconds`
+Label rules:
 
-#### Logs
-
-Required logging includes:
-
-- artifact lineage logging,
-- replay reconstruction logging,
-- optimizer artifact logging,
-- neuro-symbolic artifact logging.
-
-#### Traces
-
-Required tracing includes:
-
-- artifact lifecycle tracing,
-- replay correlation tracing,
-- adaptive-runtime lineage tracing.
+- MUST NOT include `job_id`, `trace_id`, `artifact_ref` as labels.
+- `kind`, `op`, `backend`, `region` MUST be bounded/enumerable.
 
 ---
 
-## Security and Compliance
+### 14.3 Logs and traces (target)
 
-### Required target controls
+QFS SHOULD emit traces/spans for:
 
-#### Artifact security
+- store/load/resolve operations,
+- integrity verification,
+- snapshot creation,
+- replay bundle assembly.
+
+Logs SHOULD include:
+
+- `trace_id`,
+- `job_id` (if job-scoped),
+- `artifact_ref` (as a field, not a metric label),
+- operation outcome and error reason codes.
+
+---
+
+## 15. Security and Compliance
+
+### 15.1 Artifact security (target)
+
+QFS SHALL support:
 
 - immutable artifact enforcement,
-- signed artifact manifests,
+- checksum/digest verification,
+- signed manifests (Phase-1),
 - encrypted storage backends,
 - RBAC for artifact access,
-- provenance validation.
-
-#### Compliance requirements
-
-- deterministic replay evidence,
-- retention/versioning policy,
-- immutable audit trail,
-- export provenance tracking.
+- provenance tracking.
 
 ---
 
-## ADR / RFC Follow-up Requirements
+### 15.2 Multi-tenant safety
 
-### Required future governance work
+QFS MUST prevent:
 
-- Add ADR for current QFS architecture split:
-    - Rust `CircuitFsLocal`
-    - System API `QFSStore`
-    - optional S3 backend
+- cross-tenant access (when multi-tenant mode is enabled),
+- leaking tenant identifiers in metric labels,
+- exposing credential material via logs or refs.
 
-- Add ADR/RFC amendment for canonical artifact layout:
-    - `input/`
-    - `compiled/`
-    - `results/`
-    - `logs/`
-    - `meta/`
+---
 
-- Define deterministic replay artifact contract.
-- Define distributed consistency guarantees and conformance tests.
-- Define optimizer/neuro-symbolic artifact persistence standards.
+## 16. Conformance Requirements
+
+An implementation is conformant if it:
+
+1. Preserves canonical reference grammar (`qfs://...`) and forbids path traversal.
+2. Provides atomic writes for artifact publish operations.
+3. Supports the canonical job layout and required artifacts.
+4. Enforces integrity checks where digests exist.
+5. Uses canonical error semantics and structured details where applicable.
+6. Exports required QFS metrics with bounded labels.
+7. Preserves determinism and auditability guarantees.
+
+Required test coverage (minimum):
+
+- atomic write behavior,
+- missing artifact mapping → `NOT_FOUND`,
+- invalid ref mapping → `INVALID_ARGUMENT`,
+- results/error artifact persistence contract,
+- bounded label enforcement (no forbidden labels),
+- backend outage mapping → `UNAVAILABLE` + retry guidance (where applicable).
+
+---
+
+## 17. ADR / RFC Follow-up Requirements (Normative TODOs)
+
+Future governance work SHALL:
+
+- add ADR for the current QFS split:
+  - Rust `CircuitFsLocal`,
+  - System API `QFSStore`,
+  - optional S3 backend.
+- define the deterministic replay bundle contract and its QFS layout.
+- define distributed consistency guarantees and conformance tests for replication.
+- define optimizer/neuro-symbolic artifact schemas and persistence standards.
+
+---
+
+## 18. Invariants (MUST remain true)
+
+- QFS references are stable and traversal-safe.
+- Job results and error artifacts remain durable and retrievable.
+- Artifact writes are atomic for readers.
+- Metrics labels remain bounded and do not contain correlation identifiers.
+- QFS never weakens determinism, auditability, or security guarantees.
+- Baseline execution MUST remain possible even if advanced QFS Level-1/2 features are not present.

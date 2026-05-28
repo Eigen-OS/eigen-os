@@ -1,146 +1,222 @@
 # Mission & Philosophy
 
-## Core Thesis
+## Core thesis
 
-**Eigen OS** is not merely a task scheduler—it is a **semantic bridge** between human intent and quantum hardware capabilities. Its mission is to make quantum computing **programmable, efficient, and accessible.**
+**Eigen OS** is not merely a task scheduler. It is a **contract-first semantic bridge** between human intent and heterogeneous quantum execution substrates.
 
-- **For researchers**: Describe your problem in the language of your domain—the OS finds the optimal way to solve it.
+Its mission is to make quantum computing:
 
-- **For hardware**: The OS transforms heterogeneous, unstable quantum processors into a reliable, manageable computational resource.
+- **Programmable** — through a stable programming and API model.
+- **Deterministic and auditable** — through replay-safe orchestration, lineage, and artifact persistence.
+- **Accessible** — by hiding vendor instability behind stable interfaces.
+- **Composable** — so workflows integrate into research and production automation systems.
+- **Extensible** — so new backends and optimization capabilities can be added without breaking the core.
 
-- **For the community**: This is an open, modular platform where anyone can develop components without breaking the system.
-
----
-
-## Architectural Principles
-
-- **Hybrid‑first design**: The OS is built from the ground up for tightly interwoven quantum‑classical workflows.
-
-- **Abstraction through interfaces**: A unified interface to any qubit technology (transmon, ion, photonic, etc.) via the **QDriver API**.
-
-- A**daptivity through neuro‑symbolic methods**: Neuro‑symbolic techniques (neural‑DMPA, GNN) are built into the system for continuous optimization.
-
-- **Open modularity**: Each component is isolated by clear APIs. The community can replace engines without rewriting the system.
+Eigen OS always preserves a **deterministic baseline execution path**. Adaptive or “intelligent” layers may recommend optimizations, but **must not override safety, correctness, or replay guarantees** unless explicitly enabled by policy, and must always degrade safely.
 
 ---
 
-## Layered Architecture
+## Philosophy by audience
+
+### For researchers
+
+Describe your workload in a domain-oriented form (Eigen-Lang / JobSpec), submit it via stable APIs, and rely on Eigen OS to:
+
+- compile deterministically,
+- execute across compatible backends,
+- return normalized results,
+- persist artifacts for reproducibility.
+
+---
+
+### For hardware providers
+
+Eigen OS acts as the normalization boundary that:
+
+- abstracts vendor-specific transports and SDKs behind QDriver/Driver Manager,
+- isolates failures from user-facing semantics,
+- enables capability discovery and stable execution envelopes.
+
+---
+
+### For the community
+
+Eigen OS is designed around explicit boundaries:
+
+- stable public APIs,
+- versioned internal contracts,
+- modular drivers and services,
+- contract-governed evolution.
+
+---
+
+## Architectural principles
+
+### Hybrid-first execution
+
+Eigen OS is designed for hybrid quantum-classical workflows (VQE/QAOA/QML) with:
+
+- async orchestration semantics,
+- durable artifacts and lineage,
+- external-loop orchestration as the stable MVP path,
+- forward-compatible foundations for kernel-managed loops.
+
+---
+
+### Abstraction through interfaces
+
+Heterogeneous backends are unified through:
+
+- **Driver Manager + QDriver** internal abstraction,
+- stable public API surface (System API),
+- contract-governed lifecycle and error semantics.
+
+---
+
+### Determinism and replay-safety by default
+
+The system is designed so that:
+
+- compilation is deterministic (AST-only; no server-side user code execution),
+- orchestration decisions are auditable,
+- artifacts and envelopes preserve replay evidence,
+- intelligent/adaptive systems are bounded and policy-controlled.
+
+---
+
+### Bounded adaptivity through neuro-symbolic methods
+
+Neuro-symbolic components (Neuro-Symbolic Core, GNN Optimizer, Knowledge Base, HWE) are **advisory unless enabled**, and must:
+
+- produce explainability metadata,
+- provide deterministic modes and fallbacks,
+- never bypass symbolic validation or policy enforcement.
+
+---
+
+### Open modularity
+
+Components are isolated by clear APIs and contracts. The system should be evolvable by:
+
+- adding drivers without kernel rewrites,
+- adding compiler targets and optimizer stages without changing the public API,
+- extending telemetry/observability without breaking metric compatibility.
+
+---
+
+### Layered architecture
+
 ```text
-Application & User Layer
-│
-Abstraction Layer (Eigen‑Lang & System API)
-│
-OS Kernel (Eigen Kernel)
-│
+Application & Client Layer
+  ├─ CLI / SDKs
+  └─ Automation/Integrations
+        ↓
+Public Gateway Layer
+  └─ System API (eigen.api.v1)
+        ↓
+Kernel Orchestration Layer
+  └─ QRTX / Kernel (job lifecycle, coordination)
+        ↓
 Runtime Services Layer
-│
-Hardware Abstraction Layer (QDriver API)
+  ├─ Compiler (deterministic AST → AQO)
+  ├─ Driver Manager (normalized execution boundary)
+  ├─ QFS (artifact persistence + lineage)
+  └─ (future) HWE / GNN Optimizer / KB / NSC
+        ↓
+Hardware Abstraction Layer
+  └─ QDriver implementations → vendor runtimes/simulators/hardware
 ```
 
-### 1. Abstraction Layer: Eigen‑Lang & System API
+---
 
-- **Eigen‑Lang**: A declarative, domain‑specific language embedded in Python. The user describes what to compute, not how. Includes decorators (`@hybrid_program`, `@quantum_circuit`, `@ansatz`), constructors (`minimize`, `ExpectationValue`), and factories (`create_hea_ansatz`, `compile_to_qasm`).
+### Clarification vs earlier drafts
 
-- **System API**: Single entry point via gRPC (primary) and REST (auxiliary).
-
-### 2. OS Kernel (Eigen Kernel)
-
-- **QRTX (Quantum Real‑Time Executive)**: The system’s “conductor”:
-
-    - Manages hybrid workflows as DAGs
-
-    - Dynamically allocates quantum and classical resources
-
-- **Three‑tier storage system**:
-
-    - Level 3 (CircuitFS): Storage for circuits, parameters, results
-
-    - Level 2 (StateStore): “Swap” for serialized quantum states (tomography)
-
-    - Level 1 (LiveQubitManager): Direct management of “live” qubits
-
-- **Adaptive monitoring:** Event‑driven metrics, logs, and tracing.
-
-### 3. Runtime Services Layer
-
-- **Adaptive compiler**: Translates Eigen‑Lang to AQO (Abstract Quantum Operations) using neural‑DMPA for semantic parsing and a Knowledge Base for optimal circuit selection.
-
-- **Hardware optimizer (GNN)**: Graph neural networks for topological circuit optimization.
-
-- **Driver manager**: Loads and manages drivers via the QDriver API.
-
-### 4. Hardware Abstraction Layer (QDriver API)
-
-- **Role**: The main stabilizing interface for all quantum processor types.
-
-- **Format**: Standardized set of methods: `initialize()`, `execute(circuit, shots)`, `get_status()`, `calibrate()`.
+- MVP guarantees **gRPC as primary** ingress. **REST parity** is a target capability, not a required delivered MVP behavior.
+- The kernel in MVP provides **async job orchestration**, not a fully generalized DAG scheduler.
+- QFS Level-2/Level-1 concepts (state store / live qubits) are **post-MVP targets**.
 
 ---
 
-## Technology Stack
+### Execution model (MVP baseline)
+
+Eigen OS MVP is built around an async job model with stable lifecycle semantics:
+
+```text
+PENDING → COMPILING → QUEUED → RUNNING → DONE | ERROR | CANCELLED
+```
+
+Key contract constraints:
+
+- **System API** is the sole public ingress boundary.
+- **Compiler** is deterministic and AST-only.
+- **Driver Manager** is the only place that touches vendor SDKs.
+- **QFS** persists artifacts and provides references for large payloads.
+- **Observability** (metrics/logs/traces) is present by default with correlation IDs.
+
+---
+
+### Technology stack
 
 | **Component** | **Technology** | **Rationale** |
 |-------------------|-------------------|-------------------|
-| **Kernel (Eigen Kernel)** | Rust | Memory safety, performance, no GC |
-| **Runtime Services** | Python 3.12+ | AI ecosystem (PyTorch) and quantum frameworks |
-| **Inter‑service communication** | gRPC/Protobuf | Static typing, performance |
-| **Data serialization** | JSON, Apache Parquet, Cap’n Proto | Human‑readability + efficiency |
-| **Data storage** | SQLite, MinIO/S3 | Deployment simplicity and scalability |
-| **Monitoring** | Prometheus, Grafana, OpenTelemetry | De‑facto observability standards |
-| **Containerization** | Docker, Kubernetes | Reproducibility and deployment ease |
-| **License** | Apache 2.0 | Maximizes community adoption and commercial use |
+| Kernel/QRTX | Rust | Performance, safety, deterministic orchestration core |
+| Runtime services | Python 3.12+ | Rapid iteration, ecosystem integration (tooling/ML) |
+| Inter-service | gRPC/Protobuf | Typed contracts, stability, performance |
+| Serialization | JSON + Parquet (as needed) | Human-readable artifacts + efficient analytics |
+| Persistence | SQLite + MinIO/S3-compatible | Simple deploy + durable artifacts |
+| Observability | Prometheus + Grafana + OpenTelemetry | Standard telemetry stack |
+| Deployment | Docker + Kubernetes | Reproducible operations |
+| License | Apache 2.0 | Broad adoption and commercial compatibility |
 
 ---
 
-## MVP vs Post‑MVP
+## MVP vs post-MVP
 
-### MVP (Phase 0) – “Foundation”
+### MVP (Phase 0) — Foundation (normative baseline)
 
-- **Focus**: End‑to‑end execution of hybrid quantum‑classical workflows (e.g., VQE) via CLI.
+MVP focuses on deterministic, end-to-end execution:
 
-- **Key deliverables**:
+- Stable public **gRPC** API: JobService, DeviceService.
+- Basic auth/authz (baseline modes + RBAC categories), request validation, payload limits.
+- Deterministic **AST-only** compilation (Eigen-Lang subset → AQO).
+- Driver Manager + simulator backend(s) behind QDriver-style abstraction.
+- Kernel orchestration of compile/execute/persist with stable lifecycle semantics.
+- QFS artifact persistence and reference-based retrieval.
+- Observability baseline: metrics, structured logs, trace propagation.
 
-    - Stable public gRPC/REST API (`JobService`, `DeviceService`)
+#### MVP success metric:
 
-    - Basic authentication/authorization (API keys, RBAC)
+```text
+eigen-cli submit --job job.yaml
+```
 
-    - Eigen‑Lang v0.1 DSL with deterministic, AST‑only compilation
-
-    - QDriver API with a working simulator backend
-
-    - Minimal QRTX scheduler and job lifecycle
-
-    - Observability: metrics, structured logs, trace propagation
-
-- **Non‑goals**: Hardware‑level isolation, noise‑adaptive scheduling, multi‑tenant quotas, pulse‑level control.
-
-- **Success metric**: `eigen-cli submit --job job.yaml` runs a complete VQE cycle.
-
-### Post‑MVP (Phases 1–3) – “Evolution”
-
-- **Phase 1 (12–18 months)**: Advanced scheduling, noise‑aware optimization, GNN‑based circuit adaptation, OIDC integration, multi‑tenant quotas.
-
-- **Phase 2 (2–3 years)**: Quantum process migration, StateStore for quantum state persistence, distributed quantum file system, hardware certification program.
-
-- **Phase 3 (3+ years)**: Full integration with quantum networks, advanced quantum‑resistant security, industry‑wide standardization.
+executes a full pipeline (submit → compile → execute → persist → retrieve) and returns normalized results.
 
 ---
 
-## Next Steps
+### Post-MVP (Phases 1+) — Evolution (targets)
 
-1. **Formalization**: Establish the GitHub organization and repository structure.
-
-2. **Architectural RFCs**: Publish and discuss core RFCs (QDriver API, JobSpec, Eigen‑Lang, AQO format).
-
-3. **Prototype skeleton**: Build a minimal QRTX kernel, Eigen‑Lang package, and simulator driver stub.
-
-4. **Community feedback loop**: Launch tutorials, community channels (Discord), and workshops.
+- Scheduling maturity: quotas/fairness, reservation lifecycle, deterministic queue replay.
+- Multi-device execution: split/merge semantics, retry-safe shard accounting, merge policies.
+- HWE for hardware-aware adaptation and deterministic failover decisions.
+- GNN optimizer for placement/routing with deterministic fallback chain.
+- Knowledge Base for replay-safe optimization reuse and explainability.
+- Neuro-Symbolic Core for bounded intelligence with DPDA symbolic constraints, provenance, and governance.
+- QFS Level-2/Level-1 concepts where hardware semantics allow it.
 
 ---
-## Final Vision
 
-Eigen OS represents a **paradigm shift** in quantum computing. We are moving from imperative “hardware management” to declarative “computation orchestration,” transferring intellectual complexity from humans to an adaptive system.
+## Next steps (repo/governance aligned)
 
-This architecture lays the groundwork for the day when a quantum computer becomes as accessible and manageable a resource as a cloud GPU cluster is today.
+1. **Contract discipline first:** keep contracts as the source of truth (public APIs, internal contracts, observability contracts).
+2. **Conformance gates:** CI validates contract stability (buf breaking, metric catalogs, envelope invariants, replay invariants).
+3. **Incremental evolution:** add post-MVP intelligence only as optional, policy-controlled layers with deterministic fallbacks.
+4. **Community workflow:** RFC/ADR process to evolve interfaces without destabilizing MVP guarantees.
 
-**Your strength as an architect lies in vision and the ability to organize a community around clear, well‑designed interfaces. Start with the first RFC—and you will initiate a process that can change how quantum computers are programmed.**
+---
+
+## Final vision
+
+Eigen OS is a shift from imperative “vendor hardware management” to declarative, contract-governed “computation orchestration”.
+
+A developer describes intent; Eigen OS deterministically compiles and orchestrates execution across heterogeneous backends, persists reproducible artifacts, and exposes observable, auditable behavior—while enabling future adaptive optimization as a strictly bounded, explainable, policy-controlled extension.

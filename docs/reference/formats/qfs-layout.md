@@ -1,303 +1,577 @@
 # QFS Layout (CircuitFS) v1.0
 
-Version 1.0 defines the canonical directory and artifact structure (CircuitFS) used by the kernel/runtime to persist job artifacts and by the System API to retrieve execution results.
+## 1. Overview
+
+QFS (Quantum File System), also referred to as **CircuitFS**, is the canonical filesystem layout and artifact persistence contract used by:
+
+- Kernel runtime,
+- Compiler pipeline,
+- Driver Manager,
+- Scheduler,
+- Public APIs,
+- Replay systems,
+- Audit systems,
+- Analytics/export tooling.
+
+QFS defines deterministic artifact organization for:
+
+- submitted jobs,
+- compiled AQO artifacts,
+- execution outputs,
+- logs,
+- manifests,
+- replay metadata,
+- diagnostics,
+- checkpoint/restore flows.
+
+The canonical QFS contract version for this document is:
+
+```text
+QFS Layout Contract Version: 1.0.0
+```
+
+Breaking layout or semantic changes require a MAJOR version bump.
 
 ---
 
-## Job Root Directory
+## 2. Design Goals
 
-Each submitted job receives a unique `job_id` (UUID-like identifier).
+QFS v1.0 guarantees:
 
-All artifacts associated with the job are stored under:
+- deterministic artifact locations,
+- replay-safe execution persistence,
+- backend-independent retrieval,
+- compatibility across runtime components,
+- stable API integrations,
+- auditability,
+- retention enforcement,
+- deterministic cleanup behavior.
 
-```text
-{qfs_root}/{job_id}/
-```
-
-where:
-
-- `{qfs_root}` defaults to:
-
-```text
-/var/lib/eigen/circuit_fs
-```
-
-or another path configured via:
-
-```text
-EIGEN_QFS_ROOT
-```
+QFS is the canonical persistence contract for runtime execution artifacts.
 
 ---
 
-## Canonical Directory Layout
+## 3. QFS Root Directory
+
+Each submitted job receives a globally unique `job_id`.
+
+All artifacts for a job are stored under: `{qfs_root}/{job_id}/`
+
+Default root: `/var/lib/eigen/circuit_fs`
+
+Override via environment variable: `EIGEN_QFS_ROOT`
+
+---
+
+## 4. Job ID Rules
+
+`job_id` MUST satisfy:
+
+- globally unique,
+- deterministic string validation,
+- filesystem-safe encoding.
+
+Allowed format: `[a-zA-Z0-9._-]+`
+
+Forbidden:
+
+- `/`
+- `\`
+- `..`
+- null bytes
+- path traversal segments
+
+Invalid `job_id` values MUST be rejected before filesystem access.
+
+---
+
+## 5. Canonical Directory Layout
 
 ```text
 {qfs_root}/{job_id}/
 ├── input/
 │   ├── job.yaml
 │   ├── program.eigen.py
-│   └── metadata.json
+│   ├── metadata.json
+│   └── request.json
 ├── compiled/
 │   ├── circuit.aqo.json
 │   ├── circuit.aqo.pb
 │   ├── circuit.qasm
+│   ├── compile_report.json
 │   └── metadata.json
+├── execution/
+│   ├── execution_plan.json
+│   ├── backend_request.json
+│   └── backend_response.json
 ├── results/
 │   ├── result.json
 │   ├── manifest.json
+│   ├── metrics.json
+│   ├── counts.json
+│   ├── timeline.json
 │   └── error.json
-├── results.parquet
+├── checkpoints/
+│   ├── checkpoint-0001.bin
+│   └── manifest.json
 ├── logs/
 │   ├── kernel.log
 │   ├── compiler.log
-│   └── driver.log
-└── meta/
-    └── job.json
+│   ├── scheduler.log
+│   ├── driver.log
+│   └── audit.log
+├── meta/
+│   ├── job.json
+│   ├── retention.json
+│   ├── lineage.json
+│   └── tags.json
+├── traces/
+│   ├── spans.json
+│   └── events.json
+├── tmp/
+└── results.parquet
 ```
 
 ---
 
-## Directory Semantics
+## 6. Directory Semantics
 
-`input/`
+### 6.1 `input/`
 
-Contains source input artifacts:
+Contains original submission artifacts.
 
-- `job.yaml` — resolved `JobSpec`
+#### Files
 
-- `program.eigen.py` — submitted Eigen-Lang source
+| **File** | **Required** | **Description** |
+|-------------|------------|-----------|
+| `job.yaml` | yes | Resolved JobSpec |
+| `program.eigen.py` | conditional | Eigen-Lang source |
+| `metadata.json` | optional | Submission metadata |
+| `request.json` | optional | Canonical API request |
 
-- `metadata.json` — optional source hashes/schema metadata
+#### Notes
 
-The first two files are mandatory.
-
----
-
-`compiled/`
-
-Contains compiler output artifacts:
-
-- `circuit.aqo.json` — canonical AQO representation (required)
-
-- `circuit.aqo.pb` — protobuf AQO (optional)
-
-- `circuit.qasm` — OpenQASM export (optional)
-
-- `metadata.json` — compiler metadata (optional)
+- `program.eigen.py` is required only for Eigen-Lang submissions.
+- Alternative submission formats MAY omit it.
 
 ---
 
-`results/`
+### 6.2 `compiled/`
 
-Contains execution artifacts:
+Contains compiler outputs.
 
-- `result.json` — structured execution result and metadata
+#### Files
 
-- `manifest.json` — artifact manifest and checksums
-
-- `error.json` — execution failure details (if execution failed)
-
----
-
-`results.parquet`
-
-Canonical API-facing execution result artifact.
-
-This file is mandatory for successful jobs.
+| **File** | **Required** | **Description** |
+|-------------|------------|-----------|
+| `circuit.aqo.json` | yes | Canonical AQO |
+| `circuit.aqo.pb` | optional | Binary AQO |
+| `circuit.qasm` | optional | OpenQASM export |
+| `compile_report.json` | optional | Compiler diagnostics |
+| `metadata.json` | optional | Compiler metadata |
 
 ---
 
-`logs/`
+### 6.3 `execution/`
 
-Optional runtime logs:
+Contains backend execution planning artifacts.
 
-- kernel logs
+#### Files
 
-- compiler logs
+| **File** | **Required** | **Description** |
+|-------------|------------|-----------|
+| `execution_plan.json` | optional | Scheduler/runtime plan |
+| `backend_request.json` | optional | Backend payload |
+| `backend_response.json` | optional | Raw backend response |
 
-- backend/driver logs
-
----
-
-`meta/`
-
-Optional metadata summaries and indexing artifacts.
+These files are implementation-specific but standardized in location.
 
 ---
 
-## Required Files (v1.0)
+### 6.4 `results/`
 
-Mandatory artifacts:
+Contains execution outputs and structured metadata.
 
-- `input/job.yaml`
+#### Files
 
-- `input/program.eigen.py`
+| **File** | **Required** | **Description** |
+|-------------|------------|-----------|
+| `result.json` | recommended | Structured execution result |
+| `manifest.json` | recommended | Artifact manifest/checksums |
+| `metrics.json` | optional | Runtime metrics |
+| `counts.json` | optional | Measurement counts |
+| `timeline.json` | optional | Event/timing timeline |
+| `error.json` | conditional | Failure details |
 
-- `compiled/circuit.aqo.json`
-
-- `results.parquet` (for successful jobs)
-
-All other files are optional extensions.
+`error.json` MUST exist for failed terminal executions where structured error details are available.
 
 ---
 
-## Access Patterns
+### 6.5 `checkpoints/`
 
-### Validation
+Contains checkpoint/restore artifacts.
+
+#### Files
+
+| **File** | **Description** |
+|----------|----------|
+| `checkpoint-*.bin` | Serialized checkpoints |
+| `manifest.json` | Checkpoint manifest |
+
+Checkpoint files are optional.
+
+---
+
+### 6.6 `logs/`
+
+Contains runtime/service logs.
+
+#### Files
+
+| **File** | **Description** |
+|----------|----------|
+| `kernel.log` | Kernel runtime logs |
+| `compiler.log` | Compiler logs |
+| `scheduler.log` | Scheduling logs |
+| `driver.log` | Backend driver logs |
+| `audit.log` | Security/audit events |
+
+Logs are optional unless explicitly required by deployment policy.
+
+---
+
+### 6.7 `meta/`
+
+Contains metadata and indexing structures.
+
+#### Files
+
+| **File** | **Description** |
+|----------|----------|
+| `job.json` | Job metadata |
+| `retention.json` | Retention policy state |
+| `lineage.json` | Parent/child relationships |
+| `tags.json` | Search/index metadata |
+
+---
+
+### 6.8 `traces/`
+
+Contains structured observability artifacts.
+
+#### Files
+
+| **File** | **Description** |
+|----------|----------|
+| `spans.json` | Trace spans |
+| `events.json` | Structured events |
+
+Optional but recommended.
+
+---
+
+### 6.9 `tmp/`
+
+Temporary workspace directory.
+
+Rules:
+
+- MUST NOT be treated as durable storage.
+- MAY be deleted at any time.
+- MUST NOT contain canonical artifacts.
+
+---
+
+## 7. Root-Level Artifacts
+
+### 7.1 `results.parquet`
+
+Canonical analytics/result export artifact.
+
+Required for successful jobs.
+
+Purpose:
+
+- analytics,
+- batch export,
+- API retrieval,
+- offline processing.
+
+If a job succeeds, `results.parquet` MUST exist.
+
+---
+
+## 8. Required Files (v1.0)
+
+### 8.1 Mandatory Core Files
+
+| **File** | **Requirement** |
+|----------|----------|
+| `input/job.yaml` | mandatory |
+| `compiled/circuit.aqo.json` | mandatory |
+| `results.parquet` | mandatory for successful jobs |
+
+---
+
+### 8.2 Conditional Files
+
+| **File** | **Condition** |
+|----------|----------|
+| `program.eigen.py` | Eigen-Lang submissions |
+| `error.json` | failed execution |
+| `circuit.aqo.pb` | protobuf export enabled |
+
+---
+
+## 9. Access Patterns
+
+### 9.1 Validation Phase
 
 Reads:
 
-- `input/job.yaml`
-
-- `input/program.eigen.py`
-
-### Compilation
-
-Writes:
-
-- `compiled/circuit.aqo.json`
-
-### Execution
-
-Reads:
-
-- compiled/circuit.aqo.json
-
-Writes:
-
-- `results.parquet`
-
-- optional execution artifacts
-
-### API Retrieval
-
-Primary result source:
-
-- `results.parquet`
-
-Additional artifacts:
-
-- `result.json`
-
-- `manifest.json`
-
-may be used for extended metadata and analytics.
+```text
+input/job.yaml
+input/program.eigen.py
+compiled/circuit.aqo.json
+```
 
 ---
 
-## Compatibility and Migration
+### 9.2 Compilation Phase
 
-The system must remain compatible with legacy artifacts.
+Writes:
+
+```text
+compiled/circuit.aqo.json
+compiled/compile_report.json
+```
+
+---
+
+### 9.3 Execution Phase
+
+Reads: `compiled/circuit.aqo.json`
+
+Writes:
+
+```text
+results.parquet
+results/result.json
+results/error.json
+```
+
+---
+
+### 9.4 API Retrieval Phase
+
+Primary artifact: `results.parquet`
+
+Supplementary artifacts:
+
+```text
+results/result.json
+results/manifest.json
+```
+
+---
+
+## 10. Manifest and Checksum Rules
+
+`manifest.json` SHOULD contain:
+
+- artifact paths,
+- sizes,
+- content hashes,
+- timestamps,
+- retention classification.
+
+Recommended hash algorithm: `SHA-256`
 
 Example:
 
-- if only `results.parquet` exists,
-
-- APIs must still return valid results.
-
-Missing optional files must not break result retrieval when mandatory artifacts are present.
-
----
-
-## Security and Validation
-
-Required guarantees:
-
-- `job_id` validation before filesystem access
-
-- protection against path traversal (`..`)
-
-- atomic file writes where possible
-
-- strict AQO schema validation
-
-Any structural violations:
-
-- missing mandatory files
-
-- invalid AQO schema
-
-- corrupted metadata
-
-must be treated as deterministic execution or loading failures.
-
----
-
-## Version 1.0 Additions
-
-Compared to MVP (`v0.1`), version 1.0 finalizes several previously incomplete areas.
-
-### Artifact Organization
-
-Execution artifacts and logs are now consistently grouped under:
-
-- `results/`
-
-- `logs/`
-
-- `meta/`
-
----
-
-## Structured Result Artifacts
-
-The following artifacts are now standardized:
-
-- `result.json`
-
-- `manifest.json`
-
-These improve indexing, analytics, and client API integrations.
-
----
-
-## Deterministic Diagnostics
-
-Missing mandatory artifacts now return deterministic errors:
-
-```text
-MISSING_REQUIRED:qfs://jobs/{job_id}/...
+```json
+{
+  "artifact": "compiled/circuit.aqo.json",
+  "sha256": "..."
+}
 ```
 
-Standardized cleanup reason codes:
+---
 
-- `RETENTION_EXPIRED`
+## 11. Atomicity and Write Guarantees
 
-- `ORPHAN_NOT_INDEXED`
+QFS writers SHOULD implement:
+
+- atomic rename semantics,
+- temporary write staging,
+- fsync before publish,
+- partial-write protection.
+
+Canonical artifacts MUST NOT become externally visible before write completion.
 
 ---
 
-## Checkpoint/Restore Guardrails (Phase-8B L2)
+## 12. Retention and Cleanup
 
-Checkpoint and restore operations now support deterministic budget validation:
+Retention policies are deployment-defined.
 
-- `SIZE_BUDGET_EXCEEDED`
+Recommended cleanup reasons:
 
-- `RESTORE_COST_BUDGET_EXCEEDED`
+| **Code** | **Meaning** |
+|----------|----------|
+| `RETENTION_EXPIRED` | Retention TTL exceeded |
+| `ORPHAN_NOT_INDEXED` | Artifact not referenced |
+| `MANUAL_PURGE` | Administrative deletion |
 
-Validation responses include:
-
-- observed value
-
-- allowed limit
-
-- deterministic rejection reason
+Cleanup operations SHOULD be logged.
 
 ---
 
-Version 1.0 therefore establishes QFS as the canonical CircuitFS persistence contract for:
+## 13. Compatibility Rules
 
-- source programs,
+QFS consumers MUST tolerate missing optional artifacts.
 
-- AQO compilation artifacts,
+Example:
 
-- execution outputs,
+If only: `results.parquet` exists, APIs MUST still return valid results.
 
-- logs,
+Backward compatibility with older layouts is REQUIRED where feasible.
 
-- metadata,
+---
 
-- analytics-compatible result structures.
+## 14. Migration Rules
 
-Backward compatibility with older artifact layouts remains mandatory.
+Migration tooling MAY:
+
+- generate missing manifests,
+- reconstruct metadata,
+- convert legacy layouts,
+- regenerate checksums.
+
+Migration MUST preserve:
+
+- deterministic artifact paths,
+- replay integrity,
+- AQO hashes,
+- job lineage.
+
+---
+
+## 15. Error Model
+
+### 15.1 Structural Errors
+
+| **Condition** | **Error** |
+|----------|----------|
+| Missing mandatory artifact | `MISSING_REQUIRED` |
+| Invalid AQO schema | `INVALID_ARGUMENT` |
+| Corrupted manifest | `DATA_LOSS` |
+| Invalid path traversal | `PERMISSION_DENIED` |
+| Unsupported artifact version | `FAILED_PRECONDITION` |
+
+---
+
+### 15.2 Deterministic Missing Artifact Format
+
+Required format: `MISSING_REQUIRED:qfs://jobs/{job_id}/...`
+
+Example: `MISSING_REQUIRED:qfs://jobs/job-123/results.parquet`
+
+---
+
+## 16. Checkpoint/Restore Guardrails (Phase-8B L2)
+
+Checkpoint/restore flows MUST support deterministic validation.
+
+Standardized rejection codes:
+
+| **Code** | **Meaning** |
+|----------|----------|
+| `SIZE_BUDGET_EXCEEDED` | Artifact too large |
+| `RESTORE_COST_BUDGET_EXCEEDED` | Restore budget exceeded |
+
+Validation responses SHOULD include:
+
+- observed value,
+- configured limit,
+- deterministic rejection reason.
+
+---
+
+## 17. Security Requirements
+
+QFS implementations MUST enforce:
+
+- path traversal protection,
+- sandboxed filesystem access,
+- job ownership validation,
+- strict artifact validation,
+- checksum verification where applicable.
+
+QFS artifacts MUST be treated as untrusted input.
+
+---
+
+## 18. Observability Requirements
+
+Recommended telemetry fields:
+
+| **Field** | **Description** |
+|----------|----------|
+| `job_id` | Job identifier |
+| `artifact_path` | QFS artifact |
+| `artifact_size_bytes` | Artifact size |
+| `artifact_hash` | Content checksum |
+| `qfs_operation` | read/write/delete |
+| `retention_reason` | Cleanup reason |
+
+---
+
+## 19. Performance Considerations
+
+### 19.1 AQO Caching
+
+Implementations MAY cache:
+
+- parsed AQO,
+- compiled execution plans,
+- backend translations.
+
+Caches SHOULD use deterministic content hashes.
+
+---
+
+### 19.2 Large Artifact Handling
+
+Large artifacts SHOULD support:
+
+- streaming reads,
+- chunked writes,
+- lazy loading,
+- compression.
+
+---
+
+### 19.3 Parquet Optimization
+
+`results.parquet` SHOULD:
+
+- support column pruning,
+- support analytics workloads,
+- preserve deterministic schema ordering.
+
+---
+
+## 20. Compliance Requirements
+
+A compliant QFS v1.0 implementation MUST:
+
+- preserve canonical directory structure,
+- preserve deterministic artifact naming,
+- implement required mandatory artifacts,
+- validate AQO before execution,
+- protect against path traversal,
+- implement deterministic error semantics,
+- support replay-safe artifact retrieval.
+
+The canonical `.proto`, AQO, and runtime contracts remain the authoritative source for interoperable execution semantics.

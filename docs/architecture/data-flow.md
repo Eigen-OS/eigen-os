@@ -1,37 +1,39 @@
 # Eigen OS — Data Flow Specification
 
 - **Document status:** Normative MVP architecture contract
-- **Contract scope:** End-to-end runtime and artifact flow
+- **Contract scope:** End-to-end runtime and artifact flow (MVP + explicitly marked Phase-1 extensions)
 - **Snapshot date:** 2026-05-24
-- **Compatibility target:** Eigen OS MVP / Phase-0 and validated Phase-1 - extensions
+- **Compatibility target:** Eigen OS 1.0 contracts (`eigen.api.v1`, `eigen.internal.v1`, JobSpec v1.0, QFS Layout v1.0)
 
 ---
 
 ## 1. Purpose and Scope
 
-This document defines the canonical end-to-end data flow contract for Eigen OS.
+This document defines the canonical end-to-end **data flow contract** for Eigen OS.
 
 It serves four purposes simultaneously:
 
-1. Defines the intended architectural flow required by the technical specification (ТЗ).
-2. Captures the implementation state already present in the repository.
-3. Fixes current runtime and artifact semantics so downstream components can rely on stable behavior.
-4. Explicitly separates stable MVP guarantees from future-phase TODO items.
+1. Defines the intended architectural flow required by the Technical Specification (ТЗ).
+2. Captures the current implementation state and freezes it into stable contracts.
+3. Fixes runtime and artifact semantics so downstream components can rely on deterministic behavior.
+4. Separates **stable MVP guarantees** from **future-phase / TODO** items.
 
-The document covers:
+This specification covers:
 
-- user submission flow,
-- compilation flow,
-- execution flow,
-- result retrieval flow,
-- hybrid/VQE iterative orchestration,
-- artifact persistence semantics,
+- user submission flow (CLI/SDK → public API),
+- validation, packaging, and canonical hashing,
+- compilation flow (Eigen-Lang → AQO/QASM),
+- execution flow (Driver Manager → backend),
+- result persistence and retrieval (QFS/CircuitFS),
+- lifecycle and job-state propagation,
+- error and failure data flow (sync + async),
 - observability and trace propagation.
 
-This specification is aligned with:
+This document is aligned with:
 
 - `docs/architecture/contract-map.md`
 - `docs/reference/jobspec.md`
+- `docs/reference/qfs-layout.md`
 - `docs/reference/error-model.md`
 - `docs/reference/error-mapping.md`
 
@@ -41,27 +43,27 @@ This specification is aligned with:
 
 ### 2.1 Runtime Components
 
-| **Component** | **Responsibility** | **Current State** |
+| **Component** | **Responsibility** | **Contract status** |
 |---|---|---|
-| `eigen-cli` | User interaction, packaging, local compile helpers | Implemented |
-| System API | Public gRPC gateway, auth, validation | Implemented |
-| Kernel (QRTX) | Orchestration, lifecycle, persistence coordination | Implemented |
-| Compiler Service | AST-based compilation to AQO/QASM | Implemented |
-| Driver Manager | Backend abstraction and execution | Implemented |
-| Vendor Backend / Simulator | Actual execution target | Implemented |
-| QFS (CircuitFS) | Artifact and result persistence | Implemented |
-| Observability stack | Metrics, tracing, structured logs | Partially implemented |
+| `eigen-cli` / SDKs | User interaction, JobSpec packaging, metadata propagation | Stable |
+| System API | Public gateway (gRPC), validation, auth, tracing propagation | Stable (transport + mapping) |
+| Kernel (QRTX) | Orchestration, lifecycle, persistence coordination | Stable (MVP flow) |
+| Compiler Service | AST-based compilation to AQO/QASM | Stable (MVP feature-set) |
+| Driver Manager | Backend abstraction + execution + normalization | Stable (MVP backends) |
+| Vendor Backend / Simulator | Execution target | Provider-dependent |
+| QFS (CircuitFS) | Durable artifacts and results persistence | Stable layout contract v1.0 |
+| Observability stack | Metrics, tracing, structured logs | Stable contracts; wiring may be partial per deployment |
 
 ### 2.2 Primary Data Domains
 
-| **Data Domain** | **Description** |
+| **Data domain** | **Description** |
 |---|---|
-| Job specification | User submission descriptor (`job.yaml`) |
-| Program source | Eigen-Lang source (`program.eigen.py`) |
-| Intermediate representation | AQO / QASM artifacts |
-| Execution payload | Driver-consumable circuit payload |
-| Runtime state | Job lifecycle and orchestration metadata |
-| Result artifacts | Counts, metadata, derived outputs |
+| Job specification | Declarative submission descriptor (`job.yaml`, JobSpec v1.0) |
+| Program source | Eigen-Lang source file (`program.eigen.py`) or other allowed program forms |
+| Intermediate representation | AQO v1.0 (primary), QASM (optional export) |
+| Execution payload | Driver-consumable envelope (CircuitPayload / bytes or QFS reference) |
+| Runtime state | Job lifecycle + orchestration metadata |
+| Result artifacts | Parquet primary result + JSON metadata artifacts |
 | Telemetry | Metrics, traces, structured logs |
 
 ---
@@ -72,203 +74,176 @@ This specification is aligned with:
 
 ```text
 User
-  │
-  ▼
+  ↓
 eigen-cli / SDK
-  │
-  ▼
-System API
-  │
-  ▼
+  ↓
+System API (public gRPC)
+  ↓
 Kernel (QRTX)
-  ├──► Compiler Service
-  │         │
-  │         ▼
-  │      AQO/QASM
+  ├──→ Compiler Service
+  │       ↓
+  │     AQO/QASM artifacts
   │
-  ├──► Driver Manager
-  │         │
-  │         ▼
-  │   Vendor Backend / Simulator
+  ├──→ Driver Manager
+  │       ↓
+  │    Backend / Simulator / Hardware
   │
-  ▼
-QFS (CircuitFS)
-  │
-  ▼
-User Results
+  └──→ QFS (CircuitFS persistence)
+          ↓
+       Result retrieval
+          ↓
+         User
 ```
 
-### 3.2 Contracted Runtime Stages
+### 3.2 Contracted Runtime Lifecycle
 
-The canonical client-visible lifecycle is:
+The canonical **client-visible** lifecycle is:
 
 ```text
 PENDING → COMPILING → QUEUED → RUNNING → DONE | ERROR | CANCELLED
 ```
 
-Additional internal orchestration substates may exist but must not violate the public lifecycle contract.
+Notes:
+
+- Services MAY have internal substates, but they MUST NOT violate the public contract ordering.
+- Terminal states are immutable: `DONE`, `ERROR`, `CANCELED`.
 
 ---
 
 ## 4. Core Data Formats
 
-### 4.1 JobSpec (`job.yaml`)
+### 4.1 JobSpec (job.yaml) — Canonical submission descriptor (v1.0)
 
-Canonical MVP submission descriptor.
+Reference: `docs/reference/jobspec.md`
 
-Reference:
+Minimum valid JobSpec:
 
-- `docs/reference/jobspec.md`
-
-Current MVP rules:
-
-- `apiVersion: eigen.os/v0.1`
-- `kind: QuantumJob`
-- file-backed source packaging is canonical
-- inline source parsing exists but submission rejection is currently enforced
-
-Example:
-
-```text
-apiVersion: eigen.os/v0.1
+```yaml
+apiVersion: eigen.os/v1
 kind: QuantumJob
+
 metadata:
-  name: h2-ground-state
+  name: hello-world
+
 spec:
   target: sim:local
-  entrypoint: main
-  program_path: program.eigen.py
+  program:
+    path: program.eigen.py
+    entrypoint: main
 ```
+
+Normative rules:
+
+- JobSpec is declarative; it describes intent, not procedure.
+- Packaging MUST be deterministic (path normalization + stable hashing).
+- Validation occurs before orchestration begins.
 
 ---
 
 ### 4.2 Eigen-Lang Source
 
-Primary hybrid quantum-classical source representation.
+Canonical file: `program.eigen.py`
 
-Typical file:
+Compiler behavior (MVP contract):
 
-```text
-program.eigen.py
-```
-
-Current compiler pipeline characteristics:
-
-- AST-based parsing only,
-- no arbitrary runtime execution,
-- import allowlist enforcement,
-- `@hybrid_program` validation,
-- entrypoint validation.
+- AST-based parsing only (no arbitrary execution of user code),
+- strict allowlist of imports (`eigen_lang` package only),
+- exactly one `@hybrid_program(...)` entrypoint,
+- deterministic compilation and deterministic validation errors.
 
 ---
 
 ### 4.3 AQO (Abstract Quantum Operations)
 
-Primary intermediate representation exchanged between compiler and runtime.
+Reference: `docs/reference/formats/aqo.md` (AQO v1.0)
 
-Current MVP representation:
+AQO is the canonical IR handed from compiler to runtime.
 
-- JSON payload,
-- optionally protobuf-wrapped,
-- persisted in QFS.
-
-Example:
+Minimal example:
 
 ```json
 {
-  "version": "0.1",
+  "version": "1.0",
   "qubits": 2,
   "operations": [
     {"op": "H", "q": [0]},
-    {"op": "CX", "q": [0,1]},
-    {"op": "MEASURE", "q": [0,1], "c": [0,1]}
+    {"op": "CX", "q": [0, 1]},
+    {"op": "MEASURE", "q": [0, 1], "c": [0, 1]}
   ]
 }
 ```
 
----
+Normative rules:
 
-### 4.4 CircuitPayload
-
-Canonical Driver Manager execution envelope.
-
-Logical structure:
-
-- `format`
-- `payload bytes/ref`
-- `shots`
-- execution options
-- optional metadata
-
-Current supported formats:
-
-- AQO JSON
-- QASM (limited/partial depending on backend)
+- `version`, `qubits`, `operations` are required.
+- Unknown opcodes MUST be rejected with `INVALID_ARGUMENT`.
+- `MEASURE` must satisfy `len(q) == len(c)`.
+- Canonical bit ordering for counts MUST be stable (`c[0]` is LSB).
 
 ---
 
-### 4.5 ExecutionResult
+### 4.4 CircuitPayload (Kernel → Driver Manager execution envelope)
 
-Normalized execution response returned by Driver Manager.
+Logical fields (implementation-defined, but contractually required semantics):
+
+- `format`: AQO_JSON | AQO_PROTO | QASM (subset / provider-dependent)
+- `payload`: bytes OR QFS reference
+- `shots`: integer
+- `options`: bounded key-value options (stable keys when standardized)
+- `metadata`: optional bounded metadata (no unbounded identifiers)
+
+---
+
+### 4.5 ExecutionResult (Driver Manager → Kernel normalized result)
+
+Normalized structure:
+
+- `counts`: map bitstring → integer
+- `execution_time_sec`: float
+- `metadata`: bounded, stable keys (backend id, device id, calibration snapshot refs, etc.)
 
 Example:
 
 ```json
 {
-  "counts": {
-    "00": 512,
-    "11": 512
-  },
+  "counts": {"00": 512, "11": 512},
   "execution_time_sec": 0.45,
-  "metadata": {
-    "backend": "qiskit_aer_simulator"
-  }
+  "metadata": {"backend": "sim:local"}
 }
 ```
 
-Current implementation state:
-
-- counts normalization exists,
-- backend metadata exists,
-- metadata naming is not yet fully standardized across all drivers.
-
 ---
 
-### 4.6 JobResults
-
-Final user-facing result envelope.
+### 4.6 JobResults (Kernel/System API → user-facing envelope)
 
 Contains:
 
-- execution results,
-- artifact references,
+- execution result summary (or QFS references),
+- artifact references (Parquet and optional JSON),
 - runtime metadata,
-- optional error metadata.
+- async error visibility when applicable.
 
-Large artifacts must be referenced through QFS refs instead of embedded raw payloads.
+Large outputs MUST be returned via QFS references (not embedded raw payloads).
 
 ---
 
-## 5. Primary Flow — Linear Job Execution
+## 5. Primary Flow — Linear Job Execution (MVP)
 
 ### 5.1 Flow Summary
 
-The MVP execution path is:
 
 ```text
-Submit → Validate → Persist → Compile → Execute → Persist Results → Retrieve
+Submit → Validate → Persist Inputs → Compile → Persist Compiled → Execute → Persist Results → Retrieve
 ```
 
-The current repository already implements:
+MVP-stable contract surface includes:
 
 - submission,
 - compilation,
 - execution,
-- polling/status,
+- status polling,
 - result retrieval,
-- artifact persistence.
-
-Advanced scheduling and multi-provider orchestration remain future-phase extensions.
+- artifact persistence in QFS layout v1.0.
 
 ---
 
@@ -276,566 +251,396 @@ Advanced scheduling and multi-provider orchestration remain future-phase extensi
 
 ```text
 User
-  │
-  ▼
-eigen-cli
-  │ Read job.yaml + source
-  ▼
+  ↓
+CLI/SDK
+  - reads job.yaml
+  - resolves program source (path/inline/uri per JobSpec)
+  - computes canonical hashes
+  ↓
 System API
-  │ Validate/authenticate
-  ▼
+  - validates request/authz
+  - propagates trace context
+  ↓
 Kernel (QRTX)
-  │ Persist source bundle
-  │ Create job state
-  │
-  ├──► Compiler Service
-  │         │ Compile
-  │         ▼
-  │      AQO/QASM
-  │
-  ├──► QFS
-  │      compiled artifacts
-  │
-  ├──► Driver Manager
-  │         │ Execute
-  │         ▼
-  │   Vendor Backend
-  │
-  ├──► QFS
-  │      results.json
-  │
-  ▼
+  - creates job record + job_id
+  - persists inputs into QFS
+  - transitions lifecycle
+  - calls compiler
+  - persists compiled artifacts
+  - calls Driver Manager
+  - persists results + metadata
+  ↓
 System API
-  │
-  ▼
-User Results
+  - serves status/results using QFS refs
+  ↓
+User
 ```
 
 ---
 
-### 5.3 Submission and Packaging Flow
+## 6. Packaging & Submission Data Flow
 
-#### Input Artifacts
+### 6.1 Input Artifacts (MVP required)
 
-Required MVP artifacts:
+MVP requires:
 
 - `job.yaml`
-- `program.eigen.py`
+- `program.eigen.py` (file-backed source is canonical in MVP)
 
-Current canonical packaging model:
-
-- source is file-backed,
-- CLI reads source locally,
-- SHA-256 checksum is generated,
-- source bundle is forwarded through `SubmitJobRequest`.
-
-#### CLI Responsibilities
-
-The CLI currently:
-
-1. Parses `job.yaml`.
-2. Resolves `program_path`.
-3. Loads source bytes.
-4. Computes source checksum.
-5. Builds `SubmitJobRequest`.
-6. Sends request to System API.
-
-Current implementation note:
-
-- inline source mode is parsed but rejected during mapping/packaging.
+Other program sources (`inline`, `uri`) may be supported by JobSpec, but if a deployment restricts them, rejection MUST be deterministic and MUST use canonical errors (`INVALID_ARGUMENT` or `PERMISSION_DENIED` depending on policy).
 
 ---
 
-### 5.4 System API Flow
+### 6.2 Deterministic Hashing
 
-The System API acts as the public gateway.
+The CLI/SDK packaging layer MUST compute stable hashes:
 
-Responsibilities:
+- `source_sha256 = SHA-256(source_bytes)`
+- optional: `job_yaml_sha256 = SHA-256(canonicalized_job_yaml_bytes)`
 
-- request validation,
-- auth/authz enforcement,
-- trace propagation,
-- gRPC contract enforcement,
-- forwarding to Kernel.
+Canonicalization rules MUST include:
 
-Current implementation state:
-
-- gRPC public API exists,
-- validation exists,
-- trace propagation exists,
-- canonical gRPC status mapping exists.
-
-Errors follow:
-
-- `INVALID_ARGUMENT`
-- `FAILED_PRECONDITION`
-- `NOT_FOUND`
-- `UNAVAILABLE`
-- other canonical mappings from `error-model.md`.
+- normalized line endings,
+- stable UTF-8 encoding,
+- normalized relative paths.
 
 ---
 
-### 5.5 Kernel (QRTX) Orchestration Flow
+### 6.3 Submission Request
+
+Public submission uses `eigen.api.v1.JobService.SubmitJob`.
+
+Contractual mapping from JobSpec to `SubmitJobRequest` is defined in `docs/reference/jobspec.md`.
+
+---
+
+## 7. System API (Public Gateway) Data Flow
+
+System API responsibilities:
+
+- validate request shape and required fields,
+- enforce authn/authz policies (if enabled in deployment),
+- enforce bounded metadata constraints,
+- propagate trace context (W3C TraceContext),
+- forward to Kernel (internal API).
+
+Failure behavior:
+
+- MUST be **gRPC-status-first** (no `success=false` wrappers),
+- MUST use canonical statuses and structured details (see Section 10).
+
+---
+
+## 8. Kernel (QRTX) Orchestration & Persistence Data Flow
 
 Kernel responsibilities:
 
-- lifecycle management,
-- orchestration,
-- persistence coordination,
-- compiler execution coordination,
-- backend execution coordination,
-- artifact management.
+1. Create job record and assign stable `job_id`.
+2. Persist submission artifacts into QFS (CircuitFS layout v1.0).
+3. Manage lifecycle transitions.
+4. Trigger compilation.
+5. Trigger execution.
+6. Persist final outputs, logs, and error artifacts.
+7. Serve status and results to System API.
 
-Current implemented behavior:
+---
 
-1. Create job record.
-2. Assign `job_id`.
-3. Persist submission artifacts.
-4. Transition lifecycle states.
-5. Call compiler.
-6. Call Driver Manager.
-7. Persist results.
-8. Surface status/results.
+### 8.1 QFS (CircuitFS) Layout (v1.0)
 
-Current persistent artifacts include:
+Reference: `docs/reference/qfs-layout.md`
+
+Normative job root: `{qfs_root}/{job_id}/`
+
+Canonical layout (abridged):
 
 ```text
-qfs://jobs/<job_id>/
+{qfs_root}/{job_id}/
+├── input/
+│   ├── job.yaml
+│   ├── program.eigen.py
+│   └── metadata.json
+├── compiled/
+│   ├── circuit.aqo.json
+│   ├── circuit.aqo.pb
+│   ├── circuit.qasm
+│   └── metadata.json
+├── results/
+│   ├── result.json
+│   ├── manifest.json
+│   └── error.json
+└── results.parquet
 ```
 
-Typical artifact layout:
+Normative requirements:
 
-```text
-job.yaml
-source/program.eigen.py
-compiled/compiled.aqo.json
-compiled/compiled.qasm
-results/results.json
-results/error.json
-logs/run.log
-```
-
-Some paths may vary slightly by deployment profile.
+- `input/job.yaml` and `input/program.eigen.py` MUST exist for every accepted job.
+- `compiled/circuit.aqo.json` MUST exist after successful compilation.
+- `results.parquet` MUST exist for successful jobs (`DONE`).
+- `results/error.json` MUST exist for failed jobs (`ERROR`) when a durable failure is produced.
 
 ---
 
-### 5.6 Compilation Flow
+## 9. Compilation Data Flow (Kernel → Compiler Service)
 
-#### Compiler Responsibilities
+Compiler Service responsibilities:
 
-Compiler Service performs:
+- parse and validate Eigen-Lang source,
+- produce AQO v1.0 JSON (required),
+- produce optional AQO protobuf and optional QASM,
+- produce deterministic diagnostics,
+- return metadata including hashes.
 
-- parsing,
-- validation,
-- transformation,
-- AQO/QASM generation.
+Compiler persistence:
 
-#### Compiler Validation Rules
+- Kernel writes compiler outputs under:
+  - `compiled/circuit.aqo.json` (required)
+  - `compiled/circuit.aqo.pb` (optional)
+  - `compiled/circuit.qasm` (optional)
+  - `compiled/metadata.json` (optional)
 
-Current implementation enforces:
+Compiler failures:
 
-- AST-based parsing,
-- single `@hybrid_program`,
-- import restrictions,
-- entrypoint existence checks,
-- basic semantic validation.
-
-Current implementation limitations:
-
-- validation is not yet fully AST-semantic,
-- some checks are still substring/textual,
-- size-limit enforcement is incomplete.
-
-#### Compiler Output
-
-Compiler returns:
-
-- AQO payload,
-- optional QASM,
-- compiler metadata,
-- statistics.
-
-Artifacts are persisted into QFS.
+- MUST map to canonical errors (`INVALID_ARGUMENT` for validation, `UNIMPLEMENTED` for unsupported feature, `INTERNAL` for invariant violations),
+- MUST be deterministically reproducible for identical inputs.
 
 ---
 
-### 5.7 Execution Flow
+## 10. Execution Data Flow (Kernel → Driver Manager → Backend)
 
-#### Driver Manager Responsibilities
+Driver Manager responsibilities:
 
-Driver Manager:
+1. Accept `CircuitPayload`.
+2. Select provider driver for the target backend.
+3. Translate AQO/QASM to backend-native execution representation.
+4. Execute against backend/simulator/hardware.
+5. Normalize results into canonical `ExecutionResult`.
+6. Normalize provider errors into canonical Eigen error model.
 
-- abstracts vendor backends,
-- manages driver lifecycle,
-- normalizes backend responses,
-- maps backend failures to canonical runtime errors.
+Execution persistence:
 
-#### Execution Pipeline
-
-1. Kernel selects/resolves target.
-2. Driver Manager receives `CircuitPayload`.
-3. Backend-specific driver is loaded.
-4. AQO/QASM translated into backend-native representation.
-5. Vendor SDK/runtime invoked.
-6. Raw results normalized.
-7. Normalized result returned to Kernel.
-
-#### Backend Types
-
-Current MVP supports:
-
-- simulator backends,
-- local execution profiles.
-
-Hardware integration exists architecturally but is deployment/provider dependent.
+- Kernel persists successful outputs:
+  - `results.parquet` (required on `DONE`)
+  - `results/result.json` (optional extended metadata)
+  - `results/manifest.json` (optional checksums + listing)
+- Kernel persists failures:
+  - `results/error.json` (recommended durable failure artifact)
+  - optional logs under `logs/`
 
 ---
 
-### 5.8 Result Persistence and Retrieval
+## 11. Result Retrieval Data Flow (User → System API → Kernel → QFS)
 
-#### Result Persistence
+Retrieval paths:
 
-Kernel persists:
+- `GetJobStatus`: returns lifecycle state + timestamps + progress metadata.
+- `GetJobResults`: returns result envelope + QFS references (Parquet primary).
 
-- normalized results,
-- metadata,
-- optional logs,
-- optional error artifacts.
+Contract rules:
 
-Current durable error artifact contract:
-
-```text
-results/error.json
-```
-
-#### Result Retrieval
-
-The retrieval flow is:
-
-```text
-User → CLI/SDK → System API → Kernel → QFS
-```
-
-Current implemented retrieval capabilities:
-
-- polling status,
-- result retrieval,
-- artifact references,
-- stream-like poll-based updates.
+- Large artifacts MUST be referenced via QFS, not embedded.
+- If results are requested before the job reaches terminal state:
+  - MUST return `FAILED_PRECONDITION` (sync call behavior), OR
+  - return an envelope that clearly indicates non-terminal state (only if the API contract defines it).
+  - The canonical rule in Eigen OS is `FAILED_PRECONDITION` for “results not ready”.
 
 ---
 
-## 6. Hybrid/VQE Iterative Flow
+## 12. Error and Failure Data Flow (Sync + Async)
 
-### 6.1 Scope
+### 12.1 Canonical Rule
 
-Eigen OS supports hybrid quantum-classical workloads.
+Eigen OS is **gRPC-status-first**:
 
-Primary MVP example:
-
-- Variational Quantum Eigensolver (VQE)
-
-The system currently supports two orchestration models.
-
----
-
-### 6.2 Pattern A — External Orchestration (Stable MVP Contract)
-
-This is the canonical and safest integration model.
-
-#### Flow
-
-1. External optimizer computes parameters.
-2. Parameters injected into job input/source.
-3. Job submitted.
-4. Quantum execution performed.
-5. Results retrieved.
-6. Optimizer computes next iteration.
-7. Loop repeats.
-
-#### System Semantics
-
-Eigen OS acts as:
-
-- stateless execution substrate,
-- independent-job runtime.
-
-Each iteration is treated as a separate job.
-
-#### Current State
-- fully supported,
-- production-safe,
-- primary recommended integration model.
-
----
-
-### 6.3 Pattern B — Kernel-Managed Hybrid Loop
-
-#### Scope
-
-Kernel-managed loops are partially implemented.
-
-Current MVP support exists for:
-
-- recognized VQE-like execution paths,
-- persisted iteration metadata,
-- final optimizer state persistence.
-
-#### Planned Expanded Semantics
-
-Future phases intend:
-
-- generalized hybrid-loop orchestration,
-- child-job lineage,
-- optimizer plugins,
-- parameterized AQO reuse,
-- orchestration DAG execution.
-
-#### Current Limitation
-
-Pattern B must not yet be treated as a fully generalized stable contract.
-
-Pattern A remains the normative external integration contract.
-
----
-
-## 7. QFS (CircuitFS) Persistence Contract
-
-### Purpose
-
-QFS is the canonical persistence layer for:
-
-- source artifacts,
-- compiled artifacts,
-- runtime outputs,
-- logs,
-- error artifacts,
-- lineage metadata.
-
-### Current MVP Backends
-
-Typical implementations:
-
-- S3/MinIO object storage,
-- SQLite metadata/indexing.
-
-Alternative backend implementations are allowed if they preserve artifact semantics.
-
-### Artifact Guarantees
-
-Current repository direction guarantees:
-
-- stable job artifact namespace,
-- durable result storage,
-- durable error artifacts,
-- artifact retrieval by refs.
-
----
-
-## 8. Error and Failure Data Flow
-
-### Canonical Rule
-
-All runtime failures follow:
-
-- gRPC status-first semantics,
-- normalized backend errors,
-- durable async error persistence.
+- transport failures use gRPC status codes,
+- structured details use `google.rpc.*` types,
+- payloads MUST NOT contain ad-hoc transport error wrappers.
 
 Reference documents:
 
 - `docs/reference/error-model.md`
 - `docs/reference/error-mapping.md`
 
-### Async Failure Contract
+---
 
-Async execution failures surface through:
+### 12.2 Async Failure Visibility (Terminal ERROR)
 
-- lifecycle state `ERROR`,
-- `error_code`,
-- `error_summary`,
-- `error_details_ref`.
+When a job ends with `ERROR`, the system MUST expose:
 
-### Backend Failure Normalization
-
-Driver/provider-native failures are normalized into canonical Eigen status classes.
-
-Examples:
-
-| **Failure** | **Canonical Mapping** |
-|---|---|
-| Provider unavailable | `UNAVAILABLE` |
-| Quota exceeded | `RESOURCE_EXHAUSTED` |
-| Invalid auth | `UNAUTHENTICATED` |
-| Access denied | `PERMISSION_DENIED` |
-| Internal backend fault | `INTERNAL` |
+- terminal lifecycle: `ERROR`
+- failure metadata:
+  - `error_code` (stable machine-readable)
+  - `error_summary` (human-readable)
+  - `error_details_ref` (durable artifact reference, typically `results/error.json`)
 
 ---
 
-## 9. Observability and Telemetry Flow
+### 12.3 Backend Failure Normalization
 
-### 9.1 Trace Propagation
+Provider-native failures MUST be normalized:
+
+| **Provider failure class** | **Canonical mapping** |
+|---|---|
+| Provider unavailable / outage | `UNAVAILABLE` |
+| Quota exceeded / throttling | `RESOURCE_EXHAUSTED` |
+| Invalid authentication | `UNAUTHENTICATED` |
+| Access denied | `PERMISSION_DENIED` |
+| Provider timeout | `DEADLINE_EXCEEDED` |
+| Provider internal fault | `INTERNAL` |
+
+---
+
+## 13. Observability and Telemetry Data Flow
+
+### 13.1 Trace Propagation
 
 Trace propagation uses:
 
-- W3C TraceContext,
-- `traceparent` propagation across services.
+- **W3C TraceContext**
+- required metadata field: `traceparent`
 
-Current implemented flow:
+Canonical propagation path:
 
 ```text
-CLI → System API → Kernel → Compiler → Driver Manager
+CLI/SDK → System API → Kernel → Compiler → Driver Manager → (backend boundary)
 ```
 
-Telemetry enrichment includes:
+Rules:
 
-- `trace_id`,
-- `job_id`,
-- `device_id`.
-
----
-
-### 9.2 Logging
-
-Structured logging exists across core services.
-
-Current implementation state:
-
-- structured logs implemented,
-- trace correlation implemented,
-- deployment topology for centralized collection remains environment-specific.
-
-Current supported integrations may include:
-
-- OpenTelemetry collector,
-- Loki,
-- Grafana.
+- Trace context MUST be propagated across internal RPCs.
+- Trace-level identifiers MUST NOT be used as Prometheus label values (bounded-cardinality rule).
 
 ---
 
-### 9.3 Metrics
+### 13.2 Logs
 
-Prometheus-oriented metrics are implemented.
+Services SHOULD emit structured logs with:
 
-Current contract areas include:
+- `trace_id` correlation,
+- `job_id` correlation (as log fields, not metric labels),
+- stage/lifecycle context.
 
-- orchestration metrics,
-- intelligent-runtime metrics,
-- runtime execution metrics.
+---
 
-Related contracts:
+### 13.3 Metrics
+
+Metrics contracts are defined in dedicated documents:
 
 - `orchestration-observability-contract.md`
+- `cluster-runtime-observability-contract.md`
 - `intelligent-runtime-observability-contract.md`
+- `benchmark-observability-contract.md` (benchmarks)
 
-Current limitation:
+This document’s requirement is data-flow correctness:
 
-- some metric families and exporter wiring remain partially implemented.
-
----
-
-## 10. Current MVP Guarantees
-
-The following behaviors are considered stable MVP contract surface:
-
-1. gRPC-based submission flow.
-2. File-backed `job.yaml` packaging.
-3. Kernel-managed lifecycle states.
-4. Compiler AQO generation flow.
-5. Driver Manager abstraction layer.
-6. QFS artifact persistence.
-7. Poll-based update streaming.
-8. Canonical gRPC error semantics.
-9. Trace propagation across runtime services.
-10. Durable result and error artifacts.
+- key stage transitions and failures MUST be observable via metrics and traces,
+- exporter failure MUST NOT break job execution.
 
 ---
 
-## 11. Known Gaps and Future Hardening
+## 14. Hybrid / VQE Iterative Data Flow
 
-The following areas remain intentionally incomplete or partially frozen.
+### 14.1 Pattern A — External Orchestration (Stable MVP Contract)
 
-### Runtime and Scheduling
+This is the canonical and safest MVP integration model.
 
-- advanced scheduling policies,
-- full multi-provider orchestration,
-- dynamic backend health scoring,
-- generalized hybrid orchestration DAGs.
+Flow:
 
-### Compiler
+1. External optimizer selects parameters.
+2. Parameters are injected into the job input/source.
+3. Job is submitted.
+4. Quantum execution runs.
+5. Results are retrieved.
+6. Optimizer computes next iteration.
+7. Repeat.
 
-- fully semantic AST validation,
-- stronger type/schema validation,
-- stricter source/resource limits.
+Contract guarantee:
 
-### Driver Layer
-
-- fully standardized backend metadata schema,
-- richer execution telemetry,
-- broader hardware-provider coverage.
-
-### Observability
-
-- unified canonical metric catalog,
-- finalized SLO definitions,
-- deployment-standardized telemetry topology.
-
-### Hybrid Runtime
-
-- generalized optimizer plugin model,
-- parameterized AQO reuse semantics,
-- stable child-job lineage contract.
+- Each iteration is a separate job with its own `job_id`.
+- QFS artifacts form the audit trail for each iteration.
 
 ---
 
-## 12. Compatibility and Evolution Rules
+### 14.2 Pattern B — Kernel-Managed Hybrid Loop (Phase-1 extension)
 
-### Stable Contract Areas
+Kernel-managed loops MAY exist as an implementation detail.
 
-The following are considered public/runtime contract surface:
+Constraints:
+
+- MUST NOT be treated as a stable generalized DAG/orchestration contract unless explicitly versioned.
+- If exposed, must include deterministic lineage and child-job relationships.
+
+MVP guarantee remains Pattern A.
+
+---
+
+## 15. Benchmark Execution Data Flow (Phase-1 extension)
+
+If the deployment includes benchmark APIs (e.g., `POST /benchmarks/run`), the benchmark runtime MUST:
+
+- persist benchmark run snapshots and artifacts,
+- expose run lifecycle and ingestion outcomes,
+- follow benchmark observability contracts,
+- remain idempotent when required by API contracts.
+
+Benchmark data flow is intentionally separate from the core Job execution flow and must not weaken the JobSpec/QFS invariants.
+
+---
+
+## 16. Stable MVP Guarantees (Frozen)
+
+The following behaviors are stable MVP contract surface:
+
+1. Public gRPC submission flow (`eigen.api.v1`).
+2. JobSpec v1.0 as canonical job descriptor (`job.yaml`).
+3. Client-visible lifecycle state machine (per ТЗ).
+4. Compiler → AQO v1.0 generation flow.
+5. Driver Manager backend abstraction and result normalization.
+6. QFS (CircuitFS) persistence per layout contract v1.0, including Parquet for successful jobs.
+7. Canonical gRPC error model + deterministic mapping.
+8. Trace propagation across core services.
+9. Durable result and error artifacts.
+
+---
+
+## 17. Known Gaps and Future Hardening (Explicitly Non-Normative)
+
+These areas are intentionally incomplete or future-phase:
+
+- advanced multi-provider scheduling policies beyond MVP,
+- full intelligent scoring + explainability linkage across submission → decision → explain endpoint,
+- full semantic AST/type validation and stricter resource limits,
+- fully standardized backend metadata keys across all drivers,
+- uniform SLO definitions across all runtime profiles,
+- generalized kernel-managed hybrid DAG orchestration.
+
+These items MUST NOT change the stable MVP guarantees above without a versioned contract update.
+
+---
+
+## 18. Compatibility and Evolution Rules
+
+Stable contract areas:
 
 - public gRPC semantics,
-- lifecycle states,
+- lifecycle states and transitions,
 - AQO handoff semantics,
-- QFS artifact semantics,
-- canonical error mappings.
+- QFS artifact layout and mandatory artifacts,
+- canonical error model and mappings.
 
-### Compatibility Rules
+Rules:
 
 - additive fields are backward compatible,
-- breaking protocol/runtime semantic changes require version bump,
-- public gRPC contract changes require compatibility review.
+- breaking semantic changes require a version bump (SemVer discipline),
+- changes to observability contracts require synchronized updates to dashboards, alerts, tests, and documentation.
 
 ---
 
-## 13. Final State Summary
+## 19. Final Summary
 
-Eigen OS currently implements a complete MVP execution pipeline:
+Eigen OS implements a complete MVP execution pipeline:
 
 ```text
 Submit → Compile → Execute → Persist → Retrieve
 ```
 
-The repository already includes:
-
-- public API contracts,
-- orchestration runtime,
-- compiler pipeline,
-- driver abstraction layer,
-- artifact persistence,
-- observability foundations,
-- hybrid execution foundations.
-
-Remaining work is primarily:
-
-- hardening,
-- normalization,
-- CI conformance coverage,
-- production-grade policy freezing,
-- advanced orchestration expansion.
-
-The data-flow model defined in this document is therefore treated as:
-
-- the normative MVP architectural baseline,
-- the reference integration model for SDK/runtime work,
-- the authoritative runtime flow contract unless superseded by a versioned successor specification.
+This document freezes the **data-flow contract** as the normative MVP baseline and the canonical integration reference for SDK/CLI and runtime development.

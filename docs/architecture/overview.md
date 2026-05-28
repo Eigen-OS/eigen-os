@@ -1,15 +1,16 @@
 # Eigen OS Architecture Overview
 
-- **Document Status:** Normative MVP Architecture Specification
-Version: 1.0
-- **Scope:** Phase 0 / MVP baseline + implemented extensions
-- **Last Updated:** 2026-05-24
-- **Supersedes:** Previous draft architecture overview revisions
-- **Audience:** Core developers, infrastructure engineers, compiler/runtime contributors, driver authors
-- **Related Documents:**
-
-    - `architecture/contract-map.md`
-    - `architecture/data-flow.md`
+- **Document status:** Normative MVP Architecture Specification  
+- **Architecture version:** `1.0.0 ` 
+- **Last updated:** 2026-05-24  
+- **Audience:** Core developers, infrastructure engineers, compiler/runtime contributors, driver authors  
+- **Related documents:**
+  - `architecture/contract-map.md`
+  - `architecture/data-flow.md`
+  - `reference/jobspec.md`
+  - `reference/error-model.md`
+  - `reference/api/grpc-public.md`
+  - `reference/api/grpc-internal.md`
 
 ---
 
@@ -17,43 +18,39 @@ Version: 1.0
 
 ### 1.1 Purpose
 
-Eigen OS is a modular hybrid quantum-classical operating environment for orchestrating compilation, scheduling, execution, and result management of quantum workloads across heterogeneous backends.
+Eigen OS is a modular hybrid quantum–classical operating environment for orchestrating compilation, scheduling, execution, and result management of quantum workloads across heterogeneous backends.
 
-The system provides:
+Eigen OS provides:
 
 - a stable high-level programming model,
 - deterministic compilation contracts,
-- runtime orchestration,
-- backend abstraction,
-- artifact persistence,
+- runtime orchestration and scheduling,
+- backend abstraction via drivers,
+- artifact persistence via QFS (CircuitFS),
 - observability and traceability,
 - extensible compiler/runtime/driver infrastructure.
 
-This document defines the canonical architectural structure of the Eigen OS MVP and the accepted forward-compatible extensions already implemented beyond the original MVP specification.
-
-It is the primary architectural reference for implementation alignment.
+This document defines the canonical architectural structure of the Eigen OS MVP and the accepted forward-compatible extensions already reflected in the repository and contracts.
 
 ---
 
-## 2. System Vision
+## 2. System vision
 
-Eigen OS abstracts unstable and vendor-specific quantum infrastructure behind stable contracts and orchestration layers.
-
-The platform is designed to allow domain specialists to execute hybrid quantum-classical workflows without requiring direct interaction with:
+Eigen OS abstracts unstable and vendor-specific quantum infrastructure behind stable contracts and orchestration layers. The platform is designed to allow users to execute hybrid quantum–classical workflows without requiring direct interaction with:
 
 - low-level qubit topology,
 - vendor SDK internals,
 - hardware routing constraints,
 - pulse-level execution,
-- backend-specific compilation pipelines.
+- backend-specific compilation and execution pipelines.
 
 ---
 
-## 3. Architectural Principles
+## 3. Architectural principles
 
-### 3.1 Hybrid-First Execution
+### 3.1 Hybrid-first execution
 
-The system is designed primarily for hybrid workloads combining:
+Eigen OS is designed primarily for hybrid workloads combining:
 
 - classical optimization,
 - quantum execution,
@@ -64,48 +61,44 @@ Variational algorithms (VQE, QAOA, hybrid ML workloads) are first-class architec
 
 ---
 
-### 3.2 Stable Interface Boundaries
+### 3.2 Stable interface boundaries
 
 All major components communicate exclusively through versioned contracts.
 
 Primary interface categories:
 
-| **Boundary** | **Contract** |
+| Boundary | Contract |
 |---|---|
-| Client ↔ System API | `eigen.api.v1` |
-| System API ↔ Kernel | `eigen.internal.v1` |
-| Kernel ↔ Compiler | `eigen.internal.v1` |
-| Kernel ↔ Driver Manager | `eigen.internal.v1` |
-| Driver ↔ Backend | Vendor SDK / REST / gRPC |
+| Client ↔ System API | `eigen.api.v1` (public gRPC), plus selected REST endpoints (see §5.3) |
+| System API ↔ Kernel | `eigen.internal.v1` (internal gRPC) |
+| Kernel ↔ Compiler | `eigen.internal.v1` (internal gRPC) |
+| Kernel ↔ Driver Manager | `eigen.internal.v1` (internal gRPC) |
+| Driver ↔ Backend | vendor SDK / REST / gRPC (provider-specific; normalized by Driver Manager) |
 
-Internal implementation changes must not break external contracts.
+Internal implementation changes MUST NOT break external contracts.
 
 ---
 
-### 3.3 Deterministic Compilation
+### 3.3 Deterministic compilation
 
 Compilation is deterministic.
 
-Identical:
+Identical inputs:
 
 - source,
 - compiler options,
 - target metadata,
 - referenced artifacts
 
-must produce identical AQO output.
+MUST produce identical AQO output.
 
-Server-side user code execution is prohibited.
-
-Only AST parsing and transformation are permitted.
+Server-side user code execution is prohibited. Compilation operates on an allowlisted Python AST subset and performs parsing/validation/transformation only.
 
 ---
 
-### 3.4 Backend Abstraction
+### 3.4 Backend abstraction
 
-The same Eigen-Lang program must execute on any supported backend through compatible drivers without source modification.
-
-Backend-specific optimizations must remain encapsulated within:
+The same Eigen-Lang program SHOULD execute on any supported backend through compatible drivers without source modification. Backend-specific optimizations must remain encapsulated within:
 
 - compiler target passes,
 - driver translation layers,
@@ -113,24 +106,26 @@ Backend-specific optimizations must remain encapsulated within:
 
 ---
 
-### 3.5 Observability by Default
+### 3.5 Observability by default
 
 All runtime stages expose:
 
 - metrics,
 - structured logs,
 - traces,
-- correlation IDs.
+- correlation identifiers.
 
 Minimum required correlation identifiers:
 
-- `trace_id`
-- `job_id`
-- `device_id`
+- `trace_id` (trace context),
+- `job_id` (workload identity),
+- `device_id` / `backend_id` (when applicable).
+
+Trace propagation is W3C TraceContext (`traceparent`) across all service boundaries.
 
 ---
 
-### 3.6 Modular Extensibility
+### 3.6 Modular extensibility
 
 The architecture supports independent evolution of:
 
@@ -139,15 +134,16 @@ The architecture supports independent evolution of:
 - schedulers,
 - drivers,
 - orchestration policies,
+- dataset and knowledge services,
 - backend integrations.
 
-No core service modifications should be required to add new drivers or compiler backends.
+Adding a new backend driver SHOULD NOT require kernel core modifications.
 
 ---
 
-## 4. High-Level System Architecture
+## 4. High-level system architecture
 
-Eigen OS is organized into four architectural layers.
+Eigen OS is organized into four architectural layers (layered “cake” architecture):
 
 ```text
 ┌────────────────────────────────────────────┐
@@ -158,13 +154,14 @@ Eigen OS is organized into four architectural layers.
                     ▼
 ┌────────────────────────────────────────────┐
 │ Level 2 — Kernel Layer                    │
-│ QRTX Scheduler / QFS / Runtime State      │
+│ Kernel (QRTX) / Scheduling / QFS / State  │
 └────────────────────────────────────────────┘
                     │
                     ▼
 ┌────────────────────────────────────────────┐
 │ Level 3 — Runtime Services                │
-│ Compiler / Driver Manager / KB / GNN      │
+│ Compiler / Driver Manager / KB / Data     │
+│ (optional) Optimizers, Learning services  │
 └────────────────────────────────────────────┘
                     │
                     ▼
@@ -176,22 +173,23 @@ Eigen OS is organized into four architectural layers.
 
 ---
 
-## 5. Level 1 — Abstraction Layer
+## 5. Level 1 — Abstraction layer
 
 ### 5.1 Eigen-Lang
 
 Eigen-Lang is the high-level hybrid DSL of Eigen OS.
 
-Current MVP baseline:
+MVP baseline:
 
-- Python-based syntax
-- AST-only compilation
-- deterministic transformation pipeline
-- symbolic parameter support
+- Python-based syntax (`.eigen.py`),
+- AST-only compilation (no user code execution),
+- deterministic transformation pipeline,
+- symbolic parameter support,
+- compiler allowlist enforcement for imports and AST nodes.
 
-#### Supported Conceptual Primitives
+Conceptual primitives (language-level, not necessarily all implemented end-to-end in MVP):
 
-| **Category** | **Examples** |
+| Category | Examples |
 |---|---|
 | Quantum types | `QubitRegister`, `Observable`, `Ansatz` |
 | Decorators | `@hybrid_program`, `@cost_function` |
@@ -199,38 +197,24 @@ Current MVP baseline:
 | Templates | `create_hea_ansatz()` |
 | Utilities | `visualize_circuit()` |
 
-#### MVP Compiler Restrictions
-
-Allowed:
-
-- declarative program structure,
-- symbolic expressions,
-- constrained imports.
-
-Disallowed:
-
-- arbitrary runtime execution,
-- unrestricted dynamic evaluation,
-- unsafe filesystem/network execution.
-
-Compilation operates strictly on Python AST.
+Authoritative language contract: `reference/eigen-lang.md`.
 
 ---
 
 ### 5.2 SDK and CLI
 
-The CLI and SDK provide the user-facing execution interface.
+The CLI and SDK provide user-facing interfaces and packaging.
 
-Primary commands:
+Representative CLI commands:
 
-| **Command** | **Purpose** |
+| Command | Purpose |
 |---|---|
 | `eigen submit` | Submit jobs |
 | `eigen status` | Query state |
 | `eigen results` | Retrieve results |
 | `eigen devices` | Query backend catalog |
 
-The CLI packages user assets into `SubmitJobRequest`.
+The CLI packages user assets into `SubmitJobRequest` and is responsible for deterministic packaging and hashing rules defined by JobSpec.
 
 ---
 
@@ -238,71 +222,45 @@ The CLI packages user assets into `SubmitJobRequest`.
 
 The System API is the only public ingress to the runtime.
 
-#### Responsibilities
+Responsibilities:
 
-- authentication,
-- authorization,
-- request validation,
-- routing,
-- observability boundary,
-- external API compatibility.
+- authentication and authorization,
+- request validation and normalization,
+- routing to internal services,
+- trace propagation and observability boundary,
+- external API compatibility (public contract governance).
 
-#### Public API Contract
+#### Public APIs
 
-Package:
+- **Primary public interface:** gRPC, package `eigen.api.v1` (stable at v1.0.0).
+- **Selected REST endpoints:** used for targeted workflows and tooling where HTTP/JSON is preferred. Examples include:
+  - `POST /benchmarks/run` (benchmark run creation)
+  - `POST /explain/backend-selection` (explainability for backend selection)
 
-```text
-eigen.api.v1
-```
-
-#### Public Services
-
-| **Service** | **Status** |
-|---|---|
-| JobService | Implemented |
-| DeviceService | Implemented |
-| KnowledgeBaseService | Implemented |
-| StreamJobUpdates | Implemented |
-| GetDispatchRationale | Implemented |
-| GetDeviceDetails | Implemented |
-
-#### Primary RPCs
-
-| **RPC** | **Purpose** |
-|---|---|
-| SubmitJob | Submit workload |
-| GetJobStatus | Query runtime state |
-| CancelJob | Cancel execution |
-| GetJobResults | Retrieve results |
-| StreamJobUpdates | Poll-stream updates |
-| ListDevices | Enumerate backends |
+REST endpoints are versioned and must follow the same error and observability policies as gRPC.
 
 ---
 
-## 6. Level 2 — Kernel Layer
+## 6. Level 2 — Kernel layer
 
-### 6.1 QRTX Kernel
+### 6.1 Kernel (QRTX)
 
-The Eigen Kernel is the orchestration core.
+The Eigen Kernel is the orchestration core and the single source of truth for runtime state.
 
-Implementation language:
+Primary responsibilities:
 
-```text
-Rust
-```
+- job lifecycle state machine,
+- orchestration and scheduling,
+- coordinating compilation and execution,
+- artifact persistence coordination (QFS),
+- retries and cancellation semantics,
+- durable error visibility for async failures.
 
-The kernel owns:
-
-- job lifecycle,
-- state machine,
-- orchestration,
-- scheduling,
-- artifact coordination,
-- runtime transitions.
+Implementation language: Rust.
 
 ---
 
-### 6.2 Runtime State Machine
+### 6.2 Runtime state machine
 
 Canonical client-visible states:
 
@@ -314,154 +272,89 @@ PENDING
 → DONE | ERROR | CANCELLED
 ```
 
-The kernel is the single source of truth for runtime state.
-
-System API must not invent or reinterpret states.
+The kernel is the authoritative owner of lifecycle state. System API and SDKs MUST NOT invent or reinterpret lifecycle states.
 
 ---
 
-### 6.3 Scheduling Model
+### 6.3 Scheduling model
 
-Current MVP scheduler:
+MVP scheduler characteristics:
 
 - queue-based,
-- deterministic,
-- backend-aware,
-- simulator-first.
+- deterministic and simulator-first,
+- backend-aware via Driver Manager capabilities.
 
-Future-compatible extension points already defined:
+Forward-compatible extension points:
 
-- noise-aware scheduling,
-- topology-aware placement,
-- multi-program scheduling,
-- adaptive retry policies,
-- hardware scoring.
+- policy-driven routing (`balanced`, `latency`, `cost`, `availability`, `deterministic`, `compliance`),
+- intelligent backend scoring and explainability,
+- multi-device execution (split/merge),
+- adaptive retry policies and fairness/quota enforcement.
 
 ---
 
-### 6.4 QFS — Quantum File System
+### 6.4 QFS (CircuitFS) — artifact persistence
 
-QFS is the artifact persistence layer.
+QFS is the canonical persistence layer for:
 
-#### Current Production Baseline
-
-Implemented:
-
-```text
-QFS Level 3
-```
-
-#### Level 3 Responsibilities
-
-Persistent storage for:
-
-- source bundles,
-- AQO artifacts,
-- QASM,
+- JobSpec (`job.yaml`) and submission bundles,
+- source programs,
+- compiled artifacts (AQO/QASM),
 - execution results,
 - logs,
-- metadata,
-- manifests.
+- manifests and checksums,
+- durable error artifacts for async failures,
+- lineage and replay artifacts (when applicable).
 
-#### Storage Backends
+Storage backends (deployment dependent):
 
-Current implementations:
+- SQLite (metadata/indexing),
+- MinIO / S3-compatible object storage (artifact payloads),
+- alternative backends are allowed if they preserve QFS semantics.
 
-- SQLite
-- MinIO / S3-compatible object storage
-
----
-
-### 6.5 Future QFS Layers
-
-#### Level 2 — Quantum State Store
-
-Target capability:
-
-- serialized quantum state persistence,
-- tomography checkpointing,
-- debugging snapshots.
-
-Not required for MVP execution.
+Authoritative artifact layout contract: `reference/qfs-layout.md`.
 
 ---
 
-#### Level 1 — Live Qubit Manager
+## 7. Level 3 — runtime services
 
-Target capability:
+### 7.1 Compiler service
 
-- direct qubit allocation,
-- feed-forward execution,
-- hardware isolation management.
+Implementation language: Python.
 
-Not part of MVP runtime.
+Responsibilities:
 
----
-
-## 7. Level 3 — Runtime Services
-
-### 7.1 Compiler Service
-
-Implementation language:
-
-```text
-Python
-```
-
-#### Responsibilities
-
-- AST parsing,
-- validation,
+- parse and validate Eigen-Lang source (AST allowlist),
 - deterministic lowering,
-- AQO generation,
-- target optimization.
+- AQO generation (canonical IR),
+- optional QASM export,
+- compiler metadata and diagnostics.
 
-#### Compilation Pipeline
+Compilation pipeline:
 
 ```text
 Eigen-Lang Source
 → AST
 → Validation
 → Transformation
-→ AQO
-→ Backend Payload
+→ AQO (+ optional QASM)
+→ Persist to QFS
 ```
-
-#### Current Compiler Guarantees
-
-Implemented:
-
-- deterministic AQO,
-- AST safety enforcement,
-- import allowlists,
-- symbolic parameter handling.
 
 ---
 
-### 7.2 AQO — Abstract Quantum Operations
+### 7.2 AQO (Abstract Quantum Operations)
 
-AQO is the canonical intermediate representation.
+AQO is the canonical intermediate representation exchanged between compiler and runtime.
 
-#### Properties
+Properties:
 
 - backend-independent,
 - deterministic,
 - serializable,
-- symbolic.
+- supports symbolic parameters.
 
-#### Example Operations
-
-```json
-{
-  "op": "RY",
-  "q": [0],
-  "params": {
-    "theta": "p0"
-  }
-}
-```
-
-AQO is the boundary contract between compiler and execution runtime.
+Authoritative AQO contract: `reference/aqo.md`.
 
 ---
 
@@ -469,117 +362,90 @@ AQO is the boundary contract between compiler and execution runtime.
 
 The Driver Manager abstracts backend execution.
 
-#### Responsibilities
+Responsibilities:
 
-- driver lifecycle,
-- backend translation,
+- driver lifecycle and capability discovery,
+- payload translation to vendor formats,
 - execution dispatch,
 - result normalization,
-- capability discovery.
-
-#### Current Runtime Baseline
-
-Implemented:
-
-- simulator-first drivers,
-- backend abstraction,
-- execution normalization,
-- driver contracts.
+- backend/provider error normalization per the Error Model.
 
 ---
 
 ### 7.4 Knowledge Base
 
-The Knowledge Base stores reusable execution intelligence.
+The Knowledge Base (KB) stores reusable execution intelligence and records used by the platform and developer tooling.
 
-Current implemented APIs:
-
-- `UpsertRecord`
-- `BatchUpsertRecords`
-- `QueryRecords`
-- `GetRecord`
+Public-facing APIs exist (`KnowledgeBaseService`), frozen at v1.0.0.
 
 Target capabilities:
 
-- circuit reuse,
+- circuit and artifact reuse,
 - optimization reuse,
-- execution analytics,
-- adaptive scheduling intelligence.
+- analytics and trace-backed auditability,
+- future integration with intelligent scheduling.
 
 ---
 
-### 7.5 Hardware Optimizer
+### 7.5 Dataset pipeline and learning services (forward-compatible)
 
-Future runtime optimization subsystem.
+Eigen OS architecture includes forward-compatible services for:
 
-Target responsibilities:
+- dataset ingestion and caching (Dataset Pipeline),
+- continuous learning signals and model refresh,
+- optimizer integration (e.g., GNN optimizer).
 
-- qubit placement,
-- routing optimization,
-- topology-aware transformations,
-- backend-specific scheduling optimization.
-
-Planned implementation:
-
-```text
-Graph Neural Networks (GNN)
-```
+These are not required for MVP end-to-end execution but are included as architectural extension points.
 
 ---
 
-## 8. Level 4 — Hardware Abstraction Layer
+## 8. Level 4 — hardware abstraction layer
 
 ### 8.1 QDriver API
 
 The QDriver API standardizes backend integrations.
 
-#### Core Driver Responsibilities
+Core driver responsibilities:
 
-| **Method** | **Purpose** |
+| Method | Purpose |
 |---|---|
-| initialize | Driver startup |
-| get_devices | Capability discovery |
-| execute_circuit | Execution |
-| get_device_status | Health monitoring |
-| calibrate_device | Calibration hooks |
+| `initialize` | Driver startup |
+| `get_devices` | Capability discovery |
+| `execute_circuit` | Execution |
+| `get_device_status` | Health monitoring |
+| `calibrate_device` | Calibration hooks |
 
 ---
 
-### 8.2 Supported Backend Categories
+### 8.2 Supported backend categories
 
-#### Current MVP Baseline
-
-Implemented:
+MVP baseline:
 
 - simulator backends,
-- Qiskit Aer integration path,
-- local execution flows.
+- local execution profiles.
 
-#### Planned Extensions
+Planned extensions (provider dependent):
 
-- IBM Quantum
-- AWS Braket
-- IonQ
-- Rigetti
-- photonic systems
-- trapped-ion systems
+- major vendor QPUs,
+- cloud provider orchestration backends,
+- additional simulator engines.
 
 ---
 
-## 9. Service Topology
+## 9. Service topology
 
-### 9.1 Runtime Services
+### 9.1 Runtime services
 
-| **Service** | **Language** | **Role** |
+| Service | Language | Role |
 |---|---|---|
-| system-api | Python | Public ingress |
-| eigen-kernel | Rust | Runtime orchestration |
-| eigen-compiler | Python | Compilation |
-| driver-manager | Python | Backend execution |
+| `system-api` | Python | Public ingress (gRPC + selected REST) |
+| `eigen-kernel` (QRTX) | Rust | Orchestration, scheduling, lifecycle |
+| `eigen-compiler` | Python | Compilation to AQO/QASM |
+| `driver-manager` | Python | Backend execution and normalization |
 
 ---
 
-### 9.2 Mandatory Communication Paths
+### 9.2 Mandatory communication paths
 
 ```text
 Client
@@ -592,7 +458,7 @@ Kernel
   └── QFS
 ```
 
-#### Runtime Flow
+Runtime flow:
 
 ```text
 Submit
@@ -606,85 +472,84 @@ Submit
 
 ---
 
-## 10. Key Data Models
+## 10. Key data models
 
-### 10.1 JobSpec
+### 10.1 JobSpec (`job.yaml`)
 
-Canonical user workload description.
+Canonical user workload descriptor.
 
-#### Structure
+Contract version (JobSpec API version):
 
 ```yaml
-apiVersion: eigen.os/v0.1
+apiVersion: eigen.os/v1
 kind: QuantumJob
-metadata:
-spec:
 ```
 
-#### Contains
+JobSpec defines:
 
-- program source,
-- target backend,
+- program source (file/inline/URI – per contract),
+- target backend/routing policy,
 - compiler options,
-- execution metadata,
-- runtime parameters.
+- runtime parameters,
+- observability and security policy,
+- artifact retention rules.
+
+Authoritative contract: `reference/jobspec.md`.
 
 ---
 
 ### 10.2 CircuitPayload
 
-Execution-ready transport wrapper.
+Execution-ready transport wrapper between kernel and driver.
 
 Contains:
 
-- AQO bytes,
-- format enum,
-- metadata,
-- execution options.
+- payload format enum (AQO JSON / AQO protobuf / QASM where supported),
+- payload bytes or references,
+- shots and execution options,
+- metadata and provenance identifiers.
 
 ---
 
-## 10.3 ExecutionResult
+### 10.3 ExecutionResult
 
 Normalized backend output.
 
-#### Canonical Contents
+Canonical contents:
 
-- counts,
-- execution metadata,
-- timing,
-- backend identifiers.
+- counts (canonical bit ordering),
+- execution timing,
+- backend identifiers,
+- structured metadata.
 
 ---
 
 ### 10.4 JobResults
 
-User-facing final result envelope.
+User-facing result envelope.
 
 May contain:
 
 - normalized results,
-- AQO references,
-- QASM references,
-- logs,
-- manifests,
-- metrics.
+- QFS references to artifacts (AQO/QASM/results/logs),
+- manifests and checksums,
+- durable error references when failed.
 
 ---
 
-## 11. Observability Architecture
+## 11. Observability architecture
 
-### 11.1 Trace Propagation
+### 11.1 Trace propagation
 
 Eigen OS uses W3C TraceContext.
 
-Propagation key:
+Propagation header/key:
 
 ```text
 traceparent
 ```
 
-The trace context propagates through:
+Trace context propagates through:
 
 ```text
 Client
@@ -692,196 +557,171 @@ Client
 → Kernel
 → Compiler
 → Driver Manager
-→ Backend
+→ Backend (where supported)
 ```
 
 ---
 
 ### 11.2 Metrics
 
-All services expose:
-
-```text
-/metrics
-```
+All services expose Prometheus metrics via `/metrics`.
 
 Primary telemetry stack:
 
-| **Component** | **Technology** |
+| Component | Technology |
 |---|---|
 | Metrics | Prometheus |
 | Dashboards | Grafana |
 | Tracing | OpenTelemetry |
 | Logs | Structured JSON |
 
----
-
-### 11.3 Correlation Requirements
-
-All logs and traces must include:
-
-- `trace_id`
-- `job_id`
-- `service_name`
-
-Optional:
-
-- `device_id`
-- `backend_id`
+Observability contracts are versioned and maintained as stable public operational surfaces (see the observability contract documents in `docs/reference/`).
 
 ---
 
-## 12. Security Model
+### 11.3 Correlation requirements
 
-### 12.1 Public Boundary
+Logs and traces MUST include:
 
-Only `system-api` is externally reachable.
+- `trace_id`,
+- `job_id`,
+- `service_name`.
 
-Internal services are network-restricted.
+When applicable:
+
+- `device_id` / `backend_id`.
+
+Metrics MUST obey bounded-cardinality rules (no `job_id`/`trace_id` labels).
 
 ---
 
-### 12.2 Compilation Safety
+## 12. Security model
 
-User code execution on the server is prohibited.
+### 12.1 Public boundary
 
-The compiler:
+Only `system-api` is externally reachable. Internal services are network-restricted and communicate over authenticated channels.
+
+### 12.2 Transport security
+
+- All external and internal RPC/HTTP calls MUST use TLS 1.3.
+- Internal service-to-service communication SHOULD use mutual TLS (mTLS) and service identity propagation.
+
+### 12.3 Authentication and authorization
+
+- External clients authenticate via OAuth2/JWT tokens (or client mTLS where applicable).
+- System API enforces authz (scopes/RBAC) per method.
+- Identity and tenant context is propagated to internal services via metadata.
+
+### 12.4 Compilation safety
+
+User code execution on the server is prohibited. The compiler:
 
 - parses AST,
-- validates syntax,
-- transforms declarative structures,
-- rejects unsafe constructs.
+- validates allowlisted constructs,
+- rejects unsafe imports and dynamic execution,
+- applies resource limits where required.
 
 ---
 
-### 12.3 Auth Model
+## 13. Technology stack
 
-Current MVP baseline:
-
-- interceptor-based auth,
-- metadata propagation,
-- internal claims forwarding.
-
-Advanced multi-provider auth remains a future extension.
-
----
-
-## 13. Technology Stack
-
-| **Area** | **Technology** |
+| Area | Technology |
 |---|---|
 | Kernel | Rust |
-| Runtime Services | Python 3.12+ |
+| Runtime services | Python 3.12+ |
 | RPC | gRPC + Protocol Buffers |
+| REST | HTTP/JSON (selected endpoints) |
 | Persistence | SQLite + MinIO/S3 |
 | Serialization | JSON / Parquet |
-| Observability | Prometheus / Grafana / OTel |
+| Observability | Prometheus / Grafana / OpenTelemetry |
 | Containers | Docker / Kubernetes |
-| Python Packaging | Poetry |
-| Rust Packaging | Cargo |
+| Python packaging | Poetry |
+| Rust packaging | Cargo |
 
 ---
 
-## 14. MVP Scope
+## 14. MVP scope
 
 The MVP guarantees:
 
 - end-to-end job execution,
 - deterministic AQO generation,
 - simulator execution,
-- artifact persistence,
-- observability,
-- gRPC public API,
-- runtime orchestration.
+- artifact persistence via QFS,
+- observability foundations (metrics/tracing/logging),
+- stable public gRPC API (`eigen.api.v1`),
+- kernel-managed runtime orchestration.
 
-### MVP Success Criterion
+### MVP success criterion
 
 ```bash
-eigen-cli submit --job job.yaml
+eigen submit --job job.yaml
 ```
 
-must execute a complete hybrid workflow on a simulator and return normalized results.
+MUST execute an end-to-end workload on a simulator and return normalized results (and QFS artifact references).
 
 ---
 
-## 15. Post-MVP Extensions Already Reflected in Architecture
+## 15. Post-MVP extensions already reflected in architecture/contracts
 
-The architecture already includes forward-compatible contracts for:
+The architecture includes forward-compatible contracts and/or partial implementations for:
 
 - Knowledge Base APIs,
-- dispatch rationale APIs,
-- device detail APIs,
-- hybrid loop orchestration,
-- advanced scheduling hooks,
-- optimizer integration,
-- distributed orchestration,
-- hardware-aware compilation.
+- dispatch rationale and explainability,
+- device details and reservation,
+- intelligent scheduling hooks,
+- distributed orchestration and multi-device split/merge,
+- optimizer integration hooks,
+- benchmark execution contracts,
+- cluster runtime observability contracts.
 
 These extensions are additive and do not invalidate MVP contracts.
 
 ---
 
-## 16. Architectural Invariants
+## 16. Architectural invariants
 
-The following invariants are mandatory.
+The following invariants are mandatory:
 
-### 16.1 Abstraction Invariant
-
-Programs execute across compatible backends without source modification.
-
-### 16.2 Safety Invariant
-
-User code is never executed server-side.
-
-### 16.3 Determinism Invariant
-
-Compilation outputs are deterministic.
-
-### 16.4 Observability Invariant
-
-All runtime flows expose metrics, logs, and traces with correlation IDs.
-
-### 16.5 Security Invariant
-
-System API is the sole public ingress.
-
-### 16.6 Extensibility Invariant
-
-Drivers and compilers can be added without modifying kernel core logic.
+1. **Abstraction:** Programs execute across compatible backends without source modification.
+2. **Safety:** User code is never executed server-side.
+3. **Determinism:** Compilation outputs are deterministic.
+4. **Observability:** Runtime flows expose metrics, logs, and traces with correlation IDs.
+5. **Security:** System API is the sole public ingress; internal comms are secured.
+6. **Extensibility:** Drivers and services can be added without modifying kernel core logic.
+7. **Contract governance:** Public API and format contracts evolve under SemVer discipline.
 
 ---
 
-## 17. Acceptance Criteria
+## 17. Acceptance criteria
 
 The architecture is considered MVP-complete when:
 
-| **Criterion** | **Target** |
+| Criterion | Target |
 |---|---|
 | End-to-end execution | Functional |
 | Deterministic AQO | Enforced |
 | Simulator support | Functional |
 | Public gRPC API | Stable |
-| Observability | JSON / Functional |
-| Artifact persistence | Functional |
+| Observability foundations | Functional |
+| Artifact persistence (QFS) | Functional |
 | Runtime orchestration | Functional |
 
 ---
 
-## 18. Compatibility Policy
+## 18. Compatibility policy
 
-### 18.1 API Compatibility
+### 18.1 API compatibility
 
 Breaking changes require:
 
-- new package version,
-- parallel support window,
+- new package version (`eigen.api.v2`, etc.),
+- parallel support window (where feasible),
 - migration documentation.
 
----
+### 18.2 Protobuf governance
 
-### 18.2 Protobuf Governance
-
-Proto contracts must pass:
+Proto contracts MUST pass:
 
 ```text
 buf lint
@@ -892,16 +732,16 @@ before merge.
 
 ---
 
-## 19. Final Architectural Position
+## 19. Final architectural position
 
-Eigen OS MVP is defined as:
+Eigen OS MVP is:
 
 - a deterministic hybrid quantum runtime,
 - based on stable service contracts,
 - with strict orchestration boundaries,
 - simulator-first execution,
 - extensible backend abstraction,
-- artifact persistence,
+- artifact persistence (QFS),
 - observable runtime execution,
 - future-compatible distributed architecture.
 

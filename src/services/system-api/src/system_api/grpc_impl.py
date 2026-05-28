@@ -916,7 +916,7 @@ class JobService:
             record.dispatch_rationale["attributes"]["quota_state"] = "eligible"
             record.dispatch_rationale["attributes"]["quota_penalty_slots"] = "0"
             
-            queued_for_tenant = sum(
+        queued_for_tenant = sum(
             1
             for rec in self._jobs.values()
             if rec.job_id != record.job_id

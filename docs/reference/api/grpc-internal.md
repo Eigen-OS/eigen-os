@@ -1,111 +1,699 @@
-# gRPC Internal API (eigen.internal.v1)
+# gRPC Internal API Specification (eigen.internal.v1)
 
-This section captures the implemented internal gRPC contracts (used between Eigen OS services) and highlights missing pieces. The canonical `.proto` files (`proto/eigen/internal/v1/*.proto`) are the source of truth.
+**Version**: 1.0.0  
+**Status**: Target Standard  
+**Compatibility**: Eigen OS v1.3.0+  
+**Primary Transport**: gRPC over HTTP/2  
+**Serialization**: Protocol Buffers v3  
+**Security Model**: mTLS + Service Identity Tokens  
+**Canonical Namespace**: `eigen.internal.v1`
 
-## 1. Services and Methods
+---
 
-- **KernelGatewayService:** (System API → Kernel)
+## 1. Purpose
 
-   - `EnqueueJob(EnqueueJobRequest) → EnqueueJobResponse`
+This document defines the authoritative internal gRPC contracts used between Eigen OS services.
 
-   - `GetJobStatus(GetJobStatusRequest) → GetJobStatusResponse`
+The gRPC Internal API is the backbone of:
+- QRTX orchestration,
+- compilation pipelines,
+- scheduling,
+- driver execution,
+- optimizer execution,
+- observability propagation,
+- Knowledge Base ingestion,
+- Continuous Learning workflows,
+- storage operations.
 
-   - `CancelJob(CancelJobRequest) → CancelJobResponse`
+This specification supersedes informal implementation behavior and acts as the **source of truth** for all internal service-to-service communication. All implementations **MUST** conform to this document.
 
-   - `GetJobResults(GetJobResultsRequest) → GetJobResultsResponse` *State enum: TASK_STATE_(PENDING, COMPILING, QUEUED, RUNNING, DONE, ERROR, CANCELLED, TIMEOUT).*
+---
 
-- **CompilationService:** (Kernel → Compiler)
+## 2. Architectural Alignment with Eigen OS
 
-   - `CompileCircuit(CompileCircuitRequest) → CompileCircuitResponse`
+This API layer directly implements the architecture defined in Eigen OS Target Standard v1.3.0.
 
-   - `CompileJob(CompileJobRequest) → CompileJobResponse`
+#### Integrated components:
 
-   - `OptimizeCircuit(OptimizeCircuitRequest) → OptimizeCircuitResponse` *(stub)*
+| **Component**               | **Role** |
+|-----------------------------|------|
+| System API                  | External ingress |
+| QRTX                        | Central orchestration |
+| Compilation Service         | Neuro-DPDA compiler |
+| Optimizer Service           | GNN routing & placement |
+| Driver Manager              | Hardware abstraction |
+| QFS                         | Artifact and state persistence |
+| Knowledge Base              | Long-term learning memory |
+| Security Module             | AuthN/AuthZ and policy |
+| Observability Stack         | Tracing, metrics, audit |
+| Dataset Pipeline            | Dataset ingestion |
+| Continuous Learning Pipeline| Retraining orchestration |
 
-   - `ValidateCircuit(ValidateCircuitRequest) → ValidateCircuitResponse` *(stub)*
+---
 
-- **DriverManagerService:** (Kernel → Driver Manager)
+## 3. Transport Requirements
 
-   - `ListDevices(ListDevicesRequest) → ListDevicesResponse`
+#### Protocol
 
-   - `GetDeviceStatus(GetDeviceStatusRequest) → GetDeviceStatusResponse`
+All internal APIs **MUST** use:
+```http
+gRPC over HTTP/2
+```
 
-   - `ExecuteCircuit(ExecuteCircuitRequest) → ExecuteCircuitResponse`
+#### Serialization
 
-   - `CalibrateDevice(CalibrateDeviceRequest) → CalibrateDeviceResponse`
+All payloads MUST use:
 
-- **OptimizerService:** (Compiler/Kernel → GNN Optimizer)
+```text
+Protocol Buffers v3
+```
 
-   - `OptimizeCircuit(OptimizeCircuitRequest) → OptimizeCircuitResponse`
+#### Connection Security
 
-Common types (`types.proto`) include `CircuitPayload`, `CircuitFormat`, `DeviceInfo`, `DeviceStatus`, etc.
+All service-to-service communication MUST use:
 
-## 2. Detailed Notes
+- TLS 1.3
+- mutual TLS (mTLS)
 
-- **KernelGatewayService:**
+Unencrypted internal traffic is prohibited.
 
-   - **Implemented:** Submit, status, cancel, results RPCs.
+#### Identity Propagation
 
-   - **Missing:** There is *no* `PollJobUpdates` RPC here; streaming is done via public API instead.
+Each request MUST propagate:
 
-   - **Auth:** No auth fields in requests (we rely on gRPC metadata for internal trust). We should ensure metadata propagation (user/tenant context) on all calls.
+| **Metadata Key**     | **Purpose** |
+|----------------------|------|
+| `x-eigen-user-id`    | External ingress |
+| `x-eigen-tenant-id`  | Central orchestration |
+| `x-eigen-request-id` | Neuro-DPDA compiler |
+| `x-eigen-trace-id`   | GNN routing & placement |
+| `x-eigen-service-id` | Hardware abstraction |
+| `authorization`      | Artifact and state persistence |
+| `traceparent`        | Long-term learning memory |
 
-   - **Idempotency:** Not defined here; higher-level (System API) handles idempotency.
+These metadata keys are mandatory unless explicitly exempted.
 
-- **CompilationService:**
+---
 
-   - **Implemented:** `CompileCircuit`, `CompileJob`. The code returns a `CircuitPayload` and metadata.
+## 4. Canonical Proto Namespace
 
-   - **Stubbed:** `OptimizeCircuit` and `ValidateCircuit` exist in proto but are currently not implemented (they return UNIMPLEMENTED).
+```text
+package eigen.internal.v1;
+```
 
-   - **Options:** The `options` map in requests is currently unstructured; we should eventually define specific compiler flags or remove it if unused.
+Canonical source location:
+```text
+proto/eigen/internal/v1/
+```
 
-   - **Source refs:** CompileJob can accept `source_ref` but the ownership/timeout is not documented here.
+All `.proto` files under this directory are authoritative schema definitions.
 
-- **DriverManagerService:**
+---
 
-   - **Implemented:** List, status, execute; the response normalizes backend output into `counts`, `execution_time_sec`, etc.
+## 5. Core Services
 
-   - **CalibrateDevice:** Exists in proto but the driver manager’s current behavior is unimplemented.
+### 5.1 KernelGatewayService
 
-   - **Async exec:** Currently only synchronous unary `ExecuteCircuit`. A future should be an async/streaming interface for long jobs.
+#### Purpose
 
-   - **Metadata:** We should standardize keys like `"noise_level"` or `"gate_errors"` in `metadata`.
+Primary orchestration interface into QRTX.
 
-- **OptimizerService:**
+Acts as the internal bridge between:
+- System API
+- QRTX Scheduler
+- Runtime services
 
-   - **Implemented RPC:** `OptimizeCircuit`.
+#### Service Definition
 
-   - **Protocol details:** The request contains a semver envelope for replay (`contract_version`), topology, objective, deterministic seed.
+```text
+service KernelGatewayService {
+    rpc EnqueueJob(EnqueueJobRequest)
+        returns (EnqueueJobResponse);
 
-   - **Response:** Echoes seed, plus `fallback_used`/`fallback_reason` if a default algorithm was used, timing metrics (`optimizer_latency_ms`, etc.), and trace ID.
+    rpc GetJobStatus(GetJobStatusRequest)
+        returns (GetJobStatusResponse);
 
-   - **Reason codes:** The proto defines codes like `OPT_INVALID_AQO`, `OPT_TIMEOUT`, etc. These should be used on failure.
+    rpc CancelJob(CancelJobRequest)
+        returns (CancelJobResponse);
 
-   - **Missing:** The actual ML model execution path is not yet wired (only stub).
+    rpc GetJobResults(GetJobResultsRequest)
+        returns (GetJobResultsResponse);
 
-   - **Thresholds:** There is mention of confidence thresholds (e.g. fallback) but no frozen table of values.
+    rpc PollJobUpdates(PollJobUpdatesRequest)
+        returns (stream JobUpdateEvent);
+}
+```
 
-## 3. Cross-cutting
+---
 
-- **Error Model:** Internal APIs use gRPC status codes (no `success=false` fields). We should use standard codes: `INVALID_ARGUMENT`, `NOT_FOUND`, `FAILED_PRECONDITION`, `RESOURCE_EXHAUSTED`, `UNAVAILABLE`, `DEADLINE_EXCEEDED`, `UNIMPLEMENTED`. A global error mapping table (per-RPC and failure type) is not documented yet.
+#### Required Semantics
 
-- **Retries:** No common retry budgets are documented; each caller must decide per status. We should define recommended retry behavior for idempotent calls.
+#### EnqueueJob
 
-- **Observability:** Trace context (W3C `traceparent`) flows by metadata. Metrics exist but naming is not standardized in docs.
+Creates a new execution workflow.
 
-- **Security:** Internal calls are currently unsecured (mTLS optional). We should enforce mutual TLS and propagate a service identity token on all hops.
+MUST:
+- validate authorization,
+- assign deterministic `job_id`,
+- persist JobSpec,
+- enqueue into QRTX.
 
-## 4. Action Items
+#### GetJobStatus
 
-1. **Sync Names:** Update docs and code to consistently use `KernelGatewayService`, `CompilationService`, etc. (vs. legacy names).
+Returns lifecycle state.
 
-2. **Metadata Fields:** Freeze required gRPC metadata keys (e.g. `x-eigen-user`, `x-eigen-tenant`) and enforce them.
+Canonical states:
+```text
+PENDING
+COMPILING
+QUEUED
+RUNNING
+DONE
+ERROR
+CANCELLED
+TIMEOUT
+```
 
-3. **Error Table:** Create a reference table mapping each RPC and error condition to gRPC codes.
+#### CancelJob
 
-4. **CI Checks:** Add Buf or custom checks to catch proto changes in CI and verify metadata propagation in tests.
+MUST:
 
-5. **Complete Stubs:** Implement or remove the stub RPCs (`OptimizeCircuit`, `ValidateCircuit`, `CalibrateDevice`).
+- propagate cancellation to all downstream services,
+- cancel queued/running backend executions,
+- release qubit reservations,
+- update observability traces.
 
-6. **Opcodes:** Freeze any constant options (like compiler flags keys) that must be interoperable.
+#### PollJobUpdates
+
+Streaming API for incremental updates.
+
+Replaces polling loops.
+
+MUST support:
+
+- server streaming,
+- heartbeat events,
+- cancellation propagation,
+- deadline handling.
+
+---
+
+### 5.2 CompilationService
+
+#### Purpose
+
+Neuro-symbolic compilation interface.
+
+Transforms:
+```text
+Eigen-Lang → AST → AQO → Intermediate representations
+```
+
+**Service Definition**
+```text
+service CompilationService {
+    rpc CompileCircuit(CompileCircuitRequest)
+        returns (CompileCircuitResponse);
+
+    rpc CompileJob(CompileJobRequest)
+        returns (CompileJobResponse);
+
+    rpc OptimizeCircuit(OptimizeCircuitRequest)
+        returns (OptimizeCircuitResponse);
+
+    rpc ValidateCircuit(ValidateCircuitRequest)
+        returns (ValidateCircuitResponse);
+}
+```
+
+#### CompileCircuit
+
+Compiles a standalone circuit.
+
+Outputs:
+
+- AQO,
+- IR,
+- diagnostics,
+- compiler trace.
+
+#### CompileJob
+
+Compiles a full hybrid workflow.
+
+MUST support:
+
+- multiple circuits,
+- classical orchestration,
+- dataset references,
+- parameter binding.
+
+#### OptimizeCircuit
+
+Previously stubbed.
+
+MUST now be implemented.
+
+Responsibilities:
+
+- AQO optimization,
+- gate simplification,
+- SWAP reduction,
+- noise-aware rewriting,
+- topology-aware transformations.
+
+#### ValidateCircuit
+
+Previously stubbed.
+
+MUST now be implemented.
+
+Validation includes:
+
+- AST safety,
+- deterministic semantics,
+- unsupported gates,
+- recursion prevention,
+- bounded resources,
+- prohibited runtime constructs.
+
+---
+
+### 5.3 DriverManagerService
+
+#### Purpose
+
+Hardware abstraction orchestration layer.
+
+Provides unified access to:
+
+- simulators,
+- local hardware,
+- cloud quantum devices.
+
+#### Service Definition
+
+```text
+service DriverManagerService {
+    rpc ListDevices(ListDevicesRequest)
+        returns (ListDevicesResponse);
+
+    rpc GetDeviceStatus(GetDeviceStatusRequest)
+        returns (GetDeviceStatusResponse);
+
+    rpc ExecuteCircuit(ExecuteCircuitRequest)
+        returns (ExecuteCircuitResponse);
+
+    rpc ExecuteCircuitAsync(ExecuteCircuitRequest)
+        returns (ExecutionHandle);
+
+    rpc StreamExecutionUpdates(ExecutionHandle)
+        returns (stream ExecutionEvent);
+
+    rpc CalibrateDevice(CalibrateDeviceRequest)
+        returns (CalibrateDeviceResponse);
+}
+```
+
+#### ExecuteCircuit
+
+Synchronous unary execution.
+
+Recommended only for short-running jobs.
+
+#### ExecuteCircuitAsync
+
+Required for:
+
+- cloud devices,
+- queued systems,
+- long-running executions.
+
+Returns execution handle.
+
+#### StreamExecutionUpdates
+
+Streams:
+
+- queue status,
+- execution start,
+- execution completion,
+- telemetry,
+- cancellation,
+- failure events.
+
+#### CalibrateDevice
+
+Previously stubbed.
+
+MUST now be implemented.
+
+Calibration MAY include:
+
+- T1/T2 refresh,
+- gate recalibration,
+- readout recalibration,
+- topology refresh.
+
+---
+
+### 5.4 OptimizerService
+
+#### Purpose
+
+GNN-based routing and placement optimization.
+
+Transforms:
+
+```text
+AQO → topology-aware executable QASM
+```
+
+#### Service Definition
+
+```text
+service OptimizerService {
+    rpc OptimizeCircuit(OptimizeCircuitRequest)
+        returns (OptimizeCircuitResponse);
+}
+```
+
+#### Required Semantics
+
+MUST support:
+
+- deterministic seed replay,
+- confidence scoring,
+- fallback algorithms,
+- topology-aware routing,
+- SWAP minimization,
+- noise prediction.
+
+#### Required Failure Codes
+
+| **Code** | **Meaning** |
+|----------------------|------|
+| `OPT_INVALID_AQO` | Invalid intermediate representation |
+| `OPT_TIMEOUT` | Optimization exceeded deadline |
+| `OPT_NO_FEASIBLE_MAPPING` | No routing solution |
+| `OPT_MODEL_FAILURE` | ML model failure |
+| `OPT_INTERNAL_ERROR` | Internal optimizer failure |
+
+---
+
+### 5.5 QFSService
+
+#### Purpose
+
+Internal persistence interface for QFS.
+
+Previously undocumented in internal API contracts.
+
+Now mandatory.
+
+#### Service Definition
+
+```text
+service QFSService {
+    rpc StoreArtifact(StoreArtifactRequest)
+        returns (StoreArtifactResponse);
+
+    rpc GetArtifact(GetArtifactRequest)
+        returns (GetArtifactResponse);
+
+    rpc ListArtifacts(ListArtifactsRequest)
+        returns (ListArtifactsResponse);
+
+    rpc CheckpointState(CheckpointStateRequest)
+        returns (CheckpointStateResponse);
+
+    rpc RestoreState(RestoreStateRequest)
+        returns (RestoreStateResponse);
+}
+```
+
+---
+
+### 5.6 KnowledgeBaseService
+
+#### Purpose
+
+Persistent memory and learning interface.
+
+Previously omitted from internal API spec.
+
+Now mandatory.
+
+#### Service Definition
+
+```text
+service KnowledgeBaseService {
+    rpc SearchSimilar(SearchSimilarRequest)
+        returns (SearchSimilarResponse);
+
+    rpc QueryCircuits(QueryCircuitsRequest)
+        returns (QueryCircuitsResponse);
+
+    rpc GetPattern(GetPatternRequest)
+        returns (GetPatternResponse);
+
+    rpc IngestCircuit(IngestCircuitRequest)
+        returns (IngestCircuitResponse);
+
+    rpc IngestBatch(IngestBatchRequest)
+        returns (IngestBatchResponse);
+}
+```
+
+---
+
+## 6. Common Types
+
+Canonical shared types include:
+
+| **Type** | **Purpose** |
+|----------------------|------|
+| `CircuitPayload` | Circuit representation |
+| `AQOPayload` | AQO intermediate representation |
+| `DeviceInfo` | Device metadata |
+| `DeviceStatus` | Live telemetry |
+| `ExecutionMetrics` | Runtime metrics |
+| `CompilerTrace` | DPDA trace |
+| `TopologyGraph` | Device topology |
+| `JobSpec` | Workflow specification |
+
+---
+
+## 7. Error Model
+
+Internal APIs MUST use canonical gRPC status codes.
+
+No:
+```text
+success = false
+```
+
+patterns are permitted.
+
+### 7.1 Canonical gRPC Codes
+
+| **Code** | **Usage** |
+|----------------------|------|
+| `INVALID_ARGUMENT` | Validation failure |
+| `NOT_FOUND` | Missing resource |
+| `FAILED_PRECONDITION` | Invalid lifecycle state |
+| `RESOURCE_EXHAUSTED` | Quota exhaustion |
+| `UNAUTHENTICATED` | Missing auth |
+| `PERMISSION_DENIED` | Access denied |
+| `UNAVAILABLE` | Temporary outage |
+| `DEADLINE_EXCEEDED` | Timeout |
+| `UNIMPLEMENTED` | Unsupported RPC |
+| `INTERNAL` | Unexpected failure |
+
+---
+
+### 7.2 Retry Semantics
+
+Retry recommendations:
+
+| **Status** | **Retry** |
+|----------------------|------|
+| `UNAVAILABLE` | yes |
+| `DEADLINE_EXCEEDED` | yes |
+| `RESOURCE_EXHAUSTED` | backoff |
+| `INTERNAL` | conditional |
+| `INVALID_ARGUMENT` | never |
+| `PERMISSION_DENIED` | never |
+
+Exponential backoff REQUIRED.
+
+---
+
+## 8. Determinism Requirements
+
+All services MUST support deterministic replay where applicable.
+
+Deterministic replay requires:
+
+- fixed seeds,
+- version-pinned models,
+- topology snapshots,
+- compiler trace persistence,
+- immutable artifacts.
+
+---
+
+## 9. Observability Requirements
+
+#### OpenTelemetry
+
+All RPCs MUST create spans.
+
+Required attributes:
+
+| **Attribute** | **Description** |
+|----------------------|------|
+| `rpc.service` | gRPC service |
+| `rpc.method` | RPC method |
+| `eigen.job_id` | Job ID |
+| `eigen.device_id` | Backend |
+| `eigen.user_id` | User |
+| `eigen.trace_id` | Trace |
+
+#### Metrics
+
+Each RPC MUST expose:
+
+| **Metric** | **Type** |
+|----------------------|------|
+| `grpc_requests_total` | counter |
+| `grpc_failures_total` | counter |
+| `grpc_latency_ms` | histogram |
+
+#### Structured Logging
+
+All services MUST emit structured logs.
+
+Required fields:
+
+- `trace_id`,
+- `request_id`,
+- `service_id`,
+- `rpc_name`,
+- `latency_ms`,
+- `result_code`.
+
+---
+
+## 10. Security Requirements
+
+#### Mutual TLS
+
+Mandatory for ALL internal traffic.
+
+#### Service Identity
+
+Each service MUST authenticate using:
+
+- SPIFFE/SPIRE,
+- or signed JWT service identities.
+
+#### Least Privilege
+
+Each service account MUST have minimal scopes.
+
+Example:
+
+| **Service** | **Allowed Actions** |
+|----------------------|------|
+| Compiler | compile only |
+| Optimizer | optimize only |
+| Driver Manager | backend execution only |
+
+#### Auditability
+
+All privileged operations MUST be auditable.
+
+---
+
+## 11. Versioning Rules
+
+Proto contracts follow SemVer.
+
+#### Minor Versions
+
+May:
+
+- add optional fields,
+- add RPCs,
+- extend enums safely.
+
+#### Major Versions
+
+Required for:
+
+- field removal,
+- semantic changes,
+- required field additions.
+
+---
+
+## 12. CI/CD Requirements
+
+CI MUST enforce:
+
+- Buf breaking-change checks,
+- deterministic proto generation,
+- linting,
+- metadata propagation tests,
+- replay fixture validation,
+- backward compatibility tests.
+
+---
+
+## 13. Acceptance Criteria
+
+Implementation is compliant only if:
+
+- all RPCs use mTLS,
+- metadata propagation is enforced,
+- streaming APIs work,
+- deterministic replay passes,
+- observability instrumentation exists,
+- retries follow policy,
+- stubs are fully implemented,
+- QFS/KB services are exposed,
+- proto contracts are CI-protected.
+
+---
+
+## 14. Migration Requirements
+
+The following legacy behaviors MUST be removed:
+
+| Legacy Behavior | Replacement |
+|----------------------|------|
+| unsecured gRPC | mTLS |
+| missing metadata | mandatory propagation |
+| unary-only execution | async + streaming |
+| unimplemented stubs | fully implemented RPCs |
+| implicit auth trust | explicit service identity |
+
+---
+
+## 15. Source of Truth Statement
+
+This document is the authoritative specification for all internal gRPC APIs in Eigen OS.
+
+All implementations:
+
+- Rust,
+- Python,
+- Go,
+- SDKs,
+- test harnesses,
+- mock servers,
+
+MUST conform to this specification.
+
+If code diverges from this document, the implementation MUST be corrected.
