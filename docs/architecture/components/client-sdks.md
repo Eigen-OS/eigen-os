@@ -1,791 +1,522 @@
 # Eigen OS Client SDKs
 
-Status snapshot: updated on 2026-05-25 based on implemented repository state, RFC index, ADR index, integration tests, and architectural contracts.
+- **Document status:** Normative
+- **Subsystem:** Client SDKs / CLI
+- **Applies to:** SDKs, CLI, integration clients
+- **Compatibility target:** Eigen OS `1.x` public API (`eigen.api.v1`)
+- **Last updated:** 2026-05-25
 
-This document is the canonical specification of the Eigen OS Client SDK layer.
-It explicitly separates:
+This document is the canonical specification of the Eigen OS Client SDK layer. It separates:
 
-- functionality required by the technical specification (target architecture),
-- functionality already implemented,
-- functionality planned but not yet implemented.
+- **Normative contract requirements** (what SDKs MUST implement to be conformant),
+- **Current implementation status** (what exists in this repository today),
+- **Planned / deferred items** (explicitly non-normative until implemented + released).
 
-The document is normative for SDK architecture, public contracts, and integration behavior.
+The SDK layer is **not** the source of truth for server contracts; it MUST track:
+
+- `docs/reference/api/grpc-public.md`
+- `docs/reference/jobspec.md`
+- `docs/reference/error-model.md`
+- `docs/reference/error-mapping.md`
+- `docs/architecture/contract-map.md`
+- `docs/architecture/data-flow.md`
 
 ---
 
 ## 1. Purpose
 
-The Eigen OS Client SDKs provide standardized client interfaces for interacting with the Eigen OS distributed hybrid quantum-classical runtime.
+Eigen OS Client SDKs provide standardized client interfaces for interacting with the Eigen OS distributed hybrid quantum-classical runtime.
 
 The SDK layer abstracts:
 
-- transport protocols,
-- authentication,
-- serialization,
-- job lifecycle management,
-- observability,
-- compatibility handling,
-- backend communication complexity.
+- transport protocols (gRPC first; REST optional),
+- authentication and metadata propagation,
+- JobSpec packaging and submission,
+- job lifecycle and result retrieval,
+- device discovery and reservation,
+- deterministic error semantics and retry guidance,
+- observability integration (tracing/logging/metrics hooks),
+- compatibility negotiation and version pinning.
 
-The SDKs are intended for:
+SDKs are intended for:
 
 - research environments,
 - production orchestration systems,
 - ML/AI pipelines,
-- scientific computing workflows,
-- cloud automation platforms,
-- IDE and notebook integrations.
+- CI/CD and automation,
+- notebook/IDE integrations.
 
 ---
 
-## 2. Scope
+## 2. Scope and Non-Goals
 
-The Client SDK layer is responsible for:
+### 2.1 SDK responsibilities (normative)
 
-- submitting quantum and hybrid jobs,
-- interacting with runtime services,
-- monitoring execution state,
-- retrieving execution results,
-- querying device information,
-- managing authentication and session state,
-- exposing observability hooks,
-- handling retries and transport failures,
-- providing language-native developer ergonomics.
+SDKs MUST provide:
 
-The SDK layer is **not responsible** for:
+- job submission (JobSpec-driven),
+- job lifecycle management (polling + streaming updates),
+- result retrieval (including artifact references),
+- device interactions (list/status/details/reserve),
+- authentication + authorization metadata injection,
+- deterministic error mapping and typed exceptions,
+- deadline/timeout propagation,
+- trace propagation (W3C TraceContext),
+- bounded and safe client-side observability hooks.
 
-- executing quantum programs locally,
-- bypassing Eigen OS validation,
-- direct hardware access,
-- server-side scheduling,
-- compilation determinism guarantees,
-- runtime isolation.
+### 2.2 Non-goals
 
-Those responsibilities belong to the Eigen OS backend services.
+SDKs MUST NOT:
+
+- execute user quantum programs locally as an alternative to Eigen OS (except optional local *validation-only* tools),
+- bypass Eigen OS validation or isolation,
+- directly access quantum hardware providers (all provider access is via Eigen OS runtime services),
+- implement server-side scheduling, compilation determinism, or policy decisions,
+- embed transport-layer errors inside application payloads (errors are transport status + structured details).
 
 ---
 
-## 3. Supported SDKs
+## 3. Supported SDKs and Current Status
 
-### 3.1 Current Status
+### 3.1 SDK portfolio (target)
 
-| **SDK** | **Status** | **Notes** |
+| **SDK** | **Target role** | **Status** |
 |---|---|---|
-| Python SDK | Planned | Primary reference SDK |
-| Rust SDK | Planned | High-performance production integration |
-| JavaScript/TypeScript SDK | Planned | Browser and Node.js support |
-| CLI | Partially implemented | Uses gRPC APIs |
-| Go SDK | Deferred | Not part of MVP |
-| Java SDK | Deferred | Enterprise roadmap item |
+| **CLI** | Reference client + automation | **Partially implemented** (repository) |
+| **Python SDK** | Primary reference SDK | Planned |
+| **Rust SDK** | High-performance integration | Planned |
+| **JavaScript/TypeScript SDK** | Node + browser integrations | Planned |
+| Go SDK | Infra/ops ecosystems | Deferred |
+| Java SDK | Enterprise integrations | Deferred |
+
+### 3.2 Conformance requirement
+
+All released SDKs MUST expose **equivalent semantics** for the same Eigen OS API version:
+
+- same lifecycle concepts,
+- same idempotency expectations,
+- same error categories,
+- same retryability guidance,
+- same metadata propagation requirements.
+
+Language idioms may differ; semantics MUST NOT.
 
 ---
 
-## 4. Architectural Principles
+## 4. Contract Anchors and Versioning
 
-### 4.1 Unified API Semantics
+### 4.1 Public API contract anchor
 
-All SDKs MUST expose equivalent semantic behavior:
+SDKs MUST implement the public API as defined by the **proto source of truth**:
 
-- identical lifecycle concepts,
-- consistent naming,
-- compatible error categories,
-- equivalent transport behavior,
-- equivalent authentication behavior.
+- Namespace: `eigen.api.v1`
+- Contract stability: breaking changes require a new MAJOR API package/version.
 
-Language-specific idioms MAY differ, but behavioral contracts MUST remain equivalent.
+SDKs MUST NOT “invent” new public semantics not reflected in `grpc-public.md` and the `.proto` files.
+
+### 4.2 JobSpec contract anchor
+
+SDKs MUST support JobSpec as defined in:
+
+- `docs/reference/jobspec.md`
+
+JobSpec is the canonical input contract for packaging, reproducibility, and auditability.
+
+### 4.3 Error contract anchor
+
+SDKs MUST implement the error model as defined in:
+
+- `docs/reference/error-model.md`
+- `docs/reference/error-mapping.md`
 
 ---
 
-### 4.2 Transport-First Architecture
+## 5. Transport Architecture
 
-#### Mandatory transport hierarchy
+### 5.1 Mandatory transport hierarchy
 
-| **Priority** | **Transport** | **Status** |
+| **Priority** | **Transport** | **Requirement** |
 |---|---|---|
-| Primary | gRPC | Implemented |
-| Secondary | REST | Planned |
-| Streaming | WebSocket | Planned |
+| Primary | **gRPC** | MUST be supported by all SDKs |
+| Secondary | REST | MAY be supported (optional) |
+| Streaming alternative | WebSocket/SSE | MAY be supported (optional) |
 
-#### Current implementation
+### 5.2 Current repository state
 
 Implemented now:
 
-- gRPC transport,
-- protobuf-based serialization,
-- server-streaming job updates.
+- gRPC transport to `eigen.api.v1`,
+- server-streaming job updates (`StreamJobUpdates`),
+- status/results polling,
+- CLI-based submission flows.
 
-Not implemented:
+Not implemented as a released SDK feature:
 
-- REST fallback transport,
-- WebSocket real-time transport,
-- automatic transport failover.
-
----
-
-### 4.3 Stateless Client Model
-
-SDK clients SHOULD remain stateless whenever possible.
-
-Persistent state MAY include:
-
-- auth credentials,
-- connection pools,
-- local cache entries,
-- retry metadata.
-
-Execution state is authoritative only on Eigen OS services.
+- REST transport fallback,
+- automatic transport downgrade,
+- WebSocket real-time transport.
 
 ---
 
-### 4.4 Versioned Contracts
+## 6. Authentication, Authorization, and Metadata Propagation
 
-All SDKs MUST follow versioned API contracts defined by:
+### 6.1 TLS
 
-- RFC 0003 — JobSpec,
-- RFC 0004 — Public APIs,
-- RFC 0005 — AQO,
-- RFC 0006 — Driver API,
-- RFC 0011 — Program sources,
-- RFC 0012 — Eigen-Lang subset.
+SDKs MUST use TLS for all public network calls.
 
----
+### 6.2 Auth model (public)
 
-## 5. Implemented Architecture
+SDKs MUST support attaching credentials via request metadata:
 
-### 5.1 Public API Surface
+- **Bearer token** (JWT/OAuth2 access token) in metadata.
+- Token refresh helpers MAY exist, but the SDK MUST at least allow the user to provide a token and reconfigure it.
 
-Implemented public services:
+### 6.3 Required metadata keys (normative)
 
-| **Service** | **Status** |
-|---|---|
-| JobService | Implemented |
-| DeviceService | Implemented |
+SDKs MUST support (and propagate) these metadata keys:
 
-Internal-only services:
+- `authorization` — bearer token (if applicable),
+- `traceparent` — W3C TraceContext parent,
+- `x-client-request-id` — client idempotency / correlation key (bounded),
+- `x-eigen-tenant` — tenant context (if applicable in deployment),
+- `x-eigen-project` — project context (if applicable in deployment).
 
-| **Service** | **Status** |
-|---|---|
-| CompilationService | Internal-only |
+SDKs MUST NOT emit unbounded identifiers as metadata.
 
-Compilation APIs are not currently exposed as stable public SDK endpoints.
+### 6.4 Idempotency rule (normative)
 
----
+For operations that create resources (e.g., job submission), SDKs MUST support a client-provided idempotency/correlation key using:
 
-### 5.2 Transport Layer
+- `x-client-request-id` metadata (preferred),
+- OR a request field **only if** the public proto adds such a field in a future version.
 
-Implemented:
-
-- gRPC channels,
-- protobuf serialization,
-- streaming RPC updates,
-- request validation,
-- status/error propagation.
-
-Planned:
-
-- REST transport,
-- WebSocket transport,
-- automatic transport downgrade.
+Retries MUST reuse the same idempotency key for the same logical operation.
 
 ---
 
-### 5.3 Authentication Baseline
+## 7. Public API Surface (SDK-facing)
 
-Implemented:
+> The proto files are the source of truth. This section is a semantic summary.
 
-- service-side auth enforcement,
-- token propagation,
-- request authorization hooks.
-
-Not yet standardized across SDKs:
-
-- JWT helpers,
-- OAuth2 flows,
-- API key abstraction,
-- mTLS helpers,
-- token refresh lifecycle.
-
----
-
-### 5.4 Validation
-
-Implemented:
-
--  JobSpec validation,
-- Eigen-Lang AST restrictions,
-- request schema validation,
-- protobuf validation contracts.
-
-Planned:
-
-- client-side preflight validation wrappers,
-- unified validation middleware across SDK languages.
-
----
-
-### 5.5 Observability
-
-Implemented:
-
-- trace propagation,
-- correlation IDs,
-- structured service logs,
-- OpenTelemetry-compatible tracing.
-
-Planned:
-
-- dedicated SDK telemetry packages,
-- SDK metric exporters,
-- standardized SDK log schemas.
-
----
-
-## 6. SDK Responsibilities
-
-The SDK layer MUST provide the following capabilities.
-
-### 6.1 Job Submission
-
-The SDK MUST support submission of:
-
-- Eigen-Lang source,
-- OpenQASM 3.0 source,
-- AQO references.
-
-Submission MUST support:
-
-- compiler options,
-- metadata,
-- priority,
-- target backend selection.
-
----
-
-### 6.2 Job Lifecycle Management
+### 7.1 JobService (public)
 
 SDKs MUST support:
 
-- job creation,
-- status polling,
-- streaming updates,
-- cancellation,
-- result retrieval.
+- `SubmitJob(SubmitJobRequest) -> SubmitJobResponse`
+- `GetJobStatus(GetJobStatusRequest) -> GetJobStatusResponse`
+- `CancelJob(CancelJobRequest) -> CancelJobResponse`
+- `StreamJobUpdates(StreamJobUpdatesRequest) -> stream StreamJobUpdatesResponse`
+- `GetJobResults(GetJobResultsRequest) -> GetJobResultsResponse`
+- `GetDispatchRationale(GetDispatchRationaleRequest) -> GetDispatchRationaleResponse` (if present in proto)
 
----
-
-### 6.3 Device Interaction
-
-SDKs MUST support:
-
-- listing devices,
-- querying device status,
-- querying capabilities,
-- device reservation requests.
-
----
-
-### 6.4 Error Handling
-
-SDKs MUST expose structured error categories.
-
-Mandatory categories:
-
-| **Category** | **Description** |
-|---|---|
-| NetworkError | Transport/connectivity failure |
-| AuthenticationError | Invalid or expired credentials |
-| AuthorizationError | Access denied |
-| ValidationError | Invalid request payload |
-| ResourceError | Quota/device exhaustion |
-| InternalError | Server-side failure |
-| TimeoutError | Deadline exceeded |
-
----
-
-### 6.5 Observability Hooks
+### 7.2 DeviceService (public)
 
 SDKs MUST support:
 
-- trace propagation,
-- metrics emission,
-- structured logging hooks,
-- correlation IDs.
+- `ListDevices(ListDevicesRequest) -> ListDevicesResponse`
+- `GetDeviceDetails(GetDeviceDetailsRequest) -> GetDeviceDetailsResponse`
+- `GetDeviceStatus(GetDeviceStatusRequest) -> GetDeviceStatusResponse`
+- `ReserveDevice(ReserveDeviceRequest) -> ReserveDeviceResponse`
+
+### 7.3 KnowledgeBaseService (public, if enabled in deployment)
+
+If `KnowledgeBaseService` is part of the deployed public surface, SDKs SHOULD support it, but it MAY be shipped as a separate optional module/package.
 
 ---
 
-## 7. Public Interfaces
+## 8. Job Submission and Packaging
 
-### 7.1 JobService
+### 8.1 Canonical input: JobSpec (`job.yaml`)
 
-#### SubmitJob
+SDKs MUST accept JobSpec as input (file or in-memory object) and perform deterministic packaging according to `docs/reference/jobspec.md`.
 
-```text
-rpc SubmitJob(SubmitJobRequest)
-    returns (JobResponse);
-```
+SDKs MUST support the JobSpec program source modes:
 
-#### GetJobStatus
+- `path` (file-backed),
+- `inline`,
+- `uri` (remote artifact reference),
 
-```text
-rpc GetJobStatus(JobStatusRequest)
-    returns (JobStatusResponse);
-```
+while enforcing mutual exclusivity.
 
-#### CancelJob
+If a deployment disables a mode (e.g., inline submission), SDKs MUST surface the server rejection as a structured error without attempting to “work around” the policy.
 
-```text
-rpc CancelJob(CancelJobRequest)
-    returns (CancelJobResponse);
-```
+### 8.2 Deterministic packaging (normative)
 
-#### StreamJobUpdates
+SDK packaging MUST:
 
-```text
-rpc StreamJobUpdates(JobUpdatesRequest)
-    returns (stream JobUpdate);
-```
+- normalize paths (no `..`, no absolute paths),
+- normalize line endings for hashing when specified by JobSpec packaging rules,
+- compute and record stable hashes where required by the packaging rules,
+- avoid embedding large artifacts inline when a reference mechanism is required.
 
-#### GetJobResults
+### 8.3 Submission semantics
 
-```text
-rpc GetJobResults(JobResultsRequest)
-    returns (JobResultsResponse);
-```
+`SubmitJob` MUST:
+
+- propagate `traceparent` and auth metadata,
+- attach `x-client-request-id` if provided,
+- enforce a request deadline (caller-provided or SDK default),
+- return the server-assigned `job_id` and initial status.
 
 ---
 
-### 7.2 DeviceService
+## 9. Lifecycle Management
 
-#### ListDevices
+### 9.1 Polling
 
-```text
-rpc ListDevices(ListDevicesRequest)
-    returns (ListDevicesResponse);
-```
+SDKs MUST support `GetJobStatus(job_id)` polling.
 
-#### GetDeviceDetails
+SDKs SHOULD provide helpers:
 
-```text
-rpc GetDeviceDetails(DeviceDetailsRequest)
-    returns (DeviceDetailsResponse);
-```
+- `wait_for_terminal(job_id, timeout)` (implemented client-side),
+- `wait_for_state(job_id, desired_state, timeout)`.
 
-#### GetDeviceStatus
+### 9.2 Streaming updates
 
-```text
-rpc GetDeviceStatus(DeviceStatusRequest)
-    returns (DeviceStatusResponse);
-```
+SDKs MUST support `StreamJobUpdates` as the preferred mechanism when available.
 
-#### ReserveDevice
+SDKs MUST support resume semantics if the proto supports `last_event_seq` (or equivalent).
 
-```text
-rpc ReserveDevice(ReserveDeviceRequest)
-    returns (ReserveDeviceResponse);
-```
+### 9.3 Cancellation
+
+SDKs MUST support `CancelJob(job_id)` and MUST document that cancellation is best-effort depending on server state.
 
 ---
 
-## 8. Input Formats
+## 10. Result Retrieval and Artifacts
 
-### 8.1 JobSpec
+### 10.1 GetJobResults
 
-Canonical format:
+SDKs MUST support retrieving results via `GetJobResults(job_id)`.
 
-```yaml
-apiVersion: eigen.os/v0.1
-kind: QuantumJob
-metadata:
-  name: example-job
+If results contain large payloads, SDKs MUST support resolving artifact references (e.g., QFS refs) via:
 
-spec:
-  program: |
-    @hybrid_program
-    def main():
-        pass
+- a dedicated artifact download helper (if the server provides an API),
+- OR by returning the reference to the caller in a typed way.
 
-  target: sim:local
-  priority: 50
-```
+SDKs MUST NOT assume that large artifacts are embedded inline.
+
+### 10.2 Error visibility for async failures
+
+If a job ends in `ERROR`, SDKs MUST expose:
+
+- stable machine-readable `error_code` (when present),
+- human-readable `error_summary`,
+- durable `error_details_ref` (when present),
+- and must preserve the underlying gRPC status + structured details for synchronous calls.
 
 ---
 
-### 8.2 Supported Program Sources
+## 11. Error Handling Contract (SDK-facing)
 
-| **Source Type** | **Status** |
+### 11.1 Canonical transport semantics (normative)
+
+SDKs MUST treat failures as:
+
+- gRPC status code (primary),
+- `google.rpc.Status` details (structured semantics),
+- stable reason codes (`google.rpc.ErrorInfo.reason`) when provided.
+
+SDKs MUST NOT rely on ad-hoc `success=false` payloads.
+
+### 11.2 Typed SDK error categories
+
+SDKs MUST expose a stable error taxonomy mapped from canonical gRPC statuses:
+
+| **SDK category** | **Canonical source** |
 |---|---|
-| Eigen-Lang source | Implemented |
-| OpenQASM 3 source | Planned/partial |
-| AQO reference | Implemented internally |
+| `ValidationError` | `INVALID_ARGUMENT` (+ `BadRequest`) |
+| `AuthenticationError` | `UNAUTHENTICATED` |
+| `AuthorizationError` | `PERMISSION_DENIED` |
+| `NotFoundError` | `NOT_FOUND` |
+| `PreconditionError` | `FAILED_PRECONDITION` |
+| `ResourceExhaustedError` | `RESOURCE_EXHAUSTED` (+ `RetryInfo`) |
+| `UnavailableError` | `UNAVAILABLE` (+ `RetryInfo`) |
+| `TimeoutError` | `DEADLINE_EXCEEDED` |
+| `ConflictError` | `ABORTED` / concurrency conflicts |
+| `InternalError` | `INTERNAL` |
+| `CancelledError` | `CANCELLED` |
+
+SDKs SHOULD also provide access to raw structured details for advanced clients.
+
+### 11.3 Retry guidance (normative)
+
+SDKs MUST implement retry behavior consistent with `error-model.md`:
+
+- Typically retryable: `UNAVAILABLE`, `RESOURCE_EXHAUSTED`, `ABORTED`, `DEADLINE_EXCEEDED` (policy-dependent)
+- Conditionally retryable: `FAILED_PRECONDITION`, `NOT_FOUND` (deployment semantics)
+- Typically non-retryable: `INVALID_ARGUMENT`, `UNIMPLEMENTED`, `PERMISSION_DENIED`
+
+If SDKs perform retries automatically, they MUST:
+
+- reuse `x-client-request-id`,
+- respect caller deadlines,
+- apply bounded exponential backoff,
+- stop on non-retryable codes,
+- expose retry attempts and final outcome to the caller.
 
 ---
 
-## 9. Output Formats
+## 12. Deadlines and Timeouts
 
-### 9.1 Job Results
+SDKs MUST:
 
-Result payloads MUST support:
-
-```json
-{
-  "counts": {
-    "00": 512,
-    "11": 512
-  },
-  "metadata": {
-    "shots": "1024"
-  }
-}
-```
+- allow per-call deadlines,
+- provide sane defaults (bounded),
+- propagate deadlines to the server (gRPC deadlines),
+- avoid indefinite blocking on streaming calls (require caller cancellation or deadline).
 
 ---
 
-### 9.2 Device Status
+## 13. Observability (Client-side)
 
-Mandatory statuses:
+### 13.1 Tracing (normative)
 
-- ONLINE
-- OFFLINE
-- CALIBRATING
-- MAINTENANCE
+SDKs MUST support W3C TraceContext propagation:
 
----
+- inject/propagate `traceparent`,
+- generate a new trace if none is provided (optional, but recommended),
+- provide span naming conventions for SDK operations (recommended).
 
-## 10. Client State Management
+### 13.2 Logging hooks (normative)
 
-### 10.1 Current State
+SDKs MUST allow structured logging integration and MUST include these fields when logging SDK-level events:
 
-Implemented:
+- `timestamp`
+- `level`
+- `trace_id` (if tracing enabled)
+- `span_id` (if tracing enabled)
+- `operation` (RPC/method name)
+- `message`
 
-- gRPC channel lifecycle,
-- server-side authoritative job states.
+Optional fields:
 
-Not implemented:
+- `job_id`
+- `device_id`
 
-- unified SDK state manager,
-- distributed cache layer,
-- persistent local job registry.
+SDKs MUST avoid logging secrets and raw payloads by default.
 
----
+### 13.3 SDK metrics (optional)
 
-### 10.2 Planned Cache Architecture
+SDKs MAY expose client-side metrics (recommended), but MUST obey bounded cardinality rules (no job_id labels, no trace_id labels).
 
-Target architecture:
+Suggested metric names (non-normative until implemented):
 
-| **Level** | **Purpose** |
-|---|---|
-| L1 | In-memory TTL cache |
-| L2 | Redis distributed cache |
-| L3 | Persistent disk cache |
-
-This architecture is not yet implemented.
+- `eigen_sdk_requests_total`
+- `eigen_sdk_request_duration_seconds`
+- `eigen_sdk_retries_total`
 
 ---
 
-## 11. Failure Handling
+## 14. Security Requirements (Client-side)
 
-### 11.1 Retry Policy
+SDKs MUST:
 
-Target SDK behavior:
+- store credentials securely (at minimum: avoid accidental logging),
+- support TLS verification,
+- support disabling insecure transports,
+- validate and bound user-provided metadata (prevent unbounded headers/labels),
+- apply payload size limits for client-side packaging to prevent accidental oversized submits.
 
-- exponential backoff,
-- retry budget limits,
-- retryable gRPC status handling,
-- timeout propagation.
-
-Example policy:
-
-```Python
-max_retries = 3
-initial_delay = 0.1
-max_delay = 10.0
-backoff_factor = 2.0
-```
-
-Not yet standardized across released SDKs.
+Credential vault/keychain integration is optional and deferred.
 
 ---
 
-### 11.2 Circuit Breaker
-
-Planned states:
-
-- CLOSED,
-- OPEN,
-- HALF_OPEN.
-
-Not yet implemented in released SDK packages.
-
----
-
-### 11.3 Transport Fallback
-
-Planned behavior:
-
-- fallback from gRPC to REST,
-- degraded-mode operation.
-
-Not implemented.
-
----
-
-## 12. Observability
-
-### 12.1 Metrics
-
-Planned SDK metrics namespace:
-
-```text
-eigen_sdk_requests_total
-eigen_sdk_request_duration_seconds
-eigen_sdk_retries_total
-eigen_sdk_cache_hits_total
-```
-
-Current status:
-
-- service-side metrics exist,
-- SDK metric packages are not yet released.
-
----
-
-### 12.2 Logging
-
-Mandatory structured fields:
-
-| **Field** | **Required** |
-|---|---|
-| timestamp | Yes |
-| level | Yes |
-| trace_id | Yes |
-| span_id | Yes |
-| job_id | Optional |
-| device_id | Optional |
-| message | Yes |
-
----
-
-### 12.3 Tracing
-
-Implemented:
-
-- OpenTelemetry-compatible tracing,
-- trace propagation through services.
-
-Planned:
-
-- SDK instrumentation packages,
-- semantic span conventions.
-
----
-
-## 13. Security
-
-### 13.1 Mandatory Security Requirements
-
-SDKs MUST support:
-
-- TLS transport,
-- authenticated requests,
-- secure credential handling,
-- request validation,
-- payload size limits.
-
----
-
-### 13.2 Planned Credential Features
-
-Not yet implemented:
-
-- encrypted credential vault,
-- OS keychain integration,
-- automatic token refresh manager.
-
----
-
-## 14. Integration Targets
-
-### 14.1 Planned Framework Integrations
-
-Target integrations:
-
-- Qiskit,
-- PyTorch,
-- Jupyter,
-- VS Code,
-- CI/CD tooling.
-
-These integrations are architectural targets and are not currently delivered as maintained SDK adapters.
-
----
-
-## 15. Testing Requirements
+## 15. Testing and Conformance
 
 SDK implementations MUST include:
 
-| **Test Type** | **Required** |
+| **Test type** | **Requirement** |
 |---|---|
-| Unit tests | Yes |
-| Integration tests | Yes |
-| Contract tests | Yes |
-| Security tests | Yes |
-| Performance tests | Yes |
+| Unit tests | MUST |
+| Integration tests against a real server or harness | MUST |
+| Contract tests (golden fixtures where applicable) | MUST |
+| Security tests (no secret logging, TLS behavior) | SHOULD |
+| Performance/regression tests | SHOULD |
+
+Conformance MUST verify:
+
+- correct mapping to canonical gRPC statuses,
+- structured detail parsing,
+- retryability rules,
+- idempotency key reuse,
+- trace propagation and metadata injection,
+- JobSpec packaging determinism.
 
 ---
 
 ## 16. Configuration
 
-### 16.1 Configuration Sources
+### 16.1 Configuration precedence (normative)
 
-Order of precedence:
-
-1. CLI arguments
+1. Explicit client configuration (constructor / flags)
 2. Environment variables
 3. Config file
 4. Built-in defaults
 
----
+### 16.2 Standard environment variables (recommended)
 
-### 16.2 Standard Environment Variables
-
-```text
-EIGEN_ENDPOINT
-EIGEN_TOKEN
-EIGEN_TIMEOUT
-EIGEN_LOG_LEVEL
-```
+- `EIGEN_ENDPOINT`
+- `EIGEN_TOKEN`
+- `EIGEN_TIMEOUT`
+- `EIGEN_LOG_LEVEL`
 
 ---
 
 ## 17. Compatibility Policy
 
-### 17.1 Semantic Versioning
-
 SDKs MUST follow semantic versioning.
 
-| **Version Type** | **Compatibility** |
-|---|---|
-| Major | Breaking changes allowed |
-| Minor | Backward compatible |
-| Patch | Bug fixes only |
+### 17.1 API compatibility
+
+SDKs MUST be compatible with declared Eigen OS API versions they claim to support.
+
+Breaking changes in the public API require:
+
+- a new API major version (`eigen.api.v2`, etc.),
+- SDK major version changes if behavior changes,
+- migration notes.
+
+### 17.2 Minimum supported platforms (targets)
+
+These are targets and may be tightened by release notes:
+
+- Eigen OS: `1.x` public API surface
+- Python: `3.12+` (target)
+- Rust: `1.75+` (target; adjust to actual toolchain policy)
 
 ---
 
-### 17.2 Minimum Supported Platform
+## 18. Current Repository Status Summary
 
-| **Component** | **Minimum** |
-|---|---|
-| Eigen OS | v0.1 |
-| Python | 3.12+ |
-| Rust | 1.92+ |
+### Implemented (repository)
 
----
-
-## 18. Performance Targets
-
-### 18.1 MVP Targets
-
-| **Metric** | **Target** |
-|---|---|
-| Submission latency | <100 ms |
-| Result retrieval | <50 ms |
-| Concurrent connections | 10–100 |
-| Baseline memory usage | <50 MB |
-
-These are target engineering requirements, not guaranteed achieved benchmarks.
-
----
-
-## 19. Architectural Constraints
-
-The SDK layer MUST obey the following invariants.
-
-### 19.1 No User Code Execution
-
-SDKs MUST NOT execute arbitrary user code received from remote services.
-
----
-
-### 19.2 Transport Isolation
-
-Transport implementations MUST remain replaceable without changing public SDK semantics.
-
----
-
-### 19.3 API Compatibility
-
-SDKs MUST remain compatible with declared Eigen OS API versions.
-
----
-
-### 19.4 Observability Consistency
-
-All SDK-generated telemetry MUST propagate:
-
-- trace_id,
-- request correlation context,
-- service boundaries.
-
----
-
-## 20. Current Repository Status Summary
-
-### Implemented
-
-- gRPC public APIs,
-- protobuf contracts,
-- JobService,
-- DeviceService,
-- streaming updates,
-- service-side validation,
-- tracing infrastructure,
-- structured observability,
-- contract-based architecture,
-- integration/e2e test coverage.
-
----
-
-### Partially Implemented
-
-- authentication abstraction,
-- OpenQASM support,
-- CLI tooling,
-- observability standardization.
-
----
+- public gRPC APIs (`eigen.api.v1`) are present,
+- JobService + DeviceService are usable via gRPC,
+- streaming job updates exist,
+- service-side validation exists,
+- trace propagation exists,
+- CLI exists but is not yet a fully productized SDK.
 
 ### Planned
 
-- official SDK packages,
-- REST transport,
-- WebSocket transport,
-- retry/circuit breaker libraries,
-- IDE integrations,
-- cache layers,
-- framework adapters,
-- credential vault integration,
-- compatibility negotiation layer.
+- official Python/Rust/TS SDK packages,
+- optional REST transport,
+- circuit breaker and retry libraries with shared policy,
+- client-side preflight validation helpers,
+- SDK-side metrics packages,
+- IDE/notebook adapters.
 
 ---
 
-## 21. Conclusion
+## 19. Invariants (normative)
 
-The Eigen OS Client SDK architecture defines a unified, transport-oriented, contract-driven client layer for interacting with distributed hybrid quantum-classical infrastructure.
+1. SDK semantics are consistent across languages for the same API version.
+2. SDKs do not bypass server validation or isolation.
+3. Errors are gRPC-status-first with structured details.
+4. Idempotency/correlation keys are supported and reused on retries.
+5. Tracing metadata (`traceparent`) is propagated end-to-end.
+6. Client observability is bounded and safe (no unbounded labels/headers).
+7. JobSpec packaging is deterministic and path-safe.
 
-The current implementation already provides:
-
-- stable gRPC contracts,
-- production-oriented service interfaces,
-- deterministic validation boundaries,
-- structured observability,
-- integration-grade APIs.
-
-The remaining roadmap primarily concerns:
-
-- SDK productization,
-- multi-language packaging,
-- transport expansion,
-- developer ergonomics,
-- advanced reliability tooling.
-
-This document is the authoritative specification for SDK behavior, integration contracts, and implementation boundaries.
+---

@@ -1,9 +1,8 @@
 # Contract Map
 
-- **Document status:** Normative architecture contract
-- **Contract scope:** MVP → Phase-5 runtime evolution baseline
-- **Contract type:** End-to-end system interface map
-- **Last updated:** 2026-05-24
+**Document status:** Normative architecture contract (Source of Truth)
+**Scope:** Eigen OS 1.3.0 (Kernel & Data Fabric Detailing) — MVP → Phase runtime baseline
+**Contract type:** End-to-end system interface map (APIs, IR formats, storage, observability, security)
 
 ---
 
@@ -12,27 +11,22 @@
 This document defines the canonical end-to-end contract topology of Eigen OS:
 
 ```text
-User → SDK/CLI → System API → Kernel/QRTX
-→ Compiler / Driver Manager / Runtime
-→ Backend / Simulator / Hardware
-→ QFS / Results / Observability
+User → SDK/CLI → System API (gRPC/REST)
+→ Kernel (QRTX)
+→ Compiler (Eigen-DPDA) → Optimizer (GNN) → Driver Manager → QDriver → Backend
+→ QFS (L3 CircuitFS, L2 State Store, L1 Live Qubit Manager)
+→ Knowledge Base + Observability (OTel → Prometheus/Loki/ES/Jaeger)
 → User
 ```
 
-The document serves as:
+It serves as:
 
 - the authoritative architectural interface map,
 - the canonical boundary definition between services,
-- the normative source for API/runtime interaction semantics,
-- the compatibility baseline for MVP and post-MVP evolution.
+- the normative source for interaction semantics across runtime/compile/execute/data,
+- the compatibility baseline for Eigen OS 1.x evolution.
 
-This document intentionally includes:
-
-1. required architecture contracts from the original MVP specification,
-2. currently implemented runtime/API behavior,
-3. additive functionality implemented beyond the original MVP scope.
-
-This document is normative unless explicitly marked otherwise.
+**Normative rule:** Wire contracts, schemas, and stability guarantees live in `docs/reference/`. Component “explanation” docs must not redefine wire-level contracts.
 
 ---
 
@@ -48,97 +42,113 @@ This document is normative unless explicitly marked otherwise.
 
 #### Responsibilities
 
-- construct and submit jobs,
-- package JobSpec artifacts,
-- propagate tracing/auth metadata,
-- observe lifecycle/results,
-- interact with public APIs only.
+- construct workloads (JobSpec / SDK objects),
+- package artifacts deterministically,
+- propagate tracing and auth metadata,
+- observe job lifecycle/results,
+- use public APIs only.
 
 #### Public contract namespace
 
-```text
-eigen.api.v1
-```
+- gRPC: `eigen.api.v1`
+- REST: `/v1/*` (REST mirrors public semantics; see `docs/reference/api/rest-*`)
 
 ---
 
-### 2.2 Public Gateway Layer
+### 2.2 Public Gateway Layer (System API)
 
 #### Component
 
-System API
+- System API (single public ingress)
 
 #### Responsibilities
 
-- public gRPC API exposure,
-- authentication/authorization,
-- request validation,
-- request normalization,
-- lifecycle/result serving,
-- trace propagation,
-- orchestration delegation.
+- public gRPC/REST exposure,
+- authentication/authorization (OAuth2/JWT),
+- request validation + normalization,
+- idempotency handling (where applicable),
+- lifecycle/status/results serving,
+- trace propagation (W3C TraceContext),
+- delegation to kernel orchestration.
 
-#### Contract type
+#### Security contract (normative)
 
-Stable public API surface.
+- External clients: **JWT/OAuth2**
+- All public endpoints: TLS 1.3
+- Required scopes/roles per method (see `docs/reference/security/authz.md`)
 
 ---
 
-### 2.3 Orchestration Layer
+### 2.3 Kernel Orchestration Layer (Eigen Kernel / QRTX)
 
 #### Component
 
-Kernel / QRTX
+- QRTX (Rust)
 
 #### Responsibilities
 
-- job lifecycle orchestration,
-- DAG/state management,
-- runtime scheduling,
-- compiler coordination,
-- execution coordination,
-- distributed runtime orchestration,
-- artifact persistence coordination,
-- queue/resource management.
+- job lifecycle orchestration and state machine,
+- DAG construction and dependency execution,
+- compiler coordination (DPDA),
+- optimizer coordination (GNN),
+- execution coordination (Driver Manager / QDriver),
+- QFS integration (L1/L2/L3),
+- queueing/fairness/priority,
+- deadline and retry governance (idempotent-safe),
+- audit and telemetry emission.
 
 #### Internal contract namespace
 
-```text
-eigen.internal.v1
-```
+- gRPC: `eigen.internal.v1`
 
 ---
 
-### 2.4 Compilation Layer
+### 2.4 Compilation & Optimization Layer
 
-#### Component
+#### Components
 
-CompilationService
+- **Eigen-DPDA** (neuro-symbolic compiler): Eigen-Lang → AQO
+- **GNN Optimizer** (placement/routing): AQO + topology → QASM (or backend-native)
 
 #### Responsibilities
 
-- Eigen-Lang compilation,
-- AQO/QASM generation,
-- optimization pipeline execution,
-- compilation diagnostics,
-- artifact generation.
+- deterministic compilation,
+- schema validation (Eigen-Lang allowlist; AQO invariants),
+- optimization trace emission,
+- artifact production + persistence via QFS-L3.
+
+#### Normative formats
+
+- Eigen-Lang spec
+- AQO format spec
+- QASM export rules (when present)
 
 ---
 
 ### 2.5 Execution Layer
 
-#### Component
+#### Components
 
-DriverManagerService
+- Driver Manager (sessioning, pooling, capability registry)
+- QDriver services (device/simulator specific)
 
 #### Responsibilities
 
-- backend abstraction,
-- vendor integration,
-- execution dispatch,
-- execution normalization,
-- device metadata,
-- calibration/state access.
+- device discovery, status, capabilities,
+- dispatch execution requests,
+- normalize results and errors,
+- enforce driver isolation (container/process sandbox),
+- secrets access via Security Module only,
+- emit device/runtime telemetry.
+
+#### Normative driver interface
+
+- QDriver API (gRPC), including:
+  - `Initialize`
+  - `Execute`
+  - `GetStatus`
+  - `Calibrate`
+  - `Cancel`
 
 ---
 
@@ -146,41 +156,74 @@ DriverManagerService
 
 #### Components
 
-- local simulators,
-- vendor simulators,
-- cloud providers,
-- hardware backends.
+- simulators (local/cluster)
+- vendor simulators
+- cloud providers
+- physical quantum hardware
 
 #### Notes
 
-Backend APIs are vendor-specific and are normalized through Driver Manager contracts before exposure to public/runtime layers.
+- Vendor APIs are not public contracts.
+- All provider interaction is normalized through Driver Manager/QDriver.
 
 ---
 
-### 2.7 Artifact Layer
+### 2.7 Data & Artifact Layer (QFS)
 
-#### Component
+#### Components
 
-QFS (CircuitFS)
+- **QFS Level 3 — CircuitFS:** long-term artifact store (S3/MinIO + metadata DB)
+- **QFS Level 2 — Quantum State Store:** checkpoint/restore (HDF5 + SQLite)
+- **QFS Level 1 — Live Qubit Manager (LQM):** live qubit allocation + feed-forward
 
 #### Responsibilities
 
 - durable artifact persistence,
-- compiled artifact storage,
-- execution result storage,
-- logs/error persistence,
-- timeline/provenance persistence.
-
-#### MVP storage profile
-
-- S3/MinIO-compatible object storage,
-- SQLite metadata/state layer.
+- deterministic lineage and provenance,
+- checkpoint/restore for eligible modes,
+- qubit reservation/isolation guarantees,
+- retention policy enforcement.
 
 ---
 
-## 3. Canonical API Namespaces
+### 2.8 Knowledge & Learning Layer (Knowledge Base + Dataset Pipeline)
 
-### 3.1 Public APIs
+#### Components
+
+- Knowledge Base (records, patterns, indices)
+- Dataset Pipeline Service (load/validate/convert/register datasets)
+- Continuous Learning Pipeline (triggered retraining)
+
+#### Responsibilities
+
+- store circuit/task records and traces,
+- similarity search (vector index),
+- structural queries (metrics filtering),
+- training dataset assembly and governance.
+
+---
+
+### 2.9 Observability Layer
+
+#### Components
+
+- OpenTelemetry instrumentation in all services
+- Prometheus (metrics), Grafana (dashboards)
+- Loki/Elasticsearch (logs), Jaeger (tracing)
+- Alertmanager (alerts)
+
+#### Responsibilities
+
+- metric naming/label boundedness,
+- trace continuity across hops,
+- audit/security event streams,
+- SRE contracts and conformance testing.
+
+---
+
+## 3. Canonical API Namespaces and Surfaces
+
+### 3.1 Public APIs (User-facing)
 
 Canonical namespace:
 
@@ -188,15 +231,24 @@ Canonical namespace:
 eigen.api.v1
 ```
 
-#### Public services
+#### Public services (gRPC):
 
 - `JobService`
 - `DeviceService`
 - `KnowledgeBaseService`
 
+#### Public REST surface (mirrors core functionality):
+
+- `/v1/jobs/*`
+- `/v1/devices/*`
+- `/v1/benchmarks/*`
+- `/v1/explain/*`
+
+**Normative:** gRPC is the primary contract; REST must remain semantically equivalent.
+
 ---
 
-### 3.2 Internal APIs
+### 3.2 Internal APIs (Service-to-service)
 
 Canonical namespace:
 
@@ -204,352 +256,293 @@ Canonical namespace:
 eigen.internal.v1
 ```
 
-#### nternal services
+Internal services:
 
-- `KernelGatewayService`
-- `CompilationService`
-- `DriverManagerService`
+- `KernelGatewayService` (System API ↔ QRTX)
+- `CompilationService` (QRTX ↔ DPDA compiler service)
+- `OptimizerService` (QRTX ↔ GNN optimizer service)
+- `DriverManagerService` (QRTX ↔ Driver Manager)
+- `StorageService` (QRTX ↔ QFS-L3/L2 service interfaces where applicable)
+- `SecurityService` (policy decisions, secrets issuance, audit hooks — if separated)
+
+---
+
+### 3.3 Hardware Abstraction (Device-facing)
+
+QDriver API (gRPC; versioned):
+
+- Device sessioning and execution
+- Status/telemetry retrieval
+- Calibration
+- Cancellation
 
 ---
 
 ## 4. Versioning and Compatibility
 
-### 4.1 Public API Compatibility
+### 4.1 Public API Compatibility (gRPC/REST)
 
-Public APIs are treated as stable contracts.
+Public APIs are stable contracts.
 
 #### Breaking changes require:
 
-- new package version,
-- compatibility coexistence period,
-- explicit migration documentation.
+- MAJOR version (e.g., `eigen.api.v2` or `/v2/`)
+- coexistence/migration period
+- explicit migration documentation
 
 #### Breaking changes include:
 
-- renaming package/service/method,
-- field semantic changes,
-- field removals,
-- incompatible enum/state changes.
+- renaming package/service/method/path,
+- removing fields or changing requiredness,
+- incompatible enum/state changes,
+- semantic changes that alter meaning.
+
+#### Non-breaking changes (MINOR) may include:
+
+- adding optional fields,
+- adding new RPCs/endpoints,
+- adding bounded-cardinality labels,
+- adding new result artifact types (without breaking existing retrieval).
 
 ---
 
-### 4.2 Non-Breaking Changes
+### 4.2 Internal Contract Compatibility
 
-Allowed additive changes:
-
-- optional request/response fields,
-- additional RPCs,
-- additional metadata,
-- additive observability labels with bounded cardinality.
+Internal APIs follow SemVer discipline and must remain synchronized with runtime orchestration semantics. Internal changes must not break running mixed-version deployments unless explicitly allowed by a rolling-upgrade policy document.
 
 ---
 
-### 4.3 Internal Contract Compatibility
+### 4.3 Job Specification Versioning
 
-Internal APIs follow SemVer-style compatibility discipline and must remain synchronized with runtime orchestration semantics.
-
----
-
-### 4.4 Job Specification Versioning
-
-Current JobSpec contract:
+#### Current JobSpec contract (Eigen OS 1.x)
 
 ```yaml
-apiVersion: eigen.os/v0.1
+apiVersion: eigen.os/v1
+kind: QuantumJob
 ```
 
-Canonical job descriptor:
+Canonical descriptor: `job.yaml`
 
-```text
-job.yaml
-```
+> **Fix applied:** prior `eigen.os/v0.1` reference is invalid for Eigen OS 1.x baseline and conflicts with the JobSpec contract.
 
 ---
 
-## 5. End-to-End Execution Flow
+### Format Versioning (AQO, QFS layouts)
+
+- AQO: versioned format contract (e.g., `AQO v1.0`)
+- QFS layouts: versioned storage contracts (e.g., CircuitFS layout v1.0)
+- Any breaking format change requires MAJOR bump + migration plan.
+
+---
+
+## 5. End-to-End Execution Flows
 
 ### 5.1 Submit Flow
 
 ```text
 Client
-→ SubmitJob
+→ (SubmitJob / POST /v1/jobs)
 → System API
-→ Kernel/QRTX
-→ enqueue lifecycle
-→ persist metadata/artifacts
+→ QRTX
+→ persist JobSpec + input artifacts (QFS-L3)
+→ initial lifecycle state emitted
 ```
 
 #### Submit guarantees
-- request validation occurs before orchestration,
-- accepted jobs receive stable `job_id`,
+
+- request validation occurs before enqueue,
+- accepted jobs receive a stable `job_id`,
 - trace context is propagated,
+- auth context is propagated,
 - orchestration state is persisted.
+
+#### Idempotency
+
+- Public submission MUST support idempotency via either:
+  - explicit `idempotency_key` field (preferred when defined), or
+  -  a standardized request header/metadata key (e.g., `x-eigen-idempotency-key`).
+- Idempotency semantics MUST be documented per endpoint.
 
 --- 
 
-### 5.2 Compilation Flow
+### 5.2 Compilation Flow (Eigen-Lang → AQO)
 
 ```text
-Kernel/QRTX
-→ CompilationService
-→ compiled artifacts
-→ QFS persistence
+QRTX
+→ CompilationService (Eigen-DPDA)
+→ AQO (+ compiler trace, metadata)
+→ persist compiled artifacts (QFS-L3)
+→ lifecycle update
 ```
 
-#### Generated artifacts may include
+#### Generated artifacts include:
 
-- AQO,
-- QASM,
-- compiler metadata,
-- diagnostics,
-- optimization artifacts.
+- `compiled/circuit.aqo.json` (required for Eigen-Lang jobs),
+- optional `compiled/circuit.aqo.pb`,
+- compiler metadata + trace references,
+- validation diagnostics when relevant.
 
 ---
 
-### 5.3 Execution Flow
+### 5.3 Optimization Flow (AQO → QASM)
 
 ```text
-Kernel/QRTX
-→ DriverManagerService
-→ backend/simulator/hardware
-→ normalized execution result
+QRTX
+→ OptimizerService (GNN Optimizer) + topology from Driver Manager
+→ QASM (or backend-native lowered form)
+→ persist optimization artifacts (QFS-L3)
+→ lifecycle update
 ```
 
-#### Driver Manager responsibilities
+---
+
+### 5.4 Execution Flow
+
+```text
+QRTX
+→ DriverManagerService
+→ QDriver.Execute
+→ Backend execution
+→ normalized results + telemetry
+→ persist results (QFS-L3) + optional checkpoints (QFS-L2)
+→ lifecycle update
+```
+
+Driver Manager responsibilities:
 
 - backend normalization,
-- payload normalization,
-- retry/error normalization,
-- execution metadata normalization.
+- error normalization,
+- deterministic metadata extraction,
+- secure credential handling (no secrets in logs/artifacts).
 
 ---
 
-### 5.4 Results Flow
+### 5.5 Results Flow
 
 ```text
 Client
-→ GetJobResults
+→ GetJobResults / GET /v1/jobs/{job_id}/results
 → System API
-→ Kernel/QRTX
-→ QFS artifact retrieval
-→ normalized response
+→ QRTX
+→ QFS-L3 retrieval
+→ normalized response + artifact refs
 ```
 
-Large artifacts are returned through QFS references rather than raw payload embedding.
+Large artifacts are returned through QFS references rather than raw embedding.
+
+---
+
+### 5.6 Explainability Flow (Backend selection / dispatch rationale)
+
+```text
+Client
+→ GetDispatchRationale / POST /v1/explain/backend-selection
+→ System API
+→ QRTX / Runtime Controller (reads stored decision snapshot)
+→ response with deterministic scoring trace
+→ observability events emitted
+```
+
+Explainability must be linked to:
+
+- `job_id` (preferred),
+- or `decision_id` (internal identifier),
+and be auditable via QFS/KB references.
 
 ---
 
 ## 6. Job Lifecycle Contract
 
-### 6.1 Stable Client-Facing States
+### 6.1 Stable Client-Facing States (Public Contract)
 
-Canonical public lifecycle:
+Canonical lifecycle:
 
 ```text
 PENDING
 → COMPILING
 → QUEUED
 → RUNNING
-→ DONE | ERROR | CANCELLED
+→ DONE | ERROR | CANCELED
 ```
 
----
+Notes:
 
-### 6.2 Runtime Guarantees
-
-#### PENDING
-
-Job accepted but not yet executing.
-
-#### COMPILING
-
-Compilation pipeline executing.
-
-#### QUEUED
-
-Awaiting runtime/backend scheduling.
-
-#### RUNNING
-
-Execution active on runtime/backend.
-
-#### DONE
-
-Execution completed successfully.
-
-#### ERROR
-
-Terminal failure state with normalized error envelope.
-
-#### CANCELLED
-
-Execution cancelled before completion.
+- `TIMEOUT` may exist as an internal reason or error code, but the public terminal state remains `ERROR` with a stable reason code indicating timeout, unless a dedicated `TIMEOUT` public state is explicitly defined in `eigen.api.*`.
 
 ---
 
-## 7. Public API Contracts
+### 6.2 Runtime Guarantees (State Semantics)
 
-### 7.1 JobService
-
-#### Stable RPC Surface
-
-- `SubmitJob`
-- `GetJobStatus`
-- `CancelJob`
-- `StreamJobUpdates`
-- `GetJobResults`
-- `GetDispatchRationale`
+- **PENDING:** accepted and persisted, not yet compiling.
+- **COMPILING:** DPDA compilation in progress.
+- **QUEUED:** waiting for backend assignment/resources.
+- **RUNNING:** executing on backend (or distributed workers).
+- **DONE:** completed successfully; results persisted.
+- **ERROR:** terminal failure; normalized error and durable error artifacts available.
+- **CANCELED:** canceled by user/system; best-effort cancellation details persisted.
 
 ---
 
-#### SubmitJob
+## 7. Public Contract Surfaces
 
-**Input**
+### 7.1 JobService (gRPC) / Jobs (REST)
 
-`SubmitJobRequest`
+Stable operations:
 
-#### Required fields
+- `SubmitJob` / `POST /v1/jobs`
+- `GetJobStatus` / `GET /v1/jobs/{job_id}`
+- `CancelJob` / `POST /v1/jobs/{job_id}:cancel`
+- `StreamJobUpdates` / (gRPC stream) and REST alternatives if defined
+- `GetJobResults` / `GET /v1/jobs/{job_id}/results`
+- `GetDispatchRationale` / `GET /v1/jobs/{job_id}/dispatch-rationale` (or equivalent)
 
-- `name`
-- `program`
-- `target`
+#### Cancel semantics
 
-#### Optional fields
-
-- `priority`
-- `compiler_options`
-- `metadata`
-
-**Output**
-
-```text
-SubmitJobResponse {
-  job_id,
-  accepted_at
-}
-```
-
-#### Semantics
-
-- creates orchestration job,
-- validates request before enqueue,
-- may persist artifacts to QFS,
-- propagates trace/auth context.
+- allowed for `PENDING`, `COMPILING`, `QUEUED`,
+- best-effort for `RUNNING`,
+- deterministic terminal behavior for `DONE/ERROR/CANCELED`.
 
 ---
 
-#### GetJobStatus
+### 7.2 DeviceService (gRPC) / Devices (REST)
 
-Returns:
+#### Stable operations:
 
-- lifecycle state,
-- progress,
-- stage,
-- timestamps,
-- optional runtime messages.
+- `ListDevices` / `GET /v1/devices`
+- `GetDeviceStatus` / `GET /v1/devices/{device_id}/status`
+- `GetDeviceDetails` / `GET /v1/devices/{device_id}`
+- `ReserveDevice` / `POST /v1/devices/{device_id}:reserve` (if supported)
 
----
+Reservation semantics:
 
-#### CancelJob
-
-**Contract**
-
-Cancellation is:
-
-- allowed for `PENDING`,
-- allowed for `COMPILING`,
-- allowed for `QUEUED`,
-- best-effort for `RUNNING`.
-
-Terminal jobs return deterministic terminal semantics.
-
----
-
-#### GetJobResults
-
-Returns:
-
-- normalized results,
-- artifact references,
-- execution metadata,
-- async error information when applicable.
-
----
-
-#### StreamJobUpdates
-
-**MVP implementation**
-
-Poll-based streaming.
-
-**Contract guarantee**
-
-Clients receive ordered lifecycle updates reflecting Kernel runtime state progression.
-
----
-
-#### GetDispatchRationale
-
-Returns explainability/scheduling rationale metadata for orchestration/runtime decisions.
-
----
-
-### 7.2 DeviceService
-
-#### Stable RPC Surface
-
-- `ListDevices`
-- `GetDeviceStatus`
-- `GetDeviceDetails`
-- `ReserveDevice`
-
----
-
-#### Device Metadata
-
-Device contracts may expose:
-
-- availability,
-- queue depth,
-- calibration state,
-- estimated wait,
-- backend capabilities,
-- scheduling metadata.
-
----
-
-#### ReserveDevice Semantics
-
-Reservation applies to scheduler/runtime orchestration capacity rather than exclusive hardware ownership.
+- reservation is a scheduler/runtime capacity signal,
+- not guaranteed exclusive hardware lock unless explicitly specified.
 
 ---
 
 ### 7.3 KnowledgeBaseService
 
-#### Stable RPC Surface
+Stable operations (as per KB contract):
 
 - `UpsertRecord`
 - `BatchUpsertRecords`
 - `QueryRecords`
 - `GetRecord`
 
----
-
-#### Contract Version
-
-```text
-1.0.0
-```
+KB access must be authorization-gated; user data must be anonymized/controlled per policy.
 
 ---
 
-#### Stable Error Taxonomy
+### 7.4 Benchmarks (REST/gRPC where defined)
 
-- `KB_INVALID_ARGUMENT`
-- `KB_NOT_FOUND`
-- `KB_INDEX_UNAVAILABLE`
-- `KB_RATE_LIMITED`
-- `KB_INTERNAL`
+Benchmark runs must integrate:
+
+- dataset pipeline,
+- QFS persistence,
+- observability contract compliance,
+- idempotency.
+
+(See benchmark contracts and observability contracts under `docs/reference/`.)
 
 ---
 
@@ -557,325 +550,255 @@ Reservation applies to scheduler/runtime orchestration capacity rather than excl
 
 ### 8.1 KernelGatewayService
 
-#### Responsibilities
+Responsibilities:
 
-- enqueue jobs,
-- expose orchestration lifecycle,
-- cancellation,
-- result retrieval,
-- runtime coordination.
+- job enqueue,
+- lifecycle queries,
+- cancellation propagation,
+- results retrieval integration,
+- metadata propagation (user/tenant context).
 
----
-
-#### Semantic Rule
-
-Internal lifecycle semantics must remain compatible with public API semantics.
+Internal lifecycle semantics must remain compatible with public semantics.
 
 ---
 
-### 8.2 CompilationService
+### 8.2 CompilationService (Eigen-DPDA)
 
-#### Stable Operations
+Stable operations:
 
-**Compile**
-
-Input:
-
-- program,
-- target,
-- options.
-
-Output:
-
-- compiled artifact,
-- metadata,
-- stats,
-- normalized payload format.
+- compile program inputs (Eigen-Lang) to AQO
+- validate determinism/security constraints
+- return artifacts + compiler trace refs
 
 ---
 
-### 8.3 DriverManagerService
+### 8.3 OptimizerService (GNN)
 
-#### Stable Operations
+Stable operations:
 
-- `ListDevices`
-- `GetDeviceStatus`
-- `ExecuteCircuit`
-- `CalibrateDevice`
+- optimize AQO against device topology → lowered form (e.g., QASM)
+- return placement/routing trace + confidence metadata
 
 ---
 
-#### ExecuteCircuit Responsibilities
+### 8.4 DriverManagerService
 
-- backend dispatch,
-- result normalization,
-- timing metadata,
-- backend error normalization.
+Stable operations:
 
----
-
-## 9. QFS Artifact Contract
-
-### Canonical Artifact Types
-
-- compiled circuits,
-- AQO artifacts,
-- results,
-- logs,
-- timelines,
-- diagnostics,
-- error artifacts.
+- list devices, status, details,
+- execute circuit,
+- calibrate device (when supported),
+- cancel backend execution (where supported).
 
 ---
 
-### Stable Artifact Expectations
+## 9. QFS Artifact Contract (Normative Integration)
 
-#### Results
+QFS is a multi-level storage model:
 
-```text
-results.json
-```
+- **L3 CircuitFS** (long-term artifacts)
+- **L2 Quantum State Store** (checkpoints)
+- **L1 Live Qubit Manager** (live qubit allocation/FF)
 
-#### Error artifacts
+Canonical job artifact expectations (L3) include:
 
-```text
-results/error.json
-```
+- input JobSpec and program source,
+- compiled AQO,
+- optional lowered QASM,
+- results (Parquet + metadata),
+- logs/traces references,
+- error artifacts for failures.
 
-#### Timeline artifacts
-
-```text
-timeline.json
-```
-
----
-
-## 10. Error Contract
-
-Eigen OS uses:
-
-```text
-gRPC-status-first semantics
-```
-
-Transport-level failures must not be encoded through:
-
-```json
-success=false
-```
-
-style wrappers.
+Artifact access must be authorization-gated.
 
 ---
 
-### Canonical Status Rules
+## 10. Error Contract (Normative Integration)
 
-#### INVALID_ARGUMENT
+Eigen OS uses **gRPC-status-first semantics** (and equivalent REST mapping).
 
-Invalid request independent of runtime state.
+Transport-level failures must not be encoded in RPC bodies via `success=false` wrappers.
 
-#### FAILED_PRECONDITION
+Canonical statuses:
 
-Valid request blocked by runtime/system state.
+- `INVALID_ARGUMENT`
+- `FAILED_PRECONDITION`
+- `NOT_FOUND`
+- `RESOURCE_EXHAUSTED`
+- `UNAVAILABLE`
+- `DEADLINE_EXCEEDED`
+- `UNAUTHENTICATED`
+- `PERMISSION_DENIED`
+- `UNIMPLEMENTED`
+- `INTERNAL`
+- `ABORTED`
+- `CANCELLED`
 
-#### RESOURCE_EXHAUSTED
-
-Quota/capacity exhaustion.
-
-#### UNAVAILABLE
-
-Transient backend/runtime unavailability.
-
-#### DEADLINE_EXCEEDED
-
-Timeout/deadline breach.
-
-#### NOT_FOUND
-
-Missing resource identity.
-
-#### UNAUTHENTICATED / PERMISSION_DENIED
-
-Authentication/authorization failures.
-
----
-
-### Structured Error Details
-
-Recommended structured details:
+Structured details (where applicable):
 
 - `google.rpc.BadRequest`
 - `google.rpc.ErrorInfo`
 - `google.rpc.ResourceInfo`
 - `google.rpc.RetryInfo`
 
----
+Backend/provider failures must be normalized before reaching public contracts.
 
-### Backend Error Normalization
-
-Vendor/provider failures must be normalized before reaching public contracts.
+Async failures must remain inspectable via durable artifacts (e.g., `qfs://jobs/<job_id>/results/error.json`).
 
 ---
 
-## 11. Tracing and Correlation
+## 11. Security Contract (Normative Integration)
 
-### Trace Propagation
+### 11.1 Transport Security
 
-Canonical propagation format:
+- External: TLS 1.3
+- Internal: **mTLS required** between services (Zero Trust baseline)
 
-```text
-W3C TraceContext
-```
+### 11.2 Authentication / Authorization
 
-Primary metadata field:
+- External: OAuth2/JWT
+- Internal: mTLS service identity + propagated user/tenant context
+- Policy decision point: centralized policy engine (e.g., OPA/Casbin)
 
-```text
-traceparent
-```
+### 11.3 Secret Management
+
+- Secrets stored in Vault/KMS-equivalent
+- Never in source code, logs, or artifacts
+- Driver credentials issued least-privilege and time-bounded
+
+### 11.4 Auditability
+
+- Security/audit events emitted to observability stack
+- Immutable audit trail requirements apply to auth, policy, and critical runtime actions
 
 ---
 
-### Required Correlation Metadata
+## 12. Tracing and Correlation
 
-Where applicable:
+### 12.1 Trace Propagation
 
-- `trace_id`
+- W3C TraceContext
+- required header/metadata: `traceparent`
+
+### 12.2 Correlation Expectations
+
+Where applicable, systems must correlate via:
+
 - `job_id`
 - `device_id`
-- correlation identifiers.
+- `decision_id` (for explainability)
+- `trace_id` (traces only; not as metric labels)
 
 ---
 
-## 12. Timeout and Deadline Semantics
+## 13. Timeout and Deadline Semantics
 
-### External RPCs
-
-Clients set deadlines.
-
-### Internal propagation
-
-System API propagates deadlines downstream.
-
-### Long-running operations
-
-Long-running execution must use async orchestration semantics rather than indefinite RPC blocking.
+- Public APIs: clients set deadlines/timeouts.
+- System API must propagate deadlines downstream.
+- Long-running operations must use async orchestration rather than - indefinite blocking RPCs.
+- Timeouts must map deterministically into error codes/reasons and durable failure artifacts.
 
 ---
 
-## 13. Observability Architecture
+## 14. Observability Contract Integration
 
-### Supported telemetry
+Eigen OS must comply with:
 
-- Prometheus metrics,
-- OpenTelemetry traces,
-- structured logs.
+- orchestration observability contract,
+- intelligent runtime observability contract,
+- cluster runtime observability contract (if distributed),
+- benchmark observability contract.
 
----
+Bounded cardinality rule:
 
-### Observability Coverage Areas
-
-- orchestration observability,
-- runtime observability,
-- intelligent runtime observability,
-- cluster runtime observability,
-- benchmark observability.
+- no `job_id`, `trace_id`, `request_id`, user identifiers as metric labels.
 
 ---
 
-### Runtime Expectations
+## 15. Interface Matrix
 
-All runtime services should expose:
+### 15.1 External Layer
 
-- metrics,
-- traces,
-- lifecycle-correlated logs.
-
----
-
-## 14. Interface Matrix
-
-### 14.1 External Layer
-
-| **Caller** | **Callee** | **Contract** | **Operations** |
-|---|---|---|---|
-| SDK / CLI | System API | `eigen.api.v1` | submit/status/results |
-| SDK / CLI | System API | `eigen.api.v1` | streaming updates |
-| SDK / CLI | System API | `eigen.api.v1` | device operations |
+| **Caller** | **Callee** | **Contract** | **Purpose** |
+|-----------|-----------|-----------|-----------|
+| SDK / CLI | System API | `eigen.api.v1` + REST `/v1` | submit/status/results/explain/devices |
 
 ---
 
-### 14.2 Orchestration Layer
+### 15.2 Orchestration Layer
 
-| **Caller** | **Callee** | **Contract** | **Operations** |
-|---|---|---|---|
-| System API | Kernel/QRTX | `eigen.internal.v1` | enqueue/status/results |
-| Kernel/QRTX | CompilationService | `eigen.internal.v1` | compile |
-| Kernel/QRTX | DriverManagerService | `eigen.internal.v1` | execute |
-| Kernel/QRTX | QFS | internal IO | artifacts/results |
-
----
-
-### 14.3 Backend Layer
-
-| **Caller** | **Callee** | **Contract** |
-|---|---|---|
-| DriverManagerService |backend/vendor | vendor-specific |
-| backend/vendor | DriverManagerService | normalized response |
+| **Caller** | **Callee** | **Contract** | **Purpose** |
+|-----------|-----------|-----------|-----------|
+| System API | QRTX | `eigen.internal.v1` | enqueue/status/cancel/results |
+| QRTX | CompilationService | `eigen.internal.v1` | Eigen-Lang → AQO |
+| QRTX | OptimizerService | `eigen.internal.v1` | AQO + topology → lowered form |
+| QRTX | DriverManagerService | `eigen.internal.v1` | execute/cancel/status |
+| QRTX | QFS Services | internal gRPC / storage APIs | artifacts/checkpoints |
+| QRTX | Knowledge Base | KB API | ingest/search/patterns |
+| All services | Observability stack | OTel | metrics/logs/traces |
 
 ---
 
-## 15. Operational and CI Requirements
+### 15.3 Hardware Layer
 
-### Proto Compatibility
+| **Caller** | **Callee** | **Contract** | **Purpose** |
+|-----------|-----------|-----------|-----------|
+| Driver Manager | QDriver | QDriver gRPC | execute/status/calibrate/cancel |
+| QDriver | Vendor backend | vendor-specific | device integration |
 
-CI should enforce:
+---
 
-- `buf lint`
-- `buf breaking`
+## 16. CI and Contract Governance Requirements
 
-### Contract Consistency
+CI must enforce:
+
+- proto change controls (e.g., `buf lint`, `buf breaking`),
+- schema validation tests for formats (AQO, JobSpec, QFS manifests),
+- conformance tests for error mapping,
+- observability contract tests (metrics presence, label boundedness),
+- replay determinism tests where applicable.
 
 Changes affecting:
 
-- metrics,
 - APIs,
-- runtime semantics,
-- dashboards,
-- alerts,
-
-must be updated in the same change set.
-
----
-
-## 16. Production Hardening Targets
-
-The following remain required for full production-grade contract freeze:
-
-1. Full runtime topology synchronization across architecture docs.
-2. Unified retry/deadline governance.
-3. Full cross-service conformance testing.
-4. Runtime/observability contract CI validation.
-5. Distributed runtime orchestration hardening.
-6. Deterministic explainability/runtime reasoning semantics.
+- formats,
+- observability,
+- dashboards/alerts,
+- must be updated in the same change set.
 
 ---
 
-## 17. MVP Success Criterion
+## 17. Production Hardening Targets (1.x Baseline)
 
-The baseline MVP success flow is:
+Required for a full production-grade freeze:
+
+1. mTLS enabled and enforced across internal hops.
+2. OAuth2/JWT scopes and ABAC/RBAC policies fully documented and enforced.
+3. Durable QFS-L3 persistence + retention policies.
+4. Observability contracts wired end-to-end.
+5. Backend error normalization and durable failure artifacts.
+6. Deterministic compilation + replay safety for defined modes.
+7. Explainability trace linkage: job submission → decision snapshot → explain endpoint.
+
+---
+
+## 18. MVP Success Criterion (End-to-end)
+
+A baseline success path must work deterministically:
 
 ```text
 eigen-cli submit --job job.yaml
 ```
 
-followed by successful:
+followed by:
 
 - validation,
 - orchestration,
-- compilation,
-- execution,
-- result persistence,
-- observability/tracing,
-- result retrieval.
+- compilation (Eigen-Lang → AQO),
+- optimization (AQO → lowered),
+- execution (Driver Manager → QDriver → backend),
+- persistence (QFS-L3),
+- observability emission,
+- results retrieval.
 
-The full path must operate deterministically end-to-end across the supported simulator/runtime profile.
+This path must operate consistently on at least one supported simulator/runtime profile for Eigen OS 1.x.

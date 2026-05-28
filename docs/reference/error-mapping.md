@@ -3,6 +3,7 @@
 **Document status:** Normative
 **Subsystem:** Public API, Kernel, Runtime, Compiler, Driver Manager, Distributed Runtime
 **Contract version:** `1.0.0`
+**Applies to:** Eigen OS 1.0
 
 This document defines the canonical error mapping contract for Eigen OS 1.0.
 
@@ -15,6 +16,7 @@ The contract standardizes:
 - retryability semantics,
 - distributed runtime failure mapping,
 - compiler/runtime validation behavior,
+- observability correlation guarantees,
 - and cross-service determinism guarantees.
 
 This document is normative for:
@@ -34,6 +36,9 @@ Related references:
 - `docs/reference/error-cases-by-rpc.md`
 - `docs/reference/api/grpc-public.md`
 - `docs/reference/api/grpc-internal.md`
+- `docs/reference/formats/aqo.md`
+- `docs/reference/runtime/qfs-layout.md`
+- `docs/reference/observability/cluster-runtime-observability-contract.md`
 
 ---
 
@@ -55,6 +60,9 @@ RPC payloads MUST NOT implement:
 - `ok=false`,
 - ad-hoc error wrappers,
 - transport-layer error objects.
+- embedded transport status fields.
+
+Application-level async failures MUST be represented via lifecycle state plus structured failure metadata.
 
 ---
 
@@ -64,15 +72,30 @@ Every failure MUST consist of:
 
 1. gRPC status code,
 2. canonical status message,
+3. stable machine-readable reason code,
 4. optional structured details,
-5. stable machine-readable reason code,
-6. optional remediation metadata.
+5. optional remediation metadata,
+6. optional correlation and trace metadata.
+
+The same semantic failure MUST always map to the same:
+
+- gRPC status,
+- reason code,
+- retryability class.
+
+This invariant is mandatory across:
+
+- public APIs,
+- internal APIs,
+- SDKs,
+- orchestration services,
+- distributed runtime components.
 
 ---
 
 ## 3. Structured Error Details
 
-Eigen OS standardizes usage of:
+Eigen OS standardizes usage of the following Google RPC detail types.
 
 | **Detail Type** | **Purpose** |
 |---|---|
@@ -83,6 +106,11 @@ Eigen OS standardizes usage of:
 | `google.rpc.DebugInfo` | internal diagnostics |
 | `google.rpc.Help` | operator remediation |
 | `google.rpc.LocalizedMessage` | localization-safe user messaging |
+| `google.rpc.QuotaFailure` | quota enforcement semantics |
+| `google.rpc.PreconditionFailure` | lifecycle/precondition violations |
+| `google.rpc.RequestInfo` | request correlation metadata |
+
+Structured details MUST remain backward-compatible within the same MAJOR contract version.
 
 ---
 
@@ -98,10 +126,13 @@ Examples:
 
 - malformed JobSpec,
 - unsupported compiler syntax,
+- invalid AQO schema,
 - invalid parameter ranges,
 - missing required fields,
 - malformed resource identifiers,
-- invalid artifact references.
+- invalid artifact references,
+- unsupported metadata values,
+- invalid optimizer configuration.
 
 MUST include:
 
@@ -127,11 +158,17 @@ Examples:
 - illegal lifecycle transition,
 - missing prerequisite artifact,
 - attempting merge before all required shards available,
-- cluster worker not ready.
+- cluster worker not ready,
+- reservation expired,
+- backend calibration unavailable.
 
 Retryability:
 
 - conditionally retryable after state transition.
+
+MUST include when applicable:
+
+- `PreconditionFailure`.
 
 ---
 
@@ -147,7 +184,8 @@ Examples:
 - missing artifact,
 - unknown worker,
 - missing queue,
-- deleted execution context.
+- deleted execution context,
+- unknown reservation ID.
 
 Retryability:
 
@@ -166,7 +204,8 @@ Examples:
 
 - duplicate artifact upload,
 - duplicate registration,
-- duplicate job namespace allocation.
+- duplicate job namespace allocation,
+- duplicate idempotency key reuse with incompatible payload.
 
 Retryability:
 
@@ -188,7 +227,9 @@ Examples:
 - backend quota exceeded,
 - execution concurrency exhausted,
 - memory budget exhausted,
-- cluster scheduling saturation.
+- cluster scheduling saturation,
+- tenant queue limit exceeded,
+- artifact storage limit exceeded.
 
 Retryability:
 
@@ -197,6 +238,10 @@ Retryability:
 MUST include:
 
 - `RetryInfo`.
+
+SHOULD include:
+
+- `QuotaFailure`.
 
 ---
 
@@ -211,7 +256,8 @@ Examples:
 - provider outage,
 - network partition,
 - backend unavailable,
-- transient control-plane failure.
+- transient control-plane failure,
+- distributed queue outage.
 
 Retryability:
 
@@ -234,7 +280,8 @@ Examples:
 - backend execution timeout,
 - scheduler timeout,
 - trace propagation timeout,
-- distributed merge timeout.
+- distributed merge timeout,
+- compilation timeout.
 
 Retryability:
 
@@ -252,7 +299,9 @@ Examples:
 
 - forbidden namespace access,
 - denied backend entitlement,
-- unauthorized administrative action.
+- unauthorized administrative action,
+- missing required OAuth scope,
+- forbidden tenant resource access.
 
 Retryability:
 
@@ -271,7 +320,8 @@ Examples:
 - invalid token,
 - expired token,
 - missing credentials,
-- invalid runtime certificate.
+- invalid runtime certificate,
+- invalid mTLS identity.
 
 Retryability:
 
@@ -290,7 +340,8 @@ Examples:
 - unsupported compiler feature,
 - unsupported runtime backend,
 - unavailable orchestration policy,
-- unsupported API version.
+- unsupported API version,
+- stub RPC invocation.
 
 Retryability:
 
@@ -309,7 +360,8 @@ Examples:
 - runtime panic,
 - corrupted execution state,
 - impossible scheduler state,
-- unexpected compiler failure.
+- unexpected compiler failure,
+- invariant breach in merge pipeline.
 
 Retryability:
 
@@ -318,6 +370,10 @@ Retryability:
 MUST include:
 
 - correlation metadata.
+
+SHOULD include:
+
+- `DebugInfo`.
 
 ---
 
@@ -331,7 +387,8 @@ Examples:
 
 - lease conflict,
 - transactional state race,
-- distributed coordination conflict.
+- distributed coordination conflict,
+- replay conflict.
 
 Retryability:
 
@@ -349,7 +406,8 @@ Examples:
 
 - user cancellation,
 - orchestration cancellation,
-- shutdown interruption.
+- shutdown interruption,
+- deadline-propagated cancellation.
 
 Retryability:
 
@@ -363,18 +421,24 @@ Retryability:
 |-------------------|-------------------|-------------------|-------------------|-------------------|
 | Missing required field | API validation | `INVALID_ARGUMENT` | RPC failure | No |
 | Invalid JobSpec | Compiler/parser | `INVALID_ARGUMENT` | RPC failure or async `ERROR` | No |
+| Invalid AQO schema | Compiler/runtime | `INVALID_ARGUMENT` | RPC failure | No |
 | Invalid artifact checksum | Artifact layer | `INVALID_ARGUMENT` | RPC failure | No |
-| Unknown `job_id` | Kernel/QFS | `NOT_FOUND` | RPC failure | Conditional |
+| Unknown job_id | Kernel/QFS | `NOT_FOUND` | RPC failure | Conditional |
 | Unknown shard | Distributed runtime | `NOT_FOUND` | RPC failure | No |
+| Unknown reservation | Reservation manager | `NOT_FOUND` | RPC failure | No |
 | Duplicate artifact upload | Artifact store | `ALREADY_EXISTS` | RPC failure | No |
+| Duplicate idempotency key | API gateway | `ALREADY_EXISTS` | RPC failure | No |
 | Results requested before completion | Runtime lifecycle | `FAILED_PRECONDITION` | RPC failure | Yes |
 | Merge before quorum satisfied | Runtime merge layer | `FAILED_PRECONDITION` | RPC failure | Yes |
+| Reservation expired | Device runtime | `FAILED_PRECONDITION` | RPC failure | Conditional |
 | Unsupported language feature | Compiler | `UNIMPLEMENTED` | RPC failure | No |
 | Unsupported backend capability | Driver Manager | `UNIMPLEMENTED` | RPC failure | No |
+| Stub RPC invoked | Internal API | `UNIMPLEMENTED` | RPC failure | No |
 | Backend unavailable | Provider/runtime | `UNAVAILABLE` | Async or sync failure | Yes |
 | Backend throttling | Provider/runtime | `RESOURCE_EXHAUSTED` | Async or sync failure | Yes |
 | Queue capacity exhausted | Distributed runtime | `RESOURCE_EXHAUSTED` | RPC failure | Yes |
 | Scheduler saturation | Orchestrator | `RESOURCE_EXHAUSTED` | RPC failure | Yes |
+| Tenant quota exceeded | Admission control | `RESOURCE_EXHAUSTED` | RPC failure | Yes |
 | Lease conflict | Cluster runtime | `ABORTED` | RPC failure | Yes |
 | Worker unavailable | Cluster runtime | `UNAVAILABLE` | RPC failure | Yes |
 | Cluster partition | Distributed runtime | `UNAVAILABLE` | RPC failure | Yes |
@@ -397,6 +461,8 @@ AND
 
 2. structured failure metadata.
 
+Async failures MUST remain durable and inspectable after execution completion.
+
 ### 6.1 Required Async Failure Fields
 
 Async failures MUST expose at least one of:
@@ -406,6 +472,9 @@ Async failures MUST expose at least one of:
 | `error_code` | stable machine-readable code |
 | `error_summary` | human-readable summary |
 | `error_details_ref` | durable artifact reference |
+| `retryable` | retry guidance |
+| `origin_service` | originating subsystem |
+| `trace_id` | distributed tracing correlation |
 
 ---
 
@@ -424,7 +493,16 @@ Artifacts MAY include:
 - retry metadata,
 - trace references,
 - scheduling rationale,
-- distributed failure lineage.
+- distributed failure lineage,
+- normalized provider payloads,
+- AQO validation diagnostics.
+
+Artifacts MUST NOT expose:
+
+- secrets,
+- raw authentication tokens,
+- private credentials,
+- internal-only infrastructure topology.
 
 ---
 
@@ -436,7 +514,8 @@ Raw provider payloads MUST NOT leak directly into:
 
 - public APIs,
 - SDK contracts,
-- orchestration decisions.
+- orchestration decisions,
+- stable telemetry contracts.
 
 ---
 
@@ -513,6 +592,7 @@ Distributed runtime semantics introduce additional failure classes.
 | Queue unavailable | `UNAVAILABLE` |
 | Queue overloaded | `RESOURCE_EXHAUSTED` |
 | Invalid queue state | `FAILED_PRECONDITION` |
+| Poison message detected | `INVALID_ARGUMENT` |
 
 ---
 
@@ -527,9 +607,27 @@ Distributed runtime semantics introduce additional failure classes.
 
 ---
 
+### 8.4 Replay & Recovery Failures
+
+| **Condition** | **Status** |
+|---|---|
+| Replay lineage mismatch | `FAILED_PRECONDITION` |
+| Replay artifact missing | `NOT_FOUND` |
+| Recovery checkpoint invalid | `INVALID_ARGUMENT` |
+| Replay timeout | `DEADLINE_EXCEEDED` |
+
+---
+
 ## 9. Retryability Contract
 
 SDKs and clients MUST treat retryability deterministically.
+
+Retries MUST respect:
+
+- exponential backoff,
+- bounded retry budgets,
+- propagated deadlines,
+- idempotency guarantees.
 
 ### 9.1 Retryable Statuses
 
@@ -554,6 +652,18 @@ Typically non-retryable:
 - `INVALID_ARGUMENT`
 - `UNIMPLEMENTED`
 - `PERMISSION_DENIED`
+- `UNAUTHENTICATED`
+- `ALREADY_EXISTS`
+
+---
+
+### 9.3 Retry Metadata
+
+Retryable failures SHOULD include:
+
+- `RetryInfo.retry_delay`
+- retry classification metadata
+- retry budget hints when available
 
 ---
 
@@ -564,7 +674,9 @@ All distributed/runtime failures SHOULD expose:
 - correlation ID,
 - trace ID,
 - execution timeline reference,
-- shard lineage (if applicable).
+- shard lineage (if applicable),
+- originating subsystem,
+- runtime worker identity (internal only).
 
 Distributed failures SHOULD remain traceable across:
 
@@ -573,7 +685,13 @@ Distributed failures SHOULD remain traceable across:
 - worker,
 - merge pipeline,
 - artifact storage,
-- replay systems.
+- replay systems,
+- observability exporters.
+
+Trace propagation SHOULD use:
+
+- W3C `traceparent`
+- OpenTelemetry-compatible correlation metadata.
 
 ---
 
@@ -586,13 +704,21 @@ SDKs MUST consistently expose:
 3. structured details,
 4. retryability semantics,
 5. correlation metadata.
+6. stable reason codes.
 
 CLI tooling SHOULD:
 
 - render validation failures clearly,
 - expose remediation hints,
 - display retry guidance,
-- preserve structured diagnostics.
+- preserve structured diagnostics,
+- expose correlation IDs for operator support.
+
+SDKs MUST NOT:
+
+- collapse canonical statuses into generic exceptions,
+- discard structured detail payloads,
+- mutate retryability semantics.
 
 ---
 
@@ -606,6 +732,8 @@ CI MUST validate:
 4. retryability correctness,
 5. async failure envelope presence,
 6. distributed-runtime failure normalization.
+7. backend normalization correctness,
+8. traceability metadata propagation.
 
 Required golden tests:
 
@@ -616,7 +744,9 @@ Required golden tests:
 - distributed runtime conflicts,
 - merge failures,
 - quota failures,
-- timeout behavior.
+- timeout behavior,
+- AQO validation failures,
+- replay/recovery failures.
 
 ---
 
@@ -648,6 +778,19 @@ Async failures MUST remain inspectable after runtime completion.
 
 Distributed/runtime failures MUST remain correlatable across services.
 
+#### Retry Consistency
+
+Retry guidance MUST remain deterministic across SDKs and services.
+
+#### Security Preservation
+
+Failure payloads MUST NOT leak:
+
+- secrets,
+- credentials,
+- internal tokens,
+- privileged infrastructure topology.
+
 ---
 
 ## 14. Migration & Compatibility Rules
@@ -678,19 +821,5 @@ Breaking changes require:
 - SDK compatibility updates,
 - CLI compatibility updates,
 - migration documentation,
-- conformance test updates.
-
----
-
-## 15. Minimum Closure Criteria
-
-The Eigen OS error contract is considered fully realized only when:
-
-1. all RPCs use deterministic canonical status mapping,
-2. all runtime services normalize backend/provider failures,
-3. structured detail schemas are frozen,
-4. retryability semantics are standardized,
-5. distributed runtime failures are fully mapped,
-6. SDKs expose structured failure semantics consistently,
-7. CI validates end-to-end mapping determinism,
-8. async failure artifacts remain durable and inspectable.
+- conformance test updates,
+- observability compatibility review.

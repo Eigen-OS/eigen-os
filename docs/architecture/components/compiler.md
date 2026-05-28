@@ -1,771 +1,429 @@
 # Eigen Compiler Architecture Specification
 
-Status snapshot: updated on 2026-05-25 based on implemented repository state, RFCs, ADRs, compiler contracts, integration tests, and architectural roadmap.
+- **Document status:** Normative (source of truth)
+- **Subsystem:** Compiler Service (Eigen OS)
+- **Contract version:** `1.0.0`
+- **Applies to:** System API → Kernel/QRTX → Compiler Service interactions, compiler artifacts persisted to QFS
+- **Last updated:** 2026-05-28
 
-This document is the canonical specification of the Eigen Compiler subsystem.
+This document defines the **canonical** compiler behavior and contracts for Eigen OS. It is written to match the Technical Specification (ТЗ) and to remove ambiguities so downstream code can be aligned to it.
 
-The document explicitly distinguishes:
+## 0. Scope and non-goals
 
-- implemented behavior,
-- mandatory behavior required by the technical specification,
-- planned but not yet implemented capabilities.
+### In scope
 
-This document supersedes informal MVP-only descriptions and defines the target production architecture while preserving current implementation truthfulness.
+- Deterministic compilation of **Eigen-Lang v1.0** source into **AQO v1.0** artifacts.
+- Compiler safety model (AST-only, no user-code execution).
+- Compiler service interfaces (internal gRPC), artifacts, error semantics.
+- DPDA-based neuro-symbolic compilation architecture (Eigen-DPDA) as the target compiler core, including the required iteration cycle.
+- Hardware-aware optimization hooks (GNN optimizer) as a **post-AQO** stage.
 
----
+### Out of scope
 
-## 1. Purpose
-
-The Eigen Compiler is the canonical compilation subsystem of Eigen OS responsible for transforming high-level hybrid quantum-classical programs into deterministic executable intermediate representations.
-
-The compiler acts as the semantic boundary between:
-
-- user-defined declarative programs,
-- distributed runtime orchestration,
-- heterogeneous quantum hardware backends.
-
-The compiler MUST provide:
-
-- deterministic compilation,
-- safe AST-only processing,
-- backend-independent IR generation,
-- optimization pipelines,
-- hardware-aware transformation,
-- observability and auditability,
-- extensibility through modular compiler stages.
+- Public (external) compiler APIs (not exposed in `eigen.api.v1`).
+- Vendor-specific backend compiler toolchains (those belong in drivers / provider SDKs).
+- Full ML training pipelines (only the required integration points are defined here).
 
 ---
 
-## 2. Architectural Role
+## 1. Canonical responsibilities
 
-The compiler is a runtime service positioned between:
+The compiler service is the semantic boundary between:
 
-- `system-api`,
-- `eigen-kernel`,
-- `driver-manager`,
-- hardware optimization pipelines.
+- **User programs** (Eigen-Lang source),
+- **Runtime orchestration** (Kernel/QRTX),
+- **Execution backends** (through Driver Manager).
 
-The compiler receives validated program specifications and produces:
+The compiler MUST:
 
-- AQO intermediate representation,
-- metadata artifacts,
-- optimization hints,
-- hardware placement annotations,
-- validation diagnostics.
+1. Parse Eigen-Lang source into an annotated AST.
+2. Validate the allowed subset and enforce safety restrictions.
+3. Produce **canonical, deterministic AQO v1.0** (JSON) as the primary IR artifact.
+4. Optionally produce additional artifacts (AQO protobuf, QASM export) **without changing AQO**.
+5. Emit structured diagnostics and deterministic error semantics.
+6. Persist compilation artifacts and metadata into QFS in the canonical layout (see `qfs-layout.md`).
 
-The compiler MUST NEVER execute user code.
+The compiler MUST NEVER:
 
----
-
-## 3. Current Implementation Status
-
-### 3.1 Implemented
-
-Implemented in the current repository:
-
-| **Capability** | **Status** |
-|---|---|
-| AST-only parsing | Implemented |
-| Python `ast.parse` frontend | Implemented |
-| Deterministic AQO lowering | Implemented |
-| Safety validation | Implemented |
-| Restricted Eigen-Lang subset | Implemented |
-| Internal gRPC compile service | Implemented |
-| AQO JSON v0.1 output | Implemented |
-| Structured validation errors | Implemented |
-| Trace propagation | Implemented |
-| Deterministic compilation baseline | Implemented |
+- execute user Python code,
+- import arbitrary modules,
+- access the host filesystem outside the compilation workspace,
+- access the network (unless explicitly enabled for **trusted** internal sources; disabled by default),
+- spawn subprocesses.
 
 ---
 
-### 3.2 Partially Implemented
+## 2. Contract and versioning
 
-| **Capability** | **Status** |
-|---|---|
-| Distributed compiler metadata | Partial |
-| Compiler observability | Partial |
-| AQO metadata annotations | Partial |
+### 2.1 Contract versions
 
----
+- **Eigen-Lang spec:** `1.0`
+- **AQO format:** `1.0`
+- **Compiler service contract:** `1.0.0`
+- **Error model:** Eigen OS `1.0.0` (`error-model.md`, `error-mapping.md`)
 
-### 3.3 Planned
+### 2.2 Backward compatibility
 
-| **Capability** | **Status** |
-|---|---|
-| Typed frontend | Planned |
-| Neuro-symbolic DPDA compiler | Planned |
-| Transformer-assisted optimization | Planned |
-| Knowledge-base optimization | Planned |
-| GNN hardware optimizer | Planned |
-| Incremental compilation | Planned |
-| Plugin architecture | Planned |
-| Multi-target backend lowering | Planned |
-| QASM3 backend generation | Planned |
-| Compiler caching | Planned |
+If legacy AQO `0.1` artifacts exist in QFS, the runtime MAY continue to execute them during a migration window, but:
+
+- **New compilation output MUST be AQO v1.0**.
+- Any compatibility mode MUST be explicit via a version field in artifacts and MUST be test-covered.
 
 ---
 
-## 4. Core Architectural Principles
+## 3. Inputs and outputs
 
-### 4.1 Deterministic Compilation
+### 3.1 Primary input: program source
+
+Inputs to compilation are carried via the internal `CompileJob` (or equivalent) RPC and MUST include:
+
+- `source_bytes` (UTF-8) **or** `source_ref` (QFS ref to the source file),
+- `entrypoint` (default: `main`),
+- `target` (string, e.g. `sim:local`, `cluster:auto`, `runtime:auto`),
+- `compiler_options` (bounded map of strings),
+- `request_context` (trace context, tenant/project scope via metadata).
+
+**Source precedence** (when both provided):
+
+1. `source_bytes` (authoritative)
+2. `source_ref` (fallback)
+
+### 3.2 Primary output artifacts
+
+The compiler MUST produce and persist:
+
+- `compiled/circuit.aqo.json` (**required**, canonical AQO v1.0 JSON, sorted keys, no insignificant whitespace)
+- `compiled/metadata.json` (**required**, compiler metadata and hashes)
+
+The compiler MAY additionally persist:
+
+- `compiled/circuit.aqo.pb` (optional, AQO protobuf encoding)
+- `compiled/circuit.qasm` (optional export, best-effort, explicitly marked as non-authoritative if incomplete)
+
+### 3.3 Required metadata fields
+
+`compiled/metadata.json` MUST contain at least:
+
+- `compiler_contract_version`: `"1.0.0"`
+- `eigen_lang_version`: `"1.0"`
+- `aqo_version`: `"1.0"`
+- `source_sha256`: `sha256:<hex>`
+- `aqo_sha256`: `sha256:<hex>` (hash of the canonical AQO bytes)
+- `created_at`: RFC3339 timestamp
+- `entrypoint`: string
+- `target`: string
+- `options`: canonicalized compiler options (sorted keys)
+
+It MAY contain:
+
+- `qasm_sha256`
+- `optimizer_report_ref` (QFS ref)
+- `placement_map_ref` (QFS ref)
+- `diagnostics_ref` (QFS ref)
+
+---
+
+## 4. Deterministic compilation guarantees (normative)
 
 The compiler MUST guarantee:
 
 ```text
-same_source
-+ same_options
-+ same_input_references
-= identical_AQO_output
+same_source_bytes
++ same_entrypoint
++ same_target
++ same_compiler_options (after canonicalization)
+= identical_AQO_bytes
+= identical_aqo_sha256
 ```
 
-Determinism applies to:
+Determinism requirements:
 
-- AQO structure,
-- operation ordering,
-- parameter mapping,
-- metadata ordering,
-- canonical serialization.
+- Canonical parameter naming is stable (no dependence on hash-map iteration order).
+- Operation ordering is stable and reproducible.
+- AQO JSON serialization is canonical (sorted keys, stable list ordering, no whitespace variability).
+- Diagnostics ordering is stable (sorted by source location).
 
----
-
-### 4.2 AST-Only Safety Model
-
-The compiler MUST NEVER:
-
-- execute Python bytecode,
-- import runtime modules dynamically,
-- evaluate expressions,
-- invoke external processes.
-
-Compilation is restricted to:
-
-- parsing,
-- validation,
-- symbolic transformation,
-- deterministic lowering.
+Any nondeterministic input (e.g. random seed) MUST be explicitly provided as an option and included in the metadata and request hash.
 
 ---
 
-### 4.3 Backend Independence
+## 5. Safety model (AST-only)
 
-AQO MUST remain backend-neutral.
+### 5.1 Allowed model
 
-Hardware-specific optimization MUST occur after canonical AQO generation.
+- Parse source via a Python AST parser.
+- Traverse AST with a strict allowlist.
+- Extract only declarative constructs.
+- Build an internal IR without executing any user code.
 
----
+### 5.2 Forbidden constructs (must fail with `INVALID_ARGUMENT`)
 
-### 4.4 Modular Pipeline
+- `exec`, `eval`, `compile`
+- dynamic imports or imports outside `eigen_lang` allowlist
+- filesystem/network/subprocess access
+- dynamic control flow (`if`, `for`, `while`, `match`) in v1.0
+- reflection / metaprogramming (`getattr` with non-literal names, `globals`, `locals`, etc.)
 
-The compiler architecture MUST remain stage-oriented.
+### 5.3 Isolation requirements (per ТЗ)
 
-Mandatory stages:
+The compiler MUST run in an isolated container / sandbox profile:
 
-1. Source ingestion
-2. Parsing
-3. Validation
-4. Semantic analysis
-5. IR generation
-6. Optimization
-7. Hardware adaptation
-8. AQO serialization
-
----
-
-## 5. Compiler Architecture
-
-### 5.1 High-Level Pipeline
-
-```text
-Source
-  ↓
-Parser
-  ↓
-AST Validator
-  ↓
-Semantic Analyzer
-  ↓
-Eigen-DPDA Core
-  ↓
-AQO Generator
-  ↓
-Optimizer Pipeline
-  ↓
-Hardware Optimizer (GNN)
-  ↓
-AQO Output
-```
+- no outbound network by default,
+- read-only filesystem outside the compilation workspace,
+- strict CPU/memory/time limits,
+- no access to host credentials or secrets,
+- explicit allowlisted environment variables only.
 
 ---
 
-### 5.2 Frontend Layer
+## 6. Compilation pipeline (normative stages)
 
-#### Responsibility
+The compiler is stage-oriented. The pipeline MUST include the following stages, with stable stage naming for observability:
 
-The frontend is responsible for:
+1. **ingest**: decode/validate UTF-8; normalize line endings.
+2. **parse**: build AST; reject syntax errors.
+3. **validate_ast**: enforce allowlist; reject forbidden nodes/calls/imports.
+4. **annotate**: build symbol table; annotate AST nodes with semantic tags.
+5. **lower_to_ir**: build deterministic internal IR representation of the program intent.
+6. **eigen_dpda**: produce AQO stream deterministically (see section 7).
+7. **canonicalize_aqo**: normalize/validate AQO invariants (arity, indices, params).
+8. **optional_optimize**: deterministic rewrite passes (if enabled; must be replay-safe).
+9. **optional_hardware_adapt**: hardware hints / placement (post-AQO, advisory).
+10. **emit**: write artifacts to QFS atomically; emit hashes.
 
-- source decoding,
-- syntax parsing,
-- AST construction,
-- structural validation,
-- semantic extraction.
-
-#### Implemented
-
-Implemented now:
-
-- Python AST parsing,
-- UTF-8 validation,
-- restricted AST traversal,
-- decorator detection,
-- import restrictions,
-- forbidden-call validation.
-
-#### Planned
-
-Planned frontend capabilities:
-
-- formal lexer/parser,
-- typed symbol tables,
-- semantic type checker,
-- module graph support,
-- incremental AST caching,
-- compiler plugin hooks.
+The compiler MUST surface stage timing and failures in structured logs and traces (see section 11).
 
 ---
 
-## 6. Eigen-Lang Processing
+## 7. Eigen-DPDA neuro-symbolic core (required architecture)
 
-### 6.1 Supported MVP Subset
+This section is normative for the target compiler core as described in the Technical Specification (ТЗ).
 
-Implemented subset:
+### 7.1 Two-stage model
 
-| **Feature** | **Status** |
-|---|---|
-| `@hybrid_program` | Implemented |
-| `rx()` | Implemented |
-| `ry()` | Implemented |
-| `rz()` | Implemented |
-| `cx()` | Implemented |
-| `Param()` | Implemented |
-| terminal measurement | Implemented |
+Eigen-DPDA combines:
 
----
+- **DPDA (Deterministic Pushdown Automaton):** defines *allowed actions* at each compilation state and enforces correctness.
+- **Neural model (Transformer/GNN):** scores allowed actions using context (AST + device hints + KB experience) and selects the best action.
 
-### 6.2 Forbidden Constructs
+**Important safety rule:** Neural outputs are advisory. Final decisions MUST be validated by the DPDA and the symbolic invariants.
 
-The following are rejected:
+### 7.2 Required DPDA compilation cycle
 
-| **Construct** | **Status** |
-|---|---|
-| `exec` | Rejected |
-| `eval` | Rejected |
-| `compile` | Rejected |
-| `subprocess` | Rejected |
-| `unrestricted imports` | Rejected |
-| dynamic runtime control flow | Rejected |
+The DPDA compilation loop MUST behave as follows:
 
----
+1. Parse Eigen-Lang into **annotated AST**.
+2. Initialize DPDA with the AST root and compilation context.
+3. Iterate until terminal state:
 
-### 6.3 Dynamic Control Flow
+   - DPDA computes `allowed_actions` for the current state.
+   - The model computes a score for each action given the context:
+     - AST neighborhood / cursor,
+     - target/backend hints,
+     - historical KB features (if available),
+     - policy constraints.
+   - Select the highest-scoring action (tie-broken deterministically).
+   - DPDA applies the action, updates stack/state, and emits zero or more AQO ops.
 
-Currently rejected:
+4. On terminal state, DPDA returns the full AQO stream plus compilation metadata.
 
-- `if`
-- `for`
-- `while`
-- `match`
+The implementation MUST provide a deterministic fallback when the model is unavailable:
 
-This restriction exists to preserve:
+- **DPDA-only mode** where the action selection uses deterministic policy rules (e.g. fixed priority ordering).
 
-- deterministic lowering,
-- bounded compilation complexity,
-- safety guarantees.
+### 7.3 Training and KB integration (interface-level requirements)
 
-Future controlled symbolic flow MAY be introduced through explicit compiler IR constructs.
+The compiler MUST be able to export training examples (without secrets) containing:
+
+- input signature (normalized AST features),
+- selected action sequence,
+- resulting AQO hash,
+- execution outcome metadata (fidelity/latency where available).
+
+The KB integration is optional at runtime, but the interfaces MUST be present so training pipelines can ingest telemetry.
 
 ---
 
-## 7. Eigen-DPDA Neuro-Symbolic Compiler Core
+## 8. AQO generation requirements (v1.0)
 
-### 7.1 Purpose
+The compiler MUST emit AQO v1.0 compliant with `aqo.md`.
 
-The Eigen-DPDA subsystem is the long-term neuro-symbolic compilation core of Eigen OS.
+Mandatory properties:
 
-Its responsibility is to combine:
+- `version`, `qubits`, `operations` exist.
+- All indices are within bounds.
+- Operation arity matches opcode definition.
+- Parameters follow opcode rules.
+- `MEASURE` invariants (`len(q) == len(c)`) hold.
+- Unknown opcodes are rejected.
 
-- formal deterministic automata,
-- symbolic program reasoning,
-- neural optimization models,
-- learned transformation strategies.
-
----
-
-### 7.2 Architectural Model
-
-The Eigen-DPDA architecture combines:
-
-| **Layer** | **Purpose** |
-|---|---|
-| Symbolic DPDA | Deterministic compilation correctness |
-| Transformer models | Optimization prediction |
-| Knowledge base | Pattern reuse |
-| Rule engine | Safety and semantic constraints |
+The compiler MUST ensure canonical bit ordering expectations are met by the end-to-end system by generating measurements consistent with the AQO contract (see `aqo.md`).
 
 ---
 
-### 7.3 Deterministic Boundary
+## 9. Optimization and hardware adaptation
 
-Neural models MUST NEVER violate:
+### 9.1 Deterministic optimization (MVP-safe)
 
-- AQO correctness,
-- semantic equivalence,
-- compiler safety invariants,
-- determinism guarantees.
+If optimization is enabled via compiler options, optimizations MUST be:
 
-Neural outputs are advisory.
+- deterministic,
+- semantics-preserving,
+- replay-safe.
 
-Final compilation decisions MUST remain validated by symbolic stages.
+Examples of allowed deterministic passes:
 
----
+- canonical gate normalization,
+- dead operation elimination (only when provably safe),
+- deterministic gate fusion (no heuristic randomness).
 
-### 7.4 Planned Capabilities
+### 9.2 Hardware-aware adaptation (GNN optimizer, post-AQO)
 
-Planned Eigen-DPDA features:
+Hardware adaptation operates **after** canonical AQO generation.
 
-- learned circuit rewriting,
-- optimization prediction,
-- parameter initialization heuristics,
-- ansatz selection,
-- topology-aware rewrite planning,
-- cost-model prediction,
-- distributed compilation optimization.
-
----
-
-### 7.5 Knowledge Base Integration
-
-The compiler architecture includes a persistent optimization knowledge base.
-
-Target stored mappings:
-
-```text
-task_signature
-→ optimal_circuit_pattern
-→ execution_metrics
-→ hardware_performance
-```
-
-The knowledge base is intended for:
-
-- optimization reuse,
-- neural training datasets,
-- hardware adaptation learning,
-- compilation acceleration.
-
-Not yet implemented.
-
----
-
-## 8. AQO Intermediate Representation
-
-### 8.1 Purpose
-
-AQO (Abstract Quantum Operations) is the canonical intermediate representation between:
-
-- compiler,
-- kernel,
-- runtime services,
-- hardware adapters.
-
----
-
-### 8.2 Current AQO Version
-
-Implemented version:
-
-```text
-AQO v0.1
-```
-
----
-
-### 8.3 Current Supported Operations
-
-Implemented operations:
-
-| **Operation** | **Status** |
-|---|---|
-| `RX` | Implemented |
-| `RY` | Implemented |
-| `RZ` | Implemented |
-| `CX` | Implemented |
-| `MEASURE imports` | Implemented |
-
----
-
-### 8.4 Current Output Format
-
-Implemented format:
-
-```text
-canonical JSON serialization
-```
-
-Planned formats:
-
-- protobuf AQO,
-- binary AQO,
-- backend-native IR,
-- QASM3 output.
-
----
-
-## 9. Optimization Pipeline
-
-### 9.1 Current State
-
-Current optimization behavior is minimal and deterministic.
-
-Implemented:
-
-- structural normalization,
-- canonical AQO generation.
-
-Not implemented:
-
-- rewrite optimization,
-- routing optimization,
-- algebraic simplification,
-- gate fusion,
-- dead code elimination.
-
----
-
-### 9.2 Planned Optimization Stages
-
-Target optimization pipeline:
-
-1. Constant folding
-2. Symbolic simplification
-3. Dead operation elimination
-4. Gate fusion
-5. Circuit depth reduction
-6. Hardware routing adaptation
-7. Noise-aware optimization
-8. Scheduling-aware rewriting
-
----
-
-## 10. GNN Hardware Optimizer
-
-### 10.1 Purpose
-
-The GNN Hardware Optimizer is the planned hardware-aware optimization subsystem of Eigen OS.
-
-Its responsibility is to adapt AQO execution plans to real hardware topology and noise characteristics.
-
-### 10.2 Architectural Role
-
-The optimizer operates after canonical AQO generation.
-
-Inputs:
+Inputs (advisory):
 
 - AQO graph,
-- hardware topology graph,
+- device topology graph,
 - calibration metadata,
-- connectivity constraints,
-- error models.
+- noise/error models.
 
-Outputs:
+Outputs (advisory artifacts):
 
-- optimized qubit placement,
-- routing plans,
-- swap minimization,
-- hardware-adapted execution plans.
+- placement map (logical → physical qubits),
+- routing hints (e.g. SWAP plan),
+- hardware profile annotations.
 
----
-
-### 10.3 GNN Model Responsibilities
-
-The GNN subsystem is intended to predict:
-
-| **Capability** | **Purpose** |
-|---|---|
-| qubit placement | topology optimization |
-| routing strategy | minimize swap overhead |
-| gate scheduling | reduce decoherence |
-| backend adaptation | vendor-specific optimization |
-| noise-aware remapping | execution fidelity improvement |
+**Deterministic boundary:** Any non-deterministic model inference MUST NOT change the canonical AQO. Instead, it MUST be emitted as separate artifacts and applied by runtime policies that are themselves deterministic and audit-safe.
 
 ---
 
-### 10.4 Deterministic Safety Boundary
+## 10. Service interfaces (internal gRPC)
 
-The GNN optimizer MUST remain bounded by symbolic validation.
+The compiler is accessed via internal gRPC (`eigen.internal.v1`). The `.proto` files are the source of truth. The following methods MUST exist and behave as described:
 
-The optimizer MAY recommend transformations but MUST NOT:
+- `CompileCircuit`: compile a single circuit-like program input into AQO artifacts.
+- `CompileJob`: compile a full job submission (JobSpec + program) into AQO artifacts and metadata.
 
-- violate AQO semantics,
-- alter observable meaning,
-- bypass compiler correctness checks.
+If `OptimizeCircuit` and `ValidateCircuit` exist in proto but are not implemented, they MUST return `UNIMPLEMENTED` deterministically until implemented or removed.
 
----
+### 10.1 Idempotency and caching
 
-### 10.5 Implementation Status
+Compilation may be cached by `(source_sha256, options_hash, target)`.
 
-| **Capability** | **Status** |
-|---|---|
-| Architectural contracts | topology optimization |
-| ADR alignment | minimize swap overhead |
-| Production execution path | reduce decoherence |
-| Training infrastructure | vendor-specific optimization |
-| Runtime inference integration | execution fidelity improvement |
+If caching is implemented:
+
+- cache lookup MUST be deterministic,
+- cache hits MUST return identical artifacts,
+- cache metadata MUST be surfaced (e.g. `metadata.cache_hit: true`).
 
 ---
 
-## 11. Interfaces
+## 11. Observability (compiler telemetry)
 
-### 11.1 Internal gRPC Services
+The Technical Specification requires compilation visibility (CompilationMetrics, DPDA steps). The compiler MUST provide:
 
-Implemented services:
+### 11.1 Traces (OpenTelemetry)
 
-| **RPC** | **Status** |
-|---|---|
-| CompileCircuit | Implemented |
-| CompileJob | Implemented |
+Spans MUST include:
 
-Current placeholder services:
+- `compiler.ingest`
+- `compiler.parse`
+- `compiler.validate_ast`
+- `compiler.annotate`
+- `compiler.eigen_dpda`
+- `compiler.emit`
 
-| **RPC** | **Status** |
-|---|---|
-| OptimizeCircuit | Returns `UNIMPLEMENTED` |
-| ValidateCircuit | Returns `UNIMPLEMENTED` |
+Required span attributes:
 
----
+- `job_id` (if known)
+- `target`
+- `aqo_version`
+- `source_sha256` (redacted/hashed form is acceptable; do not emit raw source)
+- `cache_hit` (boolean, if applicable)
 
-### 11.2 Planned API Expansion
+### 11.2 Metrics (Prometheus)
 
-Future compiler APIs MAY include:
+At minimum, the compiler MUST expose:
 
-- optimization-only requests,
-- validation-only requests,
-- AST inspection,
-- compiler hints,
-- hardware profile selection,
-- distributed compile sessions.
+- `eigen_compiler_contract_info{version="1.0.0"} 1` (contract marker)
+- `eigen_compiler_compilations_total{result="succeeded|failed"}` (counter)
+- `eigen_compiler_phase_duration_seconds{phase="<stage>"}` (histogram or summary; bounded phase label)
+- `eigen_compiler_dpda_steps_total{result="succeeded|failed"}` (counter)
+- `eigen_compiler_source_bytes` (histogram)
+- `eigen_compiler_aqo_ops` (histogram)
 
----
+Label rules:
 
-## 12. Input Contracts
+- MUST NOT include `job_id`, `trace_id`, raw user identifiers, or any unbounded values.
+- Any labels MUST be finite enums (`phase`, `result`, `target_class`).
 
-### 12.1 Implemented Inputs
+### 11.3 Logs
 
-Implemented request inputs:
+Logs MUST be structured and correlation-friendly, including:
 
-| **Field** | **Status** |
-|---|---|
-| `source` | Implemented |
-| `source_ref` | Parsed only |
-| `options` map | Implemented |
-
----
-
-### 12.2 Planned Input Extensions
-
-Planned additions:
-
-- compiler profiles,
-- optimization policies,
-- hardware constraints,
-- distributed compilation hints,
-- caching directives.
+- `trace_id`, `span_id`,
+- `job_id` when available,
+- `source_sha256`, `aqo_sha256`,
+- deterministic error codes on failure.
 
 ---
 
-## 13. Output Contracts
+## 12. Error handling (canonical)
 
-### 13.1 Implemented Outputs
+Errors MUST follow `error-model.md` and `error-mapping.md`.
 
-Implemented outputs:
+### 12.1 Common compiler errors
 
-| **Artifact** | **Status** |
-|---|---|
-| AQO JSON | Implemented |
-| metadata map | Implemented |
-| validation violations | Implemented |
+- Syntax error / invalid UTF-8 / forbidden AST nodes: `INVALID_ARGUMENT`
+- Exceeded resource limits: `RESOURCE_EXHAUSTED` (or `INVALID_ARGUMENT` if treated as validation; pick one policy and keep it consistent—default: `RESOURCE_EXHAUSTED` for hard size limits)
+- Unsupported language feature: `UNIMPLEMENTED`
+- Internal invariant violation: `INTERNAL`
+- Missing source reference: `NOT_FOUND` (when `source_ref` points to a missing artifact)
 
----
-
-### 13.2 Planned Outputs
-
-Planned outputs:
-
-- typed IR,
-- annotated AST,
-- optimization reports,
-- placement maps,
-- compilation traces,
-- symbolic analysis artifacts.
-
-## 14. Resource Limits
-
-### 14.1 Current Limits
-
-Implemented environment-based limits:
-
-| **Variable** | **Purpose** |
-|---|---|
-| `EIGEN_COMPILER_MAX_SOURCE_BYTES` | source size limit |
-| `EIGEN_COMPILER_MAX_AST_NODES` | AST node limit |
-| `EIGEN_COMPILER_MAX_AST_DEPTH` | AST depth limit |
+Validation failures MUST include structured details equivalent to `google.rpc.BadRequest` field violations.
 
 ---
 
-### 14.2 Planned Enforcement
+## 13. Resource limits and DoS resistance
 
-Future work:
+The compiler MUST enforce bounded resource usage:
 
-- unified policy enforcement,
-- per-tenant quotas,
-- distributed resource budgeting.
+- `max_source_bytes`
+- `max_ast_nodes`
+- `max_ast_depth`
+- `max_compile_wall_time`
 
----
-
-## 15. State and Storage
-
-### 15.1 Current State Model
-
-Implemented now:
-
-- stateless request handling,
-- no persistent compiler cache,
-- no persistent AST storage.
+Limits MUST be configurable per deployment and SHOULD be quota-aware in multi-tenant setups.
 
 ---
 
-### 15.2 Planned Persistent Systems
+## 14. Conformance and CI requirements
 
-Planned systems:
+A conformant compiler implementation MUST have CI that validates:
 
-- AST cache,
-- compilation cache,
-- distributed artifact storage,
-- optimization knowledge base,
-- incremental compilation state.
+1. Deterministic AQO output for identical inputs (byte-for-byte).
+2. Stable hashing (`source_sha256`, `aqo_sha256`).
+3. Rejection of forbidden constructs with deterministic error codes.
+4. AQO v1.0 schema invariants (including measurement invariants).
+5. Internal RPC compatibility and `UNIMPLEMENTED` behavior for stubs.
+6. Observability markers and required metric presence.
+7. QFS artifact layout correctness (per `qfs-layout.md`).
 
----
-
-## 16. Failure Handling
-
-### 16.1 Implemented Failures
-
-Implemented failure categories:
-
-| **Failure** | **Behavior** |
-|---|---|
-| syntax errors | INVALID_ARGUMENT |
-| UTF-8 errors | INVALID_ARGUMENT |
-| forbidden imports | INVALID_ARGUMENT |
-| resource limit violations | INVALID_ARGUMENT |
-| unsupported RPCs | UNIMPLEMENTED |
+Golden tests MUST be used for fixture-based stability.
 
 ---
 
-### 16.2 Planned Failure Taxonomy
+## 15. Implementation notes (truthfulness)
 
-Planned structured categories:
+This document is normative. If the repository currently emits AQO `0.1` or lacks some metrics, the code MUST be updated to match this document. The intended source of truth is:
 
-- semantic errors,
-- optimization failures,
-- plugin failures,
-- hardware adaptation failures,
-- neural inference failures.
+- `aqo.md` for AQO format,
+- internal proto files for RPC message shapes,
+- this document for compiler semantics, stages, and determinism requirements.
 
 ---
 
-## 17. Observability
+## 16. Summary
 
-### 17.1 Implemented
-
-Implemented:
-
-- structured RPC lifecycle logging,
-- trace propagation,
-- correlation metadata.
-
----
-
-### 17.2 Planned
-
-Planned observability:
-
-- Prometheus metrics,
-- OpenTelemetry spans,
-- compilation phase timing,
-- optimization telemetry,
-- neural inference metrics,
-- compiler SLO dashboards.
-
----
-
-## 18. Security Invariants
-
-The compiler MUST obey the following invariants.
-
-### 18.1 No User Code Execution
-
-User code MUST NEVER execute inside compiler processes.
-
-### 18.2 Deterministic Output
-
-Equivalent inputs MUST produce identical AQO outputs.
-
-### 18.3 Restricted Runtime Surface
-
-The compiler MUST reject:
-
-- unsafe imports,
-- filesystem access,
-- network access,
-- subprocess execution.
-
-### 18.4 Neural Safety Boundary
-
-Neural optimization systems MUST remain subordinate to symbolic validation.
-
----
-
-## 19. Technology Stack
-
-| **Component** | **Technology** |
-|---|---|
-| Compiler runtime | Python 3.12+ |
-| AST frontend | Python AST |
-| RPC layer | gRPC |
-| Serialization | Protocol Buffers + JSON |
-| Planned ML stack | PyTorch / JAX |
-| Planned GNN stack | PyTorch Geometric / DGL |
-
----
-
-## 20. Conclusion
-
-The Eigen Compiler is the deterministic neuro-symbolic compilation subsystem of Eigen OS.
-
-The current implementation already provides:
-
-- safe AST-only compilation,
-- deterministic AQO generation,
-- restricted Eigen-Lang support,
-- structured validation,
-- service-oriented compiler APIs.
-
-The target architecture extends this foundation into:
-
-- a full neuro-symbolic compiler pipeline,
-- transformer-assisted optimization,
-- knowledge-driven compilation,
-- GNN-based hardware adaptation,
-- distributed intelligent optimization.
-
-This document is the canonical specification for the compiler subsystem, including both currently implemented behavior and approved architectural targets.
+The Eigen Compiler is a deterministic, sandboxed, stage-oriented compilation service that transforms Eigen-Lang v1.0 programs into AQO v1.0 artifacts. It is designed around the Eigen-DPDA neuro-symbolic architecture (DPDA + model scoring) with a strict deterministic safety boundary, produces canonical QFS artifacts, and exposes required observability for compilation timing and DPDA step visibility.

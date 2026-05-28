@@ -1,55 +1,298 @@
-# Eigen-Lang Reference Guide (Version 1.0)
+# Eigen-Lang Reference Guide v1.0
 
-**Eigen-Lang** is a declarative, domain-specific language based on Python for describing hybrid quantum-classical problems. Programs written in Eigen-Lang describe *what* must be computed and *which results* are required, rather than *how* quantum and classical operations should be arranged. Eigen-Lang compiles to **AQO** (Abstract Quantum Operations) and interacts with the operating system kernel to execute the task on a quantum/classical backend.
+**Document status:** Stable
+**Subsystem:** Eigen Compiler & Hybrid Runtime
+**Contract version:** `1.0.0`
+**Applies to:** Eigen OS 1.0
 
-- **Specification completeness:** This guide defines the full syntax, semantics, and standard library of Eigen-Lang version 1.0, and aligns with the requirements of the technical specification (version 1.3.0).
+---
 
-- **Contracts:** It defines input structures and the expected behavior of the compiler, validation layer, and type system. Special attention is given to security and determinism: dynamic Python constructs are prohibited, and compilation is always deterministic.
+## 1. Overview
 
-- **Tooling:** Eigen-Lang implementations are supported by a conformance test suite and specification versioning mechanisms. Any language changes must go through an RFC process and an updated test suite.
+**Eigen-Lang** is the declarative hybrid programming language of Eigen OS used to define quantum-classical workloads.
 
-## 1. Syntax
+Eigen-Lang is intentionally:
 
-Eigen-Lang version 1.0 uses Python syntax. A program is a file, preferably with the extension `.eigen.py`, containing exactly one function decorated with `@hybrid_program`. All instructions are executed in the context of this function. Example of a valid file:
+- deterministic,
+- statically analyzable,
+- sandbox-safe,
+- reproducible,
+- compiler-friendly,
+- backend-independent.
+
+Eigen-Lang programs compile into **AQO** (Abstract Quantum Operations), which acts as the canonical intermediate representation between the language frontend and runtime execution layers.
+
+The language defines:
+
+- syntax,
+- semantic rules,
+- validation guarantees,
+- allowed AST subset,
+- standard library contracts,
+- AQO mapping behavior,
+- deterministic compilation guarantees,
+- compatibility rules,
+- conformance expectations.
+
+This document is the normative specification for Eigen-Lang v1.0.
+
+The canonical source-of-truth implementation includes:
+
+- `compiler/eigen_lang/`
+- `docs/reference/formats/aqo.md`
+- `tests/conformance/eigen_lang/`
+- `proto/eigen/api/v1/`
+- compiler validation fixtures and golden AQO snapshots.
+
+---
+
+## 2. Design Goals
+
+Eigen-Lang is designed around the following principles:
+
+| **Principle** | **Requirement** |
+|----------|----------|
+| Deterministic compilation | identical source + config → identical AQO |
+| Declarative semantics | users define intent, not execution scheduling |
+| Restricted execution | arbitrary Python execution forbidden |
+| Static analyzability | compiler validates entire AST before execution |
+| Backend independence | language does not encode backend-specific execution |
+| Safe sandboxing | no filesystem/network/process access |
+| Stable contracts | SemVer-governed language evolution |
+| Reproducibility | canonical AQO generation mandatory |
+
+---
+
+## 3. File Format
+
+Eigen-Lang source files SHOULD use: `*.eigen.py`
+
+UTF-8 encoding is mandatory.
+
+Files MUST:
+
+- contain exactly one `@hybrid_program` entrypoint,
+- avoid dynamic imports,
+- avoid runtime code generation,
+- avoid side-effect execution.
+
+---
+
+## 4. Program Structure
+
+### 4.1 Minimal Example
 
 ```python
-from eigen_lang import hybrid_program, Param, rx, ry, rz, cx
+from eigen_lang import (
+    hybrid_program,
+    Param,
+    Observable,
+    ExpectationValue,
+    rx,
+    ry,
+    rz,
+    cx
+)
 
-@hybrid_program(compiler="eigen", target="simulator", shots=1024, optimization_level=2)
+@hybrid_program(
+    compiler="eigen",
+    target="simulator",
+    shots=1024,
+    optimization_level=2
+)
 def main():
     theta = Param("theta", 0.1)
+
     rx(0, theta)
     ry(1, 0.2)
     cx(0, 1)
     rz(1, theta)
-    return {"result": ExpectationValue(Observable(Z=0), shots=None)}
+
+    return {
+        "energy": ExpectationValue(
+            observable=Observable(Z=0)
+        )
+    }
 ```
 
-### Main syntax rules
+---
 
-- **Single entrypoint:** A program must contain exactly one `@hybrid_program(...)` decorator. If there are zero or more than one entrypoints, compilation fails with a validation error.
+### 4.2 Entrypoint Rules
 
-- **Naming:** The entrypoint function name must be a valid Python identifier. Function arguments are optional and may be used in `Param`.
+Exactly one function MUST be decorated with:
 
-- **Imports:** Only safe imports from the `eigen_lang` package are allowed (see the “Standard Library” section). All other imports are forbidden.
+```python
+@hybrid_program(...)
+```
 
-- **Literals:** Numeric literals (`int`, `float`) and string literals are allowed. Dynamic code execution is not permitted.
+Compilation fails if:
 
-- **Control flow:** All control-flow constructs (`if`, `for`, `while`, `match`, etc.) are prohibited in the MVP version of the language. The compiler rejects them as nondeterministic. There is a possibility of allowing statically resolvable loops/conditions in the future, but they are not supported in version 1.0.
+- zero entrypoints exist,
+- multiple entrypoints exist.
 
-- **Allowed AST nodes:** Only the AST nodes required for declarative description of circuits and parameters are allowed: function definitions, `return`, assignments, function calls, literals, names, and permitted binary operations. Fixed-size containers (`list`, `tuple`, `dict`) with constant elements are supported for defining fixed parameter sets, dimensions, and similar constructs.
+The entrypoint function:
 
-- **Resource limits:** Source code is limited by size and AST depth (for example, no more than 262,144 bytes and AST depth up to 200 nodes) to prevent compiler DoS attacks. These limits are strictly enforced during parsing.
+- MUST use a valid Python identifier,
+- MAY contain arguments,
+- MUST remain statically analyzable.
 
-### Errors and diagnostics
+---
 
-When syntax or language rules are violated, the compiler returns a structured error:
+## 5. Compiler Security Model
+
+Eigen-Lang source code is NEVER executed directly.
+
+The compiler:
+
+1. parses source into AST,
+2. validates allowed constructs,
+3. builds internal IR,
+4. emits deterministic AQO.
+
+The compiler MUST NOT:
+
+- execute arbitrary Python,
+- evaluate runtime imports,
+- access host resources,
+- perform filesystem access,
+- perform network access,
+- spawn subprocesses.
+
+Eigen-Lang therefore behaves as a restricted declarative DSL using Python syntax.
+
+---
+
+## 6. Allowed Imports
+
+Only imports from approved Eigen-Lang namespaces are allowed.
+
+Examples:
+
+```python
+from eigen_lang import rx, ry, rz
+```
+
+```python
+from eigen_lang.optimizers import minimize
+```
+
+Forbidden imports include:
+
+```python
+import os
+import sys
+import subprocess
+import socket
+```
+
+Violation MUST fail compilation with: `INVALID_ARGUMENT`
+
+---
+
+## 7. Allowed AST Subset
+
+### 7.1 Allowed Nodes
+
+The following AST nodes are allowed:
+
+| **AST Node** | **Purpose** |
+|----------|----------|
+| `Module` | file root |
+| `FunctionDef` | entrypoint |
+| `arguments` | function args |
+| `Return` | return values |
+| `ImportFrom` | restricted imports |
+| `Assign` | assignments |
+| `AnnAssign` | typed assignments |
+| `Expr` | expressions |
+| `Name` | identifiers |
+| `Constant` | literals |
+| `Call` | approved function calls |
+| `List` | fixed containers |
+| `Tuple` | fixed containers |
+| `Dict` | fixed containersy |
+| `BinOp` | limited arithmetic |
+| `UnaryOp` | limited arithmetic |
+
+---
+
+### 7.2 Forbidden Nodes
+
+The following constructs are forbidden:
+
+| **Construct** | **Reason** |
+|----------|----------|
+| `If` | nondeterministic branching |
+| `For` | dynamic iteration |
+| `While` | dynamic execution |
+| `Match` | runtime dispatch |
+| `Lambda` | dynamic closures |
+| `Try` | dynamic control flow |
+| `ClassDef` | runtime mutation |
+| `With` | resource access |
+| `Await` | async runtime |
+| `Yield` | generators |
+| `Exec` | arbitrary execution |
+| `Eval` | arbitrary execution |
+
+Dynamic imports are forbidden.
+
+Undeclared identifiers are forbidden.
+
+---
+
+## 8. Determinism Guarantees
+
+Eigen-Lang compilation MUST be deterministic.
+
+Identical:
+
+- source,
+- compiler version,
+- settings,
+- target config,
+- optimization config,
+- seed,
+
+MUST produce byte-identical AQO output.
+
+This includes:
+
+- operation ordering,
+- parameter ordering,
+- metadata ordering,
+- checksum generation,
+- AQO serialization.
+
+---
+
+## 9. Resource Limits
+
+The compiler MUST enforce strict limits.
+
+### 9.1 Required Limits
+
+| **Limit** | **Required** |
+|----------|----------|
+| Maximum source size | 262144 bytes |
+| Maximum AST depth | 200 |
+| Maximum operation count | dynamic executionimplementation-defined |
+| Maximum symbol length | implementation-defined |
+| Maximum import count | bounded |
+
+---
+
+## 10. Error Model
+
+Validation failures return structured deterministic errors.
+
+### 10.1 Error Envelope
 
 ```json
 {
   "error": {
     "code": "INVALID_ARGUMENT",
-    "message": "Validation of Eigen-Lang source failed",
+    "message": "Eigen-Lang validation failed",
     "details": [
       {
         "field": "function",
@@ -60,248 +303,368 @@ When syntax or language rules are violated, the compiler returns a structured er
 }
 ```
 
-- The `INVALID_ARGUMENT` code is used for all validation errors in source code.
+---
 
-- The `details` field contains objects with `field` (the syntax construct name) and `message` (the error description).
+### 10.2 Stable Error Semantics
 
-- Error messages and codes are stable across releases.
+Errors MUST be:
 
-## 2. Semantics
+- deterministic,
+- reproducible,
+- stable within MAJOR versions.
 
-Eigen-Lang defines a **hybrid DAG** (directed acyclic graph) of computation, consisting of quantum and classical nodes:
+The same invalid input MUST always produce the same error class.
 
-- **Quantum nodes:** describe quantum circuits (sequences of gates and measurements). In version 1.0, the compiler generates an equivalent circuit on quantum hardware from the declared description.
+---
 
-- **Classical nodes:** represent classical computations (functions, optimization steps, target-function evaluation). Python expressions (for example, matrix multiplication or optimization) are executed on the host.
+## 11. Standard Library
 
-- **Boundaries:** The connection between quantum and classical nodes is expressed through special markers and functions. For example, `ExpectationValue` defines a measurement request, and `minimize` defines an optimization loop.
+Only the official Eigen-Lang standard library is supported.
 
-### Execution model
+---
 
-1. **Parsing and analysis:** Source code is transformed into an AST and checked against the syntax rules in section 1. Semantic validation is performed (for example, verifying that all used identifiers are either declared or imported).
+## 12. Decorators
 
-2. **Intermediate representation generation:** All valid language constructs (gates, registers, parameters, `Observable`, etc.) are translated into a unified internal representation (AQO)
+### 12.1 `@hybrid_program`
 
-3. **Quantum core:** Optimizations and backend mapping are applied to the generated AQO, after which the circuit is executed on a quantum device or simulator.
+Mandatory entrypoint decorator.
 
-4. **Feedback:** Measurement results are returned to the client and also stored in the system journal and knowledge base.
+Example:
 
-### Determinism guarantees
+```python
+@hybrid_program(
+    compiler="eigen",
+    target="simulator",
+    shots=1024,
+    optimization_level=2,
+    seed=42
+)
+```
 
-- **Identical output:** For completely identical source code and settings (pseudo-random seed, target device, etc.), compilation always produces the same output data (AQO, hashes, etc.).
+#### Required Semantics
 
-- **No hidden side effects:** The compiler does not execute arbitrary user Python code; it only analyzes its syntax. Therefore, there must be no hidden side effects or environment dependencies.
+Decorator arguments form part of the canonical `JobSpec`.
 
-- **Stable errors:** Compilation and validation errors are deterministic — the same input always produces the same error.
+Supported fields include:
 
-### Language and environment boundaries
+| **Field** | **Type** |
+|----------|----------|
+| `compiler` | string |
+| `target` | string |
+| `shots` | integer |
+| `optimization_level` | integer |
+| `seed` | integer |
+| `noise_model` | string |
+| `metadata` | dict |
 
-- **Job meta-fields:** Compilation parameters (job name, target device, number of shots, optimization level, noise model, etc.) are provided through the `@hybrid_program` decorator and additional function arguments. These data form a `JobSpec`, which is passed to the OS kernel.
+Unknown fields MAY be rejected.
 
-- **Results:** The entrypoint function returns either structured data (`dict` with numeric values) or `ExpectationValue` objects that declare metrics to be computed. These values are collected by the OS kernel after execution.
+---
 
-- **Execution modes:** Classical and quantum parts may coexist within one script without explicit transitions; the system analyzes dependencies and constructs the execution DAG.
+### 12.2 Additional Decorators
 
-## 3. Allowed AST subset and constructs
+Supported auxiliary decorators:
 
-To ensure compiler security and determinism, a strict allowlist of permitted constructs is defined. Below is what is supported in version 1.0, along with additional capabilities planned for the future.
+| **Decorator** | **Purpose** |
+|----------|----------|
+| `@quantum_circuit` | static circuit template |
+| `@ansatz` | parameterized ansatz |
+| `@cost_function` | optimization target |
+| `@benchmark` | benchmark specification |
 
-### Allowed AST nodes (current implementation)
+---
 
-- `Module`, `FunctionDef`, `arguments`, `Return` — the basic program structure.
+## 13. Standard Types
 
-- `ImportFrom` — imports only from the official `eigen_lang` package and its standard-library subpackages.
+### 13.1 `Param`
 
-- `Assign`, `AnnAssign` — simple assignments.
+```python
+Param(name, initial_value)
+```
 
-- `Expr` — a function call or standalone expression.
+Defines symbolic parameters.
 
-- `Name`, `Constant` — identifiers and literals.
+---
 
-- `Call` — function or constructor calls.
+### 13.2 `Observable`
 
-- Literal containers: `List`, `Tuple`, `Dict` — with supported elements (numbers, strings, `Param`, etc., without dynamic references).
+Defines measurement observables.
 
-- Arithmetic operations `BinOp`, `UnaryOp` — only with numeric literals and variables (for coefficients, indices, and similar values).
+Example:
 
-### Forbidden AST nodes
+```python
+Observable(Z=0, X=1)
+```
 
-- **Dynamic code:** `exec`, `eval`, `compile` — usage is rejected.
+---
 
-- **Unsafe modules:** Access to system Python modules (`os`, `sys`, `subprocess`, etc.) is forbidden.
+### 13.3 Registers
 
-- **Control constructs:** Flow-control constructs (`If`, `For`, `While`, `Match`, etc.) are not supported, even though they may be allowed in a limited form in the future. Their use currently triggers a compilation error.
+```python
+QubitRegister(n)
+ClassicalRegister(n)
+```
 
-- Undeclared identifiers: Any identifier not imported from `eigen_lang` and not explicitly declared is treated as an error.
+---
 
-- Dynamic imports: The `__import__` operator and imports through variables are forbidden.
+## 14. Quantum Operations
 
-### Allowed calls
+### 14.1 Mandatory Gate Set
 
-In version 0.x, the compiler allowed only a small set of functions (`rx`, `ry`, `rz`, `cx`, and parameter handlers). In version 1.0, the official set of allowed functions is significantly expanded (see the “Standard Library” section). Key entries include:
+The following gates MUST be supported:
 
-- **Gates and transformations:** `rx(qubit, theta)`, `ry(qubit, theta)`, `rz(qubit, theta)`, `cx(control, target)`, as well as additional future gates (for example, `h`, `cz`, `swap` when needed).
+| **Gate** | **AQO Opcode** |
+|----------|----------|
+| `rx` | `RX` |
+| `ry` | `RY` |
+| `rz` | `RZ` |
+| `cx` | `CX` |
 
-- **Register operations:** `QubitRegister(n)`, `ClassicalRegister(n)` — creation of quantum/classical registers (new capability).
+---
 
-- **Parameters:** `Param(name, init)` — declaration of a circuit parameter. Used to bind circuit parameters to internal names.
+### 14.2 Additional Supported Gates
 
-- **Ansatze:** `Ansatz([...])` — a template for building a parameterized block (gates will later be applied to it).
+| **Gate** |
+|----------|
+| `h` |
+| `x` |
+| `y` |
+| `z` | 
+| `cz` | 
+| `swap` | 
+| `ccx` | 
 
-- **Annotated entrypoints:** `@quantum_circuit`, `@ansatz`, `@cost_function`, `@benchmark` — special decorators for auxiliary functions (currently used as helpers or to prepare tasks for the kernel).
+Support MAY depend on backend capability.
 
-- **Optimizers:** Built-in optimization methods and wrappers for SciPy/PyTorch (for example, `minimize` with different methods) — define the configuration for classical optimization.
+Unsupported gates MUST fail deterministically.
 
-- **Data loaders:** `load_dataset(source, format, split, cache)` — a unified interface for loading and preparing data from S3, HuggingFace, and other sources.
+---
 
-- **Standard functions:** `make_molecular_hamiltonian(molecule, basis)`, `create_ising_model_hamiltonian(params)`, `create_hea_ansatz(n_qubits, depth)`, `visualize_circuit(circuit)`, `profile_execution(job)`, and more. See the “Standard Library” section.
+## 15. Hybrid Runtime Functions
 
-### Limits and validation
+### 15.1 `ExpectationValue`
 
-All of the above constructs and calls are strictly checked during compilation. On violation (for example, calling a forbidden function or exceeding numeric bounds), `INVALID_ARGUMENT` is raised. The reason is always explained with a message indicating the symbol and context.
+```python
+ExpectationValue(observable=Observable(...))
+```
 
-## 4. Eigen-Lang Standard Library
+Defines observable evaluation.
 
-Below are the key elements of the standard library (the current contractual implementation and purpose). They are imported from the `eigen_lang` package and are required for describing hybrid tasks.
+---
 
-### Decorators
+### 15.2 `minimize`
 
-- `@hybrid_program(compiler, target, shots, optimization_level, noise_model, ...)` — the mandatory main decorator. It defines task properties: compiler (usually `"eigen"`), backend, number of shots, optimization level, noise model, etc. The decorator parameters form the `JobSpec`.
+```python
+minimize(cost_fn, initial_params, method="COBYLA")
+```
 
-- `@quantum_circuit` — decorator for an auxiliary function without optimization; used to define fixed circuits.
+Defines classical optimization orchestration.
 
-- `@ansatz` — marks a function as a parameterized circuit template.
+---
 
-- `@cost_function` — marks a function that computes the target function (`ExpectationValue`) for optimization.
+### 15.3 `load_dataset`
 
-- `@benchmark(dataset, model, metrics, target_backend, repetitions, ...)` — declaratively defines a parameterized benchmark run.
+```python
+load_dataset(source, format="parquet")
+```
 
-### Types and constructors
+Dataset loading declaration.
 
-- `QubitRegister(n)` — creates a quantum register of `n` qubits (in the future this will influence physical-qubit allocation).
+Runtime execution remains sandbox-controlled.
 
-- `ClassicalRegister(n)` — creates a classical register of `n` bits.
+---
 
-- `Param(name, init)` — declares a circuit parameter with the given name and initial value.
+## 16. AQO Mapping
 
-- `Observable(**ops)` — defines an observable (Hamiltonian) as a sum of operators over qubits, for example `Observable(Z=0, X=1)`.
+Eigen-Lang compiles into AQO v1.0.
 
-- `Ansatz(name, *args)` — describes a parameterized circuit (a state-preparation variant), for example `Ansatz("hea", depth=3)`.
+Normative AQO contract:
 
-- `QuantumModel(...)` and `SupervisedTask(...)` — types for more complex hybrid models (for future releases).
+- `docs/reference/formats/aqo.md`
 
-- `DatasetHandle` — the return type of dataset loading (see below).
+### 16.1 Gate Mapping
 
-### Quantum functions and gates
+Example:
 
-- `rx(qubit_index, theta)` — rotation around X.
+```python
+rx(0, theta)
+```
 
-- `ry(qubit_index, theta)` — rotation around Y.
+maps to:
 
-- `rz(qubit_index, theta)` — rotation around Z.
+```json
+{
+  "op": "RX",
+  "q": [0],
+  "params": {
+    "theta": "theta"
+  }
+}
+```
 
-- `cx(control_index, target_index)` — CNOT.
+---
 
-- *(Planned: `h`, `cz`, `swap`, `toffoli`, etc.)*
+### 16.2 Measurement Mapping
 
-### Hybrid constructs
+Measurements compile into AQO `MEASURE` operations.
 
-- `ExpectationValue(circuit, observable, shots=None)` — returns an expression denoting the computation of the expected value of an observable when the given circuit is run on a quantum device.
+Measurement ordering MUST remain deterministic.
 
-- `minimize(cost_function, initial_params, method, options)` — standard optimization (for example, COBYLA, L-BFGS) of the supplied target function. Returns the minimum value and the optimal parameters.
+---
 
-- `load_dataset(source, format="parquet", split="train", cache=True)` — loads a dataset from the specified source (for example, HuggingFace Hub, S3) and returns a `DatasetHandle` compatible with PyTorch `DataLoader`.
+### 16.3 Metadata
 
-- `profile_execution(job_handle)` — profiles a previously submitted job.
+Generated AQO metadata MUST include:
 
-- `visualize_circuit(circuit)` — renders a graphical representation of a quantum circuit.
+| **Field** | **Purpose** |
+|----------|----------|
+| `aqo_sha256` | canonical checksum |
+| `compiler_version` | compiler reproducibility |
+| `spec_version` | language version |
+| `generated_at` | optional timestamp policy |
+| `target` | backend target |
 
-### Built-in tools
+Timestamps MUST NOT affect deterministic AQO hashing.
 
-- `make_molecular_hamiltonian(mol, basis)` — builds the Hamiltonian of a molecule in the specified basis.
+---
 
-- `create_ising_model_hamiltonian(params)` — builds the Hamiltonian of an Ising model with the given parameters.
+## 17. Distributed Execution Metadata
 
-- `create_hea_ansatz(n_qubits, depth)` — returns a standard Hartree-exponential ansatz.
+Optional distributed metadata MAY include:
 
-- `wrap_optimizer(scipy_method)` — wrapper for connecting an external optimizer (SciPy, PyTorch, JAX, etc.).
+- topology hints,
+- partition hints,
+- distributed execution metadata,
+- execution group identifiers.
 
-These capabilities allow users to describe complex tasks without dealing with qubit layout details and quantum-device transaction management.
+All distributed metadata fields MUST include explicit version markers.
 
-## 5. Mapping Eigen-Lang to AQO
+---
 
-During compilation, Eigen-Lang elements are translated into **AQO** (Abstract Quantum Operations), the intermediate representation of the quantum circuit. In version 1.0, the following mappings are implemented:
+## 18. Conformance Suite
 
-- **Gates and operations:** `rx`, `ry`, `rz`, `cx` are converted into AQO elements with fields `{op, q, params}`. For example:
+Eigen-Lang implementations MUST pass the conformance suite.
 
-    - `rx(0, theta)` → `{ "op": "RX", "q": [0], "params": {"theta": theta} }`
+### 18.1 Golden Tests
 
-    - `cx(1, 2)` → `{ "op": "CX", "q": [1, 2] }`
+Golden AQO fixtures validate:
 
-- **Measurements:** After all gates, the compiler automatically appends a terminal `MEASURE` operation to all `QubitRegisters` (or after each ansatz, depending on strategy).
+- deterministic compilation,
+- stable serialization,
+- stable metadata,
+- operation ordering.
 
-- **Parameters:** `Param("θ")` declarations bind parameter names to internal identifiers. Parameter values are substituted into AQO, or remain symbolic during optimization.
+---
 
-- **Observables:** `ExpectationValue` and `Observable` are not yet directly translated into quantum operators in the current version, but they are marked as requirements for the kernel: the system knows which Hamiltonian evaluation must be collected.
+### 18.2 Negative Tests
 
-- **Ansatze:** Templates marked with `@ansatz` may be expanded into a sequence of gates during compilation. In the MVP version, this is partially implemented: ready-made ansatze from the standard library can be used.
+Negative fixtures validate:
 
-The final AQO JSON contains the full instructions for the OS kernel: which gates to execute, in what order, and with what parameters.
+0 forbidden AST rejection,
+- invalid imports,
+- invalid decorators,
+- invalid parameters,
+- invalid gates.
 
-### Encoding details
+---
 
-- The AQO format is specified in `docs/reference/formats/aqo.md` (which defines the JSON structure and fields).
+### 18.3 Deterministic Hash Validation
 
-- After AQO generation, checksums (`aqo_sha256`) are computed and metadata is added (program name, author, ansatz version, etc.).
+The same source MUST generate identical:
 
-- For distributed compilation, the sections `distributed_execution` and `topology_hints` are added (field versions are governed by `metadata.distributed.execution_metadata_version`).
+- AQO JSON,
+- protobuf AQO,
+- hashes,
+- metadata.
 
-- **Important:** AQO JSON is a coherent contract. Any format changes must be accompanied by a contract version update (see `versioning.md`).
+---
 
-## 6. Conformance Suite
+## 19. Security Requirements
 
-The conformance test suite ensures that the compiler implementation follows the language specification.
+Eigen-Lang MUST be treated as executable declarative input.
 
-- **Golden tests:** For typical `program.eigen.py` examples, expected AQO JSON outputs are defined. Any change in AQO output must be intentionally confirmed by updating test fixtures.
+Required guarantees:
 
-- **Negative tests:** Every forbidden language element (for example, a dynamic loop or unsupported syntax) has its own test expecting a specific `INVALID_ARGUMENT` error code and a textual description of the problematic field.
+- strict AST validation,
+- sandbox-safe parsing,
+- deterministic compilation,
+- bounded resource consumption,
+- no host execution,
+- no filesystem access,
+- no network access,
+- no subprocess execution.
 
-- **Migration scenarios:** New features (for example, a new decorator or gate) must have tests so that regressions are detected as the language evolves.
+Compiler crashes MUST NOT expose host internals.
 
-### Supported cases (v1.0)
+---
 
-- **Deterministic compilation:** Recompiling the same code produces identical AQO output (byte-for-byte equality).
+## 20. Observability Requirements
 
-- **Hashes:** The `aqo_sha256` field in metadata must exactly match the SHA-256 of the AQO bytes.
+Compiler telemetry SHOULD include:
 
-- **No “hidden” gates:** The compiler must not add extra quantum operations. For example, an empty function `def f(): pass` produces only `MEASURE` in AQO.
+| **Signal** | **Purpose** |
+|----------|----------|
+| compile latency | performance |
+| validation failures | diagnostics |
+| AQO hash | reproducibility |
+| compiler version | compatibility |
+| spec version | auditing |
 
-- **Defined validations:** Missing input data, invalid `JobSpec` structure, or invalid parameter values are all tested.
+Full source logging SHOULD be disabled by default.
 
-### Gaps and tasks (to-do)
+---
 
-Some aspects of the language are not yet covered by tests:
+## 21. Versioning Policy
 
-- Full mapping of new constructs (`ExpectationValue`, `minimize`, imports from external modules, etc.).
+Eigen-Lang uses SemVer.
 
-- Distributed options (`distributed_execution` sections) are only partially covered.
+### 21.1 MAJOR
 
-- Performance/limit tests (maximum program size) need to be added.
+Breaking changes:
 
-- Real integration scenarios (from `SubmitJob` to `GetJobResults`) are outside the scope of this suite for now.
+- syntax removal,
+- AST changes,
+- semantic changes,
+- AQO mapping changes.
 
-Any language update is accompanied by a **Golden update process:** test rebuilds and an explicit description of fixture changes in the pull request.
+---
 
-## 7. Versioning and Compatibility
+### 21.2 MINOR
 
-Eigen-Lang stores a specification version of the form `eigen-lang-spec: 1.0.` Compatibility policy:
+Backward-compatible additions:
 
-- **Major versions (1.0 → 2.0):** incompatible changes are allowed (new major capabilities or removal of old constructs). Major updates must be accompanied by migration documentation and backward-compatibility support.
+- optional decorators,
+- optional metadata,
+- additional gates,
+- additional observables.
 
-- **Minor versions (1.x → 1.x+1):** extensions that do not break existing programs are allowed (new optional functions, fields, or simplifications of options). Existing functionality must remain operational.
+---
 
-- **Patch (1.0.x):** only bug fixes and specification clarifications; backward compatibility must be preserved.
+### 21.3 PATCH
 
-Distributed compilation metadata: every element passed in `distributed_execution` or `topology_hints` includes a version. This allows new fields to be introduced gradually without breaking compatibility.
+Clarifications and bug fixes only.
 
-Change process: Any language changes must go through the RFC procedure: proposal, code review, test updates. Before public release, backward compatibility is conformance-tested in CI.
+---
+
+## 22. Compatibility Guarantees
+
+Eigen OS guarantees:
+
+- stable language semantics within MAJOR versions,
+- deterministic compilation,
+- stable AQO mapping,
+- stable validation semantics,
+- reproducible compilation behavior.
+
+---
+
+## 23. Migration Rules
+
+New features MUST:
+
+- include RFC approval,
+- include conformance tests,
+- include golden fixtures,
+- preserve backward compatibility within MAJOR version.
+
+Deprecated features MUST remain supported for at least one MINOR release unless a security exception applies.

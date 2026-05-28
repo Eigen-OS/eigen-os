@@ -1,82 +1,205 @@
-# REST API: Benchmark Run (`POST /benchmarks/run`)
+# REST API Contract: Benchmark Run (POST /benchmarks/run)
 
-## 1. Request Schema
+**Status**
 
-- **Endpoint:** `POST /benchmarks/run`
+- **Contract Version**: 1.0.0
+- **Document Status**: Canonical Target Standard
+- **Compatibility**: Eigen OS Target Standard v1.3.0
+- **Transport Type**: REST binding over canonical gRPC System API
+- **Normative Language**: RFC 2119 (MUST, SHOULD, MAY)
 
-- **Content-Type:** `application/json`
+---
 
-- **Request JSON:**
+## 0. Architectural Positioning
+
+This REST endpoint is an HTTP transport binding over the canonical Eigen OS System API benchmark submission contract.
+
+Internally, the endpoint **MUST** translate incoming REST requests into a canonical `JobSpec` and submit them through the internal gRPC System API layer.
+
+The REST transport layer **MUST NOT** bypass:
+
+- QRTX scheduling
+- authorization checks
+- observability instrumentation
+- audit logging
+- Knowledge Base ingestion
+- Continuous Learning hooks
+- QFS storage policies
+- Driver Manager validation
+
+**Canonical execution authority** remains:
+
+```
+REST API → System API → QRTX → Runtime Services
+```
+
+REST is a **transport adapter only**.
+
+The canonical contract for benchmark execution is defined in protobuf/gRPC specifications.
+
+---
+
+## 1. Endpoint Definition
+
+### 1.1 HTTP Endpoint
+
+- **Endpoint**: `POST /benchmarks/run`
+- **Content-Type**: `application/json`
+- **Authentication**: OAuth2/JWT required
+- **Transport Security**: HTTPS/TLS 1.3 mandatory
+
+---
+
+### 1.2 Request Schema
+
+**Request JSON**
 
 ```json
 {
-  "idempotency_key": "<string>",   // required, non-empty
-  "config": {                      // required, non-empty object
-    // Benchmark configuration parameters (implementation-defined)
+  "idempotency_key": "client-generated-key",
+  "config": {
     "dataset": "qsbench-core",
     "dataset_version": "2026.04.27",
     "backend": "simulator",
     "seed": 42
-    // ... (other domain-specific keys as needed)
   }
 }
 ```
 
-  - `idempotency_key` (string): **required.** A unique client-provided key to ensure idempotent creation. Must be a non-empty string (whitespace trimmed).
+**Request Fields**
 
-  - `config` (object): **required.** Arbitrary JSON with benchmark parameters. Must be a non-empty object.
+#### `idempotency_key`
 
-## 2. Success Response (201 Created)
+- **Type**: string
+- **Required**: true
+- **Constraints**:
+  - MUST be non-empty after trimming whitespace
+  - MUST be UTF-8
+  - SHOULD be globally unique per client
+  - Maximum length: 256
 
-On successful creation (or retrieval of an existing run with the same idempotency key), returns HTTP 201 and a JSON body:
+**Purpose**: Used to guarantee idempotent benchmark submission.
+
+#### `config`
+
+- **Type**: object
+- **Required**: true
+- **Constraints**:
+  - MUST be a non-empty JSON object
+  - MUST conform to benchmark configuration schema
+  - MUST be canonicalizable
+  - MUST NOT contain NaN/Infinity values
+
+---
+
+### 1.3 Internal JobSpec Mapping
+
+The REST layer **MUST** transform requests into canonical internal `JobSpec` objects.
+
+**Example mapping:**
+
+```json
+{
+  "job_id": "derived-from-run-id",
+  "job_type": "BENCHMARK",
+  "source": "REST_API",
+  "benchmark_config": {
+    "dataset": "qsbench-core",
+    "backend": "simulator"
+  },
+  "target_device": "simulator",
+  "priority": "NORMAL",
+  "submitted_by": "authenticated-user-id",
+  "trace_id": "otel-trace-id"
+}
+```
+
+The REST API **MUST NOT** introduce transport-specific execution semantics.
+
+---
+
+## 2. Success Response
+
+**HTTP Status**
+
+```http
+201 Created
+```
+
+**Response Body**
 
 ```json
 {
   "api_version": "1.0.0",
   "run": {
-    "run_id": "run_...",
+    "run_id": "run_01JABCDEF",
     "state": "PENDING",
     "state_contract_version": "1.0.0",
     "parent_run_id": null,
-    "idempotency_key": "<same as request>"
+    "idempotency_key": "client-generated-key"
   },
   "snapshot": {
     "contract_version": "1.0.0",
     "snapshot_version": "1.0.0",
     "history_entry_version": "1.0.0",
-    "run_id": "run_...",
-    "request_hash": "<sha256 of payload>",
+    "run_id": "run_01JABCDEF",
+    "request_hash": "sha256:abcdef123456",
     "created_at": "2026-05-21T12:34:56Z",
-    "payload": "{\"backend\":\"simulator\", ...}" 
+    "payload": "{\"backend\":\"simulator\",\"dataset\":\"qsbench-core\",\"seed\":42}"
+  },
+  "trace": {
+    "trace_id": "otel-trace-id",
+    "correlation_id": "correlation-id"
   }
 }
 ```
 
-- **Field notes:**
+---
 
-  - `api_version`: API contract version (here `1.0.0`).
+### 2.1 Response Field Semantics
 
-  - `run.run_id`: Deterministic identifier of the run.
+- **`api_version`**: Semantic version of the public REST contract.
+- **`run.run_id`**: Deterministic globally unique benchmark execution identifier.
+- **`run.state`**: Canonical QRTX lifecycle state. Immediately after creation: **`PENDING`**.
+- **`run.state_contract_version`**: Version of lifecycle semantics.
+- **`snapshot.request_hash`**: SHA-256 hash of canonicalized payload.
+- **`snapshot.payload`**: Canonical JSON payload representation.
 
-  - `run.state`: Always "`PENDING`" immediately after creation.
+**Requirements for canonical payload**:
+- lexicographically sorted keys
+- UTF-8 encoding
+- no insignificant whitespace
+- deterministic serialization
 
-  - `state_contract_version`: Same as `api_version` (since run states are part of the v1.0.0 contract).
+---
 
-  - `parent_run_id`: Always `null` on creation (reserved for future tree of runs).
+## 3. Canonical Lifecycle States
 
-  - `snapshot.contract_version`: Semantic version of the request envelope (same as `api_version`).
+REST lifecycle states **MUST** mirror canonical QRTX job states. Transport-specific lifecycle states are prohibited.
 
-  - `snapshot.snapshot_version`: Version of the snapshot format (also `1.0.0`).
+**Allowed states**:
 
-  - `snapshot.history_entry_version`: Version of history entries (set to `1.0.0`).
+```
+PENDING
+COMPILING
+QUEUED
+RUNNING
+DONE
+ERROR
+CANCELED
+```
 
-  - `snapshot.request_hash`: SHA-256 hash of the canonical JSON payload.
+---
 
-  - `snapshot.payload`: Canonical (sorted keys, no whitespace) JSON string of the `config`.
+## 4. Error Response Contract
 
-## 3. Error Response (4xx)
+**HTTP Status**
 
-Validation or other request failures return HTTP 400 with a structured JSON error envelope:
+```http
+4xx / 5xx
+```
+
+**Error Envelope**
 
 ```json
 {
@@ -89,64 +212,339 @@ Validation or other request failures return HTTP 400 with a structured JSON erro
         "field": "idempotency_key",
         "message": "idempotency_key is required and must be a non-empty string"
       }
-      // ... potentially multiple field errors
     ]
   }
 }
 ```
 
-- **Validation rules:**
-  
-  - `idempotency_key` must be a non-empty string.
+---
 
-  - `config` must be a non-empty JSON object.
+### 4.1 Canonical Error Codes
 
-- On validation failure, `code` is `INVALID_ARGUMENT`. The `message` is a summary, and `details` lists each field error with `field`, `code`, and `message`.
+REST responses **MUST** map canonical internal gRPC status codes.
 
-## 4. Lifecycle and Semantics
+**Allowed canonical codes**:
 
-- Runs follow the state machine: `PENDING → PREPARING → RUNNING → SUCCEEDED|FAILED|CANCELLED`.
+```
+INVALID_ARGUMENT
+UNAUTHENTICATED
+PERMISSION_DENIED
+RESOURCE_EXHAUSTED
+ALREADY_EXISTS
+FAILED_PRECONDITION
+INTERNAL
+UNAVAILABLE
+DEADLINE_EXCEEDED
+CANCELLED
+```
 
-- The system ensures idempotency by `idempotency_key`: the same key and config will not create duplicate runs.
+---
 
-- On error during creation or if the run exists, the service handles it as idempotent.
+### 4.2 Validation Rules
 
-## 5. Versioning and Compatibility
+- **`idempotency_key`**: MUST exist, MUST be string, MUST be non-empty
+- **`config`**: MUST exist, MUST be object, MUST be non-empty
 
-- **Contract version:** 1.0.0 (breaking changes require v2.0).
+---
 
-- **Field extensions:** Adding new optional fields may use MINOR bumps; removing required fields needs MAJOR bump.
+## 5. Idempotency Semantics
 
-## 6. Implementation Status & Gaps
+The system **MUST** guarantee idempotent benchmark submission.
 
-- **Implemented:**
+**Rules**:
+- If the same `idempotency_key` is reused with **identical** canonical payload → return the original response.
+- If the same `idempotency_key` is reused with **different** canonical payload → return `ALREADY_EXISTS`.
 
-  - Contract logic in `BenchmarkRunApi.run()` matches the above schema.
+---
 
-  - Validation, idempotent run creation, and snapshot generation are implemented (in-memory).
+## 6. Canonical JSON Rules
 
-  - Fixture tests (`test_run_api_contract.py`) verify the JSON shapes and idempotency.
+Canonical payload generation **MUST**:
+- sort keys lexicographically
+- use UTF-8 encoding
+- remove insignificant whitespace
+- normalize floating-point representation
+- preserve array ordering
+- reject NaN/Infinity values
 
-- **Missing / Partial:**
+Hash generation **MUST** be deterministic across platforms.
 
-  - **Transport binding:** No actual HTTP handler is implemented in this repository. The `BenchmarkRunApi` class is a Python object (used in tests) but there is no HTTP endpoint.
+---
 
-  - **Persistence:** Current implementation uses in-memory store; no durable database for run state or idempotency.
+## 7. Security Requirements
 
-  - **AuthN/AuthZ/Quotas:** No authentication or authorization is enforced; multi-tenant isolation or quotas are not implemented.
+The endpoint **MUST** comply with the Eigen OS Security Module requirements.
 
-  - **Size/schema constraints:** No detailed JSON Schema for `config` (all fields allowed), nor request size limits.
+### 7.1 Authentication
+- OAuth2/JWT authentication **REQUIRED**
+- JWT validation **MUST** be delegated to the Security Module
+- Expired or invalid tokens **MUST** return `UNAUTHENTICATED`
 
-- **Tasks to complete:**
+---
 
-  1. **HTTP Handler:** Create a REST controller (e.g. Flask or FastAPI) for `POST /benchmarks/run` that calls `BenchmarkRunApi.run()`. Add routing to expose this endpoint.
+### 7.2 Authorization
+Authorization **MUST** use centralized RBAC/ABAC policies. The system **MUST** validate:
+- benchmark execution permissions
+- backend access permissions
+- dataset access permissions
+- quota permissions
 
-  2. **Durable Storage:** Hook up a database (e.g. PostgreSQL or SQLite) for runs and idempotency. Ensure crash recovery and global consistency of `run_id`.
+Unauthorized requests **MUST** return `PERMISSION_DENIED`.
 
-  3. **Security:** Integrate JWT/OAuth2 tokens and ACL checks; ensure only authorized clients can call this endpoint.
+---
 
-  4. **Request Schema:** Define a stricter JSON Schema for `config` (required keys, data types) and enforce it.
+### 7.3 Transport Security
+- TLS 1.3
+- mTLS for internal services
 
-  5. **Error taxonomy:** Expand error handling (e.g. return `ALREADY_EXISTS` for duplicate run, `RESOURCE_EXHAUSTED` for quotas, etc.).
+---
 
-  6. **CI Contract Tests:** Add automated tests in CI to catch any JSON contract breaks using the existing fixture tests.
+### 7.4 Tenant Isolation
+Benchmark runs **MUST** be namespace-isolated per authenticated tenant. Users **MUST NOT**:
+- access foreign runs
+- infer foreign run existence
+- access foreign benchmark artifacts
+
+---
+
+### 7.5 Audit Requirements
+Every benchmark submission **MUST** generate immutable audit records containing:
+- `user_id`
+- `request_hash`
+- `trace_id`
+- `timestamp`
+- `authorization result`
+- `originating IP/service`
+
+Audit entries **MUST** be immutable.
+
+---
+
+## 8. Observability Requirements
+
+The endpoint **MUST** emit OpenTelemetry traces and metrics.
+
+**Required Metrics**:
+
+```
+benchmark_run_created_total
+benchmark_run_validation_failed_total
+benchmark_run_duration_seconds
+benchmark_run_state_transitions_total
+```
+
+**Required Trace Metadata**  
+Each request **MUST** generate: `trace_id`, `correlation_id`, `audit_event_id`.
+
+Tracing **MUST** propagate through: REST API → QRTX → Benchmark Pipeline → Knowledge Base.
+
+---
+
+## 9. Dataset Resolution
+
+Datasets referenced in benchmark configuration **MUST** be resolved through Dataset Pipeline Service.
+
+Dataset loading **MUST**:
+- validate schema
+- verify dataset version
+- cache artifacts in QFS-L3
+- register provenance in Knowledge Base
+
+---
+
+## 10. Backend Validation
+
+The `backend` field **MUST** reference a registered QDriver backend. Validation **MUST** verify:
+- backend existence
+- backend availability
+- capability compatibility
+- calibration freshness
+- authorization permissions
+
+Backend resolution **MUST** occur through Driver Manager.
+
+---
+
+## 11. Knowledge Base Integration
+
+Successful benchmark runs **MUST** ingest:
+- TaskRecord
+- benchmark metadata
+- execution metrics
+- backend topology
+- noise characteristics
+- benchmark outputs
+
+into the Knowledge Base.
+
+Benchmark runs marked as `training_eligible` **MUST** participate in Continuous Learning pipelines.
+
+---
+
+## 12. Provenance Tracking
+
+Each benchmark run **MUST** maintain provenance relationships:
+
+```
+run_id ↔ task_record ↔ circuit_records ↔ compiler_trace ↔ dataset_version
+```
+
+The provenance chain **MUST** remain queryable after archival.
+
+---
+
+## 13. Storage Integration
+
+Benchmark artifacts **MUST** be stored using QFS.
+
+**QFS-L3** (Persistent):
+- benchmark snapshots
+- benchmark outputs
+- logs
+- reports
+- metadata
+
+**QFS-L2** (Temporary):
+- transient execution checkpoints
+- intermediate quantum states
+
+---
+
+## 14. Retention and Archival
+
+Benchmark artifacts **MUST** follow QFS retention policies.
+
+- **Hot Storage**: active runs, recent benchmark snapshots
+- **Cold Storage**: archived benchmark artifacts
+
+Metadata **MUST** remain queryable after archival.
+
+---
+
+## 15. Deadlines and Cancellation
+
+The endpoint **MUST** support client deadlines, timeout enforcement, and cancellation propagation.
+
+Cancellation **MUST** propagate through: REST API → QRTX → Driver Manager → QDriver.
+
+---
+
+## 16. Versioning and Compatibility
+
+**Contract Version**: `1.0.0`
+
+**Backward-Compatible Changes** (allowed):
+- new optional fields
+- additive metadata
+- non-breaking telemetry extensions
+
+**Breaking Changes**
+
+Require MAJOR version increment:
+
+- required field changes
+- lifecycle changes
+- semantic behavior changes
+- error contract modifications
+
+Breaking changes MUST include:
+
+- migration documentation
+- compatibility guidance
+- parallel version support
+
+---
+
+## 17. Acceptance Criteria
+
+The implementation **MUST** satisfy:
+- request validation < 50 ms
+- queue submission < 100 ms
+- deterministic request hashing
+- idempotent retry behavior
+- authenticated access only
+- observability integration
+- QRTX lifecycle compatibility
+
+---
+
+## 18. Implementation Requirements
+
+**Mandatory Components**:
+- REST transport layer
+- canonical gRPC System API integration
+- durable persistence
+- JWT authentication
+- RBAC/ABAC authorization
+- OpenTelemetry instrumentation
+- QFS integration
+- Knowledge Base ingestion
+- audit logging
+- Driver Manager validation
+
+---
+
+## 19. Current Implementation Status
+
+**Implemented**:
+- benchmark contract logic
+- validation
+- idempotency handling
+- snapshot generation
+- fixture contract tests
+
+**Missing / Partial**:
+- Production REST handler
+- Durable persistence
+- Security (JWT, RBAC, tenant isolation)
+- Full OpenTelemetry
+- Knowledge Base & QFS integration
+
+---
+
+## 20. Required Completion Tasks
+
+1. Implement production REST handler
+2. Integrate canonical gRPC System API
+3. Add durable persistence layer
+4. Integrate Security Module
+5. Implement OpenTelemetry tracing/metrics
+6. Integrate QFS storage
+7. Implement Knowledge Base ingestion
+8. Add Driver Manager backend validation
+9. Add Dataset Pipeline integration
+10. Implement audit logging
+11. Add CI contract compatibility validation
+12. Add cancellation/deadline propagation
+13. Add multi-tenant isolation
+14. Add retention and archival policies
+
+---
+
+## 21. Compliance Statement
+
+An implementation is considered compliant only if:
+
+- all mandatory sections are implemented
+- canonical lifecycle semantics are preserved
+- REST remains a transport binding over System API
+- all security requirements are enforced
+- all observability requirements are enforced
+- deterministic idempotency is guaranteed
+- provenance tracking is preserved
+- Continuous Learning integration remains functional
+
+---
+
+## 22. References
+
+- Eigen OS Technical Specification v1.3.0
+- QRTX Scheduling Contract
+- QDriver API Contract
+- Knowledge Base Contract
+- Security Module Specification
+- Dataset Pipeline Contract
+- OpenTelemetry Specification
+- RFC 9110 (HTTP Semantics)
+- RFC 7519 (JWT)
+- RFC 8446 (TLS 1.3)

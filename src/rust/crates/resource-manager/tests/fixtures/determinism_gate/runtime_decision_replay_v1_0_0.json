@@ -58,7 +58,8 @@
       ],
       "selected_candidate_id": "cand-cheap",
       "transition_reason_code": "FallbackPolicyPluginTimeout",
-      "version": "1.2.0"
+      "version": "1.2.0",
+      "policy_bundle_schema_version": "1.0.0"
     },
     "scoring_artifact": {
       "candidates": [

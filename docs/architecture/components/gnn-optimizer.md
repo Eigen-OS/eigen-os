@@ -1,171 +1,176 @@
 # GNN Optimizer
 
-Status: approved architectural component, partial ecosystem groundwork implemented
-Scope: graph-based quantum hardware optimization, topology-aware routing, intelligent execution adaptation
+**Status:** Normative architecture + contract specification (Eigen OS 1.0 / MVP + approved extensions)
+**Subsystem:** Hardware-aware optimization (placement/routing), topology & noise adaptation, deterministic fallback
+**Contract namespace:** `eigen.internal.v1` (OptimizerService)
+**Applies to:** Compiler, Kernel/QRTX, Driver Manager, Runtime Controller/Scheduler, Model Registry, QFS lineage/telemetry
 
 ---
 
 ## 1. Purpose
 
-The GNN Optimizer is the intelligent hardware optimization subsystem of Eigen OS.
+The **GNN Optimizer** is the intelligent hardware optimization subsystem of Eigen OS. It transforms **hardware-agnostic** quantum execution plans (AQO) into **backend-optimized** execution strategies by combining:
 
-The component is responsible for transforming hardware-agnostic quantum execution plans into backend-optimized execution strategies using graph neural network models combined with deterministic symbolic optimization passes.
+- deterministic symbolic optimization passes (always safe, always replayable),
+- ML inference (GNN-based recommendations),
+- explicit policy constraints (latency/cost/compliance/determinism),
+- and a deterministic fallback chain.
 
 The optimizer operates between:
 
 - compiler AQO generation,
-- kernel scheduling,
-- hardware execution.
+- kernel scheduling / dispatch,
+- driver-manager backend execution.
 
-Its primary goal is maximizing execution quality on unstable heterogeneous quantum hardware.
+Primary objectives:
+
+- maximize predicted fidelity on noisy hardware,
+- minimize routing overhead (SWAP insertion / depth),
+- respect topology constraints,
+- produce deterministic outputs when requested,
+- provide explainability artifacts suitable for operators and forensic analysis.
 
 ---
 
-## 2. Architectural Role
+## 2. Architectural Role and Boundaries
 
-The GNN Optimizer belongs to the Runtime Services layer of Eigen OS.
-
-Architecture position:
+### 2.1 Position in the System
 
 ```text
 Eigen-Lang
   ↓
-Neuro-DPDA Compiler
+Compiler (Neuro-DPDA / symbolic pipeline)
   ↓
-AQO
+AQO (hardware-agnostic)
   ↓
-GNN Optimizer
+GNN Optimizer (hardware-aware adaptation)
   ↓
-Driver Manager
+Driver Manager (provider normalization + execution dispatch)
   ↓
-Quantum Hardware
+Hardware / Simulator / Vendor Cloud
 ```
 
-The optimizer acts as:
+---
 
-- hardware adaptation engine,
-- graph-routing optimizer,
-- topology-aware transformation engine,
-- noise-aware placement system,
-- execution quality predictor.
+### 2.2 What the GNN Optimizer is
+
+- a **hardware adaptation engine** (logical→physical placement),
+- a **topology-aware routing engine** (routing plan / SWAP strategy),
+- a **noise-aware transformation selector** (prefer higher predicted fidelity),
+- an **explainable decision system** (reason codes, confidence, traceability),
+- a **deterministic contract surface** when determinism mode is enabled.
 
 ---
 
-## 3. Relationship to Requirements
+### 2.3 What the GNN Optimizer is not
 
-The GNN Optimizer is a mandatory component of the Eigen OS target architecture.
-
-The explicitly requires:
-
-- graph-based hardware optimization,
-- adaptive hardware-aware routing,
-- intelligent qubit placement,
-- neuro-symbolic optimization pipeline integration,
-- compatibility with heterogeneous quantum backends.
-
-This document defines the normative architecture for those requirements.
+- not a public API (internal-only),
+- not allowed to weaken compiler safety invariants,
+- not allowed to introduce nondeterministic behavior in deterministic mode,
+- not allowed to bypass policy constraints or security validation,
+- not allowed to leak provider secrets or raw provider payloads.
 
 ---
 
-## 4. Current Repository State
+## 3. Contract Versioning
 
-### 4.1 Implemented Now
+### 3.1 Contract Marker
 
-The repository currently contains partial groundwork only.
+The optimizer service contract is versioned at the **RPC envelope level**.
 
-Implemented components adjacent to optimizer functionality:
+- Service: `eigen.internal.v1.OptimizerService`
+- Request field: `contract_version` (semver string, e.g. "`1.0.0`")
 
-#### Kernel Hybrid Optimization Loop
-
-Kernel runtime contains:
-
-- simple iterative optimization logic,
-- VQE-oriented parameter updates,
-- metrics persistence,
-- hybrid execution metadata tagging.
-
-Current optimization implementation:
-
-```text
-simple_gradient_free_step
-```
-
-This is not a GNN optimizer.
-
-It is only an MVP heuristic optimizer.
+**Rule:** Every Optimize request MUST include `contract_version`. Responses MUST echo the same value.
 
 ---
 
-#### Plugin Ecosystem Groundwork
+### 3.2 SemVer Policy (Optimizer Contract)
 
-Implemented:
+#### MAJOR
 
-- `optimizer` plugin type in Phase-6 contracts,
-- plugin manifest validation,
-- CLI plugin scaffolding.
+Breaking changes:
 
----
+- request/response rename or removal,
+- semantic changes to placement/routing outputs,
+- incompatible label/schema changes,
+- determinism behavior changes.
 
-#### Architecture Contracts
+#### MINOR
 
-Implemented/documented:
+Backward-compatible additions:
 
-- optimizer placement in architecture overview,
-- optimizer role in runtime pipeline,
-- integration direction with compiler/kernel/driver-manager.
+- additive optional fields,
+- new reason codes,
+- new explanation fields,
+- new metrics (bounded labels only).
 
----
+#### PATCH
 
-### 4.2 Not Yet Implemented
-
-The following do NOT currently exist as production components:
-
-- dedicated `gnn-optimizer` service,
-- optimizer runtime daemon,
-- optimizer gRPC API,
-- inference pipeline,
-- topology feature extraction,
-- model registry,
-- runtime graph transformations,
-- hardware scoring engine,
-- ML inference serving,
-- deterministic replay system.
+Implementation fixes and doc clarifications that do not change semantics.
 
 ---
 
-## 5. Core Responsibilities
+## 4. Current Repository State (Truthful Snapshot)
+
+### 4.1 Implemented Adjacent Functionality
+
+The repository includes partial groundwork around optimization, but **not** a production GNN path:
+
+- kernel contains MVP hybrid-loop heuristics (e.g., VQE-like stepping)
+- some plugin scaffolding exists (optimizer as a conceptual component)
+- architecture references exist in overview and contracts
+
+---
+
+### 4.2 Not Yet Implemented (Production Components Missing)
+
+- dedicated `gnn-optimizer` service daemon
+- working gRPC optimizer inference path wired end-to-end
+- model registry + model signature verification
+- topology feature extraction pipeline
+- deterministic replay bundles for optimizer decisions
+- placement/routing artifact schemas persisted in QFS as a stable contract
+- SLO dashboards + alert pack for optimizer subsystem
+
+---
+
+### 4.3 Internal API Status
+
+- `OptimizerService.OptimizeCircuit` exists in the internal proto surface (per internal contracts)
+- In the current codebase it may still be stubbed/unwired depending on deployment profile
+
+---
+
+## 5. Normative Responsibilities
 
 ### 5.1 Hardware Topology Optimization
 
-The optimizer must:
+The optimizer MUST:
 
-- map logical qubits to physical qubits,
-- minimize swap operations,
-- reduce routing depth,
-- reduce decoherence exposure,
-- adapt to backend connectivity constraints.
+- compute a **placement plan** (logical qubits → physical qubits),
+- minimize routing overhead (SWAP count, depth),
+- respect connectivity constraints and forbidden edges,
+- maintain execution equivalence (no semantic drift).
 
 ---
 
 ### 5.2 Noise-Aware Optimization
 
-The optimizer must consume:
+The optimizer MUST be able to consume a bounded snapshot of backend quality signals, such as:
 
-- calibration data,
-- gate fidelity metrics,
 - readout error rates,
-- coherence times,
-- thermal stability metrics.
+- gate fidelities/error rates,
+- coherence times (T1/T2),
+- calibration freshness and stability indicators.
 
-The optimizer must prioritize execution paths maximizing predicted fidelity.
+The optimizer SHOULD prioritize plans with higher predicted fidelity under the selected policy mode (latency vs fidelity vs cost).
 
 ---
 
-### 5.3 Backend Adaptation
+### 5.3 Backend Adaptation Across Backend Classes
 
-The optimizer must support heterogeneous backend architectures:
-
-| **Backend Type** | **Support Target** |
+| **Backend Type** | **Requirement** |
 |---|---|
 | Superconducting | Required |
 | Trapped Ion | Required |
@@ -173,526 +178,366 @@ The optimizer must support heterogeneous backend architectures:
 | Neutral Atom | Planned |
 | Spin Qubit | Future |
 
+**Rule:** If the backend class is unsupported, the optimizer MUST either:
+
+- fall back deterministically to a symbolic/heuristic path, or
+- return `UNIMPLEMENTED` (policy-dependent).
+
 ---
 
 ### 5.4 Graph-Based Circuit Transformation
 
-The optimizer must transform:
+The optimizer MUST be capable of producing one or more of:
 
-```text
-AQO graph
-  →
-hardware-compatible execution graph
-```
+- placement plan
+- routing plan (explicit SWAP insertion strategy)
+- transformed AQO (still valid AQO schema)
+- decomposition hints (backend gate-set adaptation)
 
-Supported transformations:
+Allowed transformations include (policy- and backend-dependent):
 
-- qubit remapping,
-- routing insertion,
-- gate decomposition,
-- gate fusion,
-- scheduling reordering,
-- parallelism optimization.
+- qubit remapping
+- routing insertion
+- gate decomposition (to native gate set)
+- limited reorderings that preserve semantics (subject to validation)
+- scheduling hints (parallelism opportunities)
 
----
-
-### 5.5 Neuro-Symbolic Coordination
-
-The optimizer is part of the broader neuro-symbolic architecture.
-
-The system combines:
-
-| **Component** | **Role** |
-|---|---|
-| Symbolic compiler | Deterministic correctness |
-| Neuro-DPDA | Semantic optimization |
-| GNN optimizer | Hardware adaptation |
-| Kernel scheduler | Runtime orchestration |
-
-The optimizer must never violate symbolic correctness guarantees.
+**Constraint:** Any transformation MUST be validated against symbolic correctness checks.
 
 ---
 
-## 6. Integration with Neuro-DPDA Compiler
+### 5.5 Neuro-Symbolic Coordination Safety Boundary
 
-### 6.1 Compiler Relationship
+The optimizer is subordinate to symbolic validation:
 
-The Neuro-DPDA compiler produces:
-
-- AQO,
-- semantic annotations,
-- optimization metadata,
-- determinism constraints.
-
-The GNN optimizer consumes these artifacts.
+- ML inference is advisory, not authoritative.
+- Symbolic checks MUST reject invalid transformations deterministically.
+- In deterministic mode, the optimizer MUST behave replayably given identical inputs.
 
 ---
 
-### 6.2 Neuro-DPDA Responsibilities
+## 6. Determinism and Replay Contract
 
-The Neuro-DPDA subsystem is responsible for:
+### 6.1 Determinism Modes
 
-- semantic optimization,
-- symbolic verification,
-- transformation safety,
-- deterministic compilation guarantees.
+The optimizer MUST support a determinism switch:
 
----
-
-### 6.3 GNN Optimizer Responsibilities
-
-The GNN optimizer is responsible for:
-
-- physical hardware adaptation,
-- topology-aware routing,
-- fidelity optimization,
-- hardware-aware transformation selection.
+- `deterministic = true:` outputs must be replay-stable
+- `deterministic = false:` outputs may use nondeterministic exploration, but MUST still be policy-safe and validated
 
 ---
 
-### 6.4 Determinism Requirement
+### 6.2 Deterministic Input Set
 
-The optimizer must support deterministic execution modes.
+When `deterministic=true`, the optimizer output MUST be a pure function of:
 
-Given identical:
-
-- AQO,
-- backend snapshot,
-- calibration state,
-- optimizer version,
-- policy constraints,
-
-the optimizer must produce identical optimization outputs.
+- AQO content hash (canonical AQO bytes)
+- `contract_version`
+- `optimizer_model_id` (or explicit `fallback_used=true`)
+- backend identity + topology snapshot hash
+- calibration snapshot hash (or explicit “no calibration” sentinel)
+- policy envelope (mode + constraints)
+- `seed` (explicit deterministic seed, REQUIRED when deterministic=true)
 
 ---
 
-## 7. Optimization Pipeline
+### 6.3 Deterministic Digest
 
-### Normative Runtime Flow
+The optimizer MUST output a reproducibility digest:
 
-```text
-Eigen-Lang
-  ↓
-AST Validation
-  ↓
-Neuro-DPDA Compilation
-  ↓
-AQO Generation
-  ↓
-Feature Extraction
-  ↓
-GNN Inference
-  ↓
-Topology Optimization
-  ↓
-Routing Optimization
-  ↓
-Execution Plan
-  ↓
-Driver Manager
-```
+- `optimizer_digest = sha256(canonical_request_inputs + canonical_outputs)`
+
+This digest MUST be persisted in artifacts and included in response metadata.
 
 ---
 
-## 8. Optimizer Inputs
+## 7. Inputs and Outputs
 
-### 8.1 Circuit Inputs
+### 7.1 Optimizer Inputs (Normative)
 
-The optimizer consumes:
+#### Circuit inputs
 
-- AQO graph,
-- dependency graph,
-- operation metadata,
-- symbolic parameters,
-- execution constraints.
+- AQO payload (or QFS ref to AQO artifact)
+- AQO format (AQO JSON / AQO PROTO)
+- dependency/structure hints (optional)
+- execution constraints (shots, dynamic-circuit flags, etc.)
 
----
+#### Hardware inputs
 
-### 8.2 Hardware Inputs
+- topology graph (connectivity, couplers)
+- device capabilities (native gate set, supported operations)
+- calibration snapshot (bounded)
+- queue/capacity hints (optional, bounded)
 
-Required backend data:
+#### Runtime/policy inputs
 
-- coupling maps,
-- topology graphs,
-- calibration snapshots,
-- coherence times,
-- gate fidelities,
-- queue depth,
-- hardware availability state.
-
----
-
-### 8.3 Runtime Inputs
-
-The optimizer may consume:
-
-- tenant policies,
-- latency targets,
-- cost budgets,
-- reproducibility requirements,
-- execution priority.
+- policy mode: `balanced | latency | cost | availability | deterministic | compliance`
+- constraints: max depth, max swaps, forbidden qubits/edges (optional)
+- deadlines: feature extraction budget, inference budget, total optimization budget
+- determinism: `deterministic` bool + `seed`
 
 ---
 
-## 9. Optimizer Outputs
+### 7.2 Optimizer Outputs (Normative)
 
 The optimizer produces:
 
-| **Output** | **Description** |
-|---|---|
-| Placement Plan | logical → physical qubit mapping |
-| Routing Plan | swap/routing transformations |
-| Optimized Circuit | transformed execution graph |
-| Fidelity Estimate | predicted execution quality |
-| Latency Estimate | predicted runtime |
-| Confidence Score | inference confidence |
-| Explanation Trace | optimization reasoning metadata |
-| Deterministic Digest | reproducibility hash |
+| **Output** | **Required** | **Notes** |
+|---|---|---|
+| `optimized_circuit` (AQO) | yes (unless rejected) | May be identical to input when fallback used |
+| `placement_plan` | optional | logical→physical mapping; required for many hardware backends |
+| `routing_plan` | optional | swap/routing strategy; may be embedded into AQO |
+| `fidelity_estimate` | optional | bounded numeric + units |
+| `latency_estimate_ms` | optional | bounded numeric |
+| `confidence_score` | optional | bounded [0..1] |
+| `fallback_used` | required | boolean |
+| `fallback_reason` | required if fallback_used | stable reason code |
+| `explanation_ref` | optional | QFS reference to explain payload |
+| `optimizer_digest` | required | reproducibility hash |
 
 ---
 
-## 10. GNN Model Architecture
+## 8. Internal API (gRPC) — Contract Alignment
 
-### 10.1 Graph Representation
+### 8.1 Service
 
-Circuit graph nodes:
-
-- gates,
-- qubits,
-- observables,
-- measurements.
-
-Hardware graph nodes:
-
-- physical qubits,
-- couplers,
-- routing edges.
+```text
+eigen.internal.v1.OptimizerService
+```
 
 ---
 
-### 10.2 Candidate Architectures
+### 8.2 OptimizeCircuit (Normative Semantics)
 
-Supported future architectures:
+#### Request MUST include:
 
-| **Model Type** | **Status** |
-|---|---|
-| GraphSAGE | Planned |
-| GAT | Planned |
-| Message Passing Networks | Planned |
-| Transformer-GNN Hybrid | Planned |
-| Reinforcement-GNN Hybrid | Research |
+- contract_version
+- AQO payload or qfs_ref
+- backend identity (device/backend id)
+- determinism flag and seed (seed required when deterministic=true)
+- objective/policy envelope
 
----
+#### Response MUST include:
 
-### 10.3 Training Sources
+- transformed AQO payload (or QFS ref)
+- `fallback_used` + `fallback_reason` if applicable
+- timing metrics (latency)
+- trace/correlation metadata
+- deterministic digest
 
-Training datasets may include:
-
-- historical executions,
-- calibration telemetry,
-- simulator-generated traces,
-- synthetic routing benchmarks,
-- reinforcement learning episodes.
+**Note:** If the optimizer service is not deployed, callers MUST treat it as optional and rely on fallback/heuristic behavior in compiler/kernel (policy-dependent).
 
 ---
 
-## 11. Fallback Architecture
+## 9. Fallback and Degradation Behavior
 
-The optimizer must support deterministic fallback paths.
-
-Fallback chain:
+The optimizer MUST provide a deterministic fallback chain:
 
 ```text
 GNN inference
-  ↓ failure
-Heuristic optimizer
-  ↓ failure
-Static topology mapper
-  ↓ failure
-Reject execution
+  ↓ (failure / confidence below threshold / policy forbids)
+Heuristic optimizer (deterministic)
+  ↓ (failure)
+Static topology mapper (deterministic)
+  ↓ (failure)
+Reject optimization request
 ```
 
 ---
 
-## 12. Failure Model
+### 9.1 Confidence Thresholds
 
-### 12.1 Failure Classes
+If confidence thresholds are used:
 
-Normative failure categories:
-
-| **Failurev** | **Description** |
-|---|---|
-| MODEL_LOAD_FAILED | model unavailable |
-| INVALID_TOPOLOGY | corrupted hardware graph |
-| INFERENCE_TIMEOUT | inference exceeded deadline |
-| NON_DETERMINISTIC_OUTPUT | determinism violation |
-| POLICY_REJECTED | optimization violates policy |
-| FEATURE_EXTRACTION_FAILED | invalid feature generation |
+- thresholds MUST be versioned and deterministic
+- thresholds MUST be frozen per MINOR contract version
+- thresholds MUST be observable (exported as config info metric or included in explain payload)
 
 ---
 
-### 12.2 Failure Policy
+## 10. Failure Model (Aligned with Eigen OS Error Model)
 
-The optimizer must support:
+The optimizer MUST follow `error-model.md` / `error-mapping.md`:
 
-- fail-open mode,
-- fail-closed mode,
-- deterministic fallback,
-- policy-based degradation.
+- Validation failures → `INVALID_ARGUMENT` (+ `BadRequest` details)
+- Unsupported backend/features → `UNIMPLEMENTED`
+- State-dependent rejection (policy forbids, missing prerequisites) → `FAILED_PRECONDITION`
+- Resource pressure (model cache OOM, quota) → `RESOURCE_EXHAUSTED` (+ `RetryInfo`)
+- Transient model registry outage → `UNAVAILABLE` (+ `RetryInfo`)
+- Deadline budget exceeded → `DEADLINE_EXCEEDED`
+- Unexpected invariant violation → `INTERNAL`
 
 ---
 
-### 12.3 Timeout Constraints
+### 10.1 Stable Failure Reason Codes (Machine-Readable)
 
-Inference deadlines must be configurable.
+The optimizer MUST expose stable reason codes via `google.rpc.ErrorInfo.reason` using an `EIGEN_OPT_*` family, for example:
 
-Recommended MVP targets:
+- EIGEN_OPT_MODEL_LOAD_FAILED
+- EIGEN_OPT_INVALID_TOPOLOGY
+- EIGEN_OPT_INFERENCE_TIMEOUT
+- EIGEN_OPT_NON_DETERMINISTIC_OUTPUT
+- EIGEN_OPT_POLICY_REJECTED
+- EIGEN_OPT_FEATURE_EXTRACTION_FAILED
+- EIGEN_OPT_UNSUPPORTED_BACKEND
+- EIGEN_OPT_CONFIDENCE_TOO_LOW
 
-| **Operation** | **Target** |
+---
+
+## 11. QFS Integration (Artifacts and Layout)
+
+Optimizer artifacts MUST be stored under the job’s QFS namespace (preferred, consistent with QFS v1.0):
+
+```text
+qfs://jobs/<job_id>/
+  compiled/               # compiler outputs
+  results/                # execution outputs
+  logs/
+  meta/
+  optimizer/              # optimizer artifacts (this section)
+```
+
+---
+
+### 11.1 Proposed Stable Optimizer Layout
+
+```text
+qfs://jobs/<job_id>/optimizer/
+  request.json            # normalized optimizer request snapshot (bounded)
+  input_aqo.ref           # ref/hash to input AQO
+  topology.ref            # ref/hash to topology snapshot
+  calibration.ref         # ref/hash to calibration snapshot (optional)
+  optimized_aqo.json      # optimized circuit (or ref)
+  placement.json          # placement plan (optional)
+  routing.json            # routing plan (optional)
+  explain.json            # explanation payload (optional; bounded)
+  decision.json           # decision summary incl fallback + confidence + digest
+```
+
+---
+
+### 11.2 Integrity Rules
+
+- All refs MUST be content-addressed or include checksums.
+- Artifacts MUST not include secrets.
+- Payload sizes MUST be bounded; large objects should be referenced.
+
+---
+
+## 12. Observability Contract
+
+The optimizer MUST align with the **Intelligent Runtime Observability Contract** principles (bounded labels, deterministic semantics), but it has its own metric namespace.
+
+### 12.1 Required Metrics (Normative)
+
+```text
+eigen_optimizer_contract_info{version="1.0.0"} 1
+
+eigen_optimizer_requests_total{result}
+eigen_optimizer_latency_seconds_bucket
+eigen_optimizer_latency_seconds_sum
+eigen_optimizer_latency_seconds_count
+
+eigen_optimizer_fallback_total{reason}
+eigen_optimizer_inference_failures_total{reason}
+eigen_optimizer_confidence_gauge
+eigen_optimizer_improvement_score_gauge
+```
+
+Rules:
+
+- Labels MUST be bounded (no `job_id`, no `trace_id`, no raw device_id if unbounded).
+- Histograms MUST be exported as complete families (`_bucket/_sum/_count`).
+
+---
+
+### 12.2 Required Tracing
+
+Spans SHOULD include:
+
+- feature extraction span
+- inference span
+- validation span
+- routing/placement generation span
+- fallback span (if used)
+
+All spans must propagate `traceparent` and be correlated to `job_id` in logs (not as metric label).
+
+---
+
+## 13. Security and Trust
+
+### 13.1 Model Provenance and Supply Chain
+
+Production models MUST support:
+
+- checksum validation,
+- signature verification,
+- provenance metadata (who/when built),
+- immutable version identifiers (`optimizer_model_id`).
+
+---
+
+## 13.2 Isolation and Resource Quotas
+
+Inference execution MUST support:
+
+- sandboxing (process/container isolation),
+- CPU/memory/GPU quotas,
+- timeouts per stage,
+- safe failure (telemetry must not kill runtime).
+
+---
+
+### 13.3 Tenant Controls (Policy)
+
+Policy MUST allow:
+
+- ML optimization disabled (force heuristic-only)
+- deterministic-only mode enforced
+- compliance mode (restricted transformations)
+- bounded explainability levels (L1/L2/L3) consistent with system observability contracts
+
+---
+
+## 14. Performance Targets (Engineering Targets)
+
+Recommended budgets (not guaranteed SLAs):
+
+| **Stage** | **Target** |
 |---|---|
 | Feature extraction | < 10 ms |
 | Inference | < 50 ms |
-| Routing optimization | < 100 ms |
+| Routing/placement generation | < 100 ms |
+| Total optimization | < 200 ms (typical) |
+
 
 ---
 
-## 13. State and Storage
-
-### 13.1 Planned Persistent Storage
-
-Required artifact categories:
-
-| **Artifact** | **Purpose** |
-|---|---|
-| Model Registry | versioned models |
-| Feature Snapshots | replay/debugging |
-| Decision Traces | explainability |
-| Replay Bundles | deterministic reproduction |
-| Telemetry Datasets | retraining |
-| Calibration History | optimization context |
-
----
-
-## 13.2 QFS Integration
-
-Optimizer artifacts must integrate with QFS.
-
-Proposed layout:
-
-```text
-/qfs/optimizer/models/
-/qfs/optimizer/features/
-/qfs/optimizer/traces/
-/qfs/optimizer/replays/
-/qfs/optimizer/calibration/
-```
-
----
-
-### 13.3 Runtime Cache
-
-Planned caches:
-
-- topology cache,
-- calibration cache,
-- inference cache,
-- model cache.
-
----
-
-## 14. Interfaces
-
-### 14.1 Current State
-
-No dedicated optimizer API currently exists.
-
-Current compiler method:
-
-```text
-OptimizeCircuit
-```
-
-returns:
-
-```text
-UNIMPLEMENTED
-```
-
----
-
-### 14.2 Planned Internal API
-
-Planned gRPC service:
-
-```text
-service OptimizerService {
-  rpc OptimizeCircuit(OptimizeRequest)
-      returns (OptimizeResponse);
-}
-```
-
----
-
-### 14.3 Planned Request Model
-
-Inputs:
-
-- AQO,
-- topology graph,
-- calibration snapshot,
-- policy constraints,
-- determinism mode,
-- timeout budget.
-
----
-
-### 14.4 Planned Response Model
-
-Outputs:
-
-- transformed AQO,
-- routing plan,
-- placement plan,
-- confidence score,
-- explanation payload,
-- fallback metadata.
-
----
-
-## 15. Observability
-
-### 15.1 Required Metrics
-
-Normative metrics:
-
-```text
-eigen_optimizer_requests_total
-eigen_optimizer_latency_seconds
-eigen_optimizer_fallback_total
-eigen_optimizer_inference_failures_total
-eigen_optimizer_improvement_score
-eigen_optimizer_confidence
-```
-
----
-
-### 15.2 Tracing
-
-Required trace spans:
-
-- feature extraction,
-- inference execution,
-- topology optimization,
-- routing generation,
-- fallback execution.
-
-All traces must propagate:
-
-- `trace_id`
-- `job_id`
-- `optimizer_model_id`
-
----
-
-### 15.3 Explainability
-
-The optimizer must emit explainability payloads.
-
-Minimum requirements:
-
-- selected topology explanation,
-- rejected alternatives,
-- confidence metadata,
-- optimization objective ranking.
-
----
-
-## 16. Security and Trust
-
-### 16.1 Model Provenance
-
-All production models must support:
-
-- signature verification,
-- provenance tracking,
-- checksum validation,
-- reproducible packaging.
-
----
-
-### 16.2 Isolation
-
-Inference execution must support:
-
-- sandbox isolation,
-- resource quotas,
-- memory limits,
-- GPU isolation where applicable.
-
----
-
-### 16.3 Tenant Controls
-
-Tenants must be able to:
-
-- disable ML optimization,
-- force deterministic mode,
-- force heuristic-only mode,
-- restrict adaptive routing.
-
----
-
-## 17. Performance Targets
-
-| **Metric** | **Target** |
-|---|---|
-| Inference latency | < 50 ms |
-| Placement optimization | < 100 ms |
-| Fidelity improvement | measurable positive delta |
-| Deterministic replay accuracy | 100% |
-| Fallback activation | < 1% nominal |
-
----
-
-## 18. Compliance Status
+## 15. Compliance Status Summary
 
 | **Capability** | **Status** |
 |---|---|
-| Architecture placement | Implemented |
-| Plugin type groundwork | Implemented |
-| Kernel heuristic optimizer | Partial |
-| Dedicated GNN service | Not implemented |
-| Runtime inference | Not implemented |
-| Topology optimization | Not implemented |
-| Hardware adaptation | Not implemented |
-| Explainability pipeline | Not implemented |
-| Deterministic replay | Not implemented |
-| Model registry | Not implemented |
-| Observability contract | Defined only |
-| Neuro-DPDA integration | Architecture-defined |
+| Architecture placement | Implemented in docs |
+| Internal service contract existence | Present in internal API surface (may be stub/unwired) |
+| Determinism rules | Normative here (implementation pending) |
+| Dedicated service + inference path | Not implemented |
+| Model registry + signatures | Not implemented |
+| QFS artifacts layout | Not implemented |
+| Optimizer observability metrics | Defined here (implementation pending) |
+| Explainability payloads | Not implemented |
+| Fallback chain (deterministic) | Partially present via heuristics elsewhere; formal chain pending |
 
 ---
 
-## 19. Conclusion
+## 16. Conclusion
 
-The GNN Optimizer is the intelligent hardware adaptation subsystem of Eigen OS and a mandatory component for full ТЗ compliance.
+The GNN Optimizer is a **mandatory** target-architecture component for Eigen OS hardware-aware execution. This document freezes the **normative contract** for:
 
-The current repository already contains:
-
-- architectural placement,
-- plugin ecosystem groundwork,
-- heuristic optimization scaffolding,
-- neuro-symbolic integration direction.
-
-The full target architecture extends this foundation into:
-
-- graph-neural hardware optimization,
-- adaptive topology-aware execution,
-- deterministic ML-assisted routing,
-- explainable optimization decisions,
-- intelligent heterogeneous backend orchestration.
-
-The optimizer therefore represents the future execution intelligence layer of Eigen OS, integrated with both:
-
-- the Neuro-DPDA compiler stack,
-- and the Driver Manager runtime abstraction layer.
+- inputs/outputs,
+- determinism and replay,
+- fallback behavior,
+- error mapping,
+- QFS artifacts,
+- observability surface,
+- and security requirements.

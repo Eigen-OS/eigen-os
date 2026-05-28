@@ -1,32 +1,33 @@
 # Driver Manager
 
-- **Status:** normative architecture and implementation specification
-- **Scope:** runtime driver orchestration, backend abstraction, execution normalization, hardware capability management
+**Status:** Normative architecture + implementation specification (Eigen OS 1.0 / MVP + approved extensions)
+**Subsystem:** Runtime driver orchestration, backend abstraction, execution normalization, device/capability management
+**Primary consumers:** `eigen-kernel (QRTX)` and internal runtime services
+**Security posture:** Internal-only service; treats all payloads as executable input; zero-trust across boundaries
 
 ---
 
 ## 1. Purpose
 
-`driver-manager` is the runtime subsystem of Eigen OS responsible for abstracting heterogeneous quantum hardware and simulators behind a unified internal execution interface.
+`driver-manager` (DM) is the Eigen OS runtime subsystem responsible for abstracting heterogeneous quantum hardware and simulators behind a unified internal execution interface.
 
-The component provides:
+The Driver Manager provides:
 
-- stable execution boundary between eigen-kernel and backend providers,
-- normalized device discovery and execution semantics,
-- unified driver lifecycle management,
-- backend capability abstraction,
-- execution result normalization,
-- runtime observability and fault isolation.
+- a stable execution boundary between `eigen-kernel` and backend providers,
+- normalized device discovery, health, topology, and capability semantics,
+- unified driver lifecycle and session management,
+- execution dispatch and result normalization,
+- backend/provider error normalization into the Eigen OS error model,
+- observability and fault isolation for backend interactions,
+- security controls for credentials and driver supply chain.
 
-The Driver Manager is the only component allowed to communicate directly with vendor SDKs, cloud quantum APIs, simulator runtimes, or hardware-specific execution libraries.
+**Only the Driver Manager is allowed to communicate directly with vendor SDKs, cloud quantum APIs, simulator runtimes, or hardware-specific execution libraries.** Kernel and public services must never depend on provider SDKs directly.
 
 ---
 
 ## 2. Architectural Role
 
-The Driver Manager belongs to the Eigen OS Runtime Services layer.
-
-Architecture position:
+Driver Manager belongs to the Runtime Services layer.
 
 ```text
 Client
@@ -37,270 +38,144 @@ eigen-kernel (QRTX)
   ↓
 driver-manager
   ↓
-QDriver implementations
+QDriver implementations (plugins / remote driver services)
   ↓
 Quantum backend / simulator / vendor cloud
 ```
 
-The component acts as:
+DM acts as:
 
-- execution abstraction layer,
-- runtime compatibility layer,
-- backend normalization gateway,
-- hardware capability registry,
-- execution fault isolation boundary.
+- execution abstraction layer
+- capability registry
+- normalization gateway
+- fault isolation boundary
+- credential boundary
+- device topology source (for hardware-aware compilation/optimization)
 
 ---
 
 ## 3. Core Responsibilities
 
-### 3.1 Implemented Responsibilities
+### 3.1 Device Catalog & Capability Registry
 
-The current implementation provides:
+DM MUST maintain a consistent, queryable view of:
 
-#### Runtime RPC Service
+- available devices,
+- device identity and stable `device_id`,
+- device capabilities (`max_qubits`, supported gate sets, dynamic circuit - support, mid-circuit measurement, etc.),
+- device health and availability,
+- device topology/connectivity (when applicable),
+- queue / capacity hints (when available).
 
-Implemented gRPC service:
-
-- `DriverManagerService`
-
-Implemented methods:
+DM MUST provide a snapshot-style interface to the kernel for:
 
 - `ListDevices`
 - `GetDeviceStatus`
-- `ExecuteCircuit`
-
-Present but intentionally unimplemented:
-
-- `CalibrateDevice`
+- `GetDeviceDetails` (if present in internal APIs)
 
 ---
 
-#### Driver Registry
+### 3.2 Execution Dispatch
 
-Implemented:
+DM MUST accept execution requests from the kernel and:
 
-- in-memory driver registry,
-- device ownership mapping,
-- duplicate device protection,
-- driver registration validation,
-- capability snapshots,
-- health snapshots.
-
----
-
-#### Driver Abstraction
-
-Implemented base driver contract:
-
-- `initialize(config)`
-- `capability_handshake()`
-- `healthcheck()`
-- `get_devices()`
-- `execute_circuit()`
-- `get_device_status()`
-- `calibrate_device()`
+1. validate request envelope and payload format,
+2. select the appropriate driver/device session,
+3. translate the payload into backend-native format if required,
+4. execute the circuit on the provider runtime,
+5. normalize the result into the canonical Eigen OS `ExecutionResult` shape,
+6. normalize provider errors into the canonical Eigen OS error model.
 
 ---
 
-#### Execution Normalization
+### 3.3 Result Normalization
 
-Implemented:
+DM MUST return backend-independent results:
 
-- backend-independent execution response mapping,
-- normalized measurement counts,
-- normalized execution metadata,
-- backend error translation into gRPC status model.
+- canonical `counts` bitstring ordering (per system contract),
+- stable metadata keys (backend id/name, timing, shots, etc.),
+- stable error mapping (gRPC status + structured details).
 
----
-
-#### Runtime Observability
-
-Implemented:
-
-- structured RPC lifecycle logging,
-- trace context propagation,
-- HTTP `/healthz`,
-- HTTP `/metrics`.
+Normalization MUST be deterministic for equivalent backend outputs.
 
 ---
 
-## 4. Strategic Responsibilities (Architecture Targets)
+### 3.4 Driver Lifecycle & Session Management
 
-The following responsibilities are part of the approved target architecture and mandatory for TЗ compliance, but are not fully implemented yet.
+DM MUST:
 
-### 4.1 Dynamic Plugin Ecosystem
-
-Planned capabilities:
-
-- runtime driver discovery,
-- hot plugin loading,
-- plugin unloading,
-- isolated plugin sandboxes,
-- signed plugin validation,
-- capability version negotiation.
+- load and register drivers,
+- create per-device sessions when needed,
+- manage connection pools for providers (where applicable),
+- implement safe shutdown and restart behavior,
+- support rolling updates of drivers (graceful restart of sessions).
 
 ---
 
-### 4.2 Runtime Resilience Layer
+### 3.5 Device Topology Source for Hardware Optimization
 
-Planned:
+DM MUST expose device topology and calibration/health snapshots to QRTX so QRTX can:
 
-- connection pooling,
-- retry orchestration,
-- exponential backoff,
-- circuit breaker state machines,
-- backend failover routing,
-- degraded-mode execution.
+- request topology via `GetDeviceStatus` / `GetDeviceDetails`,
+- feed topology into hardware-aware optimization (e.g., GNN placement/routing).
+
+This is required by the technical specification architecture: **GNN-optimizer consumes device topology obtained via Driver Manager**.
 
 ---
 
-### 4.3 Intelligent Hardware Optimization (GNN Optimizer)
+## 4. Implementation Status (Repository Truthfulness)
 
-Required by Eigen OS target architecture.
+### 4.1 Implemented Today
 
-The Driver Manager participates in hardware optimization together with the compiler/runtime stack.
-
-#### GNN Hardware Optimizer Responsibilities
-
-The GNN optimizer is responsible for:
-
-- qubit placement optimization,
-- topology-aware routing,
-- gate remapping,
-- backend-specific transformation prediction,
-- noise-aware execution optimization,
-- fidelity estimation,
-- hardware scoring.
-
-#### Integration Flow
-
-```text
-AQO
-  ↓
-Compiler optimization passes
-  ↓
-GNN Hardware Optimizer
-  ↓
-Driver Manager
-  ↓
-Backend-specific executable circuit
-```
-
-#### Planned Inputs
-
-- hardware topology graphs,
-- calibration metrics,
-- backend noise maps,
-- queue statistics,
-- historical execution telemetry,
-- AQO dependency graphs.
-
-#### Planned Outputs
-
-- optimized qubit mapping,
-- routing transformations,
-- backend selection recommendations,
-- predicted fidelity scores,
-- execution cost estimates.
-
-#### Status
-
-Architecture-approved and mandatory for full TЗ compliance.
-
-Current repository state:
-
-- contracts and architectural placement defined,
-- execution-path integration incomplete,
-- no production GNN inference pipeline yet enabled by default.
+- Internal gRPC service: `DriverManagerService`
+  - `ListDevices`
+  - `GetDeviceStatus`
+  - `ExecuteCircuit`
+- In-memory registry:
+  - driver registration and device ownership mapping
+  - capability snapshots
+  - basic health snapshots
+- Execution normalization:
+  - counts normalization
+  - execution metadata passthrough (partial standardization)
+  - backend error translation into canonical gRPC status model (baseline)
+- Observability endpoints:
+  - `/healthz`
+  - `/metrics`
+  - structured RPC lifecycle logging
+  - trace-context propagation
 
 ---
 
-### 4.4 Neuro-Symbolic Runtime Coordination
+### 4.2 Partially Implemented
 
-The Driver Manager participates in the broader Eigen OS neuro-symbolic execution architecture.
-
-#### Neuro-DPDA Relationship
-
-The Neuro-DPDA compiler subsystem:
-
-- produces optimized AQO,
-- annotates execution intent,
-- emits optimization metadata.
-
-The Driver Manager consumes these artifacts for:
-
-- backend selection,
-- execution strategy application,
-- hardware compatibility resolution.
-
-#### Planned Neuro-Symbolic Extensions
-
-Future runtime coordination includes:
-
-- adaptive backend selection,
-- telemetry-driven execution policies,
-- reinforcement-based scheduling feedback,
-- execution pattern reuse via Knowledge Base.
-
-Status:
-
-- architecture-defined,
-- partially represented in contracts,
-- not fully implemented in runtime execution flow.
+- OpenTelemetry span coverage (trace propagation exists; full per-driver spans incomplete)
+- Metadata schema standardization across all drivers
+- Connection reuse policies (some drivers may reuse sessions; pooling not uniform)
 
 ---
 
-## 5. Service Interfaces
+### 4.3 Planned / Required by Target Architecture (TЗ)
 
-### 5.1 Kernel-Facing gRPC Interface
-
-Internal service:
-
-```text
-eigen.internal.v1.DriverManagerService
-```
-
-Methods:
-
-| **Method** | **Status** |
-|---|---|
-| `ListDevices` | Implemented |
-| `GetDeviceStatus` | Implemented |
-| `ExecuteCircuit` | Implemented |
-| `CalibrateDevice` | Defined, returns `UNIMPLEMENTED` |
+- Dynamic driver discovery and loading (plugin ecosystem)
+- Connection pooling, circuit breakers, retries, failover routing
+- Signed driver verification (supply chain hardening)
+- Driver isolation (container/process sandbox, least privilege)
+- Credential vault integration (secret storage; no secrets in configs/artifacts)
+- Rich topology/calibration APIs for hardware optimization pipelines
+- Capability/version negotiation and compatibility checks
 
 ---
 
-### 5.2 ExecuteCircuit Contract
+## 5. Driver Model: QDriver API and Plugin Modes
 
-#### Request
+Eigen OS supports two normative driver integration modes:
 
-```text
-message ExecuteCircuitRequest {
-  string job_id = 1;
-  string device_id = 2;
-  CircuitPayload payload = 3;
-  uint32 shots = 4;
-  map<string,string> options = 5;
-}
-```
+### 5.1 Mode A — In-process Plugin (Current baseline + extension)
 
-#### Response
+Drivers are Python modules/packages (or FFI binaries) loaded by DM.
 
-```text
-message ExecuteCircuitResponse {
-  map<string,int64> counts = 1;
-  double execution_time_sec = 2;
-  map<string,string> metadata = 3;
-}
-```
-
----
-
-### 5.3 Driver Plugin Interface
-
-Normative driver contract:
+Normative Python interface (conceptual):
 
 ```python
 class BaseDriver:
@@ -308,239 +183,219 @@ class BaseDriver:
     async def capability_handshake(self): ...
     async def healthcheck(self): ...
     async def get_devices(self): ...
-    async def execute_circuit(self, ...): ...
-    async def get_device_status(self, ...): ...
-    async def calibrate_device(self, ...): ...
+    async def execute_circuit(self, request): ...
+    async def get_device_status(self, device_id): ...
+    async def calibrate_device(self, device_id): ...
 ```
 
-All drivers must implement the complete interface.
+**Determinism / idempotency requirements** apply equally to both modes.
 
 ---
 
-## 6. Supported Backend Types
+### 5.2 Mode B — Remote QDriver Service (TЗ architecture-aligned)
 
-### Implemented
+A QDriver is a **gRPC service** implementing a stable device-facing contract.
 
-#### Simulators
+Normative methods (conceptual, per TЗ):
 
-- Qiskit Aer
-- Cirq simulators
+- `Initialize(DeviceConfig) -> InitResponse`
+- `Execute(ExecutionRequest) -> ExecutionResponse`
+- `GetStatus(StatusRequest) -> DeviceStatus`
+- `Calibrate(...) -> ...` (optional; may be unimplemented depending on device)
 
----
-
-### Planned / Partial
-
-#### Cloud Providers
-
-- IBM Quantum
-- AWS Braket
-- IonQ
-- Rigetti
-- Quantinuum
+DM acts as the client of QDriver services and provides the kernel-facing abstraction.
 
 ---
 
-### Future
+### 5.3 Isolation Requirement
 
-#### Native Hardware Drivers
+Drivers MUST run with **minimum privilege** and SHOULD be isolated:
 
-Support planned for:
-
-- superconducting qubits,
-- trapped ions,
-- photonic systems,
-- neutral atoms,
-- spin qubits.
+- separate process or container sandbox preferred,
+- restricted filesystem/network capabilities,
+- no access to kernel memory space.
 
 ---
 
-## 7. Driver Capability Model
+## 6. Kernel-Facing gRPC Interface (Internal)
 
-Each driver exposes:
+Canonical internal namespace:
 
-```json
-{
-  "driver_name": "ibm_quantum",
-  "backend_type": "superconducting",
-  "max_qubits": 127,
-  "supports_dynamic_circuits": true,
-  "supports_mid_circuit_measurement": true,
-  "supports_feed_forward": false,
-  "native_gate_set": ["rz", "sx", "cx"]
+```text
+eigen.internal.v1.DriverManagerService
+```
+
+### 6.1 Methods
+
+| **Method** | **Status** | **Notes** |
+|---|---|---|
+| `ListDevices` | Implemented | returns device catalog snapshot |
+| `GetDeviceStatus` | Implemented | returns health/topology hints (partial) |
+| `ExecuteCircuit` | Implemented | primary execution entrypoint |
+| `CalibrateDevice` | Defined; may return `UNIMPLEMENTED` | optional per backend |
+
+---
+
+### 6.2 ExecuteCircuit Contract (Normative Semantics)
+
+Conceptual request:
+
+```protobuf
+message ExecuteCircuitRequest {
+  string job_id = 1;          // required correlation identity
+  string device_id = 2;       // required target device
+  CircuitPayload payload = 3; // required (AQO/QASM/etc)
+  uint32 shots = 4;           // required for sampling workloads
+  uint64 seed = 5;            // optional but REQUIRED for deterministic simulator replay
+  map<string,string> options = 6; // optional bounded options
 }
 ```
+
+Conceptual response:
+
+```protobuf
+message ExecuteCircuitResponse {
+  map<string,int64> counts = 1;
+  double execution_time_sec = 2;
+  map<string,string> metadata = 3; // bounded metadata only
+}
+```
+
+#### Determinism Rules
+
+- If `seed` is provided and the backend is a simulator, DM/drivers MUST ensure the simulator uses that seed so the result is replay-stable.
+- DM MUST ensure count normalization is deterministic (canonical bit ordering, stable encoding).
+
+#### Idempotency / Retry Safety
+
+- Driver execution SHOULD be idempotent where supported.
+- If the backend supports idempotency tokens, DM SHOULD map (`job_id`, `device_id`, `attempt`) to provider idempotency mechanisms.
+- Retries MUST NOT silently change semantic options (shots/seed/payload).
+
+---
+
+## 7. Supported Payload Formats
+
+DM MUST accept a `CircuitPayload` which includes:
+
+- `format` (e.g., `AQO_JSON`, `AQO_PROTO`, `QASM`)
+- payload bytes or a QFS reference
+- optional format-specific metadata (bounded)
+
+Current MVP supported formats:
+
+- AQO JSON (primary)
+- QASM (partial / backend-dependent)
+
+Planned:
+
+- AQO protobuf (`AQO_PROTO`)
+- backend-native IR (internal only)
+
+Unsupported formats MUST return:
+
+- `UNIMPLEMENTED` (per error model)
 
 ---
 
 ## 8. Execution Flow
 
-### Current Runtime Flow
+### Device Capability Model
 
-```text
-Kernel
-  ↓
-DriverManager.ExecuteCircuit
-  ↓
-DriverRegistry lookup
-  ↓
-Selected Driver
-  ↓
-Vendor SDK/API
-  ↓
-Execution Result
-  ↓
-Normalization
-  ↓
-Kernel
+Drivers MUST expose a bounded, stable capability snapshot. Example (illustrative):
+
+```json
+{
+  "driver_name": "ibm_quantum",
+  "driver_version": "1.2.3",
+  "backend_type": "superconducting",
+  "max_qubits": 127,
+  "supports_dynamic_circuits": true,
+  "supports_mid_circuit_measurement": true,
+  "supports_feed_forward": false,
+  "native_gate_set": ["rz", "sx", "cx"],
+  "topology": "heavy_hex",
+  "connectivity": "sparse"
+}
 ```
 
----
+#### Capability/Version Registration
 
-### Future Intelligent Flow
+At startup (or on refresh), DM SHOULD:
 
-```text
-Kernel
-  ↓
-Compiler AQO
-  ↓
-Neuro-DPDA annotations
-  ↓
-GNN hardware optimization
-  ↓
-Driver selection
-  ↓
-Execution policy application
-  ↓
-Backend execution
-  ↓
-Telemetry feedback
-  ↓
-Knowledge Base update
-```
+- dynamically load available drivers,
+- register driver metadata (name, version, supported devices),
+- reject duplicates and incompatible versions deterministically.
 
 ---
 
-## 9. Internal State Model
+## 9. Failure Model (Aligned with Error Model / Error Mapping)
 
-### Implemented State
+DM MUST follow the canonical Eigen OS error model:
 
-#### In-Memory Registry
-
-Stores:
-
-- registered drivers,
-- device ownership mappings,
-- capability snapshots,
-- health snapshots.
-
----
-
-### Not Yet Implemented
-
-#### Connection Pools
-
-Planned:
-
-- persistent vendor sessions,
-- pooled SDK connections,
-- timeout eviction,
-- connection reuse.
+- **Transport failures:** gRPC status codes
+- **Validation failures:** `INVALID_ARGUMENT` with structured field violations
+- **Missing resources: `NOT_FOUND` for unknown `device_id` (preferred)
+- **Unsupported featur**e/format:** `UNIMPLEMENTED`
+- **Backend/provider outages:** `UNAVAILABLE` (+ `RetryInfo` when appropriate)
+- **Quota/capacity limits:** `RESOURCE_EXHAUSTED` (+ `RetryInfo` when appropriate)
+- **Unexpected invariants:** `INTERNAL` with correlation metadata
 
 ---
 
-#### Runtime Caches
+### 9.1 Common Mappings
 
-Planned caches:
-
-| **Cache** | **Purpose** |
+| **Condition** | **Canonical status** |
 |---|---|
-| `MetadataCache` | device metadata |
-| `ResultsCache` | execution results |
-| `TopologyCache` | hardware topology |
-| `CalibrationCache` | calibration snapshots |
+| Unknown `device_id` | `NOT_FOUND` |
+| Malformed payload / schema invalid | `INVALID_ARGUMENT` |
+| Unsupported payload format | `UNIMPLEMENTED` |
+| Provider throttling / quota exceeded | `RESOURCE_EXHAUSTED` |
+| Provider outage / network partition | `UNAVAILABLE` |
+| Execution deadline exceeded | `DEADLINE_EXCEEDED` |
+| Internal driver crash/panic | `INTERNAL` |
+
+**Provider-native errors MUST be normalized**; raw provider payloads must not leak to public surfaces.
 
 ---
 
-#### Distributed Cache
+## 10. Security Model
 
-Planned:
+### 10.1 Internal-Only Boundary
 
-- Redis,
-- Memcached.
-
----
-
-## 10. Failure Model
-
-### 10.1 Implemented Failure Handling
-
-#### Invalid Request
-
-Returns:
-
-```text
-INVALID_ARGUMENT
-```
-
-with structured field violations.
+- DM MUST NOT be publicly reachable.
+- All DM RPCs MUST be protected via **TLS 1.3** and SHOULD use **mTLS** for service-to-service auth, consistent with Eigen OS internal security posture.
 
 ---
 
-#### Unknown Device
+### 10.2 Credential Handling (Mandatory)
 
-Returns:
-
-```text
-INVALID_ARGUMENT
-```
-
----
-
-#### Unsupported Payload
-
-Returns:
-
-```text
-UNIMPLEMENTED
-```
+- Provider credentials (API keys/tokens/certs) MUST be stored in a **secure secrets store** (vault/secret manager).
+- Credentials MUST NOT be embedded in:
+  - JobSpec,
+  - AQO,
+  - QFS artifacts,
+  - logs,
+  - metrics labels.
+- Drivers may receive credentials **only on demand** and only for the duration required.
 
 ---
 
-#### Backend Execution Failure
+### 10.3 Supply Chain Hardening (Mandatory)
 
-Mapped into normalized gRPC errors.
+DM MUST support driver trust controls:
 
----
-
-### 10.2 Planned Resilience Features
-
-#### Retry Engine
-
-Planned:
-
-- exponential backoff,
-- retry budgets,
-- retry classification.
+- drivers stored in a trusted registry,
+- drivers SHOULD be signed,
+- DM SHOULD verify signatures/metadata before loading,
+- failed verification MUST prevent driver activation deterministically.
 
 ---
 
-#### Circuit Breakers
+### 10.4 Least Privilege & Isolation
 
-Planned states:
-
-- CLOSED,
-- OPEN,
-- HALF_OPEN.
-
----
-
-#### Failover Routing
-
-Planned:
-
-- backend substitution,
-- topology-aware rerouting,
-- degraded execution policies.
+- Drivers SHOULD run in isolated containers/processes.
+- DM MUST restrict driver capabilities (filesystem/network) to the minimum needed.
 
 ---
 
@@ -548,182 +403,113 @@ Planned:
 
 ### 11.1 Implemented
 
-#### Structured Logging
-
-Implemented lifecycle events:
-
-- `rpc_start`
-- `rpc_end`
-
-Fields:
-
-- `trace_id`
-- `job_id`
-- `method`
-- `device_id`
+- structured RPC lifecycle logs: `rpc_start` / `rpc_end`
+- correlation fields:
+  - `trace_id`
+  - `job_id`
+  - `method`
+  - `device_id`
+- `/metrics` and `/healthz`
 
 ---
 
-#### Metrics Endpoint
+### 11.2 Required Telemetry Shape (Normative Targets)
 
-Implemented:
+DM SHOULD export bounded-cardinality metrics such as:
 
 ```text
-/metrics
+eigen_driver_requests_total{method,device_class,result}
+eigen_driver_request_duration_seconds_bucket{method,device_class}
+eigen_driver_sessions{driver}
+eigen_driver_backend_failures_total{taxonomy}
+eigen_available_devices{device_class}
 ```
 
----
+Rules:
 
-#### Health Endpoint
-
-Implemented:
-
-```text
-/healthz
-```
+- labels MUST be bounded (no `job_id`, `trace_id`, raw device ids if unbounded)
+- exporter MUST never block execution critical paths
+- metrics failures MUST NOT terminate execution
 
 ---
 
-### 11.2 Planned Metrics Contract
+### 11.3 Tracing Requirements
 
-Normative metrics:
+Target spans:
 
-```text
-eigen_driver_requests_total
-eigen_driver_request_duration_seconds
-eigen_driver_connections
-eigen_available_devices
-eigen_device_queue_depth
-eigen_driver_connection_errors_total
-```
+- DM `ExecuteCircuit` span (parented to kernel span)
+- per-driver execution span
+- backend API latency span (where meaningful)
+
+Trace continuity must be preserved across DM → driver → backend boundaries.
 
 ---
 
-### 11.3 OpenTelemetry
+## 12. Performance Targets
 
-Target architecture requires:
-
-- distributed traces,
-- per-driver spans,
-- backend latency spans,
-- queue latency spans,
-- correlation with kernel traces.
-
-Current status:
-
-- trace-context propagation implemented,
-- full tracing pipeline incomplete.
-
----
-
-## 12. Security Model
-
-### Security Invariants
-
-1. Driver Manager is internal-only.
-2. No direct public ingress allowed.
-3. Drivers execute within restricted runtime boundaries.
-4. Backend credentials must never be exposed to clients.
-5. Driver plugins must be isolated from kernel memory space.
-
----
-
-### Planned Hardening
-
-- plugin signing,
-- sandbox isolation,
-- seccomp profiles,
-- capability-restricted execution,
-- mTLS backend communication,
-- credential vault integration.
-
----
-
-## 13. Performance Targets
-
-### MVP Targets
+MVP engineering targets (not strict guarantees):
 
 | **Metric** | **Target** |
 |---|---|
 | Device lookup | < 10 ms |
-| Execution dispatch | < 50 ms |
+| Dispatch overhead | < 50 ms |
 | Registry lookup | O(1) |
-| Concurrent devices | 10,000+ |
 | Service availability | 99.9% |
 
----
-
-## 14. Architectural Invariants
-
-### Driver Abstraction Invariant
-
-Kernel must never depend on vendor SDKs directly.
-
-### Deterministic Normalization Invariant
-
-Equivalent backend results must produce identical normalized response structures.
-
-### Isolation Invariant
-
-Driver failures must not crash kernel runtime.
-
-### Extensibility Invariant
-
-New drivers must be addable without kernel modification.
-
-### Observability Invariant
-
-All execution flows must propagate:
-
-- `trace_id`
-- `job_id`
-
-across runtime boundaries.
 
 ---
 
-## 15. Compliance Status
+## 13. Architectural Invariants
+
+1. **Abstraction invariant:** Kernel must never depend on vendor SDKs directly.
+2. **Normalization invariant:** Equivalent backend results must produce identical normalized result structures.
+3. **Isolation invariant:** Driver failures must not crash kernel runtime; DM must contain failures.
+4. **Determinism invariant:** Canonical normalization, seed handling (for simulators), and error mapping are deterministic.
+5. **Security invariant:** Credentials never leak to clients, logs, metrics labels, or artifacts.
+6. **Supply-chain invariant:** Untrusted drivers must not be loaded.
+7. **Observability invariant:** All execution flows propagate `trace_id` and correlate with `job_id`.
+
+---
+
+## 14. Compliance Snapshot
 
 | **Capability** | **Status** |
 |---|---|
 | gRPC runtime boundary | Implemented |
-| Driver abstraction | Implemented |
-| Execution normalization | Implemented |
+| Driver abstraction | Implemented (baseline) |
+| Execution normalization | Implemented (baseline) |
 | Health endpoints | Implemented |
 | Structured logging | Implemented |
 | Simulator drivers | Implemented |
-| Real hardware production coverage | Partial |
-| Dynamic plugin system | Planned |
-| Connection pooling | Planned |
+| Unknown device mapping to `NOT_FOUND` | Required (ensure alignment across implementations) |
+| Dynamic plugin system | Planned / Required |
+| Connection pooling | Planned / Required |
 | Retry/failover orchestration | Planned |
-| Distributed caching | Planned |
-| OpenTelemetry spans | Partial |
-| GNN hardware optimizer | Architecture-approved, partial integration |
-| Neuro-symbolic runtime integration | Architecture-approved, partial integration |
+| Driver isolation | Partially present / Required |
+| Secret vault integration | Planned / Required |
+| Signed driver verification | Planned / Required |
+| Full OTel spans | Partial |
+| Topology/calibration rich API | Partial / Required for HW optimization |
 
 ---
 
-## 16. Conclusion
+## 15. Conclusion
 
-The Driver Manager is the hardware abstraction and execution orchestration layer of Eigen OS.
+The Driver Manager is the **hardware abstraction and execution orchestration gateway** of Eigen OS.
 
-The current implementation already provides:
+It already provides an MVP-capable execution boundary with:
 
-- stable runtime execution contracts,
-- backend abstraction,
-- execution normalization,
-- observability foundations,
-- simulator-first runtime support.
+- internal gRPC interface,
+- driver registry,
+- normalized execution results,
+- baseline error normalization,
+- observability endpoints.
 
-The approved target architecture extends this baseline into:
+To fully match the technical specification (ТЗ) target architecture, DM additionally MUST (as the system hardens):
 
-- intelligent neuro-symbolic runtime coordination,
-- GNN-based hardware optimization,
-- resilient multi-backend orchestration,
-- dynamic plugin ecosystems,
-- production-grade distributed execution infrastructure.
-
-The component is therefore both:
-
-- an operational MVP execution layer,
-- and the future intelligent hardware orchestration core required by the Eigen OS TЗ architecture.
+- dynamically load and verify drivers (signed supply chain),
+- isolate drivers with least privilege,
+- integrate secure secret storage for provider credentials,
+- standardize connection pooling, retries, and circuit breakers,
+- provide reliable topology/health snapshots for hardware-aware optimization,
+- preserve deterministic behavior for replay and simulator seed control.

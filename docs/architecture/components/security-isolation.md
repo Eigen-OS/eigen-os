@@ -1,46 +1,102 @@
-# Security Isolation
+# Security & Isolation
 
-- **Phase:** MVP → MVP-3 hardening baseline
-- **Status snapshot date:** 2026-05-25
-
-## Responsibility
-
-The Security Isolation subsystem defines the authentication, authorization, runtime isolation, validation, and auditability baseline for Eigen OS runtime and orchestration components.
-
-Current MVP implementation provides:
-
-- explicit authentication boundaries,
-- coarse-grained authorization,
-- request validation and payload limits,
-- partial security observability,
-- placeholder runtime isolation hooks.
-
-The long-term architecture target is a fully enforceable multi-layer security model with deterministic runtime isolation, policy-driven authorization, audit-grade telemetry, and hardware-aware trust boundaries.
+- **Document status:** Normative security baseline + target architecture specification
+- **Phase:** MVP → MVP-3 hardening baseline (with Phase-1+ targets explicitly separated)
+- **Contract version:** `1.0.0`
+- **Snapshot date:** 2026-05-25
+- **Applies to:** `system-api`, `eigen-kernel (QRTX)`, `eigen-compiler`, `driver-manager`, QFS, observability pipeline, future HWE / GNN Optimizer / Knowledge Base / Neuro-Symbolic Core
 
 ---
 
-# Responsibility Scope
+## 0. Purpose
 
-## Implemented now
+The Security & Isolation subsystem defines the authentication, authorization, isolation, validation, secrets handling, and auditability baseline for Eigen OS runtime and orchestration components.
 
-### Authentication boundary
+This document is **normative** for:
 
-System API enforces explicit authentication modes:
+- security boundaries and invariants,
+- error semantics for authn/authz/security policy decisions,
+- security telemetry requirements,
+- compatibility constraints required by the technical specification.
+
+It explicitly separates:
+
+- **Implemented now (MVP truth)**
+- **Required target behavior (TЗ baseline / Phase-1+)**
+
+---
+
+## 1. Contract Versioning
+
+### 1.1 Contract marker metric (recommended)
+
+Conformant deployments SHOULD export:
+
+```text
+eigen_security_contract_info{version="1.0.0"} 1
+```
+
+---
+
+### 1.2 SemVer policy
+
+#### MAJOR
+
+- breaking changes to authn/authz semantics,
+- breaking changes to security context propagation,
+- breaking changes to isolation enforcement model,
+- breaking changes to audit schema requirements.
+
+#### MINOR
+
+- additive claims / fields (bounded),
+- additive policy controls,
+- additive audit events,
+- additive security telemetry metrics.
+
+#### PATCH
+
+- documentation fixes,
+- alert/dashboard tuning,
+- implementation fixes with no semantic change.
+
+---
+
+## 2. Security Model Overview
+
+Eigen OS security is a multi-layer model:
+
+2. **Ingress security (System API):** authentication, authorization, request validation, payload limits, metadata sanitization.
+2. **Compiler safety:** AST-only processing, forbidden constructs, resource limits.
+3. **Kernel enforcement (target):** policy gating before scheduling/execution, deterministic security decisions, replay evidence.
+4. **Execution boundary (Driver Manager):** isolation from vendor SDKs, credential confinement, normalized error handling.
+5. **Data plane security (QFS):** artifact integrity, retention, access control, provenance.
+6. **Observability security:** no secrets in telemetry, bounded labels, audit-grade event logging.
+
+The security subsystem MUST NOT depend on non-deterministic or opaque decisions in the request path without a deterministic fallback.
+
+---
+
+## 3. Responsibility Scope
+
+### 3.1 Implemented now (MVP truth)
+
+#### Authentication boundary (System API)
+
+System API enforces auth modes:
 
 - `SYSTEM_API_AUTH_MODE=allow_all`
 - `SYSTEM_API_AUTH_MODE=static_token`
 
 Static token mode uses:
 
-- `SYSTEM_API_AUTH_TOKEN=<token>`
+`SYSTEM_API_AUTH_TOKEN=<token>`
 
-Authentication enforcement exists in the request ingress layer.
+Authn enforcement exists at ingress.
 
-### Authorization
+#### Authorization (System API)
 
-Coarse-grained authorization is implemented in System API.
-
-Implemented permission categories include:
+Coarse-grained authorization exists with permission categories:
 
 - `jobs:submit`
 - `jobs:read`
@@ -49,7 +105,7 @@ Implemented permission categories include:
 
 Authorization logic currently uses static in-process role mappings.
 
-### Input validation and sanitization
+#### Input validation and sanitization
 
 Request validation is implemented for:
 
@@ -58,7 +114,7 @@ Request validation is implemented for:
 - malformed request payloads,
 - invalid compiler/frontend constructs.
 
-Implemented payload limits:
+Payload limits:
 
 - `SYSTEM_API_MAX_PROGRAM_SOURCE_BYTES`
 - `SYSTEM_API_MAX_JOBSPEC_YAML_BYTES`
@@ -68,18 +124,11 @@ Compiler/frontend validation enforces:
 - AST limits,
 - resource limits,
 - forbidden construct rejection.
+- Runtime isolation hooks (partial)
 
-### Runtime isolation hooks (partial)
+A Rust `security-module` crate exists as a placeholder integration point, but **kernel-side enforcement is not wired** into the execution decision path.
 
-Rust `security-module` crate exists as a placeholder integration point.
-
-Current implementation does not yet enforce:
-
-- runtime isolation decisions,
-- device-level policy enforcement,
-- kernel-side execution gating.
-
-### Security observability (partial)
+#### Security observability (partial)
 
 Implemented:
 
@@ -90,97 +139,81 @@ Implemented:
 
 ---
 
-## Required target responsibility (architecture baseline)
+### 3.2 Required target responsibility (TЗ / Phase-1+ baseline)
 
-The final Security Isolation subsystem SHALL provide:
+#### Authentication and identity
 
-### Authentication and identity
-
-- OIDC/JWT federation
+- OIDC/JWT federation (issuer validation, audience checks, expiry validation)
 - centralized identity provider integration
-- token validation and rotation
-- service identity support
-- workload identity propagation
+- token rotation and refresh support
+- service identity (mTLS / workload identity)
+- end-to-end identity propagation
 
-### Authorization and policy
+#### Authorization and policy
 
 - centralized RBAC/ABAC policy engine
-- dynamic policy evaluation
+- dynamic policy evaluation with versioned policy snapshots
 - multi-tenant access controls
-- fine-grained runtime permissions
-- device-level authorization
+- fine-grained runtime permissions (per job/device/artifact)
+- device-level authorization and policy gating
 
-### Runtime isolation
+#### Runtime isolation enforcement
 
-- kernel-level execution isolation
-- hardware-aware isolation policies
-- runtime sandboxing
+- kernel-level execution gating (pre-schedule and pre-dispatch)
+- hardware-aware isolation policies (device class, trust tier, provider boundary)
+- sandboxing of runtime execution contexts (where applicable)
 - tenant isolation guarantees
-- workload confinement
+- deterministic “fail-closed” isolation on ambiguous cases (configurable, but default secure)
 
-### Hardware trust and attestation
+#### Hardware trust and attestation (Phase-1+)
 
-- hardware-rooted trust chains
-- confidential compute support
-- runtime attestation
-- signed execution artifacts
-- device trust verification
+- device trust verification hooks
+- signed execution artifacts and manifests
+- attestation evidence support (provider-dependent)
+- confidential compute support (where available)
 
-### Data protection
+#### Data protection
 
 - secret redaction
-- secure telemetry policies
-- DLP scanning
-- encrypted artifact handling
+- secure telemetry policies (no sensitive identifiers in labels)
+- encrypted artifact handling (at rest and in transit)
 - retention enforcement
+- export provenance tracking
 
-### Auditability and compliance
+#### Auditability and compliance
 
-- immutable audit logs
-- deterministic replay evidence
-- policy evaluation traceability
-- security event provenance
-- compliance retention controls
-
----
-
-# Architecture Position
-
-Security Isolation is a cross-cutting platform capability.
-
-It integrates with:
-
-- system-api
-- eigen-kernel
-- eigen-compiler
-- driver-manager
-- QFS
-- future knowledge-base
-- future neuro-symbolic-core
-- future HWE
-- future GNN optimizer
-
-Security Isolation is mandatory infrastructure for:
-
-- multi-tenant execution,
-- deterministic replay integrity,
-- adaptive-runtime safety,
-- runtime policy enforcement,
-- audit-grade telemetry,
-- production deployment readiness,
-- release-readiness validation.
+- immutable audit logs for security decisions
+- deterministic replay evidence for policy gating
+- policy evaluation traceability (policy version + decision rationale)
+- security event provenance chains
 
 ---
 
-# Interfaces
+## 4. Architecture Position and Trust Boundaries
 
-## 1. System API Interfaces
+Security & Isolation is cross-cutting and integrates with:
 
-### Implemented now
+- `system-api` (public boundary)
+- `eigen-kernel` (authoritative orchestration; target enforcement point)
+- `eigen-compiler` (AST-only, safe compilation)
+- `driver-manager` (vendor boundary + credential confinement)
+- `qfs` (artifact persistence and provenance)
+- future: `knowledge-base`, `neuro-symbolic-core`, `hwe`, `gnn-optimizer`
 
-Authentication and authorization are enforced in System API request handling.
+#### Mandatory boundary rules
 
-Implemented interfaces include:
+1. **System API** is the only public ingress.
+2. Vendor SDKs/providers are accessible **only** via Driver Manager (no direct kernel/provider coupling).
+3. Security decisions must be auditable and replayable when deterministic mode is enabled.
+4. Telemetry must never leak secrets or unbounded identifiers.
+
+---
+
+## 5. Interfaces
+
+### 5.1 System API Interfaces (implemented)
+
+Authn/authz enforced in request handling via middleware-like functions:
 
 - `enforce_authn`
 - `enforce_authz`
@@ -194,309 +227,256 @@ Request metadata currently supports:
 - `x-eigen-tenant`
 - `traceparent`
 
-### Required target behavior
+#### Required target behavior
 
 System API SHALL provide:
 
-- unified auth middleware,
-- gRPC + REST parity,
-- externalized policy loading,
-- centralized identity federation,
-- structured security context propagation.
+- unified auth middleware with **gRPC + REST parity**
+- externalized policy loading (versioned snapshots)
+- centralized identity federation (OIDC/JWT)
+- structured security context propagation to downstream services
+- deterministic logging and sanitization rules
 
 ---
 
-## 2. Kernel Security Interfaces
+### 5.2 Kernel Security Interfaces (target; not wired today)
 
-### Implemented now
-
-Placeholder crate exists:
+A placeholder crate exists:
 
 - `src/rust/crates/security-module`
 
-No enforceable runtime isolation API is currently wired into kernel execution flow.
-
-### Required target interfaces
-
-Kernel security SHALL expose:
-
-### Runtime isolation checks
+#### Required kernel-side policy gate (normative target API)
 
 ```rust
-check(task, device) -> Result<(), SecurityError>
+check_execution(task, device, context) -> Result<SecurityDecision, SecurityError>
 ```
 
-### Required policy evaluation inputs
+#### Required inputs
 
-- tenant identity
-- workload metadata
-- device capabilities
-- scheduling context
-- execution constraints
+- tenant identity (subject, tenant, roles/claims)
+- job metadata (labels, requested capabilities, security profile)
+- device capabilities and trust tier
+- scheduling context (queue, priority, region)
+- execution constraints (network/filesystem/sandbox requested)
+- policy snapshot version / hash
+- determinism mode
 
-### Required outputs
+#### Required outputs
 
-- allow/deny decision
-- policy rationale
-- audit metadata
-- deterministic replay marker
-
----
-
-## 3. Internal Security Context Propagation
-
-### Implemented now
-
-Trace context propagation exists.
-
-Partial propagation of:
-
-- `x-eigen-sub`
-- `x-eigen-roles`
-- `x-eigen-tenant`
-
-exists in System API only.
-
-### Required target behavior
-
-Security metadata SHALL propagate across:
-
-- system-api
-- kernel
-- compiler
-- driver-manager
-- observability pipelines
-
-Required propagation guarantees:
-
-- deterministic forwarding,
-- immutable trace correlation,
-- audit-safe metadata handling,
-- sanitized logging.
+- allow/deny
+- policy rationale (bounded)
+- audit metadata reference
+- deterministic replay marker (hash/digest)
 
 ---
 
-# Inputs / Outputs
+### 5.3 Driver Manager Security Interfaces (current + target)
 
-## Inputs
+#### Current baseline
 
-### Implemented now
+- Driver Manager is internal-only
+- Credentials are not exposed to clients
+- Vendor/provider boundary is encapsulated
 
-#### Authentication inputs
+#### Required target
 
-- authorization token
-- auth mode environment configuration
-
-#### Validation inputs
-
-- program source bytes
-- embedded JobSpec YAML
-- request metadata
-
-#### Security metadata
-
-- `x-eigen-sub`
-- `x-eigen-roles`
-- `x-eigen-tenant`
-- `traceparent`
+- per-provider credential vault integration (no raw secrets in env in production profiles)
+- plugin signing verification for drivers (if/when dynamic plugins are enabled)
+- execution isolation boundaries between plugins/drivers and the manager runtime
+- provider egress controls (network policy by deployment profile)
 
 ---
 
-### Required target inputs
+### 5.4 QFS Security Interfaces (target alignment)
 
-#### Identity and policy inputs
+QFS SHALL support:
 
-- JWT/OIDC claims
-- tenant policy definitions
-- RBAC/ABAC rules
-- workload security labels
-
-#### Runtime isolation inputs
-
-- hardware capability metadata
-- device trust state
-- runtime topology state
-- workload execution profile
-
-#### Security telemetry inputs
-
-- audit events
-- security alerts
-- policy evaluation traces
-- anomaly signals
+- access control checks on artifact read/write
+- artifact integrity (checksums, optional signatures)
+- provenance metadata (producer component, version, timestamp)
+- retention/expiry policies and deletion auditing
 
 ---
 
-## Outputs
+## 6. Security Context Propagation
 
-### Implemented now
+### 6.1 Implemented now
 
-Current outputs include:
+- `traceparent` propagation exists
+- partial propagation of `x-eigen-sub`, `x-eigen-roles`, `x-eigen-tenant` exists in **System API only**
 
-- UNAUTHENTICATED
-- PERMISSION_DENIED
-- INVALID_ARGUMENT
+---
+
+### 6.2 Required target behavior
+
+Security metadata SHALL propagate deterministically across:
+
+- system-api → kernel → compiler → driver-manager → qfs
+- and into observability pipelines (sanitized)
+
+#### Propagation guarantees
+
+- deterministic forwarding (no mutation except validated normalization)
+- trace correlation preserved
+- sensitive claims never logged verbatim
+- explicit allowlist of forwarded headers/metadata keys
+
+---
+
+## 7. Isolation Policy Surface (Alignment with JobSpec)
+
+JobSpec defines security controls (see `docs/reference/jobspec.md`):
+
+- `security.sandbox`: `disabled | standard | strict`
+- `security.filesystem.readonly`: boolean
+- `security.network.mode`: `disabled | restricted | enabled`
+
+#### Normative interpretation
+
+- These controls MUST be treated as **requested constraints**.
+- Enforcement is:
+    - **partial today** (validation mostly),
+    - **mandatory target** (kernel + runtime enforcement).
+
+If a deployment cannot enforce a requested constraint, it MUST:
+
+- reject with `FAILED_PRECONDITION` or `UNIMPLEMENTED` (preferred for unsupported features),
+- include structured error details describing unsupported enforcement.
+
+---
+
+## 8. Error Semantics (Normative)
+
+Eigen OS uses **gRPC status-first semantics** (no `success=false` wrappers).
+
+### 8.1 Implemented outputs
+
+- `UNAUTHENTICATED`
+- `PERMISSION_DENIED`
+- `INVALID_ARGUMENT`
 - structured logs
 - denied authorization metrics
 
 ---
 
-### Required target outputs
+### 8.2 Required structured details (target)
 
-#### Security decisions
+Security-related responses SHOULD attach:
 
-- policy evaluation result
-- runtime isolation decision
-- audit metadata
-- deterministic replay evidence
-
-#### Security telemetry
-
-- audit streams
-- security metrics
-- policy traces
-- security alerts
-
-#### Compliance outputs
-
-- immutable audit records
-- retention metadata
-- provenance markers
-- replay verification artifacts
+- **google.rpc.ErrorInfo** (reason/domain)
+- **google.rpc.RetryInfo** (for transient identity/policy backend failures)
+- **google.rpc.ResourceInfo** (for resource scoped denials, e.g., device/artifact)
+- **google.rpc.BadRequest** (validation violations)
 
 ---
 
-## Storage / State
-
-### Implemented now
-
-Current runtime state includes:
-
-- env-driven security configuration,
-- in-memory metrics counters,
-- static role-permission mappings.
-
-No centralized policy store or audit persistence layer exists.
+### 8.3 Failure handling stance
+Authorization MUST be **fail-closed** by default when policy cannot be evaluated.
+Auth provider outages may be configured as fail-open only in explicit dev profiles (non-production).
 
 ---
 
-### Required target storage
+## 9. Storage / State
+
+### 9.1 Implemented now
+
+- env-driven auth configuration
+- in-memory metrics counters
+- static role-permission mappings
+- no centralized policy store
+- no immutable audit sink
+
+---
+
+### 9.2 Required target storage
 
 #### Policy storage
 
-- centralized RBAC/ABAC policy registry
-- versioned policy snapshots
+- versioned RBAC/ABAC registry
+- signed policy manifests (recommended)
 - tenant isolation rules
-- signed policy manifests
 
 #### Audit storage
 
 - immutable audit logs
-- replay-safe event storage
-- provenance chains
-- export tracking
+- replay-safe event store for security decisions
+- provenance and export tracking
 
-#### Security state
+#### Security runtime state
 
-- token/session cache
-- isolation state
-- trust evaluation cache
-- policy evaluation history
+- token/session cache (bounded)
+- trust evaluation cache (bounded TTL)
+- policy evaluation cache (bounded TTL, version pinned)
 
 ---
 
-## Failure Modes
+## 10. Failure Modes
 
-### Implemented now
+### 10.1 Implemented now
 
-#### Authentication failures
-
-Handled by:
-
-- `enforce_authn`
-
-Outputs:
-
-- `UNAUTHENTICATED`
-
-#### Authorization failures
-
-Handled by:
-
-- `enforce_authz`
-
-Outputs:
-
-- `PERMISSION_DENIED`
-
-#### Validation failures
-
-Handled by:
-
-- validation pipeline
-
-Outputs:
-
-- `INVALID_ARGUMENT`
-
-#### Security module runtime behavior
-
-No enforceable runtime security module behavior currently exists.
+- authn failures → `UNAUTHENTICATED`
+- authz failures → `PERMISSION_DENIED`
+- validation failures → `INVALID_ARGUMENT`
+- no kernel-side enforcement failures because kernel security gate is not wired
 
 ---
 
-### Required target failure taxonomy
+### 10.2 Required target failure taxonomy
 
-#### Authentication failures
+#### Authentication
 
 - invalid token
 - expired token
+- issuer/audience mismatch
 - identity provider unavailable
 - malformed claims
 
-#### Authorization failures
+#### Authorization
 
 - insufficient permissions
-- policy evaluation failure
 - tenant boundary violation
-- stale policy cache
+- policy evaluation failure
+- stale policy snapshot
 
-#### Runtime isolation failures
+#### Runtime isolation
 
 - unsafe device assignment
 - sandbox violation
-- hardware trust failure
-- attestation mismatch
+- hardware trust failure / attestation mismatch
+- constraint enforcement unavailable
 
-#### Audit failures
+#### Audit
 
 - audit sink unavailable
 - immutable storage failure
-- telemetry loss
+- telemetry loss affecting audit guarantees
 - replay inconsistency
 
 ---
 
-### Recovery and fallback requirements
+### 10.3 Recovery and fallback (required)
 
-The Security Isolation subsystem SHALL support:
-
-- fail-closed authorization,
-- bounded degraded modes,
-- audit-safe fallback behavior,
-- replay-safe recovery,
-- policy rollback,
-- circuit-breaker enforcement.
+- fail-closed authorization
+- bounded degraded modes (explicitly configured)
+- audit-safe fallback behavior
+- policy rollback
+- circuit breaker for policy backends
+- replay-safe recovery when deterministic mode is enabled
 
 ---
 
-## Observability
+## 11. Observability (Security Telemetry)
 
-### Metrics
+Security telemetry must align with global observability rules:
 
-#### Implemented now
+- bounded label cardinality,
+- no secrets,
+- no user payload data,
+- no trace-level identifiers in metric labels.
 
-Existing metrics include:
+---
+
+### 11.1 Implemented metrics (examples)
 
 - `eigen_api_authz_denied_total`
 - `eigen_api_requests_total`
@@ -504,170 +484,112 @@ Existing metrics include:
 
 ---
 
-#### Required target metrics
+### 11.2 Required target metrics
 
-**Security metrics**
+#### Authn/Authz
 
-- `security_auth_attempts_total`
-- `security_auth_failures_total`
-- `security_policy_denials_total`
-- `security_validation_failures_total`
-- `security_runtime_isolation_denials_total`
+```text
+security_auth_attempts_total{mode,result}
+security_auth_failures_total{reason}
+security_policy_denials_total{action,resource_type,reason}
+security_policy_eval_duration_seconds_bucket
+```
 
-**Audit metrics**
+#### Validation
 
-- `security_audit_write_failures_total`
-- `security_audit_backlog_size`
-- `security_replay_verification_failures_total`
+```text
+security_validation_failures_total{component,reason}
+```
 
-**Runtime security metrics**
+#### Runtime isolation
 
-- `security_device_attestation_failures_total`
-- `security_policy_eval_duration_seconds`
-- `security_tenant_isolation_violations_total`
+```text
+security_runtime_isolation_denials_total{stage,reason}
+security_tenant_isolation_violations_total{reason}
+```
+
+#### Audit pipeline
+
+```text
+security_audit_write_failures_total{sink}
+security_audit_backlog_size
+security_replay_verification_failures_total{reason}
+```
 
 ---
 
-### Logs
+### 11.3 Logging (required shape)
 
 #### Implemented now
 
-Structured JSON logs exist with:
+- structured JSON logs with `trace_id`, `traceparent`, `method`, `request_id`, optional `job_id`
 
-- `trace_id`
-- `traceparent`
-- `method`
-- `request_id`
-- optional `job_id`
+#### Required target
 
-Authorization denial logs are implemented.
-
----
-
-#### Required target logging
-
-- unified security audit schema
-- immutable audit logging
-- policy evaluation logging
-- runtime isolation logging
-- hardware trust logging
-- secret-safe telemetry logging
+- unified security audit schema (immutable sink)
+- policy evaluation logs (policy version + decision outcome)
+- isolation decision logs (stage + constraints + rationale)
+- secret-safe redaction rules enforced
 
 ---
 
-### Traces
+### 11.4 Tracing (required)
 
-#### Implemented now
+Security tracing spans MUST include attributes (as trace attributes, not metric labels):
 
-Trace propagation exists via:
-
-- `traceparent`
-- `trace_id`
-
----
-
-#### Required target tracing
-
-Security tracing SHALL include:
-
-- subject
-- tenant
-- roles
-- action
-- resource
+- subject/tenant (sanitized or stable IDs per policy)
+- action/resource
 - outcome
-- policy version
-- runtime isolation rationale
+- policy version/hash
+- decision rationale reference (bounded)
 
-Distributed tracing SHALL span:
+Tracing MUST span:
 
-- API
-- compiler
-- kernel
-- driver-manager
-- QFS
-- adaptive runtime components
+- system-api → kernel → compiler → driver-manager → qfs
+- and adaptive runtime components when enabled
 
 ---
 
-### Health Checks
+## 12. Dashboards and Alerts (Target)
 
-#### Implemented now
-
-Basic runtime health endpoints exist.
-
-No dedicated security health hierarchy is implemented.
-
----
-
-#### Required target health model
-
-**Security subsystem health**
-
-- auth provider health
-- policy engine health
-- audit sink health
-- isolation runtime health
-
-**Runtime security health**
-
-- attestation freshness
-- isolation integrity
-- audit consistency
-- telemetry integrity
-
----
-
-### Dashboards and Alerts
-
-#### Implemented now
-
-Security-relevant telemetry is partially visible through existing runtime metrics and structured logs.
-
----
-
-#### Required target dashboards
-
-**Security dashboards**
+#### Dashboards
 
 - authentication overview
-- authorization failures
-- runtime isolation decisions
-- audit pipeline health
-- policy evaluation latency
-- tenant activity visibility
+- authorization denials by action/resource_type
+- policy evaluation latency + error rate
+- audit pipeline health (backlog, write failures)
+- isolation decisions + violations
+- attestation/trust health (Phase-1+)
 
-**Alert categories**
+#### Alerts
 
-- authentication failures
+- auth failure spikes
 - policy denial spikes
-- audit sink failures
-- replay inconsistencies
-- attestation failures
-- isolation violations
-- suspicious runtime activity
+- policy backend outage / evaluation failures
+- audit sink failures / backlog saturation
+- replay verification failures (deterministic mode)
+- attestation failures (Phase-1+)
+- suspected isolation violations
 
 ---
 
-## Security and Compliance
-
-### Required target controls
+## 13. Security and Compliance Controls (Target)
 
 #### Identity and access
 
 - OIDC federation
-- RBAC/ABAC enforcement
-- service identity validation
-- least-privilege policies
+- RBAC/ABAC
+- least privilege
+- service identity support
 
 #### Runtime trust
 
-- signed artifacts
-- attestation verification
+- signed artifacts / manifests
+- attestation hooks where supported
 - sandbox enforcement
-- hardware trust validation
+- credential vault integration
 
-#### Compliance controls
+#### Compliance
 
 - immutable audit retention
 - export provenance tracking
@@ -676,30 +598,36 @@ Security-relevant telemetry is partially visible through existing runtime metric
 
 ---
 
-## Alignment Summary
+## 14. Architectural Invariants (Mandatory)
+1. **Public ingress invariant:** only system-api is externally reachable.
+2. **No user code execution invariant:** compiler and services do not execute user code server-side.
+3. **Fail-safe invariant:** authorization is fail-closed by default when policy cannot be evaluated.
+4. **Telemetry safety invariant:** no secrets and no unbounded identifiers in telemetry.
+5. **Vendor boundary invariant:** only Driver Manager communicates with vendor SDKs/APIs.
+6. **Replay integrity invariant:** when deterministic mode is enabled, security decisions must be replay-verifiable.
 
-### Implemented and aligned
+---
 
-The following MVP security capabilities are implemented:
+## 15. Alignment Summary
 
-- explicit authentication modes,
-- coarse-grained authorization,
-- request-size validation,
-- baseline structured security telemetry,
-- trace propagation,
-- runtime validation enforcement.
+#### Implemented and aligned (MVP baseline)
 
-### Remaining architecture gaps
+- explicit authentication modes
+- coarse-grained authorization
+- payload size validation
+- compiler AST safety constraints
+- baseline security logs and authz denial metrics
+- trace propagation
 
-The following architecture targets remain not fully implemented:
+#### Remaining gaps (required future work)
 
-- centralized identity federation,
-- kernel-level runtime isolation enforcement,
-- end-to-end security metadata propagation guarantees,
-- immutable audit subsystem,
-- policy-driven runtime authorization,
-- attestation and confidential compute integration,
-- adaptive-runtime security controls,
-- replay-grade auditability.
+- centralized identity federation (OIDC/JWT)
+- kernel-level policy gating and isolation enforcement
+- end-to-end security context propagation guarantees
+- immutable audit subsystem
+- device-level authorization and trust/attestation hooks
+- credential vault integration
+- adaptive-runtime security controls (HWE/NSC/GNN/KB)
+- deterministic replay evidence for security decisions
 
-These gaps remain explicitly preserved as required future work to prevent architecture scope loss.
+These gaps are intentionally preserved to prevent architecture scope loss while keeping MVP semantics truthful and stable.

@@ -2,9 +2,8 @@
 
 - **Subsystem:** Scheduler and orchestration control plane
 - **Contract type:** Stable observability contract
-- **Contract version:** `3.0.0`
-- **Applies to:** Scheduler, Queue Manager, Fairness Controller, Quota Manager, Rebalancer, Runtime Dispatcher
-- **Last updated:** 2026-05-24
+- **Contract version:** `3.1.0`
+- **Applies to:** Scheduler, Queue Manager, Fairness Controller, Quota Manager, Rebalancer, Runtime Dispatcher, Placement Engine, Retry Controller
 
 ---
 
@@ -21,6 +20,10 @@ The contract standardizes:
 - starvation prevention monitoring,
 - rebalance operations,
 - orchestration latency monitoring,
+- orchestration retry telemetry,
+- shard assignment observability,
+- scheduling policy execution visibility,
+- degraded orchestration behavior,
 - control-plane SLO monitoring,
 - operational dashboards and alerts.
 
@@ -38,10 +41,13 @@ The orchestration observability contract applies to:
 - fairness enforcement,
 - quota enforcement,
 - shard assignment,
+- placement evaluation,
 - rebalance operations,
 - starvation mitigation,
 - orchestration retries,
-- scheduling policy execution.
+- scheduling policy execution,
+- orchestration degradation handling,
+- scheduler failover behavior.
 
 This contract does not define:
 
@@ -56,13 +62,13 @@ Those are defined in separate contracts.
 
 ## 3. Contract versioning
 
-### Current version
+### 3.1 Current Version
 
 ```text
-eigen_orch_contract_info{version="3.0.0"} 1
+eigen_orch_contract_info{version="3.1.0"} 1
 ```
 
-### SemVer policy
+### 3.2 SemVer Policy
 
 #### MAJOR
 
@@ -71,7 +77,8 @@ Required for:
 - metric rename/removal,
 - metric semantic changes,
 - metric type changes,
-- incompatible label changes.
+- incompatible label changes,
+- incompatible histogram semantic changes.
 
 #### MINOR
 
@@ -80,7 +87,8 @@ Used for:
 - additive metrics,
 - additive labels,
 - histogram additions,
-- bounded-cardinality extensions.
+- bounded-cardinality extensions,
+- additive telemetry dimensions.
 
 #### PATCH
 
@@ -116,29 +124,62 @@ The orchestration exporter MUST expose:
 - stable Prometheus metric families,
 - explicit metric typing,
 - bounded-cardinality labels,
-- deterministic metric naming.
+- deterministic metric naming,
+- stable histogram semantics,
+- concurrent scrape safety,
+- Prometheus text exposition format.
 
 ---
 
-## 5. Stable public metrics surface
+## 5. Design Principles
+
+### 5.1 Deterministic Metric Semantics
+
+The same orchestration condition MUST produce the same metric semantics.
+
+---
+
+### 5.2 Bounded Cardinality
+
+All labels MUST remain bounded and operator-safe.
+
+---
+
+### 5.3 Operational Explainability
+
+Scheduling decisions, fairness corrections, throttling, and rebalancing MUST remain observable.
+
+---
+
+### 5.4 Replay-Safe Telemetry
+
+Replay or retry execution MUST NOT produce ambiguous orchestration telemetry semantics.
+
+---
+
+### 5.5 Failure Visibility
+
+Control-plane degradation MUST remain externally observable.
+
+Silent orchestration degradation is prohibited.
+
+---
+
+## 6. Stable Public Metrics Surface
 
 All metric names in this section are stable public API.
 
 ---
 
-## 6. Queue health metrics
+## 7. Queue Health Metrics
 
-### Queue depth
-
-```text
-eigen_orch_queue_depth
-```
-
-Type:
+### 7.1 Queue Depth
 
 ```text
-gauge
+eigen_orch_queue_depth{queue}
 ```
+
+Type: `gauge`
 
 Meaning:
 
@@ -146,17 +187,13 @@ Meaning:
 
 ---
 
-### Oldest queue age
+### 7.2 Oldest Queue Age
 
 ```text
-eigen_orch_queue_oldest_age_seconds
+eigen_orch_queue_oldest_age_seconds{queue}
 ```
 
-Type:
-
-```text
-gauge
-```
+Type: `gauge`
 
 Meaning:
 
@@ -164,17 +201,13 @@ Meaning:
 
 ---
 
-### Average queue age
+### 7.3 Average Queue Age
 
 ```text
-eigen_orch_queue_avg_age_seconds
+eigen_orch_queue_avg_age_seconds{queue}
 ```
 
-Type:
-
-```text
-gauge
-```
+Type: `gauge`
 
 Meaning:
 
@@ -182,17 +215,13 @@ Meaning:
 
 ---
 
-### Queue enqueue throughput
+### 7.4 Queue Enqueue Throughput
 
 ```text
-eigen_orch_queue_enqueue_total
+eigen_orch_queue_enqueue_total{queue}
 ```
 
-Type:
-
-```text
-counter
-```
+Type: `counter`
 
 Meaning:
 
@@ -200,17 +229,13 @@ Meaning:
 
 ---
 
-### Queue dequeue throughput
+### 7.5 Queue Dequeue Throughput
 
 ```text
-eigen_orch_queue_dequeue_total
+eigen_orch_queue_dequeue_total{queue}
 ```
 
-Type:
-
-```text
-counter
-```
+Type: `counter`
 
 Meaning:
 
@@ -218,17 +243,15 @@ Meaning:
 
 ---
 
-### Queue dispatch latency
+### 7.6 Queue Dispatch Latency
 
 ```text
-eigen_orch_dispatch_latency_ms
+eigen_orch_dispatch_latency_ms_bucket{queue}
+eigen_orch_dispatch_latency_ms_sum{queue}
+eigen_orch_dispatch_latency_ms_count{queue}
 ```
 
-Type:
-
-```text
-histogram
-```
+Type: `histogram`
 
 Meaning:
 
@@ -236,19 +259,15 @@ Meaning:
 
 ---
 
-## 7. Fairness enforcement metrics
+## 8. Fairness Enforcement Metrics
 
-### Fairness lag cumulative
-
-```text
-eigen_orch_fairness_lag_millis_total
-```
-
-Type:
+### 8.1 Fairness Lag Cumulative
 
 ```text
-counter
+eigen_orch_fairness_lag_millis_total{policy_mode}
 ```
+
+Type: `counter`
 
 Meaning:
 
@@ -256,17 +275,13 @@ Meaning:
 
 ---
 
-### Maximum fairness lag
+### 8.2 Maximum Fairness Lag
 
 ```text
-eigen_orch_fairness_lag_millis_max
+eigen_orch_fairness_lag_millis_max{policy_mode}
 ```
 
-Type:
-
-```text
-gauge
-```
+Type: `gauge`
 
 Meaning:
 
@@ -274,37 +289,40 @@ Meaning:
 
 ---
 
-### Fairness correction events
+### 8.3 Fairness Correction Events
 
 ```text
-eigen_orch_fairness_corrections_total
+eigen_orch_fairness_corrections_total{reason}
 ```
 
-Type:
-
-```text
-counter
-```
+Type: `counter`
 
 Meaning:
 
 - number of fairness rebalance corrections applied.
 
+#### Allowed `reason`
+
+```text
+starvation_prevention
+quota_rebalance
+priority_normalization
+tenant_fairness
+project_fairness
+manual_override
+```
+
 ---
 
-## 8. Quota enforcement metrics
+## 9. Quota Enforcement Metrics
 
-### Tenant quota denials
-
-```text
-eigen_orch_quota_denied_tenant_total
-```
-
-Type:
+### 9.1 Tenant Quota Denials
 
 ```text
-counter
+eigen_orch_quota_denied_tenant_total{tenant}
 ```
+
+Type: `counter`
 
 Meaning:
 
@@ -312,73 +330,80 @@ Meaning:
 
 ---
 
-### Project quota denials
+### 9.2 Project Quota Denials
 
 ```text
-eigen_orch_quota_denied_project_total
+eigen_orch_quota_denied_project_total{project}
 ```
 
-Type:
-
-```text
-counter
-```
+Type: `counter`
 
 Meaning:
 
-rejected operations due to project quota limits.
+- rejected operations due to project quota limits.
 
 ---
 
-### Runtime quota throttling
+### 9.3 Runtime Quota Throttling
 
 ```text
-eigen_orch_quota_throttled_total
+eigen_orch_quota_throttled_total{reason}
 ```
 
-Type:
-
-```text
-counter
-```
+Type: `counter`
 
 Meaning:
 
 - operations delayed due to soft quota throttling.
 
+#### Allowed `reason`
+
+```text
+tenant_limit
+project_limit
+cluster_capacity
+fairness_guardrail
+burst_control
+```
+
 ---
 
-## 9. Rebalancing metrics
+## 10. Rebalancing Metrics
 
-### Rebalance triggers
-
-```text
-eigen_orch_rebalance_trigger_total
-```
-
-Type:
+### 10.1 Rebalance Triggers
 
 ```text
-counter
+eigen_orch_rebalance_trigger_total{reason}
 ```
+
+Type: `counter`
 
 Meaning:
 
 - number of scheduler rebalance operations initiated.
 
+#### Allowed `reason`
+
+```text
+capacity_imbalance
+starvation_risk
+backend_pressure
+fairness_violation
+topology_shift
+manual_override
+```
+
 ---
 
-### Rebalance duration
+### 10.2 Rebalance Duration
 
 ```text
-eigen_orch_rebalance_duration_ms
+eigen_orch_rebalance_duration_ms_bucket{reason}
+eigen_orch_rebalance_duration_ms_sum{reason}
+eigen_orch_rebalance_duration_ms_count{reason}
 ```
 
-Type:
-
-```text
-histogram
-```
+Type: `histogram`
 
 Meaning:
 
@@ -386,17 +411,13 @@ Meaning:
 
 ---
 
-### Rebalance failures
+### 10.3 Rebalance Failures
 
 ```text
-eigen_orch_rebalance_failures_total
+eigen_orch_rebalance_failures_total{reason}
 ```
 
-Type:
-
-```text
-counter
-```
+Type: `counter`
 
 Meaning:
 
@@ -404,19 +425,15 @@ Meaning:
 
 ---
 
-## 10. Starvation prevention metrics
+## 11. Starvation Prevention Metrics
 
-### Starvation prevention actions
-
-```text
-eigen_orch_starvation_prevention_total
-```
-
-Type:
+### 11.1 Starvation Prevention Actions
 
 ```text
-counter
+eigen_orch_starvation_prevention_total{queue}
 ```
+
+Type: `counter`
 
 Meaning:
 
@@ -424,17 +441,13 @@ Meaning:
 
 ---
 
-### Long-wait task count
+### 11.2 Long-Wait Task Count
 
 ```text
-eigen_orch_starved_tasks
+eigen_orch_starved_tasks{queue}
 ```
 
-Type:
-
-```text
-gauge
-```
+Type: `gauge`
 
 Meaning:
 
@@ -442,19 +455,15 @@ Meaning:
 
 ---
 
-## 11. Scheduler health metrics
+## 12. Scheduler Health Metrics
 
-### Scheduling decisions
-
-```text
-eigen_orch_scheduler_decisions_total
-```
-
-Type:
+### 12.1 Scheduling Decisions
 
 ```text
-counter
+eigen_orch_scheduler_decisions_total{policy_mode}
 ```
+
+Type: `counter`
 
 Meaning:
 
@@ -462,35 +471,40 @@ Meaning:
 
 ---
 
-### Scheduler failures
+### 12.2 Scheduler Failures
 
 ```text
-eigen_orch_scheduler_failures_total
+eigen_orch_scheduler_failures_total{reason}
 ```
 
-Type:
-
-```text
-counter
-```
+Type: `counter`
 
 Meaning:
 
 - internal scheduler failures.
 
+#### Allowed `reason`
+
+```text
+policy_failure
+placement_failure
+capacity_exhausted
+timeout
+state_divergence
+internal_error
+```
+
 ---
 
-### Scheduling latency
+### 12.3 Scheduling Latency
 
 ```text
-eigen_orch_scheduler_latency_ms
+eigen_orch_scheduler_latency_ms_bucket{policy_mode}
+eigen_orch_scheduler_latency_ms_sum{policy_mode}
+eigen_orch_scheduler_latency_ms_count{policy_mode}
 ```
 
-Type:
-
-```text
-histogram
-```
+Type: `histogram`
 
 Meaning:
 
@@ -498,19 +512,17 @@ Meaning:
 
 ---
 
-## 12. Runtime coordination metrics
+## 13. Runtime Coordination Metrics
 
-### Assignment operations
+### 13.1 Assignment Operations
 
 ```text
-eigen_orch_assignments_total
+eigen_orch_assignments_total{queue}
 ```
 
 Type:
 
-```text
-counter
-```
+Type: `counter`
 
 Meaning:
 
@@ -518,37 +530,134 @@ Meaning:
 
 ---
 
-### Assignment failures
+### 13.2 Assignment Failures
 
 ```text
-eigen_orch_assignment_failures_total
+eigen_orch_assignment_failures_total{reason}
 ```
 
-Type:
-
-```text
-counter
-```
+Type: `counter`
 
 Meaning:
 
 - failed runtime assignments.
 
+#### Allowed `reason`
+
+```text
+backend_unavailable
+lease_conflict
+capacity_exhausted
+network_partition
+timeout
+internal_error
+```
+
 ---
 
-## 13. Snapshot freshness metrics
+### 13.3 Assignment Latency
 
-### Last snapshot timestamp
+```text
+eigen_orch_assignment_latency_ms_bucket
+eigen_orch_assignment_latency_ms_sum
+eigen_orch_assignment_latency_ms_count
+```
+
+Type: `histogram`
+
+Meaning:
+
+- end-to-end orchestration assignment latency.
+
+---
+
+## 14. Retry and Redelivery Metrics
+
+### 14.1 Retry Attempts
+
+```text
+eigen_orch_retries_total{reason}
+```
+
+Type: `counter`
+
+Meaning:
+
+- orchestration retry attempts.
+
+#### Allowed `reason`
+
+```text
+transient_failure
+lease_expired
+worker_unavailable
+dispatch_timeout
+merge_retry
+```
+
+---
+
+### 14.2 Dead Letter Events
+
+```text
+eigen_orch_dead_letter_total{reason}
+```
+Type: `counter`
+
+Meaning:
+
+- permanently failed orchestration items moved to dead-letter handling.
+
+---
+
+## 15. Degraded Mode Metrics
+
+### 15.1 Degraded Mode Activation
+
+```text
+eigen_orch_degraded_mode_total{mode}
+```
+
+Type: `counter`
+
+Meaning:
+
+- degraded orchestration mode activations.
+
+#### Allowed `mode`
+
+```text
+safe_scheduling
+single_queue_mode
+reduced_fairness
+retry_only_mode
+manual_dispatch
+```
+---
+
+### 15.2 Scheduler Failover Events
+
+```text
+eigen_orch_failover_total{reason}
+```
+
+Type: `counter`
+
+Meaning:
+
+- scheduler failover activations.
+
+---
+
+## 16. Snapshot Freshness Metrics
+
+### 16.1 Last Snapshot Timestamp
 
 ```text
 eigen_orch_snapshot_timestamp_seconds
 ```
 
-Type:
-
-```text
-gauge
-```
+Type: `gauge`
 
 Meaning:
 
@@ -556,17 +665,13 @@ Meaning:
 
 ---
 
-### Snapshot age
+### 16.2 Snapshot Age
 
 ```text
 eigen_orch_snapshot_age_seconds
 ```
 
-Type:
-
-```text
-gauge
-```
+Type: `gauge`
 
 Meaning:
 
@@ -574,9 +679,9 @@ Meaning:
 
 ---
 
-## 14. Label contract
+## 17. Label Contract
 
-### Stable labels
+### 17.1 Stable Labels
 
 The following labels are allowed:
 
@@ -587,36 +692,37 @@ The following labels are allowed:
 | `project` | Project identifier |
 | `policy_mode` | Scheduler policy |
 | `reason` | Failure/rebalance reason |
+| `mode` | Degraded orchestration mode |
 
 ---
 
-### Label cardinality rules
+### 17.2 Label Cardinality Rules
 
 All labels MUST:
 
 - remain bounded,
 - remain deterministic,
 - avoid unbounded user-generated values,
-- avoid trace-level identifiers.
+- avoid trace-level identifiers,
+- remain operationally enumerable.
 
 Forbidden labels:
 
 - `job_id`
 - `trace_id`
 - `request_id`
+- `user_id`
 - arbitrary user input
+- backend payloads
+- freeform error messages
 
 ---
 
-## 15. Metric type guarantees
+## 18. Metric Type Guarantees
 
 Metric types are part of the compatibility contract.
 
-Prometheus exposition MUST include:
-
-```text
-# TYPE
-```
+Prometheus exposition MUST include: `# TYPE`
 
 declarations for every public metric.
 
@@ -624,7 +730,7 @@ Changing metric type requires a MAJOR version bump.
 
 ---
 
-## 16. Histogram bucket policy
+## 19. Histogram Bucket Policy
 
 Histogram metrics SHOULD use stable buckets.
 
@@ -639,9 +745,16 @@ Units:
 - milliseconds for latency histograms,
 - seconds for age gauges.
 
+The following metrics MUST use histograms:
+
+- dispatch latency,
+- scheduler latency,
+- assignment latency,
+- rebalance duration.
+
 ---
 
-## 17. Source of truth
+## 20. Source of Truth
 
 Normative assets:
 
@@ -655,9 +768,9 @@ Normative assets:
 
 ---
 
-## 18. Alert contract
+## 21. Alert Contract
 
-### Critical alerts
+### 21.1 Critical Alerts
 
 The orchestration stack MUST support alerts for:
 
@@ -667,20 +780,26 @@ The orchestration stack MUST support alerts for:
 - starvation surge,
 - quota denial spike,
 - assignment failure rate breach,
-- stale telemetry snapshots.
+- stale telemetry snapshots,
+- failover activation surge,
+- degraded scheduling activation.
 
-### Warning alerts
+---
+
+### 21.2 Warning Alerts
 
 Warning-level alerts SHOULD include:
 
 - elevated queue age,
 - fairness lag increase,
 - dispatch latency degradation,
-- rebalance frequency increase.
+- rebalance frequency increase,
+- retry amplification,
+- dead-letter growth.
 
 ---
 
-## 19. Dashboard contract
+## 22. Dashboard Contract
 
 The orchestration dashboard MUST expose:
 
@@ -692,12 +811,14 @@ The orchestration dashboard MUST expose:
 - starvation events,
 - quota denials,
 - orchestration throughput,
+- retry activity,
+- degraded mode activation,
 - snapshot freshness,
 - contract version visibility.
 
 ---
 
-20. Runtime implementation requirements
+## 23. Runtime Implementation Requirements
 
 Conformant implementations MUST:
 
@@ -707,10 +828,12 @@ Conformant implementations MUST:
 4. Preserve label cardinality guarantees.
 5. Export contract marker metric.
 6. Maintain deterministic metric semantics.
+7. Preserve histogram semantic consistency.
+8. Support concurrent Prometheus scraping.
 
 ---
 
-## 21. CI and conformance requirements
+## 24. CI and Conformance Requirements
 
 CI MUST validate:
 
@@ -719,7 +842,9 @@ CI MUST validate:
 - contract version marker,
 - dashboard query validity,
 - alert query validity,
-- exporter scrape success.
+- exporter scrape success,
+- histogram family completeness,
+- label cardinality constraints.
 
 Golden tests SHOULD validate:
 
@@ -727,27 +852,32 @@ Golden tests SHOULD validate:
 - starvation prevention metrics,
 - quota enforcement telemetry,
 - rebalance instrumentation,
-- histogram bucket consistency.
+- histogram bucket consistency,
+- retry instrumentation,
+- degraded-mode observability.
 
 ---
 
-## 22. Migration policy
+## 25. Migration Policy
 
-### Backward compatibility
+### 25.1 Backward Compatibility
 
 Existing orchestration metric families MUST remain compatible across MINOR releases.
 
-### Deprecation policy
+---
+
+### 25.2 Deprecation Policy
 
 Metrics MAY only be removed after:
 
 1. explicit deprecation marking,
 2. at least one MINOR release cycle,
-3. dashboard/alert migration guidance.
+3. dashboard/alert migration guidance,
+4. CI migration validation.
 
 ---
 
-## 23. Operational requirements
+## 26. Operational Requirements
 
 Production deployments SHOULD:
 
@@ -755,11 +885,13 @@ Production deployments SHOULD:
 2. preserve long-term queue latency history,
 3. alert on stale exporter snapshots,
 4. correlate orchestration metrics with cluster-runtime telemetry,
-5. preserve fairness and starvation audit history.
+5. preserve fairness and starvation audit history,
+6. retain retry and rebalance telemetry,
+7. monitor degraded orchestration modes continuously.
 
 ---
 
-## 24. Security considerations
+## 27. Security Considerations
 
 The observability pipeline MUST avoid exposing:
 
@@ -767,13 +899,14 @@ The observability pipeline MUST avoid exposing:
 - authentication material,
 - user payload data,
 - backend credentials,
-- unbounded runtime metadata.
+- unbounded runtime metadata,
+- secret scheduling policy inputs.
 
 Metrics MUST remain operationally safe for multi-tenant deployments.
 
 ---
 
-## 25. Future evolution
+## 28. Future Evolution
 
 Planned future extensions include:
 
@@ -783,11 +916,12 @@ Planned future extensions include:
 - adaptive queue analytics,
 - orchestration trace correlation,
 - scheduling replay telemetry,
-- predictive starvation analytics.
+- predictive starvation analytics,
+- placement explainability telemetry.
 
 ---
 
-## 26. Invariants
+## 29. Invariants
 
 The following invariants are mandatory:
 
@@ -796,5 +930,7 @@ The following invariants are mandatory:
 3. Metric types are immutable within MAJOR versions.
 4. Label cardinality remains bounded.
 5. Alerts and dashboards MUST evolve together with metric changes.
-6. Contract version markers MUST remain synchronized across code,  dashboards, tests, and documentation.
+6. Contract version markers MUST remain synchronized across code, dashboards, tests, and documentation.
 7. Orchestration telemetry MUST remain replay-safe and operationally auditable.
+8. Scheduler degradation MUST remain externally observable.
+9. Histogram semantics MUST remain stable within a MAJOR version.
