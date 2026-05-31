@@ -631,3 +631,452 @@ Tracing MUST span:
 - deterministic replay evidence for security decisions
 
 These gaps are intentionally preserved to prevent architecture scope loss while keeping MVP semantics truthful and stable.
+
+---
+
+## Appendix A. Diagrams (normative)
+
+### A.1 C4 Context — Security boundaries across Eigen OS
+
+![C4 Context](https://i.imgur.com/4yxXuaP.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+    subgraph Ext["External"]
+        Client["SDK/CLI"]
+        IdP["OIDC IdP\n(Phase-1+)"]
+    end
+
+    subgraph Public["Public Boundary"]
+        API["System API\n(authn/authz/validation)"]
+    end
+
+    subgraph Core["Runtime Core"]
+        K["Kernel / QRTX\n(target policy gate)"]
+        C["Compiler\n(AST-only sandbox)"]
+        DM["Driver Manager\n(vendor boundary)"]
+        QFS["(QFS\n\(artifacts + lineage\))"]
+    end
+
+    subgraph Adaptive["Adaptive (future)"]
+        HWE[HWE]
+        OPT[GNN Optimizer]
+        KB["Knowledge Base / OKB"]
+        NSC["Neuro-Symbolic Core"]
+    end
+
+    Client --> API --> K
+    API <--> IdP
+    K --> C
+    K --> DM
+    K --> QFS
+    DM --> QFS
+    HWE --> K
+    OPT --> HWE
+    KB --> OPT
+    NSC --> K
+
+    classDef boundary stroke-width:2px,stroke-dasharray: 5 5;
+    class API,DM boundary
+```
+
+</details>
+
+---
+
+### A.2 C4 Container — MVP vs Target security enforcement points
+
+![C4 Container](https://i.imgur.com/4yxXuaP.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+    subgraph MVP["MVP (today)"]
+        API1["System API\nstatic_token/allow_all\ncoarse RBAC"]
+        K1["Kernel\n(no policy gate wired)"]
+        C1["Compiler\nAST allowlist + limits"]
+        DM1["Driver Manager\ninternal-only boundary"]
+        
+        API1 --> K1 --> C1
+        K1 --> DM1
+    end
+
+    subgraph Target["Target (MVP-3 / Phase-1+)"]
+        API2["System API\nOIDC/JWT + policy context"]
+        PE["Policy Engine\n(RBAC/ABAC snapshots)"]
+        K2["Kernel\ncheck_execution gate"]
+        C2["Compiler\nsandbox profile + resource caps"]
+        DM2["Driver Manager\nmTLS + vault + plugin verify"]
+        QFS2[(QFS\nACL + integrity + retention)]
+        
+        API2 --> PE
+        API2 --> K2
+        K2 --> PE
+        K2 --> C2
+        K2 --> DM2
+        K2 --> QFS2
+    end
+```
+
+</details>
+
+---
+
+### A.3 Metadata propagation path (allowlist forwarding)
+
+![Metadata propagation path](https://i.imgur.com/JtBlGLH.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+    Client["Client SDK"] -->|authorization, traceparent,<br>x-eigen-tenant, x-eigen-roles,<br>x-client-request-id| API["System API"]
+    
+    API -->|forward allowlisted metadata<br>+ sanitized security context| K["Kernel/QRTX"]
+    
+    K -->|traceparent + security ctx digest| C["Compiler"]
+    K -->|traceparent + security ctx digest| DM["Driver Manager"]
+    
+    C -->|"artifact refs only<br>(no raw source in logs)"| QFS[(QFS)]
+    DM -->|results + normalized errors| QFS
+
+    classDef store fill:#f0f4c3,stroke:#689f38
+    class QFS store
+```
+
+</details>
+
+---
+
+### A.4 Sequence — End-to-end auth context propagation (target)
+
+![End-to-end auth context propagation](https://i.imgur.com/0EXyzLP.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant SDK as SDK/CLI
+  participant API as System API
+  participant K as Kernel/QRTX
+  participant C as Compiler
+  participant DM as Driver Manager
+  participant Q as QFS
+
+  SDK->>API: SubmitJob (authorization, traceparent,\n x-eigen-tenant, x-eigen-roles,\n x-client-request-id)
+  API->>API: enforce_authn + enforce_authz\n(sanitize headers)
+  API->>K: EnqueueJob (forward ctx)\n+ security_ctx_digest
+  K->>C: CompileJob (traceparent + security_ctx_digest)
+  C->>Q: write compiled artifacts (no secrets)
+  K->>DM: ExecuteCircuit (traceparent + security_ctx_digest)
+  DM->>Q: write execution results/error artifact refs
+  K-->>API: status/result (gRPC status-first)
+  API-->>SDK: response (no secret leakage)
+```
+
+</details>
+
+---
+
+### A.5 Authn/Authz decision tree (status-first)
+
+![Authn/Authz decision tree](https://i.imgur.com/1hFZ6MZ.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+    Req["Incoming request"] --> Mode{AUTH_MODE}
+    
+    Mode -->|allow_all| Allow["ALLOW (dev only)"]
+    Mode -->|static_token| Tok{"token valid?"}
+    Mode -->|"oidc_jwt (Phase-1+)"| JWT{"JWT valid?\niss/aud/exp"}
+    
+    Tok -- no --> UA1[UNAUTHENTICATED]
+    Tok -- yes --> RBAC1{"RBAC allowed?"}
+    
+    JWT -- no --> UA2[UNAUTHENTICATED]
+    JWT -- yes --> Policy{"Policy eval ok?"}
+    
+    Policy -- fail --> FailClosed["PERMISSION_DENIED\n(fail-closed default)"]
+    Policy -- ok --> RBAC2{"RBAC/ABAC allow?"}
+    
+    RBAC1 -- no --> PD1[PERMISSION_DENIED]
+    RBAC1 -- yes --> OK1[OK]
+    
+    RBAC2 -- no --> PD2["PERMISSION_DENIED\n+ ErrorInfo.reason"]
+    RBAC2 -- yes --> OK2[OK]
+```
+
+</details>
+
+---
+
+### A.6 Sequence — Policy snapshot evaluation (Phase-1+)
+
+![Policy snapshot evaluation](https://i.imgur.com/bERwAuw.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant API as System API
+  participant PE as Policy Engine
+  participant K as Kernel/QRTX
+
+  API->>PE: Evaluate(action, resource, subject, tenant)\n+ policy_snapshot_hint
+  PE-->>API: decision (allow/deny)\n+ policy_version/hash\n+ rationale_ref (bounded)
+  API->>K: forward security_ctx_digest\n+ policy_version/hash
+```
+
+</details>
+
+---
+
+### A.7 Kernel execution gate — pre-schedule + pre-dispatch checks
+
+![Kernel execution gate](https://i.imgur.com/uG09OFi.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+    Enq["Job accepted"] --> Gate1{"check_execution\n(pre-schedule)"}
+    
+    Gate1 -- deny --> Deny1["ERROR\n(PERMISSION_DENIED or FAILED_PRECONDITION)\n+ audit marker"]
+    Gate1 -- allow --> Sched["Queue / Allocate"]
+    
+    Sched --> Gate2{"check_execution\n(pre-dispatch)"}
+    
+    Gate2 -- deny --> Deny2["ERROR\n+ revoke reservation\n+ audit marker"]
+    Gate2 -- allow --> Dispatch["Dispatch to Driver Manager"]
+```
+
+</details>
+
+---
+
+### A.8 State machine — Isolation enforcement outcomes (target)
+
+![State machine](https://i.imgur.com/pbT9nge.png)
+
+<details>
+<summary>code</summary>
+
+```text
+stateDiagram-v2
+  [*] --> INGRESS_VALIDATED
+  INGRESS_VALIDATED --> POLICY_ALLOWED: authn+authz ok
+  INGRESS_VALIDATED --> POLICY_DENIED: deny (fail-closed)
+  POLICY_ALLOWED --> SANDBOX_READY: compiler/runtime sandbox constraints satisfied
+  POLICY_ALLOWED --> SANDBOX_UNAVAILABLE: enforcement missing
+  SANDBOX_UNAVAILABLE --> REJECTED: UNIMPLEMENTED/FAILED_PRECONDITION
+  SANDBOX_READY --> EXEC_ALLOWED: kernel gate allow
+  EXEC_ALLOWED --> EXEC_DENIED: late deny (pre-dispatch)
+  POLICY_DENIED --> REJECTED
+  EXEC_DENIED --> REJECTED
+  REJECTED --> [*]
+```
+
+</details>
+
+---
+
+### A.9 Compiler safety boundary (AST-only + sandbox profile)
+
+![Compiler safety boundary](https://i.imgur.com/bo4MmJp.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+    Src["Source bytes/ref"] --> Parse["Parse AST"]
+    Parse --> Allow{"Allowlist OK?"}
+    
+    Allow -- no --> Reject["INVALID_ARGUMENT\n(forbidden construct)"]
+    Allow -- yes --> Lower["Lower to IR/AQO\n(deterministic)"]
+    
+    Lower --> Emit["Emit to QFS\natomic write"]
+
+    subgraph Sandbox["Compiler Sandbox Profile (required)"]
+        NoNet["network: disabled by default"]
+        ROFS["fs: read-only outside workspace"]
+        Limits["cpu/mem/wall-time limits"]
+        Env["allowlisted env only"]
+    end
+
+    Parse -.enforced by.-> Sandbox
+    Lower -.enforced by.-> Sandbox
+```
+
+</details>
+
+---
+
+### A.10 DM security boundary (vault + isolation + no secret leakage)
+
+![DM security boundary](https://i.imgur.com/VBRgGnc.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+    K["Kernel/QRTX"] -->|"mTLS + traceparent<br>(no provider secrets)"| DM["Driver Manager"]
+    DM --> Vault[(Secret Vault<br>Phase-1+)]
+    DM --> Driver["Driver Plugin/Remote QDriver"]
+    Driver --> Vendor["Vendor API / Simulator"]
+    DM --> Logs["Logs/Metrics/Traces"]
+    Logs --> Obs[(Observability Pipeline)]
+
+    Note["⚠️ Secrets must NOT appear in:<br>• JobSpec<br>• QFS artifacts<br>• logs/metrics labels<br>• client-visible payloads"]
+    Note -.-> DM
+
+    classDef warning fill:#fff3e0,stroke:#f57c00,color:#000
+    class Note warning
+```
+
+</details>
+
+---
+
+### A.11 QFS access control check (target)
+
+![QFS access control check](https://i.imgur.com/aEqV0Tn.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant S as Service (Kernel/Compiler/DM)
+  participant Q as QFS
+  participant P as Policy Engine (optional)
+  participant A as Audit Sink
+
+  S->>Q: StoreArtifact(ref, bytes, metadata)
+  Q->>P: Authorize(artifact_write, ref, subject/tenant)\n(policy snapshot)
+  P-->>Q: allow/deny + policy_version/hash
+  alt allow
+    Q->>Q: write atomically + compute digest
+    Q->>A: audit event (artifact_write, ref, digest)
+    Q-->>S: ok (ArtifactHandle)
+  else deny
+    Q-->>S: PERMISSION_DENIED\n+ ErrorInfo.reason
+  end
+```
+
+</details>
+
+---
+
+### A.12 Integrity chain — signed manifests (Phase-1+)
+
+![Integrity chain](https://i.imgur.com/vAra3o0.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+    AQO[compiled.aqo.json] --> H1[sha256 digest]
+    H1 --> Meta["compiled/metadata.json\nincludes aqo_sha256"]
+    Meta --> Manifest["Job manifest (Phase-1+)\noptionally signed"]
+    Manifest --> Verify["Verifier / Replay / Audit"]
+
+    classDef important fill:#e3f2fd,stroke:#1976d2
+    class Manifest,Verify important
+```
+
+</details>
+
+---
+
+### A.13 Audit event flow (immutable sink)
+
+![Audit event flow](https://i.imgur.com/lAcA9ea.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  API[System API] -->|authn/authz decisions| Audit[(Immutable Audit Sink)]
+  K[Kernel] -->|execution gate decisions| Audit
+  DM[Driver Manager] -->|credential access + backend boundary| Audit
+  QFS[(QFS)] -->|artifact writes/reads| Audit
+  Obs[(Observability)] -->|security alerts| Audit
+```
+
+</details>
+
+---
+
+### A.14 Degradation signaling (must be visible)
+
+![Degradation signaling](https://i.imgur.com/P9AjkBC.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+    Comp["Security component"] --> Fail{"Exporter/Policy/Audit degraded?"}
+    
+    Fail -- no --> Normal["Normal operation"]
+    Fail -- yes --> Signal["Emit explicit indicators:\n- metric increment\n- structured log\n- optional audit event"]
+    
+    Signal --> Degraded["Degraded mode (bounded)\nnever silent"]
+
+    classDef degraded fill:#fff3e0,stroke:#f57c00,color:#d84315
+    class Signal,Degraded degraded
+```
+
+</details>
+
+---
+
+### A.15 Data flow & threat surfaces (high-level)
+
+![Data flow & threat surfaces](https://i.imgur.com/9PyZ75i.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  Client --> API["System API<br/>(ingress validation)"]
+  API --> K["Kernel/QRTX<br/>(orchestration)"]
+  K --> C["Compiler<br/>(AST-only)"]
+  K --> DM["Driver Manager<br/>(vendor boundary)"]
+  C --> QFS[(QFS)]
+  DM --> QFS
+  DM --> Vendor[Vendor API]
+
+  N_API["⚠ Threats:<br/>- auth bypass<br/>- payload abuse/DoS<br/>- header injection"]
+  N_DM["⚠ Threats:<br/>- secret leakage<br/>- supply chain (drivers)<br/>- vendor response leakage"]
+
+  N_API -.-> API
+  N_DM -.-> DM
+
+  classDef threat stroke:#d33,stroke-width:2px;
+  classDef note fill:#fff3cd,stroke:#ffc107,color:#000,stroke-dasharray: 3 3;
+  class API,DM threat;
+  class N_API,N_DM note;
+```
+
+</details>

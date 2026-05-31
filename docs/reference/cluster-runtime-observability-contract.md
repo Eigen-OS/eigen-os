@@ -1137,3 +1137,384 @@ These guarantees apply to:
 - enterprise monitoring integrations,
 - replay tooling,
 - cluster orchestration systems.
+
+---
+
+## Appendix A. Diagrams
+
+### A.1 Telemetry Architecture Requirements
+
+![Telemetry Architecture Requirements](https://i.imgur.com/DBSIhg4.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  subgraph ControlPlane
+    SCH[Cluster Scheduler / Control Plane]
+    DISP[Dispatcher]
+    LEASE[Lease Manager]
+    DLQ[Dead-letter Router]
+  end
+
+  subgraph Workers
+    W1["Worker Pool (role=executor)"]
+    W2["Worker Pool (role=merge)"]
+    W3["Worker Pool (role=persist)"]
+  end
+
+  subgraph Queue
+    Q[(Distributed Queue)]
+  end
+
+  subgraph Storage
+    QFS[(QFS / CircuitFS)]
+    AUD[(Audit/Event Store)]
+  end
+
+  subgraph Telemetry
+    EXP[Prometheus Exporter /metrics]
+    OTEL[OpenTelemetry SDK]
+    LOG[Structured Logs]
+  end
+
+  subgraph ObservabilityStack
+    PROM[Prometheus]
+    GRAF[Grafana]
+    TRACE[Jaeger/Tempo]
+    LOKI[Loki/ES]
+    AM[Alertmanager]
+  end
+
+  SCH --> DISP
+  DISP --> Q
+  Q --> W1
+  Q --> W2
+  Q --> W3
+
+  SCH --> LEASE
+  LEASE --> Q
+  LEASE --> W1
+
+  W1 --> QFS
+  W2 --> QFS
+  W3 --> QFS
+  SCH --> AUD
+
+  SCH --> OTEL
+  DISP --> OTEL
+  W1 --> OTEL
+  W2 --> OTEL
+  W3 --> OTEL
+
+  SCH --> LOG
+  DISP --> LOG
+  W1 --> LOG
+  W2 --> LOG
+  W3 --> LOG
+
+  EXP --> PROM
+  OTEL --> TRACE
+  LOG --> LOKI
+  PROM --> GRAF
+  PROM --> AM
+
+  note1{{Observability MUST NOT block queue delivery or execution}}
+  EXP --- note1
+```
+
+</details>
+
+---
+
+### A.2 Required Metrics
+
+![Required Metrics](https://i.imgur.com/t70VPKD.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  W[Worker Liveness & Availability] --> W1["eigen_cluster_worker_heartbeats_total{role}"]
+  W --> W2["eigen_cluster_worker_flaps_total{reason}"]
+  W --> W3[eigen_cluster_workers_ready]
+  W --> W4[eigen_cluster_workers_draining]
+  W --> W5["eigen_cluster_worker_quarantine_total{reason}"]
+  W --> W6[eigen_cluster_worker_restarts_total]
+
+  C[Control Plane & Assignment] --> C1[eigen_cluster_assignment_latency_ms_bucket]
+  C --> C2["eigen_cluster_assignment_failures_total{reason}"]
+  C --> C3["eigen_cluster_scheduling_decisions_total{policy,result}"]
+  C --> C4[eigen_cluster_scheduler_evaluation_latency_ms_bucket]
+
+  Q[Queue Reliability & Delivery] --> Q1["eigen_cluster_queue_backlog_depth{queue}"]
+  Q --> Q2["eigen_cluster_queue_oldest_age_seconds{queue}"]
+  Q --> Q3["eigen_cluster_queue_deliveries_total{queue}"]
+  Q --> Q4["eigen_cluster_queue_acknowledged_total{queue}"]
+  Q --> Q5["eigen_cluster_queue_lease_churn_total{queue,reason}"]
+  Q --> Q6["eigen_cluster_queue_redeliveries_total{queue}"]
+  Q --> Q7["eigen_cluster_dead_letter_total{queue,reason}"]
+  Q --> Q8[eigen_cluster_queue_replay_total]
+  Q --> Q9[eigen_cluster_queue_replay_failures_total]
+
+  R[Distributed Execution Reliability] --> R1["eigen_cluster_execution_failures_total{reason}"]
+  R --> R2["eigen_cluster_execution_retries_total{reason}"]
+  R --> R3[eigen_cluster_lease_conflicts_total]
+  R --> R4[eigen_cluster_partition_events_total]
+  R --> R5[eigen_cluster_orchestrator_failover_total]
+
+  T[Tracing Continuity] --> T1["eigen_cluster_trace_breakage_total{stage}"]
+  T --> T2[eigen_cluster_trace_propagation_latency_ms_bucket]
+```
+
+</details>
+
+---
+
+### A.3 Worker Liveness & Node Availability
+
+![Worker Liveness & Node Availability](https://i.imgur.com/Vl8BPZq.png)
+
+<details>
+<summary>code</summary>
+
+```text
+stateDiagram-v2
+  [*] --> Starting
+  Starting --> Ready: heartbeat OK + lease OK
+  Ready --> Draining: drain requested
+  Draining --> Ready: drain cancelled
+  Ready --> Quarantined: policy/reliability violation
+  Quarantined --> Ready: quarantine cleared
+  Ready --> Unreachable: heartbeat timeout
+  Unreachable --> Ready: heartbeat resumes + lease renewed
+  Ready --> Restarting: crash_restart
+  Restarting --> Ready: process restarted + init OK
+  Ready --> [*]: removed/evicted
+
+  note right of Ready
+    eigen_cluster_workers_ready (gauge) counts workers in Ready
+  end note
+  note right of Draining
+    eigen_cluster_workers_draining (gauge) counts workers in Draining
+  end note
+```
+
+</details>
+
+---
+
+### A.4 Queue Delivery Semantics
+
+![Queue Delivery Semantics](https://i.imgur.com/QAdSjWP.png)
+
+<details>
+<summary>code</summary>
+
+```text
+stateDiagram-v2
+  [*] --> Pending: enqueued
+  Pending --> Delivered: delivery attempt +deliveries_total
+  Delivered --> Processing: worker starts
+  Processing --> Acked: ack +acknowledged_total
+  Processing --> LeaseExpired: lease timeout +lease_churn_total{reason=lease_expired}
+  LeaseExpired --> Redelivered: redelivery +redeliveries_total
+  Redelivered --> Processing: worker reprocess
+  Processing --> Requeued: manual requeue +lease_churn_total{reason=manual_requeue}
+  Requeued --> Pending
+
+  Processing --> DeadLetter: retry limit / poison +dead_letter_total
+  Pending --> ReplayInsert: replay/recovery +queue_replay_total
+  ReplayInsert --> Pending
+
+  note right of Delivered
+    At-least-once semantics: duplicates possible under redelivery
+  end note
+```
+
+</details>
+
+---
+
+### A.5 Distributed Tracing Contract
+
+![Distributed Tracing Contract](https://i.imgur.com/npMhdmo.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant SCH as Scheduler
+  participant DISP as Dispatcher
+  participant Q as Queue
+  participant W as Worker
+  participant QFS as QFS
+
+  SCH->>SCH: cluster.schedule (policy eval)
+  SCH->>DISP: cluster.assign (assignment issued)
+  DISP->>Q: cluster.dispatch (enqueue item + lease)
+  Q->>W: delivery attempt (tracecontext forwarded)
+  W->>W: cluster.execute (runtime spans)
+  W->>QFS: cluster.persist (artifacts)
+  W->>Q: ack
+
+  Note over SCH,W: Trace continuity MUST survive redelivery + reassignment + replay
+```
+
+</details>
+
+---
+
+### A.6 Label Contract
+
+![Label Contract](https://i.imgur.com/a9DPxuL.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  M[Metric emission] --> L{Label candidate}
+  L -->|"bounded (queue/role/policy/stage/reason)"| OK[Allowed label]
+  L -->|correlation or dynamic identifier| NO[FORBIDDEN as label]
+  NO --> ALT[Put into traces/logs/QFS/audit]
+
+  subgraph Forbidden Examples
+    F1[worker_id]
+    F2[job_id]
+    F3[trace_id]
+    F4[request_id]
+    F5[dynamic shard id]
+    F6[payload-derived ids]
+  end
+
+  NO --- F1
+  NO --- F2
+  NO --- F3
+  NO --- F4
+  NO --- F5
+  NO --- F6
+```
+
+</details>
+
+---
+
+### A.7 Exporter Requirements
+
+![Exporter Requirements](https://i.imgur.com/4mYtMdq.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+    HOT[Hot path: scheduling/dispatch/execute] --> REG[In-process metrics registry]
+    SCR[Prometheus scrape] --> EXP["/metrics exporter"]
+
+    EXP --> REG
+    EXP --> SNAP["Consistent snapshot (text exposition)"]
+    SNAP --> PROM[Prometheus]
+
+    ERR[Scrape failure] -.-> PROM
+
+    Note["Exporter MUST NOT:<br/>• Block control-plane or workers<br/>• Panic<br/>• Break snapshot consistency"]
+    Note -.-> EXP
+```
+
+</details>
+
+---
+
+### A.8 Alert Compatibility Contract
+
+![Alert Compatibility Contract](https://i.imgur.com/NEyR1To.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  subgraph Signals
+    QB["eigen_cluster_queue_backlog_depth{queue}"]
+    QA["eigen_cluster_queue_oldest_age_seconds{queue}"]
+    RD["eigen_cluster_queue_redeliveries_total{queue}"]
+    LC["eigen_cluster_queue_lease_churn_total{queue,reason}"]
+    DL["eigen_cluster_dead_letter_total{queue,reason}"]
+    AL[eigen_cluster_assignment_latency_ms_bucket]
+    AF["eigen_cluster_assignment_failures_total{reason}"]
+    WB["eigen_cluster_worker_flaps_total{reason}"]
+    PR[eigen_cluster_partition_events_total]
+    TF["eigen_cluster_trace_breakage_total{stage}"]
+    EH[eigen_cluster_runtime exporter freshness + marker]
+  end
+
+  subgraph Alerts
+    A1[Queue stall]
+    A2[Redelivery-rate breach]
+    A3[Lease churn spike]
+    A4[Dead-letter surge]
+    A5[Assignment latency SLO breach]
+    A6[Assignment failure surge]
+    A7[Worker flap increase]
+    A8[Partition detection]
+    A9[Trace continuity breakage]
+    A10[Exporter health degradation]
+  end
+
+  QB --> A1
+  QA --> A1
+  RD --> A2
+  LC --> A3
+  DL --> A4
+  AL --> A5
+  AF --> A6
+  WB --> A7
+  PR --> A8
+  TF --> A9
+  EH --> A10
+```
+
+</details>
+
+---
+
+### A.9 CI & Conformance Requirements
+
+![CI & Conformance Requirements](https://i.imgur.com/CdD3QFh.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  PR[Change set] --> CI[CI pipeline]
+  CI --> T1["Scrape validation (text format + TYPE)"]
+  CI --> T2[Metric family presence]
+  CI --> T3["Type validation (counter/gauge/hist)"]
+  CI --> T4["Histogram bucket validation (stable boundaries)"]
+  CI --> T5["Queue semantics checks (lease/redelivery/dlq)"]
+  CI --> T6[Alert query validation]
+  CI --> T7[Dashboard query validation]
+  CI --> T8[Label boundedness checks]
+  CI --> T9[Trace continuity smoke test]
+
+  T1 --> PASS{All pass?}
+  T2 --> PASS
+  T3 --> PASS
+  T4 --> PASS
+  T5 --> PASS
+  T6 --> PASS
+  T7 --> PASS
+  T8 --> PASS
+  T9 --> PASS
+
+  PASS -->|yes| MERGE[Merge allowed]
+  PASS -->|no| BLOCK[Block incompatible change]
+```
+
+</details>

@@ -609,3 +609,224 @@ A compliant AQO v1.0 implementation MUST:
 - support replay-safe hashing semantics.
 
 Golden fixtures and replay tests SHOULD be used to ensure compatibility stability.
+
+---
+
+## Appendix A. Diagrams
+
+### A.1 Overview
+
+![Overview](https://i.imgur.com/lx2hTua.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  SRC[Eigen-Lang source] --> COMP["Compiler (Neuro-DPDA)"]
+  COMP -->|"AQO v1.0 (JSON/PROTO)"| AQO[AQO IR]
+
+  AQO --> K["Kernel (QRTX)"]
+  K --> S[Scheduler/Runtime Controller]
+  K --> DM[Driver Manager]
+  DM --> QD[QDriver]
+  QD --> BE["Backend (sim/hardware)"]
+
+  K --> QFS["QFS (job-scoped artifacts)"]
+  S --> KB["Knowledge Base (optional)"]
+  K --> OBS["Observability (traces/metrics/logs)"]
+
+  note1{{AQO is canonical IR:\nportable, deterministic,\nreplay-hashable}}
+  AQO --- note1
+```
+
+</details>
+
+---
+
+### A.2 Canonical Serialization Rules
+
+![Canonical Serialization Rules](https://i.imgur.com/hxQuU90.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  A[Raw AQO JSON bytes] --> B["Parse JSON\n(reject duplicate keys,\nreject NaN/Inf)"]
+  B --> C[Normalize\n- UTF-8\n- sort object keys\n- no insignificant whitespace\n- stable number encoding\n- preserve array order]
+  C --> D[Canonical JSON bytes]
+  D --> E["sha256(canonical bytes)\n=> aqo_hash"]
+  E --> F[Used for:\nreplay • fixtures • signatures\nidempotency • caching • audit refs]
+```
+
+</details>
+
+---
+
+### A.3 Operation Format
+
+![Operation Format](https://i.imgur.com/dPZKzaD.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  OP[Operation object] --> OPK["op: string (required)"]
+  OP --> Q["q: int[] (required)"]
+  OP --> C["c: int[] (conditional)"]
+  OP --> P["params: object (optional)"]
+  OP --> M["metadata: object (optional, non-semantic)"]
+
+  OPK -->|must be allow-listed| AL[Opcode set v1.0]
+  P -->|keys must match opcode contract| PK[Parameter validation]
+  M -->|must not affect semantics| NS[Non-semantic only]
+```
+
+</details>
+
+---
+
+### A.4 Parameter Rules
+
+![Parameter Rules](https://i.imgur.com/DDtpCKA.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TD
+  A[Operation with params] --> B{Opcode type}
+  B -->|RX/RY/RZ| C["Require theta\n(theta is number OR symbolic id)"]
+  B -->|non-parameterized gates| D[params MUST be absent]
+  B -->|MEASURE| E[Only optional basis allowed]
+  B -->|other opcodes| F[Allowed keys per opcode contract]
+
+  C --> G{theta valid?}
+  G -->|yes| OK[accept]
+  G -->|no| ERR1["INVALID_ARGUMENT\n(missing/invalid theta)"]
+
+  D --> H{params present?}
+  H -->|no| OK
+  H -->|yes| ERR2["INVALID_ARGUMENT\n(unexpected params)"]
+
+  E --> I{unknown keys?}
+  I -->|no| OK
+  I -->|yes| ERR3["INVALID_ARGUMENT\n(unknown measure param)"]
+```
+
+</details>
+
+---
+
+### A.5 Classical Bit Semantics
+
+![Classical Bit Semantics](https://i.imgur.com/VSkzEij.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  Q0["q0 measured"] --> C0["c[0] (LSB)"]
+  Q1["q1 measured"] --> C1["c[1] (MSB)"]
+  C0 --> OUT["bitstring output:left..right = MSB..LSBexample c[1]=0, c[0]=1 => \"01\""]
+  C1 --> OUT
+```
+
+</details>
+
+---
+
+### A.6 Validation Invariants
+
+![Validation Invariants](https://i.imgur.com/uJsW5Km.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  IN[Incoming AQO payload] --> S[Structural validation- JSON parse- schema fields/types- version supported- canonicalization rules]
+  S -->|ok| SEM[Semantic validation- qubit bounds- opcode allowlist- arity checks- params contract- measure invariants]
+  S -->|fail| E1["INVALID_ARGUMENT(structural)"]
+  SEM -->|ok| RES["Resource/back-end checks (optional)- topology/capacity- gate support- calibration/quotas- reservation ownership"]
+  SEM -->|fail| E2["INVALID_ARGUMENT(semantic)"]
+  RES -->|ok| READY[Eligible for compile/execute]
+  RES -->|fail| E3["FAILED_PRECONDITION(back-end incompatibility)"]
+```
+
+</details>
+
+---
+
+### A.7 Determinism Requirements
+
+![Determinism Requirements](https://i.imgur.com/twJ8rlK.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  A[Canonical JSON bytes] --> H[Stable hash\nsha256]
+  A --> P[Deterministic parse]
+  P --> V["Deterministic validation outcomes(errors + reasons)"]
+  P --> I[Deterministic opcode interpretation + canonical bit ordering]
+  H --> R["Replay identity(fixtures/audit/cache keys)"]
+  I --> EXE[Execution payload to drivers]
+  note1{{Quantum outcomes probabilistic,AQO semantics + parsing/hashing are deterministic}}
+  EXE --- note1
+```
+
+</details>
+
+---
+
+### A.8 Transport Formats
+
+![Transport Formats](https://i.imgur.com/399lJaW.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  J["AQO_JSON (canonical)"] -->|encode| P[AQO_PROTO]
+  P -->|decode| J2["AQO_JSON (reconstructed)"]
+  J --> EQ{Semantic equivalence}
+  J2 --> EQ
+  EQ -->|required| OK[Pass]
+  EQ -->|violation| FAIL["Contract violation\n(reject / fail CI fixtures)"]
+```
+
+</details>
+
+---
+
+### A.9 Observability Requirements
+
+![Observability Requirements](https://i.imgur.com/C8agcAl.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+    autonumber
+
+    participant COMP as Compiler
+    participant K as Kernel (QRTX)
+    participant DM as Driver Manager
+    participant OBS as Observability
+
+    COMP->>K: AQO artifact + aqo_hash + metadata
+    K->>OBS: span/metrics aqo_version, transport_format, aqo_size_bytes, operation_count, qubit_count
+    K->>DM: CircuitPayload(format=JSON|PROTO, ref or bytes, aqo_hash)
+    DM->>OBS: exec spans backend_id, result status (no aqo payload)
+
+    Note over OBS: Never log full AQO payload by default. Use refs and hashes for correlation.
+```
+
+</details>

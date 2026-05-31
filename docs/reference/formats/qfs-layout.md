@@ -575,3 +575,249 @@ A compliant QFS v1.0 implementation MUST:
 - support replay-safe artifact retrieval.
 
 The canonical `.proto`, AQO, and runtime contracts remain the authoritative source for interoperable execution semantics.
+
+---
+
+## Appendix A. Diagrams
+
+### A.1 Overview
+
+![Overview](https://i.imgur.com/xqvCMow.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  subgraph Runtime
+    K["Kernel (QRTX)"]
+    C[Compiler]
+    DM[Driver Manager]
+    S[Scheduler/Runtime Controller]
+  end
+
+  QFS[(QFS / CircuitFS\nLayout v1.0)]
+  API[Public APIs]
+  REPLAY[Replay systems]
+  AUDIT[Audit systems]
+  OBS[Observability]
+
+  K <--> QFS
+  C <--> QFS
+  DM <--> QFS
+  S <--> QFS
+
+  API --> QFS
+  REPLAY --> QFS
+  AUDIT --> QFS
+
+  K --> OBS
+  C --> OBS
+  DM --> OBS
+  S --> OBS
+
+  note1{{QFS is the canonical\nartifact persistence contract\nfor job-scoped evidence}}
+  QFS --- note1
+```
+
+</details>
+
+---
+
+### A.2 Canonical Directory Layout
+
+![Canonical Directory Layout](https://i.imgur.com/42kgxnU.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  ROOT["{qfs_root}/{job_id}/"] --> IN[input/]
+  ROOT --> COMP[compiled/]
+  ROOT --> EXEC[execution/]
+  ROOT --> RES[results/]
+  ROOT --> CK[checkpoints/]
+  ROOT --> LOGS[logs/]
+  ROOT --> META[meta/]
+  ROOT --> TR[traces/]
+  ROOT --> TMP[tmp/]
+  ROOT --> PARQ["results.parquet"]
+
+  IN --> IN1["job.yaml (MUST)"]
+  IN --> IN2["program.eigen.py (conditional)"]
+  IN --> IN3["metadata.json (optional)"]
+  IN --> IN4["request.json (optional)"]
+
+  COMP --> C1["circuit.aqo.json (MUST)"]
+  COMP --> C2["circuit.aqo.pb (optional)"]
+  COMP --> C3["circuit.qasm (optional)"]
+  COMP --> C4["compile_report.json (optional)"]
+
+  RES --> R1["result.json (recommended)"]
+  RES --> R2["manifest.json (recommended)"]
+  RES --> R3["error.json (conditional)"]
+
+  TMP --> TNOTE{{tmp/ is non-durable:\nmay be deleted anytime}}
+```
+
+</details>
+
+---
+
+### A.3 Access Patterns
+
+![Access Patterns](https://i.imgur.com/ymKVTPG.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant CLI as CLI/SDK
+  participant API as System API
+  participant K as Kernel (QRTX)
+  participant C as Compiler
+  participant DM as Driver Manager
+  participant QFS as QFS (CircuitFS)
+
+  CLI->>API: SubmitJob
+  API->>K: EnqueueJob
+  K->>QFS: write input/job.yaml (+ source bundle)
+  K->>C: Compile
+  C-->>K: AQO (+ diagnostics)
+  K->>QFS: write compiled/circuit.aqo.json
+  K->>DM: Execute
+  DM-->>K: normalized results / error
+  K->>QFS: write results.parquet\n(+ results/result.json / results/error.json)
+  API->>K: GetJobResults
+  K->>QFS: read results.parquet (+ manifest)
+  K-->>API: result envelope + refs
+  API-->>CLI: response
+```
+
+</details>
+
+---
+
+### A.4 Manifest and Checksum Rules
+
+![Manifest and Checksum Rules](https://i.imgur.com/lNQut3t.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  A["Artifact produced (e.g., compiled/circuit.aqo.json)"] --> B["Compute sha256(bytes)"]
+  B --> C["Record entry in results/manifest.json (path, size, hash, timestamps)"]
+  C --> D{Integrity check on read?}
+  D -->|yes| E[Recompute sha256\nand compare]
+  E -->|match| OK[OK]
+  E -->|mismatch| DL[DATA_LOSS / integrity failure]
+  D -->|no| N["Best-effort mode (allowed only if policy permits)"]
+```
+
+</details>
+
+---
+
+### A.5 Atomicity and Write Guarantees
+
+![Atomicity and Write Guarantees](https://i.imgur.com/BWNyme5.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  W[Writer] --> TMP["Write to tmp path (e.g., tmp/<name>.part)"]
+  TMP --> FSYNC["fsync/flush (where applicable)"]
+  FSYNC --> REN["Atomic publish (rename/multipart finalize)"]
+  REN --> VIS["Artifact becomes visible at canonical path"]
+  VIS --> R[Readers see either: - old version - new complete version never partial bytes]
+```
+
+</details>
+
+---
+
+### A.6 Retention and Cleanup
+
+![Retention and Cleanup](https://i.imgur.com/bPUENLS.png)
+
+<details>
+<summary>code</summary>
+
+```text
+stateDiagram-v2
+  [*] --> Hot: created/published
+  Hot --> Warm: age/usage threshold (policy)
+  Warm --> Cold: archive tier (policy)
+  Hot --> Purged: MANUAL_PURGE
+  Warm --> Purged: RETENTION_EXPIRED
+  Cold --> Purged: RETENTION_EXPIRED
+  Hot --> Orphaned: ORPHAN_NOT_INDEXED
+  Orphaned --> Purged: cleanup sweep
+
+  note right of Purged
+    Cleanup MUST be logged
+    and (where required) audited.
+  end note
+```
+
+</details>
+
+---
+
+### A.7 Security Requirements
+
+![Security Requirements](https://i.imgur.com/8Re1tNa.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  REQ["Incoming qfs access (read/write/list)"] --> VAL["Validate job_id & path (no .., no traversal)"]
+  VAL --> AUTH{Ownership / policy check}
+  AUTH -->|deny| DENY[PERMISSION_DENIED]
+  AUTH -->|allow| IO["Perform IO (store/load/list)"]
+  IO --> INTEG{Checksum required?}
+  INTEG -->|yes| VERIFY[Verify digest / manifest]
+  VERIFY -->|fail| LOSS[DATA_LOSS / integrity failure]
+  VERIFY -->|ok| OK[Success]
+  INTEG -->|no| OK
+```
+
+</details>
+
+---
+
+### A.8 Observability Requirements
+
+![Observability Requirements](https://i.imgur.com/eyTlVHS.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+    autonumber
+
+    participant S as Service (Kernel/Compiler/DM)
+    participant Q as QFS
+    participant O as Observability
+
+    S->>Q: op(read/write/list/delete)
+    Q-->>S: status + bytes/ref
+
+    Q->>O: metrics: qfs_operation, backend, kind
+    Q->>O: traces: QFS.<op> (job_id in trace/log only)
+
+    Note over O: job_id/trace_id MUST NOT be metric labels
+    Note over O: Allowed in traces & log fields only
+```
+
+</details>

@@ -697,3 +697,427 @@ All implementations:
 MUST conform to this specification.
 
 If code diverges from this document, the implementation MUST be corrected.
+
+---
+
+## Appendix A. Diagrams
+
+### A.1 Architectural Alignment with Eigen OS
+
+![Architectural Alignment with Eigen OS](https://i.imgur.com/UASV5gf.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  subgraph Ingress[Ingress]
+    SA["System API<br/>(public boundary)"] --> KG[KernelGatewayService]
+  end
+
+  subgraph Orchestration[Orchestration]
+    KG --> QRTX[QRTX Orchestrator]
+  end
+
+  subgraph RuntimeServices[Runtime Services]
+    QRTX --> COMP[CompilationService]
+    QRTX --> OPT[OptimizerService]
+    QRTX --> DM[DriverManagerService]
+    QRTX --> QFS[QFSService]
+    QRTX --> KB[KnowledgeBaseService]
+  end
+
+  subgraph Hardware[Backend Boundary]
+    DM --> QDR[QDriver gRPC]
+    QDR --> BK["Backend / Provider"]
+  end
+
+  subgraph CrossCutting[Cross-cutting]
+    SEC["Security Module<br/>(mTLS + identity + policy)"] --- Ingress
+    OBS["Observability<br/>(OTel traces/metrics/logs)"] --- Orchestration
+    OBS --- RuntimeServices
+  end
+	style CrossCutting fill:#FFFFFF
+```
+
+</details>
+
+---
+
+### A.2 Transport Requirements
+
+![Transport Requirements](https://i.imgur.com/34laUka.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant A as Service A (caller)
+  participant B as Service B (callee)
+  participant CA as mTLS / CA
+  participant OTel as OTel Collector
+
+  A->>CA: mTLS handshake (client cert + server cert validation)
+  CA-->>A: session established
+  A->>B: gRPC over HTTP/2\nmetadata: traceparent, authorization,\nx-eigen-tenant-id, x-eigen-request-id,\nx-eigen-service-id, x-eigen-user-id
+  B-->>A: gRPC response\n(status + details)
+  A->>OTel: export spans/metrics/logs (bounded labels)
+  B->>OTel: export spans/metrics/logs (bounded labels)
+```
+
+</details>
+
+---
+
+### A.3 Core Services
+
+![Core Services](https://i.imgur.com/0mebOJO.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  KG[KernelGatewayService] -->|orchestrates| COMP[CompilationService]
+  KG -->|orchestrates| OPT[OptimizerService]
+  KG -->|orchestrates| DM[DriverManagerService]
+  KG -->|persists| QFS[QFSService]
+  KG -->|learn/ingest| KB[KnowledgeBaseService]
+
+  DM -->|exec| QDR[QDriver]
+  QDR --> BK[Backend]
+
+  %% side channels
+  COMP -. compiler trace refs .-> QFS
+  OPT -. placement/routing artifacts .-> QFS
+  DM -. execution telemetry refs .-> QFS
+  KG -. decision/explain artifacts .-> QFS
+  KG -. records/feedback .-> KB
+```
+
+</details>
+
+---
+
+### A.4 KernelGatewayService
+
+![KernelGatewayService](https://i.imgur.com/2fN7UmR.png)
+
+<details>
+<summary>code</summary>
+
+```text
+stateDiagram-v2
+  [*] --> PENDING
+  PENDING --> COMPILING
+  COMPILING --> QUEUED
+  QUEUED --> RUNNING
+  RUNNING --> DONE
+  RUNNING --> ERROR
+  QUEUED --> CANCELLED
+  RUNNING --> CANCELLED
+  COMPILING --> CANCELLED
+  PENDING --> CANCELLED
+
+  %% timeout is a reason, not a public state
+  RUNNING --> ERROR: deadline_exceeded
+```
+
+</details>
+
+---
+
+### A.5 PollJobUpdates
+
+![PollJobUpdates](https://i.imgur.com/DatbBWG.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant Client as Internal Client
+  participant KG as KernelGatewayService
+  participant QRTX as QRTX
+
+  Client->>KG: PollJobUpdates(job_id) (stream)
+  KG->>QRTX: Subscribe(job_id)
+  loop stream events
+    QRTX-->>KG: JobUpdateEvent(state/progress/refs)
+    KG-->>Client: JobUpdateEvent
+  end
+  Note over Client,KG: Heartbeats MUST be emitted under idle periods
+  Client->>KG: Cancel stream / deadline exceeded
+  KG->>QRTX: Cancel subscription + propagate cancellation
+```
+
+</details>
+
+---
+
+### A.6 CompilationService
+
+![CompilationService](https://i.imgur.com/k8SuINm.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant QRTX
+  participant COMP as CompilationService
+  participant QFS as QFSService
+
+  QRTX->>COMP: CompileJob / CompileCircuit\n(seed, policy_digest, traceparent)
+  COMP-->>QRTX: AQO + diagnostics + compiler_trace_ref
+  QRTX->>QFS: StoreArtifact(compiled/a qo + diagnostics + trace)
+  QFS-->>QRTX: artifact refs + digests
+```
+
+</details>
+
+---
+
+### A.7 DriverManagerService
+
+![DriverManagerService](https://i.imgur.com/c42q1X6.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant QRTX
+  participant DM as DriverManagerService
+  participant QDR as QDriver
+  participant BK as Backend
+  participant QFS as QFSService
+
+  QRTX->>DM: ExecuteCircuitAsync(payload or qfs_ref)
+  DM-->>QRTX: ExecutionHandle(handle_id)
+  QRTX->>DM: StreamExecutionUpdates(handle_id) (stream)
+  DM->>QDR: Execute(handle_id, translated payload)
+  QDR->>BK: Provider execute
+  loop updates
+    BK-->>QDR: queue/executing/done/error
+    QDR-->>DM: ExecutionEvent(...)
+    DM-->>QRTX: ExecutionEvent(...)
+  end
+  QRTX->>QFS: StoreArtifact(results / error / telemetry snapshots)
+```
+
+</details>
+
+---
+
+### A.8 OptimizerService
+
+![OptimizerService](https://i.imgur.com/2e7xiEa.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TD
+  A[OptimizeCircuitRequest] --> B["Feature extraction<br/>AQO graph + topology + calibration"]
+  B --> C["GNN inference (seeded if deterministic)"]
+  C --> D{"confidence >= threshold<br/>and policy allows?"}
+  D -->|yes| E[Generate placement/routing plan]
+  D -->|no| F[Deterministic fallback chain]
+  E --> V[Symbolic/structural validation]
+  F --> V
+  V -->|pass| OUT["OptimizeCircuitResponse<br/>optimized_circuit + plans + digest"]
+  V -->|fail| ERR["INVALID_ARGUMENT / FAILED_PRECONDITION<br/>+ EIGEN_OPT_* reason"]
+```
+
+</details>
+
+---
+
+### A.9 QFSService
+
+![QFSService](https://i.imgur.com/87glRWf.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant S as Any Service
+  participant QFS as QFSService
+
+  S->>QFS: StoreArtifact(ref_path, bytes, content_type, schema_version)
+  QFS-->>S: ArtifactHandle(ref, digest, size_bytes, created_at, producer)
+  S->>QFS: GetArtifact(ref)
+  QFS-->>S: bytes + handle
+  S->>QFS: ListArtifacts(prefix)
+  QFS-->>S: refs[] + handles[]
+  S->>QFS: CheckpointState / RestoreState (Phase-1)
+  QFS-->>S: checkpoint_ref / restored_ref
+```
+
+</details>
+
+---
+
+### A.10 Common Types
+
+![Common Types](https://i.imgur.com/G5z5z6b.png)
+
+<details>
+<summary>code</summary>
+
+```text
+classDiagram
+  class CircuitPayload {
+    +format: enum
+    +payload_bytes: bytes?
+    +qfs_ref: string?
+    +shots: int
+    +options: map<string,string>
+  }
+
+  class AQOPayload {
+    +version: string
+    +canonical_bytes: bytes
+    +digest: string
+  }
+
+  class TopologyGraph {
+    +nodes: int
+    +edges: int
+    +snapshot_digest: string
+  }
+
+  class ArtifactHandle {
+    +ref: string
+    +digest: string
+    +size_bytes: int
+    +content_type: string
+    +producer: string
+    +schema_version: string
+  }
+
+  CircuitPayload --> AQOPayload : may_wrap
+  AQOPayload --> TopologyGraph : optimized_against
+  CircuitPayload --> ArtifactHandle : may_reference
+```
+
+</details>
+
+---
+
+### A.11 Error Model
+
+![Error Model](https://i.imgur.com/zIn43vi.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  A[gRPC Status] --> B[google.rpc.ErrorInfo<br/>reason=EIGEN_*]
+  A --> C[google.rpc.BadRequest<br/>field violations]
+  A --> D[google.rpc.ResourceInfo<br/>resource context]
+  A --> E[google.rpc.RetryInfo<br/>retry delay]
+  A --> F["google.rpc.DebugInfo<br/>(internal only)"]
+  B --> Z[Client/Caller handling]
+  C --> Z
+  D --> Z
+  E --> Z
+  F --> Z
+```
+
+</details>
+
+---
+
+### A.12 Determinism Requirements
+
+![Determinism Requirements](https://i.imgur.com/WoW7lC0.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  subgraph CanonInputs[Canonical deterministic inputs]
+    I1[contract_version]
+    I2[canonical request bytes]
+    I3[topology_snapshot_digest]
+    I4["calibration_snapshot_digest (or sentinel)"]
+    I5["policy_envelope_digest"]
+    I6["seed (required if deterministic=true)"]
+    I7["model_version / fallback marker"]
+  end
+
+  CanonInputs --> H["sha256(canonical_inputs)"]
+  H --> DEC[Deterministic decision output]
+  DEC --> OUT[Canonical outputs]
+  OUT --> DIG["replay_digest = sha256(inputs + outputs)"]
+  DIG --> QFS["Persist replay bundle + digest refs (QFS)"]
+	style CanonInputs fill:#FFFFFF
+```
+
+</details>
+
+---
+
+### A.13 Observability Requirements
+
+![Observability Requirements](https://i.imgur.com/WSf8Xwf.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant Caller
+  participant Callee
+  participant OTel as OTel Collector
+
+  Caller->>Callee: RPC (traceparent + bounded metadata)
+  Caller->>OTel: span.client (rpc.service, rpc.method, grpc.status_code)
+  Callee->>OTel: span.server (rpc.service, rpc.method, grpc.status_code)
+  Callee->>OTel: metrics grpc_requests_total{rpc,code}
+  Callee->>OTel: metrics grpc_latency_ms_bucket{rpc}
+  Callee->>OTel: logs {trace_id, request_id, service_id, rpc_name, result_code}
+  Note over Caller,Callee: job_id/tenant/user belong in traces/logs only (NOT metric labels)
+```
+
+</details>
+
+---
+
+### A.14 Security Requirements
+
+![Security Requirements](https://i.imgur.com/1w8lmPc.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  subgraph Identity["mTLS + Service Identity"]
+    A["Caller cert / SPIFFE ID"] --> MTLS[mTLS]
+    MTLS --> B[Callee verifies identity]
+  end
+
+  B --> AuthZ["Policy decision (RBAC/ABAC)"]
+  AuthZ -->|allow| Exec[Execute RPC]
+  AuthZ -->|deny| Deny["PERMISSION_DENIED + ErrorInfo.reason"]
+
+  Exec --> Audit[Emit audit event]
+  Audit --> OBS[Observability stack]
+  Exec --> Redact[Redaction rules]
+  Redact --> Logs["Structured logs (no secrets)"]
+```
+
+</details>

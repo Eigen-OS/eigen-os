@@ -571,3 +571,390 @@ The subsystem is considered Phase-1 complete when:
 - No silent telemetry degradation; drops/sampling must be visible.
 - Observability changes that affect stable contracts require SemVer governance.
 - Observability never weakens security or determinism guarantees.
+
+---
+
+## Appendix A. Diagrams (normative)
+
+### A.1 C4 — Observability as a Cross-Cutting Platform
+
+![Observability as a Cross-Cutting Platform](https://i.imgur.com/tPpUg8y.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+    subgraph Clients["Clients"]
+        SDK[Client SDKs / CLI]
+        UI[Dashboards / Ops UI]
+    end
+
+    subgraph Runtime["Eigen OS Runtime"]
+        API[System API]
+        K[Kernel / QRTX]
+        C[Compiler]
+        DM[Driver Manager]
+        HWE[HWE]
+        OPT[GNN Optimizer]
+        NSC[Neuro-Symbolic Core]
+        KB[Knowledge Base / OKB]
+        QFS[(QFS)]
+    end
+
+    subgraph Obs["Observability Platform (target)"]
+        OTel[OpenTelemetry Collector]
+        TSDB["Metrics TSDB<br/>(Prometheus-compatible)"]
+        TraceDB["Trace Store<br/>(Jaeger/Tempo)"]
+        LogStore[Log Store]
+        EventBus["Event Bus<br/>(Kafka/NATS/Redis Streams)"]
+        Alert[Alerting]
+    end
+
+    SDK --> API
+    API --> K --> DM
+    K --> C
+    K --> QFS
+    HWE --> DM
+    NSC --> OPT
+    NSC --> KB
+    KB --> QFS
+
+    API -->|"metrics/logs/traces"| OTel
+    K -->|"metrics/logs/traces"| OTel
+    C -->|"metrics/logs/traces"| OTel
+    DM -->|"metrics/logs/traces"| OTel
+    HWE -->|"metrics/logs/traces"| OTel
+    OPT -->|"metrics/logs/traces"| OTel
+    NSC -->|"metrics/logs/traces"| OTel
+    KB -->|"metrics/logs/traces"| OTel
+
+    OTel --> TSDB
+    OTel --> TraceDB
+    OTel --> LogStore
+    OTel --> EventBus
+    EventBus --> Alert
+
+    UI --> TSDB
+    UI --> TraceDB
+    UI --> LogStore
+	style Clients fill:#FFFFFF
+	style Runtime fill:#FFFFFF
+	style Obs color:#000000,fill:#FFFFFF
+```
+
+</details>
+
+---
+
+### A.2 Telemetry Class Routing (Metrics / Traces / Logs / Events)
+
+![Telemetry Class Routing](https://i.imgur.com/YpFOvyz.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+    subgraph S["Services (exporters)"]
+        API[system-api]
+        K[eigen-kernel]
+        C[eigen-compiler]
+        DM[driver-manager]
+        HWE[hwe]
+        OPT[gnn-optimizer]
+        NSC[neuro-symbolic-core]
+        KB[knowledge-base]
+    end
+
+    subgraph T["Telemetry types"]
+        M["Metrics<br/>(/metrics Prometheus)"]
+        Tr["Traces<br/>(OTel spans)"]
+        L["Logs<br/>(JSON structured)"]
+        E["Events<br/>(runtime/audit)"]
+    end
+
+    subgraph Sink["Sinks (target)"]
+        OTel[OTel Collector]
+        TSDB[Metrics store]
+        TraceDB[Trace store]
+        LogDB[Log store]
+        Bus[Event bus]
+    end
+
+    API --> M & Tr & L
+    K --> M & Tr & L
+    C --> M & Tr & L
+    DM --> M & Tr & L
+    HWE --> M & Tr & L
+    OPT --> M & Tr & L
+    NSC --> M & Tr & L
+    KB --> M & Tr & L
+
+    E --> Bus
+
+    M --> TSDB
+    Tr --> OTel --> TraceDB
+    L --> LogDB
+	style S fill:#FFFFFF
+	style T fill:#FFFFFF
+	style Sink fill:#FFFFFF
+```
+
+</details>
+
+---
+
+### A.3 Correlation Placement (Where IDs may appear)
+
+![Correlation Placement](https://i.imgur.com/0G9SlBM.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+    subgraph Allowed["Allowed locations"]
+        Traces["Traces<br/>(span attributes)<br/>trace_id, job_id, device_id"]
+        Logs["Logs<br/>(fields)<br/>trace_id, span_id, job_id, device_id"]
+        QFS["QFS artifacts<br/>(job-scoped)<br/>replay bundles, explain refs"]
+    end
+
+    subgraph Forbidden["Forbidden as metric labels"]
+        Metrics["Metrics labels MUST NOT include:<br/>job_id, trace_id, request_id,<br/>user_id, tenant_id (default),<br/>freeform strings"]
+    end
+
+    %% Связи
+    Traces -. "can correlate" .-> Logs
+    Traces -. "can correlate" .-> QFS
+    Logs -. "can correlate" .-> QFS
+
+    %% Запрет
+    Metrics ---|"❌ NEVER use as metric labels"| Metrics
+	style Forbidden fill:#FFFFFF
+	style Allowed fill:#FFFFFF
+```
+
+</details>
+
+---
+
+### A.4 Trace Propagation Map (minimum path)
+
+![Trace Propagation Map](https://i.imgur.com/grpcE5A.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+    SDK[SDK/CLI] -->|"traceparent"| API[System API]
+    API -->|"traceparent"| K[Kernel/QRTX]
+    K -->|"traceparent"| C[Compiler]
+    K -->|"traceparent"| DM[Driver Manager]
+    
+    DM -->|"traceparent (when supported)"| HW[Provider/Simulator]
+
+    K --> QFS[(QFS job artifacts)]
+    C --> QFS
+    DM --> QFS
+```
+
+</details>
+
+---
+
+### A.5 Sequence — Job submit→compile→execute with observability
+
+![Job submit→compile→execute with observability](https://i.imgur.com/DWf1i6S.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+    autonumber
+
+    participant SDK as SDK/CLI
+    participant API as System API
+    participant K as Kernel/QRTX
+    participant C as Compiler
+    participant DM as Driver Manager
+    participant QFS as QFS
+
+    SDK->>API: SubmitJob (traceparent, x-client-request-id)
+    API->>K: EnqueueJob (propagate traceparent)
+    K->>C: CompileJob (span: compiler.*)
+    C->>QFS: write compiled artifacts + metadata
+    C-->>K: compile ok (aqo_digest)
+    K->>DM: ExecuteCircuit (span: dm.execute)
+    DM-->>K: ExecutionResult (normalized) / error (grpc status + reason)
+    K->>QFS: persist results/error + timeline markers
+    K-->>API: terminal status + refs
+    API-->>SDK: job_id + status + refs
+
+    Note over API: Metrics updated (bounded labels)<br/>Logs include trace_id/span_id/job_id<br/>Errors include stable reason codes
+```
+
+</details>
+
+---
+
+### A.6 Telemetry Degradation State Machine (explicit signaling)
+
+![Telemetry Degradation State Machine](https://i.imgur.com/X1iGzEx.png)
+
+<details>
+<summary>code</summary>
+
+```text
+stateDiagram-v2
+  [*] --> Normal
+  Normal --> Buffered: sink slow / transient outage
+  Buffered --> Sampling: backlog exceeds threshold
+  Sampling --> Dropping: hard cap exceeded
+  Dropping --> Normal: sinks healthy + backlog drained
+  Buffered --> Normal: sinks healthy + backlog drained
+
+  note right of Sampling
+    MUST emit explicit indicators:
+    - observability_trace_drop_total
+    - observability_event_backpressure
+    - logs with "telemetry_degraded=true"
+  end note
+```
+
+</details>
+
+---
+
+### A.7 Replay/Audit Evidence (QFS as authoritative job scope)
+
+![Replay/Audit Evidence](https://i.imgur.com/maORQ9o.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  Job["Job execution"] --> Timeline["timeline/timeline.json\n(state transitions)"]
+  Job --> Err["results/error.json\n(if error)"]
+  Job --> Res["results/results.json\n(or refs)"]
+  Job --> Explain["explain/*.json\n(NSC/HWE/Optimizer when enabled)"]
+  Job --> Replay["replay/replay_bundle.json\n(digests + inputs/outputs)"]
+
+  Timeline --> QFS[(qfs://jobs/<job_id>/...)]
+  Err --> QFS
+  Res --> QFS
+  Explain --> QFS
+  Replay --> QFS
+
+  QFS --> Audit["Audit / Forensics\n(trace_id + digests)"]
+```
+
+</details>
+
+---
+
+### A.8 Event Streaming Topology (target)
+
+![Event Streaming Topology](https://i.imgur.com/A2JiBCy.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+    subgraph Producers["Producers"]
+        API[System API]
+        K[Kernel/QRTX]
+        DM[Driver Manager]
+        C[Compiler]
+        SEC[Security Isolation]
+        HWE[HWE]
+        NSC[NSC]
+        OPT[GNN Optimizer]
+        KB[KB/OKB]
+    end
+
+    subgraph Bus["Event Bus (select one)"]
+        Kafka[(Kafka)]
+        NATS[(NATS)]
+        Redis[(Redis Streams)]
+        Mem[(In-memory dev)]
+    end
+
+    subgraph Consumers["Consumers"]
+        Alert[Alerting]
+        Audit[Audit sink]
+        Ops[Ops UI]
+        Export[External export]
+    end
+
+    Producers --> Bus
+    Bus --> Alert
+    Bus --> Audit
+    Bus --> Ops
+    Bus --> Export
+
+    Note["Durability modes:<br/>transient | buffered | durable/auditable"]
+    Note -.-> Bus
+	style Producers fill:#FFFFFF
+	style Bus fill:#FFFFFF
+	style Consumers fill:#FFFFFF
+```
+
+</details>
+
+---
+
+### A.9 Health Signal Composition (live/ready)
+
+![Health Signal Composition](https://i.imgur.com/p6ARiQ4.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+    Live["/live<br/>process liveness"] --> OK[OK]
+
+    Ready["/ready<br/>readiness"]
+    Ready --> Dep1["Exporters configured"]
+    Ready --> Dep2["Storage reachable<br/>(QFS/DB if used)"]
+    Ready --> Dep3["Collector reachable<br/>(if required)"]
+    Ready --> Dep4["Schema compatible<br/>(contract version)"]
+
+    Dep1 --> ROK[Ready OK]
+    Dep2 --> ROK
+    Dep3 --> ROK
+    Dep4 --> ROK
+
+    Note["/ready may fail while /live remains OK<br/>(degraded operation allowed per policy)."]
+    Note -.-> Ready
+
+    classDef note fill:#fff3cd,stroke:#856404,color:#856404
+    class Note note
+```
+
+</details>
+
+---
+
+### A.10 Metrics Label Guardrails (bounded enums only)
+
+![Metrics Label Guardrails](https://i.imgur.com/n2waGyK.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+    Good["Allowed bounded labels\nrpc, code, result, phase,\npolicy_mode, reason (stable)"] --> Metrics[(Metrics)]
+    Bad["Forbidden labels\njob_id, trace_id, request_id,\ntenant_id (default), user_id,\nfreeform strings"] -.-> Metrics
+
+    Note["📝 Correlation goes to traces/logs/QFS,\nnot metric labels."] 
+    Note -.-> Metrics
+```
+
+</details>

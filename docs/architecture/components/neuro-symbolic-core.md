@@ -755,3 +755,376 @@ Any future implementation MUST preserve:
 - auditable and replay-safe decision artifacts.
 
 No implementation may bypass these guarantees.
+
+---
+
+## Appendix A. Diagrams (normative)
+
+### A.1 C4 — System Context (NSC as advisory layer)
+
+![System Context](https://i.imgur.com/Xz1ShOk.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+    Client[Client SDKs / CLI] --> API[System API]
+    API --> K[Kernel / QRTX]
+
+    subgraph Runtime["Eigen OS Runtime"]
+        K --> C["Compiler (Neuro-DPDA)"]
+        K --> HWE[HWE]
+        K --> DM[Driver Manager]
+
+        C -->|"advisory scoring"| NSC["NeuroSymbolicService (NSC)<br/>internal-only"]
+        HWE -->|"advisory planning"| NSC
+
+        NSC -->|"optional lookup"| OKB["Optimization Knowledge Base (OKB)<br/>optional dependency"]
+        NSC -->|"advisory placement/routing"| OPT["GNN Optimizer<br/>(optional, validated)"]
+
+        OPT -->|"topology/calibration"| DM
+        HWE --> DM --> HW["Hardware / Simulator"]
+    end
+
+    C --> QFS[(QFS)]
+    K --> QFS
+    HWE --> QFS
+    NSC --> QFS
+    OKB --> QFS
+
+    NSC --> OBS[Observability]
+    OKB --> OBS
+    OPT --> OBS
+	style Runtime fill:#FFFFFF
+```
+
+</details>
+
+---
+
+### A.2 C4 — Component Diagram (Inside NSC)
+
+![Component Diagram](https://i.imgur.com/kaQj7Vh.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  subgraph NSC["NeuroSymbolicService (NSC) — internal"]
+    RPC["RPC Layer\nScoreCompilationPlan / SelectOptimizationStrategy /\nRecommendBackendMapping / OptimizeHardwareTopology /\nValidateAdaptiveTransformation /\nExplainDecision / GetDecisionTrace"]
+    FEAT["Feature Builder\n(bounded, schema-versioned)"]
+    DPDA["Symbolic Engine (DPDA authority)\nallowed_actions + semantic admissibility"]
+    NEUR["Neural Scoring\n(seedable, side-effect free)"]
+    POL["Policy Gate\n(hard constraints, tenant policy digests)"]
+    ORCH["Optimizer Orchestrator\n(call GNN Optimizer advisory)"]
+    KB["OKB Adapter (optional)\n(retrieve candidates + feedback)"]
+    EXPL["Explainability Engine\n(reason codes + rejected summary)"]
+    REPL["Replay Bundle Builder\n(nsc_decision_digest)"]
+    ERR["Error Normalizer\n(error-model mapping)"]
+
+    RPC --> FEAT
+    FEAT --> DPDA
+    FEAT --> NEUR
+    FEAT --> KB
+    DPDA --> POL
+    NEUR --> POL
+    KB --> POL
+    POL --> ORCH
+    ORCH --> EXPL
+    EXPL --> REPL
+    REPL --> RPC
+    ERR --> RPC
+  end
+
+  ORCH --> OPT[GNN Optimizer]
+  KB --> OKB[OKB]
+  RPC --> OBS[(OTel/Prom/Logs)]
+  REPL --> QFS[(QFS)]
+```
+
+</details>
+
+---
+
+### A.3 NSC Decision Pipeline (DPDA-authoritative)
+
+![NSC Decision Pipeline](https://i.imgur.com/SGpYUOQ.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  In["Inputs\n(AQO digest, topology/telemetry digests,\npolicy digest, deterministic?, seed,\nfeature schema v)"] --> FE["Feature build\n(bounded)"]
+  FE --> DP["DPDA symbolic\nallowed_actions + admissibility"]
+  FE --> NN["Neural scoring\n(rank allowed actions)"]
+  FE --> KB["OKB lookup (optional)\n(candidates + provenance)"]
+
+  DP --> Gate["Policy gate\n(hard constraints)"]
+  NN --> Gate
+  KB --> Gate
+
+  Gate -->|if enabled| OR["Orchestrate GNN Optimizer\n(advisory)"]
+  Gate -->|or skip| Dec["Decision selection\n(deterministic tie-break)"]
+  OR --> Dec
+
+  Dec --> Expl["Explainability\n(selected + rejected summary)"]
+  Expl --> Dig["nsc_decision_digest\n= sha256(inputs + outputs)"]
+  Dig --> Out["Outputs\n(recommendation + reason codes\n+ explain ref + replay bundle ref)"]
+```
+
+</details>
+
+---
+
+### A.4 DPDA + Neural Scoring Loop (action-selection)
+
+![DPDA + Neural Scoring Loop](https://i.imgur.com/ZsPxOT3.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant Caller as Compiler/Kernel/HWE
+  participant NSC as NSC
+  participant DPDA as DPDA (symbolic authority)
+  participant Model as Neural Scorer
+
+  Caller->>NSC: Score/Select request (deterministic?, seed)
+  NSC->>DPDA: allowed_actions(state, context)
+  DPDA-->>NSC: allowed_actions (bounded set)
+  NSC->>Model: score(allowed_actions, context, seed)
+  Model-->>NSC: scores + confidence
+  NSC->>DPDA: apply(selected_action) for legality
+  DPDA-->>NSC: ok + state update (+ emitted hints)
+  NSC-->>Caller: ranked recommendation + reason codes + confidence + digest
+```
+
+</details>
+
+---
+
+### A.5 Sequence — Kernel asks NSC for backend mapping (advisory)
+
+![Kernel asks NSC for backend mapping](https://i.imgur.com/NF9Sdel.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant K as Kernel/QRTX
+  participant NSC as NSC
+  participant HWE as HWE
+  participant DM as Driver Manager
+  participant QFS as QFS
+
+  K->>DM: GetDeviceStatus / ListDevices (snapshots)
+  DM-->>K: topology/capability/health (bounded)
+  K->>HWE: PlanExecution(context)
+  HWE->>NSC: RecommendBackendMapping(context_digest,\ndeterministic?, seed)
+  NSC-->>HWE: recommended backend(s) + reason codes + digest
+  HWE->>QFS: persist qfs://jobs/<job_id>/nsc/decision.json\n+ explain.json + replay_bundle.json
+  QFS-->>HWE: refs
+  HWE-->>K: ExecutionDecision (selected backend + refs)
+```
+
+</details>
+
+---
+
+### A.6 Sequence — Compiler uses NSC for optimization strategy (advisory)
+
+![Compiler uses NSC for optimization strategy](https://i.imgur.com/OlqycTz.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant C as Compiler (Neuro-DPDA)
+  participant NSC as NSC
+  participant OKB as OKB (optional)
+  participant QFS as QFS
+
+  C->>NSC: SelectOptimizationStrategy(\nsemantic_hash, aqo_digest,\npolicy_digest, deterministic?, seed)
+  opt optional OKB
+    NSC->>OKB: RetrieveOptimizationCandidates(signature,\ndeterministic?, seed)
+    OKB-->>NSC: candidates + provenance refs
+  end
+  NSC-->>C: ranked strategy + admissibility notes\n+ explain ref + digest
+  C->>QFS: persist job-scoped NSC decision artifacts\n(qfs://jobs/<job_id>/nsc/*)
+  QFS-->>C: refs
+```
+
+</details>
+
+---
+
+### A.7 Sequence — NSC orchestrates GNN Optimizer (validated advisory)
+
+![NSC orchestrates GNN Optimizer](https://i.imgur.com/pMuvYXk.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+    autonumber
+
+    participant NSC as NSC
+    participant Optimizer as GNN Optimizer
+    participant DM as Driver Manager
+    participant QFS as QFS
+
+    NSC->>DM: GetDeviceStatus (topology+calibration digests)
+    DM-->>NSC: bounded snapshots/digests
+
+    NSC->>Optimizer: OptimizeCircuit(AQO digest/ref, topology digest/ref, policy, deterministic?, seed)
+
+    Optimizer-->>NSC: placement/routing + confidence + optimizer_digest + fallback_used?
+
+    NSC->>NSC: symbolic validation + policy gate
+
+    alt accepted
+        NSC->>QFS: persist qfs://jobs/<job_id>/nsc/ + optimizer refs (if used)
+        NSC-->>Optimizer: (optional) Publish feedback hook
+    else rejected
+        NSC-->>NSC: emit fallback marker (reason)
+    end
+```
+
+</details>
+
+---
+
+### A.8 Fallback Chain (mandatory)
+
+![Fallback Chain](https://i.imgur.com/1hNr9mf.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  A["NSC advisory decision\n(neural+okb+gnn)"] -->|timeout / low confidence / untrusted / policy deny| B["DPDA symbolic-only\n(deterministic)"]
+  B -->|insufficient| C["Deterministic heuristic\n(no ML)"]
+  C -->|insufficient| D["Compiler baseline\n(no NSC influence)"]
+  D --> E["Runtime baseline execution"]
+```
+
+</details>
+
+---
+
+### A.9 Trust Boundary (NSC never blocks baseline)
+
+![Trust Boundary](https://i.imgur.com/2W2gSRu.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+    subgraph Trusted["Trusted zone (internal mesh, mTLS)"]
+        NSC[NSC] --> OPT[GNN Optimizer]
+        NSC --> OKB["OKB (optional)"]
+        NSC --> QFS[(QFS)]
+    end
+
+    subgraph Authority["Authority boundaries (hard)"]
+        Comp["Compiler validation<br/>(AST-only, deterministic)"]
+        Kern["Kernel/HWE lifecycle authority"]
+        Policy["Policy enforcement<br/>(hard constraints)"]
+    end
+
+    NSC -. "advisory only" .-> Comp
+    NSC -. "advisory only" .-> Kern
+    NSC -. "bounded by" .-> Policy
+
+    Note["If NSC unavailable/untrusted:<br/>fall back deterministically.<br/>No hard dependency."]
+    Note -.-> NSC
+	style Trusted fill:#FFFFFF
+	style Authority fill:#FFFFFF
+```
+
+</details>
+
+
+---
+
+### A.10 NSC Job-Scoped QFS Layout (when NSC influences a job)
+
+![NSC Job-Scoped QFS Layout](https://i.imgur.com/1F53uJZ.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  root["qfs://jobs/<job_id>/nsc/"] --> dec["decision.json\n(selected action + reason codes)"]
+  root --> exp["explain.json\n(bounded)"]
+  root --> rep["replay_bundle.json\n(inputs+outputs+digests)"]
+  root --> inD["inputs_digest.txt"]
+  root --> outD["outputs_digest.txt"]
+
+  dec --> optRefs["optional refs:\nqfs://jobs/<job_id>/optimizer/*\nqfs://jobs/<job_id>/kb/*"]
+```
+
+</details>
+
+---
+
+### A.11 NSC Decision Lifecycle State Machine
+
+![NSC Decision Lifecycle State Machine](https://i.imgur.com/riioe7n.png)
+
+<details>
+<summary>code</summary>
+
+```text
+stateDiagram-v2
+  [*] --> Proposed: request received
+  Proposed --> Validated: DPDA admissible + policy ok
+  Proposed --> Rejected: DPDA reject / policy deny
+  Validated --> Enriched: optional OKB/GNN consulted
+  Enriched --> Finalized: decision selected + digest computed
+  Finalized --> Persisted: artifacts written to QFS
+  Persisted --> Verified: replay check passed (optional/CI)
+  Persisted --> Diverged: replay mismatch detected
+  Rejected --> [*]
+  Verified --> [*]
+  Diverged --> [*]
+```
+
+</details>
+
+
+---
+
+### A.12 Observability Span Topology (recommended)
+
+![Observability Span Topology](https://i.imgur.com/nP9Maxm.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  Req["nsc.request (root span)"] --> Feat["nsc.feature_build"]
+  Req --> Dpda["nsc.dpda_allowed_actions"]
+  Req --> Neural["nsc.neural_score"]
+  Req --> Okb["nsc.okb_lookup (optional)"]
+  Req --> Gnn["nsc.gnn_orchestrate (optional)"]
+  Req --> Gate["nsc.policy_gate"]
+  Req --> Expl["nsc.explainability"]
+  Req --> Replay["nsc.replay_bundle_write"]
+```
+
+</details>

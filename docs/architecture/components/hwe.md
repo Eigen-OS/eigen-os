@@ -620,3 +620,342 @@ HWE is considered fully realized when:
 - conformance suite and SRE monitoring assets aligned to this contract
 
 HWE is the long-term hardware-aware runtime intelligence layer connecting deterministic AQO execution with adaptive optimization, while preserving strict reproducibility, safety, and observability contracts across heterogeneous quantum backends.
+
+---
+
+## Appendix A. Diagrams (normative)
+
+### A.1 C4 — Service Context
+
+![Service Context](https://i.imgur.com/qXPGBma.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+    Client[Client SDKs / CLI] -->|"public gRPC"| API[System API]
+    API -->|"enqueue/observe"| K[Kernel / QRTX]
+
+    subgraph EigenOS["Eigen OS (cluster)"]
+        K -->|"PlanExecution / AdaptExecution"| HWE[HWE]
+        HWE -->|"ExecuteCircuit"| DM[Driver Manager]
+        HWE -->|"GetHardwareSnapshot / telemetry"| DM
+        
+        K -->|"CompileJob"| C[Compiler Service]
+        
+        C --> QFS[(QFS)]
+        K --> QFS
+        HWE --> QFS
+        DM --> QFS
+        
+        HWE -->|"optional OptimizeCircuit"| OPT[GNN Optimizer]
+        OPT --> QFS
+        
+        HWE -->|"optional retrieval"| KB[Knowledge Base]
+    end
+
+    DM -->|"vendor SDK / remote QDriver"| HW["QPU / Simulator / Vendor Cloud"]
+    
+    HWE --> OBS["Observability (OTel/Prom/Logs)"]
+    K --> OBS
+    DM --> OBS
+```
+
+</details>
+
+---
+
+### A.2 C4 — Component Diagram (Inside HWE)
+
+![Component Diagram](https://i.imgur.com/jwUJwNq.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+    subgraph HWE["HWE (logical subsystem HWEControlService)"]
+        API["Internal API<br/>PlanExecution / AdaptExecution / ReplayExecutionDecision"]
+        Guard["Policy & Safety Gate<br/>(tenant policy, determinism mode, budgets)"]
+        Canon["Canonicalizer<br/>(normalize inputs, compute digests)"]
+        Snap["Telemetry Snapshotter<br/>(validate/sanitize, TTL cache)"]
+        Select["Backend Selector<br/>(rank candidates, deterministic tie-break)"]
+        InvokeOpt["Optimizer Orchestrator<br/>(call GNN Optimizer if enabled)"]
+        Validate["Plan Validator<br/>(symbolic checks, constraints, invariants)"]
+        Adapt["Adaptation Engine<br/>(reroute/retry/defer/abort)"]
+        Replay["Replay Validator<br/>(deterministic mode)"]
+        Emit["QFS Artifact Emitter<br/>(hwe/* + digests + explain)"]
+        Err["Error Normalizer<br/>(error-model.md mapping)"]
+        Exec["Execution Dispatcher<br/>(via Driver Manager)"]
+
+        API --> Guard --> Canon --> Snap --> Select
+        Select --> InvokeOpt --> Validate
+        Validate -->|"valid plan"| Exec
+        Validate -->|"invalid/optimizer rejected"| Adapt --> Validate
+        Exec --> Emit
+        Adapt --> Emit
+        Replay --> Emit
+        Validate -->|"hard fail"| Err
+        Err --> Emit
+    end
+
+    Snap --> DM["Driver Manager<br/>(topology/calibration/status)"]
+    InvokeOpt --> OPT["GNN Optimizer"]
+    Emit --> QFS[(QFS)]
+    API --> OBS["OTel/Prom/Logs"]
+	style HWE color:#000000,fill:#FFFFFF
+```
+
+</details>
+
+---
+
+### A.3 Deterministic Key Derivation (HWE decision key + digest)
+
+![Deterministic Key Derivation](https://i.imgur.com/7ihz3WS.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  AQO["AQO digest\n(aqo_sha256)"] --> KEY["hwe_decision_key"]
+  BackendSnap["Backend snapshot digest\n(topology+capabilities)"] --> KEY
+  TelemetrySnap["Telemetry snapshot digest\n(calibration/noise/queue)"] --> KEY
+  Policy["Policy envelope\n(mode, constraints, retry budgets)"] --> KEY
+  CV["HWE contract_version"] --> KEY
+  Seed["seed (required if deterministic=true)"] --> KEY
+  OptVer["optimizer contract/model id\n(or none)"] --> KEY
+
+  KEY --> Out["Decision outputs\n(selected backend, actions, refs)"]
+  Out --> Digest["hwe_decision_digest\n= sha256(inputs + outputs)"]
+```
+
+</details>
+
+---
+
+### A.4 Sequence — PlanExecution + Execute
+
+![PlanExecution + Execute](https://i.imgur.com/1BHOyJN.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant K as Kernel/QRTX
+  participant H as HWE
+  participant DM as Driver Manager
+  participant O as GNN Optimizer
+  participant QFS as QFS
+
+  K->>H: PlanExecution(HardwareExecutionContext)\n(deterministic?, seed, policy)
+  H->>H: Canonicalize + compute digests\n(aqo/topology/telemetry/policy)
+  H->>DM: GetDeviceStatus/GetDeviceDetails\n(topology+calibration+queue)
+  DM-->>H: snapshot (bounded) + hashes/refs
+
+  alt optimizer enabled by policy
+    H->>O: OptimizeCircuit(aqo_ref/hash,\n topology_hash, calibration_hash,\n deterministic?, seed, policy)
+    O-->>H: optimized_aqo_ref + placement/routing refs\n+ optimizer_digest + fallback_used?
+    H->>H: Validate optimizer output\n(symbolic + policy constraints)
+  else optimizer disabled
+    H->>H: Deterministic heuristic planning\n(backend selection + constraints)
+  end
+
+  H->>QFS: Write qfs://jobs/<job_id>/hwe/*\n(snapshot, plan, explain, digest)
+  QFS-->>H: refs + checksums
+
+  H-->>K: ExecutionDecision\n(selected_backend, optional refs,\n hwe_decision_digest)
+  K->>DM: ExecuteCircuit(job_id, device_id, payload, shots, seed?)
+  DM-->>K: counts + metadata / normalized error
+```
+
+</details>
+
+---
+
+### A.5 Sequence — AdaptExecution (reroute/retry/defer/abort) with audit trail
+
+![AdaptExecution](https://i.imgur.com/vXnB9uk.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant K as Kernel/QRTX
+  participant H as HWE
+  participant DM as Driver Manager
+  participant QFS as QFS
+
+  K->>H: AdaptExecution(job_id, event,\n last_decision_ref, policy)
+  H->>H: Load last decision + context\n(validate determinism mode)
+  H->>DM: GetDeviceStatus (candidates)\n(queue/health/calibration)
+  DM-->>H: updated snapshots
+
+  alt transient failure & retry budget remains
+    H->>H: action=RETRY (same backend)\n(backoff policy)
+  else backend degraded & substitution allowed
+    H->>H: action=REROUTE (new backend)\n(deterministic tie-break)
+  else determinism=true and no safe action
+    H->>H: action=ABORT (policy_denied / fallback_exhausted)
+  else
+    H->>H: action=DEFER (wait / replan later)
+  end
+
+  H->>QFS: Append adaptation_history.json\n+ decision digest + reason codes
+  QFS-->>H: refs
+  H-->>K: AdaptationActions + updated ExecutionDecision ref
+```
+
+</details>
+
+---
+
+### A.6 Sequence — ReplayExecutionDecision (deterministic verification)
+
+![ReplayExecutionDecision](https://i.imgur.com/A13Z8jU.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant Ops as Operator/CI
+  participant H as HWE
+  participant QFS as QFS
+
+  Ops->>H: ReplayExecutionDecision(job_id, decision_ref)
+  H->>QFS: Load replay_bundle.json + inputs refs
+  QFS-->>H: bundle + artifacts
+  H->>H: Recompute digests + re-run planning\n(deterministic=true, same seed)
+  H->>H: Compare computed vs stored\nhwe_decision_digest
+  alt match
+    H-->>Ops: OK (replay verified)
+  else mismatch
+    H-->>Ops: FAILED (EIGEN_HWE_REPLAY_MISMATCH)
+  end
+```
+
+</details>
+
+---
+
+### A.7 QFS Layout (job-scoped HWE artifacts)
+
+![QFS Layout](https://i.imgur.com/NSvti9E.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  root["qfs://jobs/<job_id>/hwe/"] --> hs["hardware_snapshot.json\n(bounded normalized)"]
+  root --> ts["telemetry_snapshot.json\n(bounded normalized)"]
+  root --> plan["execution_plan.json\n(selected_backend + refs + budgets)"]
+  root --> hist["adaptation_history.json\n(bounded actions + reasons)"]
+  root --> replay["replay_bundle.json\n(inputs+outputs+digests)"]
+  root --> explain["explain.json\n(optional, bounded)"]
+
+  plan --> digest["hwe_decision_digest\n(sha256)"]
+  replay --> digest
+```
+
+</details>
+
+---
+
+### A.8 Adaptation State Machine (decision → action → audit)
+
+![Adaptation State Machine](https://i.imgur.com/2ILe9GP.png)
+
+<details>
+<summary>code</summary>
+
+```text
+stateDiagram-v2
+  [*] --> Snapshot: ingest telemetry snapshot
+  Snapshot --> Plan: plan execution
+  Plan --> Execute: dispatch to Driver Manager
+  Execute --> Success: result ok
+  Execute --> Failure: execution error / timeout
+
+  Failure --> Retry: transient && retry_budget
+  Retry --> Execute
+
+  Failure --> Reroute: degraded && substitution_allowed
+  Reroute --> Plan
+
+  Failure --> Defer: policy allows defer
+  Defer --> Snapshot
+
+  Failure --> Abort: policy forbids / fallback exhausted
+  Abort --> [*]
+  Success --> [*]
+```
+
+</details>
+
+---
+
+### A.9 Trace Span Outline (HWE)
+
+![Trace Span Outline](https://i.imgur.com/dPKqQn2.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  R["PlanExecution span\nhwe.plan"] --> S["snapshot span\nhwe.snapshot"]
+  R --> SEL["select span\nhwe.select_backend"]
+  R --> OPT["optimizer span (optional)\nhwe.call_optimizer"]
+  R --> VAL["validate span\nhwe.validate_plan"]
+  R --> EM["emit span\nhwe.emit_qfs"]
+  A["AdaptExecution span\nhwe.adapt"] --> S2["snapshot span\nhwe.snapshot"]
+  A --> ACT["action span\nhwe.apply_action"]
+  A --> EM2["emit span\nhwe.emit_qfs"]
+
+  Note1["attrs: job_id (logs only), policy_mode, deterministic,\n backend_class, hwe_decision_digest,\n fallback_reason (if any)"] --- R
+```
+
+</details>
+
+---
+
+### A.10 Trust Boundary (HWE as policy gate, no provider secrets)
+
+![Trust Boundary](https://i.imgur.com/ITZFA7P.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+    subgraph Trusted["Trusted Zone (Eigen OS internal mesh, mTLS)"]
+        K[Kernel/QRTX] -->|"internal calls"| H[HWE]
+        H -->|"ExecuteCircuit / snapshots"| DM[Driver Manager]
+        H -->|"optional OptimizeCircuit"| O[GNN Optimizer]
+        H --> QFS[(QFS)]
+    end
+
+    subgraph Untrusted["Untrusted / External"]
+        HW[QPU / Vendor Cloud]
+        Net[(External network)]
+    end
+
+    DM -->|"vendor APIs"| HW
+    H -.->|"NO direct provider access"| Net
+
+    Note["HWE never handles provider credentials directly.<br/>All telemetry is untrusted input → validated/sanitized.<br/>Deterministic mode requires seed + replay bundle."]
+    Note -.-> H
+	style Trusted fill:#FFFFFF
+	style Untrusted fill:#FFFFFF
+```
+
+</details>

@@ -602,3 +602,363 @@ Resource Manager SHALL support:
 - production-grade scheduling coordination.
 
 These gaps are intentionally preserved as required Phase-1+ work to prevent architecture scope loss.
+
+---
+
+## Appendix A. Diagrams (normative)
+
+### A.1 C4 Context — RM between Kernel and Driver Manager
+
+![C4 Context](https://i.imgur.com/Z6BX2MY.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+    subgraph Clients["Clients"]
+        SDK["SDK/CLI"]
+    end
+
+    subgraph Public["Public Edge"]
+        API["System API\n(DeviceService)"]
+    end
+
+    subgraph Core["Runtime Core"]
+        K["Kernel / QRTX"]
+        RM["Resource Manager\n(target)"]
+        DM["Driver Manager"]
+    end
+
+    subgraph Storage["Persistence / Evidence"]
+        QFS[(QFS)]
+        DB["Reservation DB\n(Phase-1+)"]
+    end
+
+    SDK --> API --> K
+    K --> RM
+    RM --> DM
+    K --> DM
+    K --> QFS
+    RM --> QFS
+    RM --> DB
+    DM --> QFS
+```
+
+</details>
+
+---
+
+### A.2 C4 Container — MVP wiring vs Target wiring
+
+![C4 Container](https://i.imgur.com/u5wkRvp.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+    subgraph MVP["MVP (today) — no standalone RM"]
+        API1["System API DeviceService\nList/Get/Reserve"]
+        DM1["Driver Manager\nListDevices/GetStatus"]
+        K1["Kernel (limited coord)"]
+        API1 --> DM1
+        API1 --> K1
+    end
+
+    subgraph Target["Target (Phase-1+) — RM as service/module boundary"]
+        API2["System API DeviceService"]
+        K2["Kernel/QRTX Scheduler"]
+        RM2["Resource Manager Service\nAllocation + Reservations"]
+        DM2["Driver Manager"]
+        DB2[(Reservation DB)]
+        QFS2[(QFS Audit/Artifacts)]
+        
+        API2 --> K2
+        K2 --> RM2
+        RM2 --> DM2
+        RM2 --> DB2
+        RM2 --> QFS2
+    end
+```
+
+</details>
+
+---
+
+### A.3 Reservation semantics — MVP placeholder token vs Phase-1 enforced
+
+![Reservation semantics](https://i.imgur.com/ROOOTs0.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+    subgraph MVP["MVP ReserveDevice (placeholder)"]
+        R1["ReserveDevice request"] --> V1["Validate shape"]
+        V1 --> T1["Generate reservation_id token"]
+        T1 --> RESP1["Return token + timestamps\nNO slot accounting\nNO exclusivity"]
+    end
+
+    subgraph P1["Phase-1 ReserveDevice"]
+        R2["ReserveDevice request"] --> V2["Validate + authz + policy"]
+        V2 --> A2["Check capacity / slots"]
+        A2 -->|available| L2["Create enforced reservation\n(state=ACTIVE, expires_at)"]
+        A2 -->|full| DENY2["RESOURCE_EXHAUSTED\n+ RetryInfo"]
+        L2 --> RESP2["Return reservation_id\n+ ownership + expiry\n+ queue placement (optional)"]
+    end
+```
+
+</details>
+
+---
+
+### A.4 Reservation state machine
+
+![Reservation state machine](https://i.imgur.com/eOY42IZ.png)
+
+<details>
+<summary>code</summary>
+
+```text
+stateDiagram-v2
+  [*] --> PENDING
+  PENDING --> ACTIVE: create_reservation
+  PENDING --> DENIED: capacity/policy deny
+
+  ACTIVE --> EXTENDED: extend (optional)
+  EXTENDED --> ACTIVE: normalize_state
+
+  ACTIVE --> CONSUMED: allocate_slot_for_job
+  ACTIVE --> RELEASED: client_release / admin_revoke
+  ACTIVE --> EXPIRED: ttl_expiry_sweeper
+  ACTIVE --> REVOKED: policy_violation / owner_invalid
+
+  CONSUMED --> RELEASED: job_done/cancel/error
+  CONSUMED --> EXPIRED: ttl_expiry_sweeper (should not happen; guardrail)
+
+  DENIED --> [*]
+  RELEASED --> [*]
+  EXPIRED --> [*]
+  REVOKED --> [*]
+
+  note right of ACTIVE
+    Enforced semantics only in Phase-1+.
+    In MVP, ReserveDevice returns a token only.
+  end note
+```
+
+</details>
+
+---
+
+### A.5 Expiry sweeper loop (required recovery mechanism)
+
+![Expiry sweeper loop](https://i.imgur.com/IzXugWX.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant RM as Resource Manager
+  participant DB as Reservation DB
+  participant Q as QFS (audit)
+
+  loop every N seconds
+    RM->>DB: scan reservations where expires_at < now AND state in (ACTIVE, EXTENDED)
+    DB-->>RM: expired reservation_ids
+    RM->>DB: update state=EXPIRED (idempotent)
+    RM->>Q: write audit marker (optional)\nqfs://.../meta/reservation_events.jsonl
+  end
+```
+
+</details>
+
+---
+
+### A.6 Sequence — AllocateResources / ReserveExecutionSlot (Phase-1+)
+
+![AllocateResources](https://i.imgur.com/DRqxIqg.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant K as Kernel/QRTX Scheduler
+  participant RM as Resource Manager
+  participant DM as Driver Manager
+  participant DB as Reservation DB
+
+  K->>RM: ReserveExecutionSlot(job_id, constraints, priority,\n deterministic_mode, seed)
+  RM->>DM: GetDeviceStatus/ListDevices (snapshot)
+  DM-->>RM: devices + health + capabilities (bounded)
+  RM->>RM: compute candidate set + policy checks
+  RM->>DB: create reservation (state=ACTIVE, expires_at)
+  DB-->>RM: reservation_id
+  RM-->>K: allocation accepted\n(reservation_id, device_id, slot_id, expiry)
+```
+
+</details>
+
+---
+
+### A.7 Sequence — ReleaseExecutionSlot (job terminalization)
+
+![ReleaseExecutionSlot](https://i.imgur.com/wSCOjFh.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant K as Kernel/QRTX
+  participant RM as Resource Manager
+  participant DB as Reservation DB
+
+  K->>RM: ReleaseExecutionSlot(job_id, reservation_id)
+  RM->>DB: transition reservation to RELEASED (idempotent)
+  DB-->>RM: ok
+  RM-->>K: ack
+```
+
+</details>
+
+---
+
+### A.8 Queue visibility path (GetQueueDepth / Pressure)
+
+![Queue visibility path](https://i.imgur.com/LaOhL4X.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+    subgraph Sources["Inputs"]
+        DM["Driver Manager\n(queue hints, health)"]
+        K["Kernel/QRTX\n(active jobs, queued jobs)"]
+        RM["Resource Manager\n(aggregation)"]
+    end
+
+    DM --> RM
+    K --> RM
+    RM --> API["System API\nQueue visibility endpoints"]
+    API --> SDK["SDK/CLI"]
+
+    classDef source fill:#e3f2fd,stroke:#1976d2
+    class DM,K,RM source
+```
+
+</details>
+
+---
+
+### A.9 Error mapping decision tree (normative)
+
+![Error mapping decision tree](https://i.imgur.com/Cdn5xQ1.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+    Req[Request] --> V{valid?}
+    V -- no --> IA["INVALID_ARGUMENT\n+ BadRequest"]
+    V -- yes --> Auth{authorized?}
+    Auth -- no --> PD[PERMISSION_DENIED]
+    Auth -- yes --> Impl{"feature supported\nin this deployment?"}
+    Impl -- no --> UN["UNIMPLEMENTED\n(EIGEN_RM_NOT_ENFORCED)"]
+    Impl -- yes --> Exists{"device/reservation exists?"}
+    Exists -- no --> NF["NOT_FOUND\n+ ResourceInfo"]
+    Exists -- yes --> Cap{"capacity available?"}
+    Cap -- no --> RE["RESOURCE_EXHAUSTED\n+ RetryInfo"]
+    Cap -- yes --> OK[OK]
+
+    classDef error fill:#ffebee,stroke:#f44336
+    class IA,PD,UN,NF,RE error
+```
+
+</details>
+
+---
+
+### A.10 Trace correlation across allocation path
+
+![Trace correlation across allocation path](https://i.imgur.com/v2xzKvS.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant API as System API
+  participant K as Kernel/QRTX
+  participant RM as Resource Manager
+  participant DM as Driver Manager
+
+  API->>K: Submit/Dispatch request (traceparent)
+  K->>RM: Allocate/Reserve (child span)
+  RM->>DM: device snapshot (child span)
+  RM-->>K: allocation decision (child span)
+  Note over RM: Logs include trace_id + reservation_id + device_id\nMetrics exclude job_id/trace_id labels
+```
+
+</details>
+
+---
+
+### A.11 Health model (target): /live + /ready dependency checks
+
+![Health model](https://i.imgur.com/dXdMXSI.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+    Live["/live"] --> Proc["process alive"]
+    Ready["/ready"] --> Deps{"deps ok?"}
+    
+    Deps --> DM["Driver Manager reachable"]
+    Deps --> DB["Reservation DB reachable (Phase-1+)"]
+    Deps --> Q["QFS reachable (audit optional)"]
+    Deps --> OK["ready = true"]
+    Deps --> NotOK["ready = false"]
+
+    classDef health fill:#e8f5e9,stroke:#2e7d32
+    class Live,Ready,OK health
+```
+
+</details>
+
+---
+
+### A.12 Fairness and tenant isolation (high-level)
+
+![Fairness and tenant isolation](https://i.imgur.com/9olOCel.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+    Req["Allocate request\n(tenant/project/priority)"] --> Policy["Policy engine\n(RBAC/ABAC + quotas)"]
+    Policy --> Classify["Classify into queue/class\n(bounded)"]
+    Classify --> Decide["Deterministic allocator\n(tie-break rules)"]
+    Decide --> Grant["Grant slot/reservation"]
+    Decide --> Deny["Deny + reason\n(RESOURCE_EXHAUSTED/FAILED_PRECONDITION)"]
+
+    classDef decision fill:#fff3e0,stroke:#f57c00
+    classDef deny fill:#ffebee,stroke:#f44336
+    class Policy,Classify,Decide decision
+    class Deny deny
+```
+
+</details>

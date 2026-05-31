@@ -596,3 +596,313 @@ CI SHOULD validate:
 - forwarding-path conformance tests as kernel becomes authoritative
 
 These gaps are intentionally preserved to prevent architecture scope loss while keeping the MVP implementation description truthful.
+
+---
+
+## Appendix A. Diagrams (normative)
+
+### A.1 C4 Context — System API as the sole public ingress
+
+![C4 Context](https://i.imgur.com/c8u41kL.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  subgraph Ext["External"]
+    SDK[SDK/CLI]
+    Web[Public gRPC clients]
+    IdP["OIDC IdP\n(Phase-1+)"]
+  end
+
+  subgraph Public["Public boundary"]
+    API["System API\nAuthn/Authz/Validation\nObservability ingress"]
+  end
+
+  subgraph Core["Runtime core (internal)"]
+    K["Kernel/QRTX\nKernelGatewayService"]
+    QFS[(QFS)]
+  end
+
+  SDK --> API
+  Web --> API
+  IdP <--> API
+  API --> K
+  K --> QFS
+
+  classDef boundary stroke-width:2px,stroke-dasharray: 5 5;
+  class API boundary
+```
+
+</details>
+
+---
+
+### A.2 C4 Container — MVP vs Target forwarding model
+
+![C4 Container](https://i.imgur.com/IAklit4.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  subgraph MVP["MVP (today)"]
+    API1["System API\n- gRPC public surface\n- authn/authz\n- validation\n- partial lifecycle + local streaming"]
+    K1["Kernel/QRTX\n(partial forwarding)"]
+    API1 --> K1
+  end
+
+  subgraph Target["Target (MVP-3 / Phase-1+)"]
+    API2["System API\nStrict stateless gateway\nForward-only"]
+    K2["Kernel/QRTX\nAuthoritative lifecycle"]
+    API2 -->|all lifecycle RPCs| K2
+  end
+```
+
+</details>
+
+---
+
+### A.3 Ingress decision pipeline (status-first)
+
+![Ingress decision pipeline](https://i.imgur.com/vNkJe2b.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  Req[Incoming gRPC request] --> Parse["Parse + normalize metadata\n(allowlist)"]
+  Parse --> V{"Validate request\n(schema + limits)"}
+  V -- invalid --> IA["INVALID_ARGUMENT\n(+ BadRequest details)"]
+  V -- ok --> A{Authn mode}
+  A -->|allow_all| Z{Authz}
+  A -->|static_token| T{Token valid?}
+  A -->|"oidc/jwt (Phase-1+)"| J{"JWT valid?\niss/aud/exp"}
+  T -- no --> UA1[UNAUTHENTICATED]
+  T -- yes --> Z
+  J -- no --> UA2[UNAUTHENTICATED]
+  J -- yes --> Z
+  Z -- deny --> PD["PERMISSION_DENIED\n(+ ErrorInfo.reason)"]
+  Z -- allow --> F{Forward or local-handled?}
+  F -->|target: always forward| FW[Forward to KernelGatewayService]
+  F -->|MVP: some local lifecycle| L["Local state path\n(temporary)"]
+```
+
+</details>
+
+----
+
+### A.4 Sequence — SubmitJob end-to-end (target: strict forwarding)
+
+![SubmitJob end-to-end](https://i.imgur.com/Fn3OdfV.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant C as Client SDK/CLI
+  participant API as System API
+  participant K as KernelGatewayService (QRTX)
+
+  C->>API: SubmitJob (authorization, traceparent,\n x-eigen-tenant, x-client-request-id)
+  API->>API: validate + enforce_authn + enforce_authz
+  API->>K: EnqueueJob (forward ctx + deadline)
+  K-->>API: EnqueueJobResponse(job_id, initial_state)
+  API-->>C: SubmitJobResponse(job_id, status)
+```
+
+</details>
+
+---
+
+### A.5 Idempotency key semantics (x-eigen-idempotency-key)
+
+![Idempotency key semantics](https://i.imgur.com/gw4QmIX.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  K1[Request + idempotency key] --> N["Normalize request\n(canonical form)"]
+  N --> H[Compute request_fingerprint]
+  H --> Cache{"Idempotency cache\n(key -> fingerprint, job_id)"}
+  Cache -- miss --> Create["Forward EnqueueJob\n(store key->fingerprint->job_id)"]
+  Cache -- hit same fp --> Reuse[Return same job_id]
+  Cache -- hit different fp --> Conflict["FAILED_PRECONDITION\n(idempotency key conflict)"]
+```
+
+</details>
+
+---
+
+### A.6 Sequence — Retry-safe SubmitJob with idempotency
+
+![Retry-safe SubmitJob with idempotency](https://i.imgur.com/rvgrcP7.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant C as Client
+  participant API as System API
+  participant K as Kernel/QRTX
+
+  C->>API: SubmitJob (x-eigen-idempotency-key=K)
+  API->>API: cache miss -> forward
+  API->>K: EnqueueJob
+  K-->>API: job_id=J
+  API-->>C: job_id=J
+
+  C->>API: SubmitJob retry (same key=K, same body)
+  API->>API: cache hit -> job_id=J
+  API-->>C: job_id=J (no duplicate)
+```
+
+</details>
+
+---
+
+### A.7 Header allowlist propagation (deterministic)
+
+![Header allowlist propagation](https://i.imgur.com/h19sF0k.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  Client -->|authorization?\ntraceparent\nx-client-request-id\nx-eigen-tenant\nx-eigen-project| API[System API]
+  API -->|forward allowlisted only\n+ sanitized security ctx digest| K[Kernel/QRTX]
+  API -.->|DROP / DO NOT FORWARD\nunknown/unbounded headers| Drop[Rejected metadata]
+```
+
+</details>
+
+---
+
+### A.8 Sequence — Deadline propagation (gRPC)
+
+![Deadline propagation](https://i.imgur.com/V94OAAL.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant C as Client
+  participant API as System API
+  participant K as Kernel/QRTX
+
+  C->>API: RPC with deadline=T
+  API->>API: ensure bounded default if none
+  API->>K: Forward RPC with same/derived deadline
+  alt downstream exceeds deadline
+    K-->>API: DEADLINE_EXCEEDED
+    API-->>C: DEADLINE_EXCEEDED (status-first)
+  else ok
+    K-->>API: success
+    API-->>C: success
+  end
+```
+
+</details>
+
+---
+
+### A.9 StreamJobUpdates (MVP local vs Target kernel-owned stream)
+
+![StreamJobUpdates](https://i.imgur.com/rJ6jvwy.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  subgraph MVP["MVP (today)"]
+    API1[System API]
+    Local[In-memory lifecycle + stream]
+    API1 --> Local
+    Client1[Client] --> API1
+  end
+
+  subgraph Target["Target (Phase-1+)"]
+    Client2[Client] --> API2[System API]
+    API2 --> K["Kernel stream API\n(StreamJobEvents/Updates)"]
+  end
+```
+
+</details>
+
+---
+
+### A.10 Observability flow (logs/metrics/traces)
+
+![Observability flow](https://i.imgur.com/M6Pf0ft.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  API[System API] --> M["/metrics\nPrometheus scrape/"]
+  API --> L["Structured logs\n(trace_id/span_id)"]
+  API --> T["OTel traces\n(traceparent propagation)"]
+  M --> Obs[(Observability backend)]
+  L --> Obs
+  T --> Obs
+```
+
+</details>
+
+---
+
+### A.11 “No silent degradation” (telemetry health signaling)
+
+![No silent degradation](https://i.imgur.com/guawBt3.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  Export[Exporter/Downstream/Policy component] --> Degraded{Degraded?}
+  Degraded -- no --> OK[Normal operation]
+  Degraded -- yes --> Signal[Emit explicit signals:\n- metric increment\n- structured log\n- optional audit marker]
+  Signal --> Continue["Continue in bounded mode\n(no silent drops)"]
+```
+
+</details>
+
+---
+
+### A.12 Error mapping overview (gRPC status-first)
+
+![Error mapping overview](https://i.imgur.com/UEmFtEm.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  E[Failure source] --> Map["Canonical mapping\n(error-model.md)"]
+  Map --> IA["INVALID_ARGUMENT\n(BadRequest)"]
+  Map --> UA[UNAUTHENTICATED]
+  Map --> PD["PERMISSION_DENIED\n(ErrorInfo.reason)"]
+  Map --> NF["NOT_FOUND\n(ResourceInfo)"]
+  Map --> FP[FAILED_PRECONDITION]
+  Map --> RE["RESOURCE_EXHAUSTED\n(RetryInfo)"]
+  Map --> UN["UNAVAILABLE\n(RetryInfo)"]
+  Map --> DE[DEADLINE_EXCEEDED]
+  Map --> IN[INTERNAL]
+```
+
+</details>

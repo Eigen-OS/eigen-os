@@ -520,3 +520,226 @@ These are targets and may be tightened by release notes:
 7. JobSpec packaging is deterministic and path-safe.
 
 ---
+
+## Appendix A. Diagrams (normative)
+
+### A.1 C4 — System Context (Client SDKs ↔ Eigen OS)
+
+![System Context](https://i.imgur.com/gqgNFCm.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  User((User / CI / Notebook))
+  SDK[Eigen Client SDK / CLI]
+  SysAPI["System API\n(eigen.api.v1 gRPC)"]
+  Kernel[Kernel / QRTX]
+  DM[Driver Manager]
+  QFS["QFS\n(artifacts/results)"]
+  Obs["Observability\n(traces/logs/metrics)"]
+  IdP["Auth Provider\n(OIDC/JWT or static token)"]
+
+  User -->|SDK calls| SDK
+  SDK -->|gRPC JobService/DeviceService| SysAPI
+  SysAPI --> Kernel
+  Kernel --> DM
+  Kernel --> QFS
+  SysAPI --> Obs
+  Kernel --> Obs
+  SDK -->|traceparent + metadata| SysAPI
+  SDK -->|token| SysAPI
+  SysAPI -->|verify token| IdP
+```
+
+</details>
+
+---
+
+### A.2 C4 — Container/Component View (SDK internal architecture)
+
+![System Context](https://i.imgur.com/edGdqmu.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  subgraph ClientProcess["Client Process (CLI / App / Pipeline)"]
+    SDK["SDK Facade\n(language-idiomatic API)"]
+    Pack["JobSpec Packager\n(deterministic packaging)"]
+    Meta["Metadata Injector\n(auth, traceparent,\n x-client-request-id,\n tenant/project)"]
+    Tx["Transport\n(gRPC primary,\n REST optional)"]
+    Err["Error Mapper\n(gRPC status + google.rpc.Status\n→ typed exceptions)"]
+    Retry["Retry/Backoff Policy\n(bounded, deadline-aware,\n idempotency-key reuse)"]
+    Stream["Streaming Runtime\n(StreamJobUpdates)\n+ resume support"]
+    Poll["Polling Helpers\n(GetJobStatus waiters)"]
+    ObsHook["Client Observability Hooks\n(tracing/logging/metrics)\n(bounded cardinality)"]
+
+    SDK --> Pack
+    SDK --> Meta
+    Meta --> Tx
+    Tx --> Err
+    Err --> Retry
+    SDK --> Stream
+    SDK --> Poll
+    SDK --> ObsHook
+
+    Retry --> Tx
+    Stream --> Tx
+    Poll --> Tx
+  end
+
+  SysAPI["System API\n(eigen.api.v1)"]
+  Tx -->|gRPC| SysAPI
+```
+
+</details>
+
+---
+
+### A.3 Sequence — SubmitJob with idempotency + bounded retries (normative)
+
+![System Context](https://i.imgur.com/ktix3pz.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant U as User/App
+  participant SDK as SDK/CLI
+  participant API as System API (JobService)
+  participant K as Kernel/QRTX
+
+  U->>SDK: submit(jobSpec, deadline, x-client-request-id?)
+  note over SDK: MUST normalize + package deterministically\nMUST bound metadata sizes\nMUST set deadline (caller or default)
+  SDK->>SDK: package(JobSpec) + hash/manifest (if required)
+  SDK->>SDK: inject metadata:\n- authorization\n- traceparent\n- x-client-request-id\n- x-eigen-tenant/project
+
+  SDK->>API: SubmitJob(request) [deadline]
+  alt Success (2xx gRPC OK)
+    API-->>SDK: SubmitJobResponse(job_id, status)
+    SDK-->>U: job_id
+  else Retryable failure (UNAVAILABLE/RESOURCE_EXHAUSTED/ABORTED/DEADLINE_EXCEEDED*)
+    note over SDK: If auto-retry is enabled:\n- MUST reuse same x-client-request-id\n- MUST respect remaining deadline\n- MUST bounded exponential backoff\n- MUST stop on non-retryable code
+    SDK->>SDK: backoff + retry_budget_check
+    SDK->>API: SubmitJob(request) [same x-client-request-id]
+    API-->>SDK: SubmitJobResponse(job_id, status) OR final error
+    SDK-->>U: job_id OR typed error
+  else Non-retryable failure (INVALID_ARGUMENT/PERMISSION_DENIED/UNAUTHENTICATED)
+    API-->>SDK: gRPC error + google.rpc.Status details
+    SDK-->>U: typed exception + structured details access
+  end
+
+  note over API,K: Downstream enqueue happens server-side\nSDK MUST NOT assume enqueue success\nunless SubmitJob returns OK
+  API->>K: EnqueueJob(...)
+```
+
+</details>
+
+* `DEADLINE_EXCEEDED` retryability — policy-dependent; SDK MUST follow `error-model.md`.
+
+---
+
+### A.4 Sequence — Lifecycle: StreamJobUpdates with resume + polling fallback (normative)
+
+![Lifecycle: StreamJobUpdates with resume + polling fallback](https://i.imgur.com/3tdzERw.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+    autonumber
+    participant U as User/App
+    participant SDK as SDK
+    participant API as "System API (JobService)"
+
+    U->>SDK: watch_job(job_id, from_seq?)
+
+    alt Streaming supported
+        SDK->>API: StreamJobUpdates(job_id, last_event_seq=from_seq) [deadline or cancel token]
+        API-->>SDK: stream: {event_seq, state, timestamps, optional refs}
+        SDK-->>U: on_event(event)
+        SDK->>SDK: Persist last_event_seq (client-side + custom strategy)
+    else Streaming unavailable or blocked
+        SDK->>SDK: Use polling fallback
+        loop until terminal state or timeout
+            SDK->>API: GetJobStatus(job_id)
+            API-->>SDK: status(state)
+            SDK-->>U: on_status(state)
+        end
+    end
+```
+
+</details>
+
+---
+
+### A.5 Sequence — GetJobResults + artifact references (QFS refs) (normative)
+
+![GetJobResults + artifact references](https://i.imgur.com/2vsH1DY.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant U as User/App
+  participant SDK as SDK
+  participant API as System API (JobService)
+
+  U->>SDK: get_results(job_id)
+  SDK->>API: GetJobResults(job_id) [deadline]
+  alt Results inline (small)
+    API-->>SDK: results payload
+    SDK-->>U: typed Results
+  else Artifact references present (e.g., qfs://...)
+    API-->>SDK: results + artifact_refs[]
+    note over SDK: SDK MUST surface refs as typed values\nSDK MUST NOT assume artifacts are inline
+    alt Artifact download API exists in deployment
+      SDK-->>U: typed Results + helper download(ref)
+    else No artifact download API
+      SDK-->>U: typed Results + refs (caller resolves out-of-band)
+    end
+  end
+```
+
+</details>
+
+---
+
+### A.6 State Diagram — SDK error mapping & retry decision (normative)
+
+![SDK error mapping & retry decision](https://i.imgur.com/DAR5igW.png)
+
+<details>
+<summary>code</summary>
+
+```text
+stateDiagram-v2
+  [*] --> CallRPC
+  CallRPC --> OK: gRPC OK
+  CallRPC --> MapError: gRPC error
+  MapError --> NonRetryable: INVALID_ARGUMENT\nUNAUTHENTICATED\nPERMISSION_DENIED\nNOT_FOUND*\nFAILED_PRECONDITION*
+  MapError --> Retryable: UNAVAILABLE\nRESOURCE_EXHAUSTED\nABORTED\nDEADLINE_EXCEEDED*
+  Retryable --> CheckBudget
+  CheckBudget --> Backoff: budget ok & time remains
+  CheckBudget --> FinalError: budget exceeded OR deadline exhausted
+  Backoff --> CallRPC: retry (same x-client-request-id)
+  NonRetryable --> FinalError
+  OK --> [*]
+  FinalError --> [*]
+
+  note right of NonRetryable
+    * Policy-dependent:
+    NOT_FOUND / FAILED_PRECONDITION retryability
+    MUST follow error-model.md + deployment semantics
+  end note
+```
+
+</details>

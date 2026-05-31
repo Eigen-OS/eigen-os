@@ -626,3 +626,307 @@ The following CI checks are REQUIRED:
 - Stream replay tests
 - Auth enforcement tests
 - Idempotency replay tests
+
+---
+
+## Appendix A. Diagrams
+
+### A.1 Scope
+
+![Scope](https://i.imgur.com/WWOmpG4.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  subgraph Client[External Clients]
+    SDK[SDK / CLI] --> API[gRPC Public API<br/>eigen.api.v1]
+  end
+
+  subgraph PublicSurface[Public Surface]
+    API --> JS[JobService]
+    API --> DS[DeviceService]
+    API --> KBS[KnowledgeBaseService]
+  end
+
+  subgraph Internal["Internal (not exposed)"]
+    JS -.-> INT[eigen.internal.v1<br/>KernelGatewayService]
+    INT --> QRTX[QRTX]
+    QRTX --> COMP[CompilationService]
+    QRTX --> DM[DriverManagerService]
+    QRTX --> QFS[QFS]
+    QRTX --> OPT[OptimizerService]
+  end
+
+  note1{{Public API excludes:<br/>compiler internals, optimizer internals,<br/>driver coordination semantics}}
+  PublicSurface --- note1
+```
+
+</details>
+
+---
+
+### A.2 Transport & Protocol Requirements
+
+![Transport & Protocol Requirements](https://i.imgur.com/Gs6pLC0.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant C as Client (SDK/CLI)
+  participant API as Public gRPC (eigen.api.v1)
+  participant SEC as Security Module (AuthN/AuthZ)
+  participant OTel as OTel Collector
+
+  C->>API: RPC call (HTTP/2)\nmetadata: x-request-id, traceparent,\n(optional) x-idempotency-key, authorization: Bearer JWT
+  API->>SEC: Validate JWT (iss/aud/exp/sub/tenant_id)\nEvaluate scopes (RBAC/ABAC)
+  alt authorized
+    SEC-->>API: allow + policy snapshot/version
+    API-->>C: gRPC response (status OK + payload)
+  else denied
+    SEC-->>API: deny (reason)
+    API-->>C: PERMISSION_DENIED / UNAUTHENTICATED\n+ structured details
+  end
+  API->>OTel: spans/metrics/logs (bounded labels)
+```
+
+</details>
+
+---
+
+### A.3 Services Overview
+
+![Services Overview](https://i.imgur.com/wM4K82S.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  API[eigen.api.v1] --> JS[JobService]
+  API --> DS[DeviceService]
+  API --> KBS[KnowledgeBaseService]
+
+  JS -->|submit/status/results| JOB[(Job resources)]
+  DS -->|inventory/status/reserve| DEV[(Device resources)]
+  KBS -->|records + decision logs| KB[(KB records)]
+
+  %% cross-cutting rules
+  RULES{{Global rules:<br/>Auth required • bounded metric labels<br/>• traceparent propagation • gRPC status-first}}
+  API --- RULES
+```
+
+</details>
+
+---
+
+### A.4 SubmitJob
+
+![SubmitJob](https://i.imgur.com/P4myZbd.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  A[Client submits SubmitJob\nx-idempotency-key=K] --> B[Server normalizes request\ncanonical bytes = R]
+  B --> H["hash = sha256(R)"]
+  H --> C{"Lookup (tenant,K)"}
+  C -->|miss| D["Create job_id<br/>persist idempotency record<br/>(K,H)->job_id"]
+  C -->|hit same H| E[Return existing job_id<br/>same logical job]
+  C -->|hit different H| F["ALREADY_EXISTS\n(or FAILED_PRECONDITION per policy)"]
+  D --> G[Response: job_id + initial status]
+  E --> G
+```
+
+</details>
+
+---
+
+### A.5 Runtime Semantics
+
+![Runtime Semantics](https://i.imgur.com/p0syl9x.png)
+
+<details>
+<summary>code</summary>
+
+```text
+stateDiagram-v2
+  [*] --> PENDING
+  PENDING --> COMPILING
+  COMPILING --> QUEUED
+  QUEUED --> RUNNING
+  RUNNING --> DONE
+  RUNNING --> ERROR
+  PENDING --> CANCELLED
+  COMPILING --> CANCELLED
+  QUEUED --> CANCELLED
+  RUNNING --> CANCELLED
+
+  %% timeout is represented as ERROR with deadline_exceeded semantics unless v2 introduces TIMEOUT publicly
+  RUNNING --> ERROR: deadline_exceeded
+```
+
+</details>
+
+---
+
+### A.6 StreamJobUpdates
+
+![StreamJobUpdates](https://i.imgur.com/1AwbooY.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+    autonumber
+
+    participant C as Client
+    participant JS as JobService
+
+    C->>JS: StreamJobUpdates(job_id, last_event_seq=N)
+
+    alt replay window available
+        loop events with seq > N
+            JS-->>C: JobUpdate(seq, state, refs)
+        end
+        Note over C,JS: Duplicate delivery MAY occur. Client MUST dedupe by seq
+    else replay expired
+        JS-->>C: OUT_OF_RANGE (replay window expired)
+        C->>JS: GetJobStatus(job_id) (re-sync)
+    end
+```
+
+</details>
+
+---
+
+### A.7 CancelJob
+
+![CancelJob](https://i.imgur.com/RhuUGnF.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TD
+  A["CancelJob(job_id)"] --> B{Current state}
+  B -->|PENDING/COMPILING/QUEUED| C[accepted=true<br/>cancel guaranteed]
+  B -->|RUNNING| D[accepted=true<br/>best-effort cancel]
+  B -->|DONE/ERROR/CANCELLED| E["accepted=false<br/>(or OK idempotent no-op)"]
+  D --> F["Cancellation propagates downstream\n(kernel/driver/backend)"]
+```
+
+</details>
+
+---
+
+### A.8 ReserveDevice
+
+![ReserveDevice](https://i.imgur.com/NGbvRWx.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant C as Client
+  participant DS as DeviceService
+  participant RM as Resource/Reservation Authority
+  participant JS as JobService
+
+  C->>DS: ReserveDevice(device_id)
+  DS->>RM: Create reservation (policy-gated)
+  RM-->>DS: reservation_id + expires_at
+  DS-->>C: ReserveDeviceResponse(reservation_id, expires_at)
+
+  C->>JS: SubmitJob(..., reservation_id)
+  JS->>RM: Validate reservation (owner + not expired)
+  alt valid
+    RM-->>JS: ok
+    JS-->>C: job_id
+  else expired/invalid
+    RM-->>JS: reject
+    JS-->>C: FAILED_PRECONDITION (+ details)
+  end
+```
+
+</details>
+
+---
+
+### A.9 Error Model
+
+![Error Model](https://i.imgur.com/wuGSr24.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  S[gRPC Status Code] --> EI[google.rpc.ErrorInfo<br/>reason=EIGEN_*]
+  S --> BR[google.rpc.BadRequest<br/>field violations]
+  S --> RI[google.rpc.ResourceInfo<br/>resource context]
+  S --> RET[google.rpc.RetryInfo<br/>retry delay]
+  EI --> H[Client handling]
+  BR --> H
+  RI --> H
+  RET --> H
+```
+
+</details>
+
+---
+
+### A.10 Observability
+
+![Observability](https://i.imgur.com/4Q0xkdR.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant C as Client
+  participant API as eigen.api.v1
+  participant OTel as OTel Collector
+
+  C->>API: RPC (traceparent, x-request-id)
+  API-->>C: response (grpc.status_code)
+  API->>OTel: span.server (rpc.service, rpc.method, grpc.status_code)
+  API->>OTel: metrics grpc_requests_total{rpc,code}
+  API->>OTel: metrics grpc_request_duration_ms_bucket{rpc}
+  API->>OTel: audit log events for sensitive ops\n(SubmitJob/CancelJob/ReserveDevice/GetDispatchRationale/AppendDecisionLog)
+  Note over API: No job_id/trace_id/tenant_id as metric labels (bounded labels only)
+```
+
+</details>
+
+---
+
+### A.11 Security Requirements
+
+![Security Requirements](https://i.imgur.com/aOvK4DK.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  C[Caller JWT: sub, tenant_id, scopes] --> A["AuthN validate\n(iss/aud/exp/signature)"]
+  A --> Z["AuthZ policy\n(scope + tenant isolation)"]
+  Z -->|allow| SVC[Execute RPC handler]
+  Z -->|deny| DENY["PERMISSION_DENIED\n(+ ErrorInfo.reason)"]
+  SVC --> AUD[Immutable audit event]
+  AUD --> OBS[Observability pipeline]
+  SVC --> TEN["Enforce tenant/project isolation\n(resource partitioning)"]
+```
+
+</details>
