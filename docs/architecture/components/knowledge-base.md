@@ -726,3 +726,332 @@ Required golden tests (target):
 ## Strategic Direction
 
 The Knowledge Base is Eigen OS’s persistent intelligence layer: reusable optimization memory connecting Neuro-DPDA compilation, GNN hardware optimization, HWE adaptation, and deterministic replay/audit infrastructure—without compromising baseline safety or determinism.
+
+---
+
+## Appendix A. Diagrams (normative)
+
+### A.1 C4 — Service Context (Public KB Records vs OKB)
+
+![Service Context](https://i.imgur.com/zDXMZbN.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+    Client[Client SDKs / CLI] -->|"public gRPC"| API[System API]
+
+    subgraph Runtime["Eigen OS Runtime"]
+        API -->|"public records CRUD/query"| KB["KnowledgeBaseService<br/>(public record store)"]
+        
+        C["Compiler (Neuro-DPDA)"] -->|"optional OKB retrieval"| OKB["Optimization Knowledge Base (OKB)<br/>(internal service)"]
+        
+        OPT[GNN Optimizer] -->|"optional OKB lookup"| OKB
+        HWE[HWE] -->|"optional OKB lookup"| OKB
+        K[Kernel/QRTX] -->|"job lineage + feedback refs"| OKB
+
+        KB --> QFS[(QFS)]
+        OKB --> QFS
+        C --> QFS
+        OPT --> QFS
+        HWE --> QFS
+    end
+
+    KB --> OBS[Observability]
+    OKB --> OBS
+	style Runtime fill:#FFFFFF
+```
+
+</details>
+
+---
+
+### A.2 C4 — Component Diagram (Inside OKB)
+
+![Component Diagram](https://i.imgur.com/VlqBD0E.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  subgraph OKB["Optimization Knowledge Base (OKB) — internal"]
+    API["Internal RPC\nFindOptimizationCandidates / GetOptimizationArtifact\nStoreExecutionFeedback / ReplayOptimizationSelection"]
+    Sig["Signature Builder\n(semantic_hash/aqo_hash/topology_digest/policy_digest)"]
+    Index["Metadata Index\n(deterministic lookup, version windows)"]
+    Rank["Ranker\n(deterministic mode + seed)\n(policy-aware scoring)"]
+    Validate["Artifact Validator\n(checksums, schema, provenance,\ncompatibility window)"]
+    Replay["Replay Bundle Builder\n(selection_digest + inputs/outputs)"]
+    Store["Artifact Store\n(immutable objects + refs)"]
+    Audit["Audit Emitter\n(explain refs + decision summary)"]
+    Err["Error Normalizer\n(error-model mapping)"]
+
+    API --> Sig --> Index --> Rank --> Validate --> Replay --> Audit
+    Validate --> Store
+    Audit --> Store
+    Err --> Store
+  end
+
+  Store --> QFS[(QFS)]
+  API --> OBS[(OTel/Prom/Logs)]
+```
+
+</details>
+
+---
+
+### A.3 Deterministic Selection Key + Digest
+
+![Deterministic Selection Key](https://i.imgur.com/GJGKqKB.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  Sem["semantic_hash"] --> KEY["okb_selection_key"]
+  AQO["aqo_hash"] --> KEY
+  BP["backend_profile_id"] --> KEY
+  Topo["topology_snapshot_digest"] --> KEY
+  Policy["policy_envelope_digest"] --> KEY
+  Versions["kb_schema/compiler/optimizer versions"] --> KEY
+  Seed["seed (required if deterministic=true)"] --> KEY
+
+  KEY --> Sel["Selection outputs\n(selected candidate, rejected summary, refs)"]
+  Sel --> Digest["okb_selection_digest\n= sha256(inputs + outputs)"]
+```
+
+</details>
+
+---
+
+### A.4 OKB Retrieval Dataflow (Signatures → Candidates → Selection)
+
+![OKB Retrieval Dataflow](https://i.imgur.com/mldMGdd.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  In["Inputs\n(semantic_hash, aqo_hash,\nbackend_profile, topology_digest,\npolicy_digest, deterministic?, seed)"] --> Sig["Build deterministic signature"]
+  Sig --> Q["Query index\n(version/compatibility filters)"]
+  Q --> Cand["Candidate set\n(bounded list)"]
+  Cand --> Val["Validate candidates\n(checksum/provenance/schema/window)"]
+  Val --> Rank["Rank (policy-aware)\n deterministic tie-break"]
+  Rank --> Out["Selection\n(selected + rejected summary)\n+ okb_selection_digest"]
+  Out --> Art["Persist job linkage\nqfs://jobs/<job_id>/kb/* (if used)"]
+```
+
+</details>
+
+---
+
+### A.5 Sequence — Compiler uses OKB during compile (advisory)
+
+![Compiler uses OKB during compile](https://i.imgur.com/bwqKUKc.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant C as Compiler (Neuro-DPDA)
+  participant OKB as OKB (internal)
+  participant QFS as QFS
+
+  C->>OKB: FindOptimizationCandidates(signature,\npolicy, deterministic?, seed)
+  OKB->>OKB: deterministic lookup + compatibility filter
+  OKB-->>C: candidates (bounded) + explain refs
+  C->>C: apply only validated candidates\n(symbolic checks remain authoritative)
+  opt persist linkage (if OKB influenced output)
+    C->>QFS: write qfs://jobs/<job_id>/kb/selection.json\n+ candidates.json + explain.json + replay_bundle.json
+    QFS-->>C: refs
+  end
+```
+
+</details>
+
+---
+
+### A.6 Sequence — HWE/GNN Optimizer uses OKB for reuse hints
+
+![HWE/GNN Optimizer](https://i.imgur.com/AtXOf5O.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant H as HWE / GNN Optimizer
+  participant OKB as OKB (internal)
+  participant QFS as QFS
+
+  H->>OKB: FindOptimizationCandidates(signature,\npolicy, deterministic?, seed)
+  OKB-->>H: candidates + confidence + provenance refs
+  H->>H: validate against policy + symbolic safety
+  H->>QFS: persist kb linkage under job scope\n(qfs://jobs/<job_id>/kb/*)
+  QFS-->>H: refs
+```
+
+</details>
+
+---
+
+### A.7 Sequence — Feedback ingestion (post-execution, audited)
+
+![Feedback ingestion](https://i.imgur.com/HZkEaNY.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant K as Kernel/QRTX
+  participant OKB as OKB (internal)
+  participant QFS as QFS
+
+  K->>QFS: persist execution results + summaries
+  K->>OKB: StoreExecutionFeedback(\njob_id, feedback_summary,\nrefs to results/telemetry,\nreplay_validation_result)
+  OKB->>OKB: validate + version + attach provenance
+  OKB->>QFS: write qfs://knowledge-base/execution-feedback/*\n(immutable, checksummed)
+  QFS-->>OKB: refs
+  OKB-->>K: ack + stored refs
+```
+
+</details>
+
+---
+
+### A.8 Sequence — ReplayOptimizationSelection (deterministic verification)
+
+![ReplayOptimizationSelection](https://i.imgur.com/6BnuVM6.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant Ops as Operator/CI
+  participant OKB as OKB (internal)
+  participant QFS as QFS
+
+  Ops->>OKB: ReplayOptimizationSelection(job_id, selection_ref)
+  OKB->>QFS: load replay_bundle.json + referenced artifacts
+  QFS-->>OKB: bundle + artifacts
+  OKB->>OKB: recompute selection under deterministic=true\n(same seed + versions)
+  alt match
+    OKB-->>Ops: OK (replay verified)
+  else mismatch
+    OKB-->>Ops: FAILED (EIGEN_OKB_REPLAY_MISMATCH)
+  end
+```
+
+</details>
+
+---
+
+### A.9 Global OKB Layout in QFS
+
+![Global OKB Layout in QFS](https://i.imgur.com/BS9dpJ9.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  root["qfs://knowledge-base/"] --> art["artifacts/\n(transformation refs, templates)"]
+  root --> sig["signatures/\n(indexable keys)"]
+  root --> topo["topology/\n(bounded snapshots + digests)"]
+  root --> fb["execution-feedback/\n(fidelity/latency/routing summaries)"]
+  root --> hist["optimizer-history/\n(confidence + outcomes)"]
+  root --> rep["replay/\n(selection bundles)"]
+```
+
+</details>
+
+---
+
+### A.10 Job-Scoped Linkage when OKB influences a job
+
+![Job-Scoped Linkage when OKB influences a job](https://i.imgur.com/IVXxHtP.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  job["qfs://jobs/<job_id>/kb/"] --> sel["selection.json\n(selected candidate + digest)"]
+  job --> cand["candidates.json\n(bounded list)"]
+  job --> exp["explain.json\n(bounded)"]
+  job --> rep["replay_bundle.json\n(inputs+outputs+okb_selection_digest)"]
+  sel --> refs["refs to qfs://knowledge-base/artifacts/*"]
+```
+
+</details>
+
+---
+
+### A.11 Optimization Artifact Lifecycle State Machine
+
+![Optimization Artifact Lifecycle State Machine](https://i.imgur.com/qWptsw1.png)
+
+<details>
+<summary>code</summary>
+
+```text
+stateDiagram-v2
+  [*] --> Proposed: generated by compiler/optimizer
+  Proposed --> Validated: checksum + schema + provenance ok
+  Validated --> Active: within compatibility window
+  Active --> Deprecated: superseded or confidence decays
+  Active --> Stale: topology/calibration drift detected
+  Deprecated --> Archived: retained immutable history
+  Stale --> Archived
+  Validated --> Rejected: policy/provenance invalid
+  Rejected --> [*]
+  Archived --> [*]
+```
+
+</details>
+
+
+---
+
+### A.12 Trust Boundary (OKB is advisory; never blocks baseline)
+
+![Trust Boundary](https://i.imgur.com/EyR0sMF.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+    subgraph Trusted["Trusted Zone (Eigen OS internal mesh, mTLS)"]
+        C[Compiler] -->|"optional"| OKB[OKB]
+        HWE[HWE] -->|"optional"| OKB
+        OPT[GNN Optimizer] -->|"optional"| OKB
+        OKB --> QFS[(QFS)]
+    end
+
+    subgraph Baseline["Baseline Safety Rule"]
+        Rule["If OKB unavailable/miss/low confidence:<br/>fall back to deterministic baseline<br/>(compiler/kernel/hwe)"]
+    end
+
+    Rule --- C
+    Rule --- HWE
+    Rule --- OPT
+
+    Note["OKB artifacts must be validated<br/>(checksum/provenance/schema/window)<br/>No secrets in artifacts."]
+    Note -.-> OKB
+	style Baseline fill:#FFFFFF
+	style Trusted fill:#FFFFFF
+```
+
+</details>
+

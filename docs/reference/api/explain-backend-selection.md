@@ -580,3 +580,299 @@ Any implementation:
 MUST conform to this contract.
 
 If implementation behavior diverges from this document, the implementation MUST be corrected.
+
+---
+
+## Appendix A. Diagrams
+
+### A.1 Architectural Alignment with Eigen OS
+
+![Architectural Alignment with Eigen OS](https://i.imgur.com/ek0ntnk.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  subgraph Public[Client / Ops]
+    C[Client / Operator] --> REST["REST: POST /explain/backend-selection"]
+  end
+
+  subgraph Gateway[Ingress]
+    REST --> SA["System API<br/>(REST adapter / gRPC binding)"]
+  end
+
+  subgraph Core[Runtime Authority]
+    SA --> QRTX["QRTX Scheduler & Explainability"]
+  end
+
+  subgraph Sources[Authoritative Inputs]
+    QRTX --> QFS["QFS-L3<br/>decision + replay artifacts"]
+    QRTX --> DM["Driver Manager<br/>topology/calibration/queue snapshots"]
+    QRTX --> KB["Knowledge Base<br/>historical decision records"]
+    QRTX --> POL["Policy Snapshot<br/>(Security Module)"]
+  end
+
+  subgraph Telemetry[Observability Stack]
+    QRTX --> OTel[OpenTelemetry]
+    OTel --> Traces[Tracing backend]
+    OTel --> Metrics[Prometheus]
+    OTel --> Logs[Log backend]
+  end
+
+  %% invariants
+  REST -. transport only .-> SA
+  SA -. MUST NOT recompute decision .-> QFS
+	style Public fill:#FFFFFF
+	style Gateway fill:#FFFFFF
+	style Core fill:#FFFFFF
+	style Telemetry fill:#FFFFFF
+	style Sources fill:#FFFFFF
+```
+
+</details>
+
+---
+
+### A.2 Transport Definition
+
+![Transport Definition](https://i.imgur.com/ek0ntnk.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant Client
+  participant REST as REST Handler
+  participant SEC as Security Module
+  participant SA as gRPC ExplainBackendSelection
+  participant QRTX as QRTX Explainability
+  participant QFS as QFS-L3
+  participant KB as Knowledge Base
+  participant DM as Driver Manager
+
+  Client->>REST: POST /explain/backend-selection {decision_id,...}
+  REST->>SEC: Authenticate + Authorize (jobs:explain)
+  SEC-->>REST: allow/deny + audit context
+  REST->>SA: ExplainBackendSelectionRequest (gRPC)
+  SA->>QRTX: ExplainBackendSelection(decision_id)
+  QRTX->>QFS: Load decision artifact + profile + replay bundle refs
+  QRTX->>KB: (optional) Load historical decision metadata
+  QRTX->>DM: (optional) Resolve referenced snapshot digests
+  QRTX-->>SA: ExplainBackendSelectionResponse (deterministic)
+  SA-->>REST: 200 OK + response JSON
+  REST-->>Client: 200 OK
+```
+
+</details>
+
+---
+
+### A.3 Request Validation Rules
+
+![Request Validation Rules](https://i.imgur.com/xN4M5kR.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TD
+  A[Receive request] --> B{request_version == 1.0.0?}
+  B -->|no| E1[409 VERSION_CONFLICT]
+  B --> C{response_version == 1.0.0?}
+  C -->|no| E2[409 VERSION_CONFLICT]
+  C --> D["decision_id present<br/>non-empty <=256?"]
+  D -->|no| E3[400 INVALID_ARGUMENT]
+  D --> F["Authorize tenant access<br/>(jobs:explain / admin:explain)"]
+  F -->|deny| E4[403 PERMISSION_DENIED]
+  F --> G["Lookup decision artifact by decision_id"]
+  G -->|miss| E5[404 NOT_FOUND]
+  G --> H["Build response from stored artifacts<br/>(no recomputation)"]
+  H --> I[Return 200 OK]
+```
+
+</details>
+
+---
+
+### A.4 Response Field Semantics
+
+![Response Field Semantics](https://i.imgur.com/je8Vz6x.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  D[Decision artifact] --> CS[Candidate list + scores]
+  D --> TB[Tie-break trace]
+  D --> PV[Provenance snapshot]
+  D --> SH[Scoring profile version]
+  CS --> FC["Factor contributions (flattened)"]
+  CS --> CONF["Confidence computed over eligible set"]
+  TB --> R[Response JSON]
+  PV --> R
+  SH --> R
+  FC --> R
+  CONF --> R
+
+  %% deterministic requirements
+  R -. deterministic serialization .-> HASH["Optional response hash/digest"]
+```
+
+</details>
+
+---
+
+### A.5 Runtime Semantics
+
+![Runtime Semantics](https://i.imgur.com/5ojmjnK.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  subgraph Inputs[Replay Inputs]
+    A1[decision_artifact_ref]
+    A2[topology_snapshot_ref/digest]
+    A3[driver_snapshot_version]
+    A4[policy_version]
+    A5[scoring_profile_version]
+    A6["model_versions (if used)"]
+  end
+
+  Inputs --> Canon["Canonicalize inputs<br/>stable ordering + UTF-8"]
+  Canon --> Build["Build explain response<br/>from stored artifacts"]
+  Build --> CanonOut["Canonicalize outputs<br/>stable ordering"]
+  CanonOut --> Digest["replay_digest = sha256(inputs+outputs)"]
+  Digest --> Store["Persist digest/ref (QFS/KB)"]
+	style Inputs fill:#FFFFFF
+```
+
+</details>
+
+---
+
+### A.6 Error Model
+
+![Error Model](https://i.imgur.com/CNGhzVw.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TD
+  A[Failure] --> B{Category}
+  B -->|Authn| C1[401 UNAUTHENTICATED]
+  B -->|Authz / tenant| C2["403 PERMISSION_DENIED"]
+  B -->|Validation| C3[400 INVALID_ARGUMENT]
+  B -->|Version mismatch| C4[409 VERSION_CONFLICT]
+  B -->|Decision missing| C5[404 NOT_FOUND]
+  B -->|Rate limit| C6[429 RESOURCE_EXHAUSTED]
+  B -->|Downstream outage| C7[503 UNAVAILABLE]
+  B -->|Invariant| C8[500 INTERNAL]
+
+  %% rule
+  C1 --> D["Standard error envelope + details[]"]
+  C2 --> D
+  C3 --> D
+  C4 --> D
+  C5 --> D
+  C6 --> D
+  C7 --> D
+  C8 --> D
+```
+
+</details>
+
+---
+
+### A.7 Knowledge Base Integration
+
+![Knowledge Base Integration](https://i.imgur.com/iUMT8C6.png)
+
+<details>
+<summary>code</summary>
+
+```text
+erDiagram
+  EXPLAIN_RECORD ||--|| DECISION_ARTIFACT : references
+  EXPLAIN_RECORD ||--|| SCORING_PROFILE : uses
+  EXPLAIN_RECORD ||--|| POLICY_SNAPSHOT : governed_by
+  EXPLAIN_RECORD ||--|| TOPOLOGY_SNAPSHOT : references
+  EXPLAIN_RECORD ||--|| DRIVER_SNAPSHOT : references
+  EXPLAIN_RECORD ||--|| JOB : relates_to
+
+  EXPLAIN_RECORD {
+    string decision_id
+    string tenant_id
+    string created_at
+    bool include_rejected
+    string replay_digest
+  }
+```
+
+</details>
+
+---
+
+### A.8 Observability Requirements
+
+![Observability Requirements](https://i.imgur.com/vhmnLdz.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant REST as REST Handler
+  participant SEC as Security Module
+  participant QRTX as QRTX Explainability
+  participant OTel as OTel Exporter
+
+  REST->>OTel: span ExplainBackendSelection (root)
+  REST->>SEC: span ExplainBackendSelection.Authorize
+  SEC-->>REST: authz decision (+ audit_event_id)
+  REST->>QRTX: span ExplainBackendSelection.LoadDecision
+  QRTX-->>REST: decision artifact loaded
+  REST->>QRTX: span ExplainBackendSelection.BuildResponse
+  QRTX-->>REST: response constructed
+  REST->>OTel: emit metrics + logs (bounded labels)
+```
+
+</details>
+
+---
+
+### A.9 Persistence Requirements
+
+![Persistence Requirements](https://i.imgur.com/652c4ex.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  subgraph QFS["QFS-L3 (canonical)"]
+    P1["qfs://jobs/<job_id>/explain/backend_selection/<decision_id>/decision.json"]
+    P2["qfs://jobs/<job_id>/explain/backend_selection/<decision_id>/response.json"]
+    P3["qfs://jobs/<job_id>/explain/backend_selection/<decision_id>/replay_bundle.json"]
+    P4["qfs://jobs/<job_id>/explain/backend_selection/<decision_id>/provenance.json"]
+  end
+
+  subgraph KB["Knowledge Base"]
+    K1["ExplainRecord index"]
+    K2["Provenance refs"]
+  end
+
+  QFS --> KB
+  KB -->|"query by decision_id / job_id"| API["Explain API"]
+	style QFS fill:#FFFFFF
+	style KB fill:#FFFFFF
+```
+
+</details>

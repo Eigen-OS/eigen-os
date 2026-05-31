@@ -513,3 +513,276 @@ To fully match the technical specification (ТЗ) target architecture, DM additi
 - standardize connection pooling, retries, and circuit breakers,
 - provide reliable topology/health snapshots for hardware-aware optimization,
 - preserve deterministic behavior for replay and simulator seed control.
+
+---
+
+## Appendix A. Diagrams (normative)
+
+### A.1 C4 Service Container View (Driver Manager in runtime)
+
+![Service Container View](https://i.imgur.com/Ec8IgMQ.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+    subgraph ClientLayer ["Client Layer"]
+        Client[Client SDKs / CLI]
+    end
+
+    subgraph Core ["Core Services"]
+        SysAPI["system-api (public gRPC)"]
+        Kernel["eigen-kernel / QRTX"]
+        DM["driver-manager (internal gRPC)"]
+    end
+
+    subgraph Drivers ["Driver Layer"]
+        Plugins["In-process QDriver plugins"]
+        RemoteDrivers["Remote QDriver services (gRPC)"]
+        Providers["Vendor SDKs / Simulators"]
+    end
+
+    Client --> SysAPI
+    SysAPI --> Kernel
+    Kernel --> DM
+    DM -->|Mode A| Plugins
+    DM -->|Mode B| RemoteDrivers
+    Plugins --> Providers
+    RemoteDrivers --> Providers
+
+    DM --> QFS["QFS (artifacts/refs)"]
+    DM --> Obs["Observability (OTel/metrics/logs)"]
+    DM --> Secrets["Secret store / Vault"]
+```
+
+</details>
+
+---
+
+### A.2 C4 Component diagram — driver-manager internals
+
+![Component diagram — driver-manager](https://i.imgur.com/Xv3MgiA.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+    subgraph DM["driver-manager"]
+        API["DriverManagerService (gRPC)<br/>ListDevices / GetDeviceStatus / ExecuteCircuit"]
+        Registry["Driver Registry<br/>(driver_id → devices, capabilities)"]
+        Catalog["Device Catalog<br/>(stable device_id, class, caps)"]
+        SessionMgr["Session Manager<br/>(pools, sessions, lifecycle)"]
+        Exec["Execution Dispatcher<br/>(validate → translate → run)"]
+        Normalizer["Result Normalizer<br/>(counts ordering, metadata schema)"]
+        ErrMap["Error Normalizer<br/>(provider → Eigen error model)"]
+        Topology["Topology & Calibration Snapshot<br/>(connectivity, health hints)"]
+        Supply["Supply-chain verifier<br/>(signature/manifest checks)"]
+        SecretsClient["Secrets Client<br/>(on-demand credential fetch)"]
+        Telemetry["Telemetry<br/>(logs/metrics/traces)"]
+    end
+
+    API --> Exec
+    Exec --> SessionMgr
+    Exec --> Normalizer
+    Exec --> ErrMap
+    Registry --> Catalog
+    Registry --> SessionMgr
+    Catalog --> Topology
+    Supply --> Registry
+    SecretsClient --> SessionMgr
+
+    Telemetry --- API
+    Telemetry --- Exec
+    Telemetry --- SessionMgr
+```
+
+</details>
+
+---
+
+### A.3 Sequence: ExecuteCircuit — canonical dispatch path
+
+![ExecuteCircuit](https://i.imgur.com/xn7DgDt.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant K as eigen-kernel (QRTX)
+  participant DM as driver-manager
+  participant S as Session Manager
+  participant D as QDriver (plugin/remote)
+  participant P as Provider backend / simulator
+
+  K->>DM: ExecuteCircuit(job_id, device_id, payload_ref/bytes, shots, seed?, options)\n(trace ctx)
+  DM->>DM: Validate envelope + payload format\n(bound options, size limits)
+  DM->>S: AcquireSession(device_id)
+  alt credentials required
+    DM->>DM: Fetch credentials (on-demand)
+    DM->>S: Inject ephemeral creds (no logs)
+  end
+  S->>D: execute_circuit(request)\n(trace ctx)
+  D->>P: Provider-native call (SDK/API)
+  P-->>D: Provider result / error
+  D-->>S: Raw result / error
+  S-->>DM: Raw result / error
+  DM->>DM: Normalize counts + metadata schema
+  DM->>DM: Map provider errors -> canonical Eigen error model
+  DM-->>K: ExecuteCircuitResponse(counts, metadata) OR gRPC status + structured details
+```
+
+</details>
+
+---
+
+### A.4 Sequence: Device catalog refresh (startup + periodic)
+
+![Device catalog refresh](https://i.imgur.com/52vWSbv.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant DM as driver-manager
+  participant Supply as Supply-chain verifier
+  participant D as QDriver (plugin/remote)
+  participant P as Provider backend
+
+  DM->>Supply: Verify driver manifests/signatures (if enabled)
+  alt verification OK
+    Supply-->>DM: OK
+    DM->>D: initialize(config)
+    D-->>DM: init_ok
+    DM->>D: capability_handshake()
+    D->>P: Capability query (if applicable)
+    P-->>D: caps/topology/health hints
+    D-->>DM: capability snapshot (bounded)
+    DM->>DM: Update registry + device catalog snapshot (atomic)
+  else verification failed
+    Supply-->>DM: FAIL
+    DM->>DM: Disable driver deterministically (no partial activation)
+  end
+```
+
+</details>
+
+---
+
+### A.5 Sequence: Provider error normalization (DM boundary)
+
+![Provider error normalization](https://i.imgur.com/WNZIGYY.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant DM as driver-manager
+  participant Supply as Supply-chain verifier
+  participant D as QDriver (plugin/remote)
+  participant P as Provider backend
+
+  DM->>Supply: Verify driver manifests/signatures (if enabled)
+  alt verification OK
+    Supply-->>DM: OK
+    DM->>D: initialize(config)
+    D-->>DM: init_oksequenceDiagram
+  autonumber
+  participant K as eigen-kernel (QRTX)
+  participant DM as driver-manager
+  participant D as QDriver
+  participant P as Provider
+
+  K->>DM: ExecuteCircuit(...)
+  DM->>D: execute_circuit(...)
+  D->>P: call
+  P-->>D: error (provider-specific)
+  D-->>DM: error (raw)
+  DM->>DM: Classify + map error -> canonical gRPC status
+  DM->>DM: Attach google.rpc.Status details\n(ErrorInfo, RetryInfo where applicable)
+  DM-->>K: gRPC status (UNAVAILABLE/RESOURCE_EXHAUSTED/...)\n+ structured details
+    DM->>D: capability_handshake()
+    D->>P: Capability query (if applicable)
+    P-->>D: caps/topology/health hints
+    D-->>DM: capability snapshot (bounded)
+    DM->>DM: Update registry + device catalog snapshot (atomic)
+  else verification failed
+    Supply-->>DM: FAIL
+    DM->>DM: Disable driver deterministically (no partial activation)
+  end
+```
+
+</details>
+
+---
+
+### A.6 Determinism boundary (seed + normalization)
+
+![Determinism boundary](https://i.imgur.com/3LQCjp2.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+    Req["ExecuteCircuitRequest<br/>(job_id, device_id, payload, shots, seed?, options)"] 
+    --> V["Validation<br/>(size/format/options bounded)"]
+
+    V --> Exec["Provider execution"]
+    
+    Exec --> Raw["Raw provider result<br/>(counts/metadata/error)"]
+    
+    Raw --> Norm["Deterministic Normalizer<br/>(bit ordering, stable keys)"]
+    Norm --> Out["ExecutionResult<br/>(counts + bounded metadata)"]
+    
+    Raw --> Map["Deterministic Error Mapper<br/>(provider → Eigen error model)"]
+    Map --> Err["gRPC status + structured details"]
+
+    seednote["If backend is a simulator and seed is provided,<br/>result MUST be replay-stable for same inputs."]
+    
+    Norm --- seednote
+```
+
+</details>
+
+---
+
+### A.7 Deployment & trust boundaries (driver-manager)
+
+![Deployment & trust boundaries](https://i.imgur.com/84zJRJ3.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+    subgraph TrustedRuntime["Eigen OS internal network (trusted by policy)"]
+        K["eigen-kernel (mTLS)"] --> DM["driver-manager (mTLS)"]
+        DM --> Secrets["Secret store / Vault"]
+        DM --> Obs["OTel Collector / Prometheus"]
+    end
+
+    subgraph UntrustedOrExternal["External / vendor boundary"]
+        Providers["Vendor clouds / QPUs / simulators"]
+    end
+
+    DM -->|"egress restricted<br/>allowlist"| Providers
+
+    note1["DM is internal-only.<br/>Providers are treated as untrusted.<br/>Drivers are treated as executable input."]
+
+    DM --- note1
+
+    classDef trusted fill:#e6f7e6,stroke:#2e8b57
+    classDef untrusted fill:#fff0f0,stroke:#d9534f
+    class TrustedRuntime trusted
+    class UntrustedOrExternal untrusted
+```
+
+</details>

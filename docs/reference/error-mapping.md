@@ -823,3 +823,310 @@ Breaking changes require:
 - migration documentation,
 - conformance test updates,
 - observability compatibility review.
+
+---
+
+## Appendix A. Diagrams
+
+### A.1 Core Error Contract
+
+![Core Error Contract](https://i.imgur.com/Wxe6WJX.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  REQ[RPC request] --> FAIL{Failure occurs?}
+  FAIL -->|no| OK[Normal response]
+  FAIL -->|yes| MAP["Deterministic mapping (class → status + reason)"]
+  MAP --> ST["gRPC status code (status-first)"]
+  MAP --> RI["ErrorInfo.reason (stable code)"]
+  MAP --> DET["Structured details (google.rpc.*)"]
+  MAP --> OUT["RPC terminates with status (no success=false wrappers)"]
+
+  OUT --> OBS["Logs/Traces (correlation IDs as fields)"]
+```
+
+</details>
+
+---
+
+### A.2 Canonical Error Representation
+
+![Canonical Error Representation](https://i.imgur.com/yDgINPg.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  E[Error] --> S["gRPC status (code + message)"]
+  E --> R["Stable reason code (ErrorInfo.reason)"]
+  E --> D[Structured details BadRequest / ResourceInfo / RetryInfo / ...]
+  E --> M["Remediation metadata (help, retry hints)"]
+  E --> C["Correlation fields (request_id, trace_id) (no metric labels)"]
+
+  D --> BR["BadRequest (field violations)"]
+  D --> EI["ErrorInfo (domain, reason, metadata)"]
+  D --> PI[PreconditionFailure]
+  D --> QF[QuotaFailure]
+  D --> RT[RetryInfo]
+  D --> RI2[ResourceInfo]
+  D --> DI[DebugInfo]
+```
+
+</details>
+
+---
+
+### A.3 Structured Error Details
+
+![Structured Error Details](https://i.imgur.com/8bJLeFZ.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant S as Service
+  participant M as Mapper
+  participant B as Builder
+
+  S->>M: classify(error_class, context)
+  M->>B: status(code,message) + ErrorInfo(reason,domain)
+  opt validation
+    M->>B: BadRequest(field_violations)
+  end
+  opt precondition/lifecycle
+    M->>B: PreconditionFailure(violations)
+  end
+  opt quota/capacity
+    M->>B: QuotaFailure + RetryInfo(delay)
+  end
+  opt resource identity
+    M->>B: ResourceInfo(type,name,owner)
+  end
+  opt internal diagnostics (internal only)
+    M->>B: DebugInfo(stack, detail)
+  end
+  B-->>S: Status + Details (deterministic)
+```
+
+</details>
+
+---
+
+### A.4 Canonical Error Mapping Matrix
+
+![Canonical Error Mapping Matrix](https://i.imgur.com/Z94WJAb.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  subgraph Sources
+    API[System API validation]
+    K[Kernel / QRTX]
+    C[Compiler]
+    DM[Driver Manager]
+    DR[Distributed runtime]
+    QFS[QFS / artifact layer]
+  end
+
+  subgraph Canonical statuses
+    IA[INVALID_ARGUMENT]
+    FP[FAILED_PRECONDITION]
+    NF[NOT_FOUND]
+    AE[ALREADY_EXISTS]
+    RE[RESOURCE_EXHAUSTED]
+    UA[UNAVAILABLE]
+    DE[DEADLINE_EXCEEDED]
+    PD[PERMISSION_DENIED]
+    UN[UNAUTHENTICATED]
+    UI[UNIMPLEMENTED]
+    IN[INTERNAL]
+    AB[ABORTED]
+    CA[CANCELLED]
+  end
+
+  API --> IA
+  C --> IA
+  QFS --> NF
+  K --> FP
+  DM --> UA
+  DR --> AB
+  DR --> RE
+  DM --> DE
+  API --> PD
+  API --> UN
+  C --> UI
+  K --> IN
+  K --> CA
+```
+
+</details>
+
+---
+
+### A.5 Async Job Failure Contract
+
+![Async Job Failure Contract](https://i.imgur.com/VAZEvxt.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant Client
+  participant API as System API (public)
+  participant K as Kernel/QRTX
+  participant Q as QFS
+
+  Client->>API: SubmitJob
+  API->>K: EnqueueJob
+  K->>Q: persist inputs (job.yaml, source)
+  K-->>API: job_id + PENDING
+  API-->>Client: Accepted (job_id)
+
+  loop status polling / streaming
+    Client->>API: GetJobStatus
+    API->>K: GetJobStatus
+    K-->>API: state
+    API-->>Client: state
+  end
+
+  alt terminal success
+    K->>Q: persist results.parquet + manifest
+    K-->>API: DONE
+  else terminal failure
+    K->>Q: persist results/error.json (durable)
+    K-->>API: ERROR + (error_code, error_summary, error_details_ref)
+  end
+
+  Client->>API: GetJobResults
+  API->>K: GetJobResults
+  K->>Q: read refs
+  API-->>Client: results or async failure envelope
+```
+
+</details>
+
+---
+
+### A.6 Backend Normalization Contract
+
+![Backend Normalization Contract](https://i.imgur.com/wgsKt85.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  P["Provider/Vendor error (raw payload)"] --> DM["Driver Manager (normalize + classify)"]
+  DM --> MAP[Map to canonical status + EIGEN_BACKEND_* reason]
+  MAP --> DET[Attach google.rpc.ErrorInfo + optional RetryInfo/ResourceInfo]
+  DET --> K["Kernel/QRTX (orchestrator)"]
+  K --> PUB["Public surface (System API / SDK)"]
+  DM -.optional.-> QFSRAW["qfs://jobs/<job_id>/execution/backend_response.json (raw stored under policy)"]
+  style QFSRAW stroke-dasharray: 5 5
+```
+
+</details>
+
+---
+
+### A.7 Retryability Contract
+
+![Retryability Contract](https://i.imgur.com/9TpsGMh.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  R[Received failure] --> C{Status code}
+  C -->|UNAVAILABLE| Y1[Retry exponential backoff]
+  C -->|RESOURCE_EXHAUSTED| Y2[Retry backoff + quota hints]
+  C -->|ABORTED| Y3["Retry (conflict/lease) with jitter"]
+  C -->|DEADLINE_EXCEEDED| Y4{Idempotent?}
+  Y4 -->|yes| Y4a[Retry with new deadline budget]
+  Y4 -->|no| N4[Do not retry without idempotency]
+  C -->|FAILED_PRECONDITION| Y5[Retry only after state change]
+  C -->|NOT_FOUND| Y6{Eventual consistency?}
+  Y6 -->|yes| Y6a[Retry with short backoff]
+  Y6 -->|no| N6[Do not retry]
+  C -->|INVALID_ARGUMENT| N1["Do not retry (fix request)"]
+  C -->|PERMISSION_DENIED| N2["Do not retry (policy change needed)"]
+  C -->|UNAUTHENTICATED| N3[Re-authenticate then retry]
+  C -->|UNIMPLEMENTED| N5["Do not retry (change request/feature"]
+  C -->|ALREADY_EXISTS| N7["Do not retry (resolve conflict"]
+  C -->|INTERNAL| Y7[Conditional retry bounded budget]
+  C -->|CANCELLED| N8[Caller-defined]
+```
+
+</details>
+
+---
+
+### A.8 Distributed Runtime Failure Mapping
+
+![Distributed Runtime Failure Mapping](https://i.imgur.com/Mu1tmRz.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  subgraph Queue path
+    QITEM[Queue item] --> DEL["Deliver (lease-based)"]
+    DEL -->|ack| ACK[ACK]
+    DEL -->|lease expired| RED[Redeliver]
+    RED -->|retry budget exceeded| DLQ[Dead-letter]
+  end
+
+  subgraph Canonical mapping
+    LE[Lease expired/conflict] --> AB[ABORTED]
+    QNA[Queue unavailable] --> UA[UNAVAILABLE]
+    QOL[Queue overloaded] --> RE[RESOURCE_EXHAUSTED]
+    POI[Poison message] --> IA[INVALID_ARGUMENT]
+    MQ[Missing quorum] --> FP[FAILED_PRECONDITION]
+  end
+
+  DEL --> LE
+  QITEM --> QNA
+  QITEM --> QOL
+  QITEM --> POI
+  DLQ --> MQ
+```
+
+</details>
+
+---
+
+### A.9 Correlation & Traceability
+
+![Correlation & Traceability](https://i.imgur.com/ZLDZJ0y.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  S1[System API] -->|traceparent + request_id| K[Kernel/QRTX]
+  K -->|propagate| C[Compiler]
+  K -->|propagate| DM[Driver Manager]
+  K -->|propagate| QFS[QFS]
+  DM -->|provider corr_id| P[Provider boundary]
+
+  K --> LOGS["Structured logs (trace_id, request_id, job_id)"]
+  K --> TRACES["Distributed traces (span lineage)"]
+  K --> ART["QFS artifacts (error.json, timeline.json)"]
+  note1{{"No job_id/trace_id as metric labels (bounded cardinality rule)"}}
+  LOGS --- note1
+```
+
+</details>

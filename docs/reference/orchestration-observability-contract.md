@@ -934,3 +934,310 @@ The following invariants are mandatory:
 7. Orchestration telemetry MUST remain replay-safe and operationally auditable.
 8. Scheduler degradation MUST remain externally observable.
 9. Histogram semantics MUST remain stable within a MAJOR version.
+
+---
+
+## Appendix A. Diagrams
+
+### A.1 Observability architecture
+
+![Observability architecture](https://i.imgur.com/ocNplCz.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  subgraph CP[Orchestration Control Plane]
+    SCH[Scheduler]
+    QM[Queue Manager]
+    FC[Fairness Controller]
+    QU[Quota Manager]
+    RB[Rebalancer]
+    PE[Placement Engine]
+    RC[Retry Controller]
+    RD[Runtime Dispatcher]
+  end
+
+  CP --> EXP["Orchestration Telemetry Exporter (snapshot + bounded labels)"]
+  EXP --> PR[Prometheus]
+  PR --> AR["Alert Rules (orchestrator-alerts.yaml)"]
+  PR --> GD["Grafana Dashboards (orchestration_dashboard.json)"]
+  AR --> RBK["Operational Runbooks (orchestrator-observability-runbook.md)"]
+  GD --> RBK
+```
+
+</details>
+
+---
+
+### A.2 Design Principles
+
+![Design Principles](https://i.imgur.com/BhwA0cA.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  D[Deterministic semantics] --> S[Stable metric meaning]
+  B[Bounded cardinality] --> O[Operator-safe series count]
+  E[Operational explainability] --> X["Decisions observable (fairness/quota/rebalance)"]
+  R[Replay-safe telemetry] --> RS[Retries/redelivery do not change meaning]
+  F[Failure visibility] --> V[Degradation externally visible]
+```
+
+</details>
+
+---
+
+### A.3 Queue Health Metrics
+
+![Queue Health Metrics](https://i.imgur.com/AQaOzyT.png)
+
+<details>
+<summary>code</summary>
+
+```text
+stateDiagram-v2
+  [*] --> Enqueue
+  Enqueue --> Queued: eigen_orch_queue_enqueue_total
+  Queued --> Waiting: eigen_orch_queue_depth{queue}>=0
+  Waiting --> Dispatching: scheduler selects item
+  Dispatching --> Dequeued: eigen_orch_queue_dequeue_total
+  Dispatching --> Dispatched: eigen_orch_dispatch_latency_ms observes
+  Dispatched --> [*]
+
+  Queued --> Starved: eigen_orch_queue_oldest_age_seconds high
+  Starved --> Mitigated: eigen_orch_starvation_prevention_total
+  Mitigated --> Waiting
+```
+
+</details>
+
+---
+
+### A.4 Fairness Enforcement Metrics
+
+![Fairness Enforcement Metrics](https://i.imgur.com/5kY747u.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  Q["eigen_orch_queue_depth{queue}"] --> SCH["Scheduler decision (policy_mode)"]
+  SCH --> FC[Fairness Controller]
+  FC -->|adds delay| LAG["eigen_orch_fairness_lag_millis_total{policy_mode}++"]
+  FC -->|tracks peak| MAX["eigen_orch_fairness_lag_millis_max{policy_mode}=max"]
+  FC -->|correction| CORR["eigen_orch_fairness_corrections_total{reason}++"]
+  FC --> SCH
+```
+
+</details>
+
+---
+
+### A.5 Quota Enforcement Metrics
+
+![Quota Enforcement Metrics](https://i.imgur.com/FAkIArJ.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  Req[Incoming scheduling/dispatch request] --> Eval[Quota Manager evaluation]
+  Eval -->|hard deny| DenyT["eigen_orch_quota_denied_tenant_total{tenant}++"]
+  Eval -->|hard deny| DenyP["eigen_orch_quota_denied_project_total{project}++"]
+  Eval -->|soft throttle| Thr["eigen_orch_quota_throttled_total{reason}++"]
+  Eval -->|allowed| Ok[Proceed to Scheduler/Dispatcher]
+```
+
+</details>
+
+---
+
+### A.6 Rebalancing Metrics
+
+![Rebalancing Metrics](https://i.imgur.com/FAkIArJ.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant Sch as Scheduler
+  participant Rb as Rebalancer
+  participant Exp as Exporter
+
+  Sch->>Rb: Trigger rebalance(reason)
+  Rb->>Exp: eigen_orch_rebalance_trigger_total{reason}++
+  Rb->>Rb: Execute rebalance plan
+  Rb->>Exp: Observe eigen_orch_rebalance_duration_ms{reason}
+  alt rebalance failed
+    Rb->>Exp: eigen_orch_rebalance_failures_total{reason}++
+  else rebalance succeeded
+    Rb->>Sch: Updated placements/queues
+  end
+```
+
+</details>
+
+---
+
+### A.7 Starvation Prevention Metrics
+
+![Starvation Prevention Metrics](https://i.imgur.com/zQSjdUC.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  Age["eigen_orch_queue_oldest_age_seconds{queue}"] --> Detect{Starvation risk?}
+  Detect -- yes --> Act[Mitigation action]
+  Act --> M1["eigen_orch_starvation_prevention_total{queue}++"]
+  Act --> S["eigen_orch_starved_tasks{queue} gauge adjusts"]
+  Detect -- no --> Idle[No action]
+```
+
+</details>
+
+---
+
+### A.8 Scheduler Health Metrics
+
+![Scheduler Health Metrics](https://i.imgur.com/ITZ7mUm.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  In[Eligible items + topology + policy inputs] --> Lat["Observe  eige n_orch_scheduler_latency_ms{policy_mode}"]
+  Lat --> Dec["eigen_orch_scheduler_decisions_total{policy_mode}++"]
+  Lat -->|failure| Fail["eigen_orch_scheduler_failures_total{reason}++"]
+  Dec --> Out["Decision emitted (assignment/dispatch/rebalance)"]
+```
+
+</details>
+
+---
+
+### A.9 Runtime Coordination Metrics
+
+![Runtime Coordination Metrics](https://i.imgur.com/zOFLx4a.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant QM as Queue Manager
+  participant SCH as Scheduler
+  participant PE as Placement Engine
+  participant RD as Runtime Dispatcher
+  participant EXP as Exporter
+
+  QM->>SCH: dequeue candidate(queue)
+  SCH->>PE: evaluate placement
+  PE-->>SCH: placement decision
+  SCH->>EXP: observe eigen_orch_assignment_latency_ms
+  SCH->>RD: assign(queue, backend/worker)
+  RD->>EXP: eigen_orch_assignments_total{queue}++
+  alt assignment failed
+    RD->>EXP: eigen_orch_assignment_failures_total{reason}++
+  end
+```
+
+</details>
+
+---
+
+### A.10 Retry and Redelivery Metrics
+
+![Retry and Redelivery Metrics](https://i.imgur.com/PLmKI9X.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  Fail[Transient failure / lease expired / worker unavailable] --> R[Retry Controller]
+  R --> M["eigen_orch_retries_total{reason}++"]
+  R --> Budget{Retry budget left?}
+  Budget -- yes --> ReQ[Re-enqueue item]
+  Budget -- no --> DL[Dead-letter]
+  DL --> DLM["eigen_orch_dead_letter_total{reason}++"]
+```
+
+</details>
+
+---
+
+### A.11 Degraded Mode Metrics
+
+![Degraded Mode Metrics](https://i.imgur.com/31D8b1n.png)
+
+<details>
+<summary>code</summary>
+
+```text
+stateDiagram-v2
+  [*] --> Normal
+
+  Normal --> Degraded: incident / guardrail triggered
+  Degraded --> Normal: recovery
+
+  Degraded: eigen_orch_degraded_mode_total{mode}++
+  Normal --> Failover: leader loss / outage
+  Failover --> Normal: new leader elected
+
+  Failover: eigen_orch_failover_total{reason}++
+```
+
+</details>
+
+---
+
+### A.12 Snapshot Freshness Metrics
+
+![Snapshot Freshness Metrics](https://i.imgur.com/ZszJUTs.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  EXP[Exporter snapshot] --> TS[eigen_orch_snapshot_timestamp_seconds]
+  Now[Current time] --> Age[eigen_orch_snapshot_age_seconds]
+  TS --> Age
+  Age --> A{Age > threshold?}
+  A -- yes --> Alert[Alert: stale telemetry snapshot]
+  A -- no --> Ok[Healthy scrape freshness]
+```
+
+</details>
+
+---
+
+### A.13 Label Contract
+
+![Label Contract](https://i.imgur.com/AZkaumz.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  L[Label candidate] --> B{Bounded & enumerable?}
+  B -- no --> R["REJECT as label (move to logs/traces/artifacts)"]
+  B -- yes --> C{"Is it forbidden? (job_id/trace_id/request_id/user_id/freeform)"}
+  C -- yes --> R
+  C -- no --> OK["ALLOW as metric label (queue/tenant/project/policy_mode/reason/mode)"]
+```
+
+</details>

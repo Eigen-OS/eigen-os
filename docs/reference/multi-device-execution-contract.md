@@ -971,3 +971,359 @@ The following invariants are mandatory:
 10. Public contract semantics MUST remain backward compatible within a MAJOR version.
 11. Observability semantics MUST remain stable across MINOR versions.
 12. Distributed failures MUST remain explainable and correlatable.
+
+---
+
+## Appendix A. Diagrams
+
+### A.1 Runtime Architecture Model
+
+![Runtime Architecture Model](https://i.imgur.com/pIVHxJi.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  C[Client] --> S[Scheduler]
+  S --> SP[Split Planner]
+  SP --> M["SplitPlanManifest (shard_plans[])"]
+  M --> RM["Resource Manager (leases/retries)"]
+  RM --> W[Distributed Runtime Workers]
+  W --> PR[PartialResultEnvelope + QFS payload_ref]
+  W --> PF["PartialFailureEnvelope (reason_code + retryable)"]
+  PR --> MC[Merge Coordinator]
+  PF --> MC
+  MC --> FD["MergeDecision (final outcome)"]
+  FD --> QFS["QFS Lineage Layer (split/shards/merge/lineage)"]
+  S --> EX["Explainability Layer (decisions + fallbacks)"]
+  EX --> QFS
+  S --> OT["Telemetry Exporters (metrics + traces)"]
+  W --> OT
+  MC --> OT
+```
+
+</details>
+
+---
+
+### A.2 Split Planner Contract
+
+![Split Planner Contract](https://i.imgur.com/PGuR1e2.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant Sch as Scheduler
+  participant Pl as Split Planner
+  participant QFS as QFS (lineage)
+  participant Ex as Explainability
+
+  Sch->>Pl: plan_split(parent_job_id, tasks, max_shards, policy)
+  Pl->>Pl: Validate inputs (dedup, non-empty, max_shards, backend IDs)
+  Pl->>Pl: Deterministic planning (ordering + stable IDs)
+  Pl-->>Sch: SplitPlanManifest(version=3.1.0, shard_plans[])
+  Sch->>QFS: Persist split manifest qfs://jobs/<job_id>/split/manifest.yaml
+  Sch->>Ex: Persist decision snapshot (scheduler_decision_version)
+```
+
+</details>
+
+---
+
+### A.3 Split Plan Manifest
+
+![Split Plan Manifest](https://i.imgur.com/zMAZIRx.png)
+
+<details>
+<summary>code</summary>
+
+```text
+classDiagram
+  class SplitPlanManifest {
+    +string version
+    +string parent_job_id
+    +string scheduler_decision_version
+    +int64 created_at_ms
+    +string trace_id
+    +ShardPlan[] shard_plans
+  }
+
+  class ShardPlan {
+    +string version
+    +string parent_job_id
+    +string shard_id
+    +string backend_id
+    +string[] task_ids
+    +int32 attempt
+    +int64 lease_timeout_ms?
+    +map resource_profile?
+    +string trace_id
+    +string lineage_ref?
+  }
+
+  SplitPlanManifest "1" --> "many" ShardPlan
+```
+
+</details>
+
+---
+
+### A.4 Identity Guarantees
+
+![Identity Guarantees](https://i.imgur.com/sneKwcB.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  P[parent_job_id] --> F[Shard ID function]
+  N["NNN (stable index)"] --> F
+  F --> SID["<parent>-shard-<NNN>"]
+
+  Inputs[Determinism inputs] --> F
+  Inputs --- T["task ordering (canonical)"]
+  Inputs --- Topo[backend topology snapshot]
+  Inputs --- Pol[policy config]
+  Inputs --- Ver[contract version 3.1.0]
+
+  F -->|same inputs| SAME[Byte-identical shard_id set]
+```
+
+</details>
+
+---
+
+### A.5 Partial Result Envelope
+
+![Partial Result Envelope](https://i.imgur.com/pnZrJnM.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant W as Runtime Worker
+  participant QFS as QFS
+  participant MC as Merge Coordinator
+  participant Obs as Observability
+
+  W->>QFS: Write shard result payload qfs://jobs/<job_id>/shards/<NNN>/result.*
+  W->>W: Compute checksum sha256
+  W-->>MC: PartialResultEnvelope (parent_job_id, shard_id, attempt, payload_ref, checksum, trace_id, correlation_id)
+  MC->>MC: Validate membership + version + checksum availability
+  MC->>Obs: Emit events/metrics (shard_completed)
+```
+
+</details>
+
+---
+
+### A.6 Partial Failure Envelope
+
+![Partial Failure Envelope](https://i.imgur.com/guB471q.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant W as Runtime Worker
+  participant MC as Merge Coordinator
+  participant RM as Resource Manager
+  participant Obs as Observability
+
+  W-->>MC: PartialFailureEnvelope (reason_code, retryable, attempt, trace_id, correlation_id)
+  MC->>MC: Normalize + account failure (failed_shard_ids)
+  MC->>RM: If retryable -> request retry lease (shard_id, attempt+1)
+  RM-->>W: Retry assignment (same shard_id) (attempt increments)
+  MC->>Obs: Emit failure telemetry (reason_code taxonomy)
+```
+
+</details>
+
+---
+
+### A.7 Envelope Invariants
+
+![Envelope Invariants](https://i.imgur.com/z0Z69XQ.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  E[Incoming Envelope] --> V0{version == 3.1.0?}
+  V0 -- no --> R0["Reject: FAILED_PRECONDITION (mixed/unsupported version)"]
+  V0 -- yes --> V1{parent_job_id matches?}
+  V1 -- no --> R1["Reject: INVALID_ARGUMENT (parent mismatch)"]
+  V1 -- yes --> V2{shard_id in manifest?}
+  V2 -- no --> R2["Reject: INVALID_ARGUMENT (unknown shard)"]
+  V2 -- yes --> V3{duplicate shard_id?}
+  V3 -- yes --> R3["Reject: INVALID_ARGUMENT (duplicate envelope)"]
+  V3 -- no --> V4{checksum ok + payload exists?}
+  V4 -- no --> R4["Reject: FAILED_PRECONDITION (integrity/availability)"]
+  V4 -- yes --> OK[Accept & account]
+```
+
+</details>
+
+---
+
+### A.8 Merge Semantics / Validation / Decision
+
+![Merge Semantics / Validation / Decision](https://i.imgur.com/Rp9iiuV.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  In[(Collected envelopes)] --> A[Stage 1: Parent consistency]
+  A --> B[Stage 2: Version consistency]
+  B --> C[Stage 3: Shard uniqueness]
+  C --> D[Stage 4: Membership validation]
+  D --> E["Stage 5: Payload integrity (checksum + availability)"]
+  E --> F[Stage 6: Coverage analysis merged/failed/missing/retry-pending]
+  F --> G["Stage 7: Traceability validation (trace_id continuity)"]
+  G --> P{Apply merge policy}
+  P -->|AllShardsRequired| M1[All expected shards succeeded?]
+  P -->|Quorum| M2[min_successful_shards satisfied?]
+  P -->|WeightedQuorum| M3[minimum_weight satisfied?]
+  P -->|BestEffort| M4[Merge what is available]
+  M1 --> D1[MergeDecision]
+  M2 --> D1
+  M3 --> D1
+  M4 --> D1
+  D1 --> QFS[Persist MergeDecision qfs://jobs/<job_id>/merge/decision.yaml]
+```
+
+</details>
+
+---
+
+### A.9 Merge Policies
+
+![Merge Policies](https://i.imgur.com/Lo42WQK.png)
+
+<details>
+<summary>code</summary>
+
+```text
+stateDiagram-v2
+  [*] --> Collecting
+  Collecting --> Validating: enough envelopes received or deadline
+  Validating --> AwaitingRetries: retry_pending_shards > 0 and budget remains
+  AwaitingRetries --> Collecting: retry envelopes arrive
+
+  Validating --> Success: policy satisfied (All/Quorum/Weighted/BestEffort)
+  Validating --> Failure: policy cannot be satisfied (quorum impossible, validation failed)
+  Validating --> PartialSuccess: BestEffort partial merge completed
+
+  Success --> [*]
+  Failure --> [*]
+  PartialSuccess --> [*]
+```
+
+</details>
+
+---
+
+### A.10 Retry and Replay Semantics
+
+![Retry and Replay Semantics](https://i.imgur.com/9550w48.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  SID["shard_id (fixed)"] --> R["Retry attempt"]
+  PJ["parent_job_id (fixed)"] --> R
+  TR["trace continuity preserved"] --> R
+  R --> A1["attempt = attempt + 1"]
+  R -->|payload changes| NewP["New payload_ref + checksum"]
+  R -->|identity unchanged| SameID["Same (parent_job_id, shard_id)"]
+```
+
+</details>
+
+---
+
+### A.11 QFS Lineage Integration
+
+![QFS Lineage Integration](https://i.imgur.com/HkXwUx7.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  Root[qfs://jobs/<job_id>/] --> Split[split/ manifest.yaml + planner metadata]
+  Root --> Shards[shards/ <NNN>/ result.* / error.* / attempts/]
+  Root --> Merge[merge/ decision.yaml + validation report]
+  Root --> Lineage["lineage/ lineage.json (parent<->shards)"]
+  Root --> Traces[traces/ spans.json + events.json]
+  Root --> Explain[explain/ assignment + fallback + merge rationale]
+```
+
+</details>
+
+---
+
+### A.12 Observability Integration
+
+![Observability Integration](https://i.imgur.com/jdeGmVc.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  Ev[Runtime events] --> Met["Metrics (bounded labels)"]
+  Ev --> Tr["Traces (traceparent)"]
+  Ev --> Log[Structured logs]
+
+  Met --> M1[eigen_cluster_queue_backlog_depth]
+  Met --> M2[eigen_cluster_redeliveries_total]
+  Met --> M3[eigen_cluster_dead_letter_total]
+  Met --> M4[eigen_cluster_assignment_latency_ms]
+  Met --> M5[eigen_cluster_merge_failures_total]
+  Met --> M6[eigen_cluster_shard_retries_total]
+  Met --> M7[eigen_cluster_replay_failures_total]
+  Met --> M8[eigen_cluster_trace_breakage_total]
+
+  Tr --> Attr[Attrs: parent_job_id, shard_id, backend_id, merge_correlation_id]
+  Log --> Fields[Fields: parent_job_id, shard_id, attempt, reason_code, correlation_id]
+```
+
+</details>
+
+---
+
+### A.13 Explainability Integration
+
+![Explainability Integration](https://i.imgur.com/ELnvTOU.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  Sch[Scheduler decision] --> A[Backend assignment explain]
+  Sch --> F[Fallback selection explain]
+  MC[Merge Coordinator] --> MP[Merge policy decision explain]
+  RM[Resource Manager] --> RR[Retry rationale explain]
+  A --> QFS[qfs://jobs/<job_id>/explain/]
+  F --> QFS
+  MP --> QFS
+  RR --> QFS
+```
+
+</details>

@@ -1297,3 +1297,285 @@ The following MUST remain true:
 - public field semantics remain backward compatible within a MAJOR version,
 - runtime explainability remains attachable to workload execution,
 - runtime telemetry integration remains stable across supported runtimes.
+
+---
+
+## Appendix A. Diagrams
+
+### A.1 Top-Level Structure
+
+![Top-Level Structure](https://i.imgur.com/eZ5gLRo.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  J["job.yaml (JobSpec v1.0)"] --> M[metadata]
+  J --> S[spec]
+  J --> R[runtime]
+  J --> Res[resources]
+  J --> Sch[scheduling]
+  J --> Obs[observability]
+  J --> Sec[security]
+  J --> Art[artifacts]
+
+  M -->|name/namespace/labels/annotations| M2[Identity & indexing]
+  S -->|target/program/compiler/params/deps| S2[Execution intent]
+  R -->|mode/retry/timeout/replay| R2[Runtime policy]
+  Res -->|cpu/memory/gpu/quantum| Res2[Resource envelope]
+  Sch -->|priority/policy/affinity| Sch2[Placement intent]
+  Obs -->|tracing/metrics/explain level| Obs2[Telemetry policy]
+  Sec -->|sandbox/fs/net/trust| Sec2[Safety policy]
+  Art -->|persist/retention| Art2[Durability policy]
+```
+
+</details>
+
+---
+
+### A.2 Program Definition
+
+![Program Definition](https://i.imgur.com/aJFgFui.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  P[spec.program] --> O{Exactly ONE}
+  O --> Path[path]
+  O --> Inline[inline]
+  O --> Uri[uri]
+
+  Path --> V1[Packaging: read file bytes]
+  Inline --> V2[Packaging: inline bytes]
+  Uri --> V3[Packaging: resolve & fetch policy]
+
+  O -->|multiple set| E1[INVALID_ARGUMENT]
+  O -->|none set| E2[INVALID_ARGUMENT]
+```
+
+</details>
+
+---
+
+### A.3 Packaging Rules
+
+![Packaging Rules](https://i.imgur.com/AUhjOGg.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  A[job.yaml] --> B["Canonicalization (stable YAML -> canonical form)"]
+  B --> C["Resolve program source (path/inline/uri)"]
+  C --> D["Normalize (paths, UTF-8, line endings)"]
+  D --> H["Hashing SHA-256(source_bytes)"]
+  H --> MAN["Canonical manifest (file list + hashes + ordering)"]
+  MAN --> SUB["SubmitJobRequest (gRPC eigen.api.v1)"]
+  SUB --> QFS[Persist inputs QFS input/ + metadata.json]
+```
+
+</details>
+
+---
+
+### A.4 Hashing
+
+![Hashing](https://i.imgur.com/bpwZmOz.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  Bytes[source_bytes] --> SHA[SHA-256]
+  SHA --> Out[source_sha256]
+  Out --> Use1["Idempotency equivalence (same input -> same digest)"]
+  Out --> Use2["Replay linkage (artifact verification)"]
+  Out --> Use3["Cache keys (compilation/runtime)"]
+  Out --> Use4["Audit correlation (manifest + lineage)"]
+
+  Note1[Canonicalization required: UTF-8 + normalized line endings + stable path resolution] -.enforces.-> Bytes
+```
+
+</details>
+
+---
+
+### A.5 Canonical Mapping to SubmitJobRequest
+
+![Canonical Mapping to SubmitJobRequest](https://i.imgur.com/LFrcmQD.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  JS[JobSpec] --> Pkg[Packaging layer]
+  Pkg --> Req[SubmitJobRequest]
+
+  JS -->|metadata.name| ReqName[name]
+  JS -->|metadata.namespace| ReqNS[namespace]
+  JS -->|spec.target| ReqT[target]
+  JS -->|spec.program.*| ReqProg[program oneof]
+  JS -->|scheduling.priority| ReqPrio[priority]
+  JS -->|runtime.timeout.*| ReqTO[timeouts]
+  JS -->|resources.*| ReqRes[resource_requirements]
+  JS -->|observability.*| ReqTel[telemetry_policy]
+  JS -->|security.*| ReqSec[security_policy]
+
+  Pkg -->|canonical manifest| ReqMeta[metadata / idempotency inputs]
+```
+
+</details>
+
+---
+
+### A.6 Validation Rules
+
+![Validation Rules](https://i.imgur.com/PhZHrmy.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  In[job.yaml submitted] --> V1["Schema validation (required fields/types/enums/unknown fields)"]
+  V1 -->|fail| E1[INVALID_ARGUMENT]
+  V1 --> V2["Packaging validation (path safety, exists, hashing, ordering)"]
+  V2 -->|fail policy| E2[INVALID_ARGUMENT or PERMISSION_DENIED]
+  V2 --> V3["Semantic validation (entrypoint, deps, target compatibility)"]
+  V3 -->|state dependent| E3[FAILED_PRECONDITION]
+  V3 --> V4["Security validation (sandbox/fs/net/artifact trust)"]
+  V4 -->|violation| E4[PERMISSION_DENIED]
+  V4 --> V5["Runtime compatibility (capabilities/resources/scheduling eligibility)"]
+  V5 -->|quota/capacity| E5[RESOURCE_EXHAUSTED]
+  V5 -->|backend down| E6[UNAVAILABLE]
+  V5 --> OK[Accepted]
+```
+
+</details>
+
+---
+
+### A.7 Runtime Section
+
+![Runtime Section](https://i.imgur.com/kElOphS.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  Mode[runtime.mode] --> L[local]
+  Mode --> D[distributed]
+  Mode --> H[hybrid]
+  Mode --> B[benchmark]
+  Mode --> R[replay]
+
+  D --> D1[Cluster scheduling + workers]
+  H --> H1[Classical loop + quantum executions]
+  B --> B1[Benchmark pipeline + dataset resolution]
+  R --> R1[Replay inputs pinned + deterministic_seed]
+```
+
+</details>
+
+---
+
+### A.8 Scheduling Section
+
+![Scheduling Section](https://i.imgur.com/7KDWN9Y.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  P[scheduling.policy.mode] --> M1[balanced]
+  P --> M2[latency]
+  P --> M3[cost]
+  P --> M4[availability]
+  P --> M5[deterministic]
+  P --> M6[compliance]
+
+  P --> Explain["Explainability linkage (observability.explainability_level)"]
+  Explain --> Snap["Decision snapshot persisted (QFS/KB)"]
+```
+
+</details>
+
+---
+
+### A.9 Observability Section
+
+![Observability Section](https://i.imgur.com/NHjQxv6.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  Job[Job execution] --> Tr[Tracing traceparent propagated]
+  Job --> Met[Metrics bounded labels only]
+  Job --> Log["Structured logs (job_id as field, not label)"]
+  Job --> Exp["Explain artifacts (decision snapshots)"]
+
+  Exp --> QFS[QFS-L3 artifacts]
+  Exp --> KB[Knowledge Base records]
+  Tr --> OTel[OpenTelemetry pipeline]
+  Met --> Prom[Prometheus]
+```
+
+</details>
+
+---
+
+### A.10 Security Section
+
+![Security Section](https://i.imgur.com/AidCEZe.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  JS[JobSpec security policy] --> SB[sandbox mode]
+  JS --> FS[filesystem policy]
+  JS --> NW[network policy]
+  JS --> TR[artifact trust policy]
+
+  SB -->|strict/standard| Enf1[Runtime isolation enforced]
+  FS -->|readonly + no escape| Enf2[Path traversal / symlink escape blocked]
+  NW -->|disabled/restricted| Enf3[Egress controlled]
+  TR -->|require_signatures| Enf4[Unsigned artifacts rejected]
+
+  Enf2 -->|violation| PD[PERMISSION_DENIED]
+  Enf4 -->|violation| PD
+```
+
+</details>
+
+---
+
+### A.11 Error Semantics
+
+![Error Semantics](https://i.imgur.com/RmSOh7d.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  V[Validation failure] --> IA[INVALID_ARGUMENT]
+  P[State-dependent request] --> FP[FAILED_PRECONDITION]
+  S[Security violation] --> PD[PERMISSION_DENIED]
+  Q[Quota/capacity] --> RE[RESOURCE_EXHAUSTED]
+  U[Backend/service down] --> UN[UNAVAILABLE]
+  T[Deadline budget exceeded] --> DE[DEADLINE_EXCEEDED]
+```
+
+</details>

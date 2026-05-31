@@ -541,3 +541,283 @@ The GNN Optimizer is a **mandatory** target-architecture component for Eigen OS 
 - QFS artifacts,
 - observability surface,
 - and security requirements.
+
+---
+
+## Appendix A. Diagrams (normative)
+
+### A.1 C4 — Service Context (Optimizer within Eigen OS)
+
+![Service Context](https://i.imgur.com/b9XZpIo.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+    Client[Client SDKs / CLI] -->|"public gRPC"| API[system-api]
+
+    subgraph EigenOS["Eigen OS (cluster)"]
+        API -->|"enqueue/plan"| K[Kernel / QRTX]
+        K -->|"CompileJob / CompileCircuit"| C[Compiler Service]
+        K -->|"ExecuteCircuit"| DM[Driver Manager]
+        K -->|"OptimizeCircuit (optional)"| OPT[GNN Optimizer]
+        K --> QFS[(QFS)]
+        
+        OPT --> QFS
+        C --> QFS
+        DM --> QFS
+    end
+
+    DM -->|"vendor SDK / remote QDriver"| HW["QPU / Simulator / Vendor Cloud"]
+    OPT -->|"topology + calibration snapshot"| DM
+    OPT -->|"model fetch + verify"| MR[Model Registry]
+    OPT -->|"telemetry"| OBS["Observability (OTel/Prom/Logs)"]
+
+    classDef internal fill:#e3f2fd,stroke:#1976d2
+    classDef external fill:#fff3e0,stroke:#f57c00
+    class EigenOS,K,C,DM,OPT,QFS,API internal
+    class HW,MR,OBS external
+```
+
+</details>
+
+---
+
+### A.2 C4 — Component Diagram (Inside GNN Optimizer)
+
+![Component Diagram](https://i.imgur.com/ACoX8Pq.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  %% Component-level view for gnn-optimizer service
+
+  subgraph OPT["gnn-optimizer (OptimizerService)"]
+    RPC["gRPC API: OptimizeCircuit\n(contract_version, deterministic, seed, policy)"]
+    AuthZ["Request Guard\n(authz + policy gate)"]
+    Canon["Canonicalizer\n(request normalization + hashes)"]
+    Cache["Decision Cache\n(deterministic cache key)"]
+    Feat["Feature Extractor\n(AQO graph + topology + calibration)"]
+    Inference["GNN Inference Engine\n(model_id, budgets)"]
+    Symb["Symbolic Validator\n(schema + constraints + invariants)"]
+    Heu["Deterministic Heuristic Optimizer\n(fallback)"]
+    Static["Static Topology Mapper\n(last resort)"]
+    Emit["Artifact Emitter\n(QFS layout + digests)"]
+    Err["Error Normalizer\n(error-model.md mapping)"]
+
+    RPC --> AuthZ --> Canon --> Cache
+    Cache -->|hit| Emit
+    Cache -->|miss| Feat --> Inference --> Symb
+    Symb -->|valid| Emit
+    Symb -->|invalid/low_confidence| Heu --> Symb
+    Heu -->|still invalid| Static --> Symb
+    Symb -->|fail| Err
+  end
+
+  Canon --> MR[(Model Registry)]
+  Inference --> MR
+  Emit --> QFS[(QFS)]
+  RPC --> OBS[(OTel/Prom/Logs)]
+  Err --> OBS
+```
+
+</details>
+
+---
+
+### A.3 Deterministic Key Derivation (what is hashed)
+
+![Deterministic Key Derivation](https://i.imgur.com/fgRXNKV.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  AQO["AQO bytes (canonical)"] --> H1["aqo_sha256"]
+  Topo["Topology snapshot (bounded)"] --> H2["topology_sha256"]
+  Cal["Calibration snapshot (bounded)\n(or sentinel)"] --> H3["calibration_sha256"]
+
+  CV["contract_version"] --> K["deterministic_key"]
+  MID["optimizer_model_id\n(or fallback_used=true)"] --> K
+  Policy["policy envelope\n(mode + constraints)"] --> K
+  Seed["seed (required if deterministic)"] --> K
+  H1 --> K
+  H2 --> K
+  H3 --> K
+
+  K --> Cache["Decision Cache lookup"]
+  Cache --> Out["Outputs"]
+  Out --> Digest["optimizer_digest = sha256(req_inputs + outputs)"]
+```
+
+</details>
+
+---
+
+### A.4 Sequence — Kernel/QRTX → Optimizer → QFS (happy path + fallback)
+
+![Kernel/QRTX → Optimizer → QFS](https://i.imgur.com/eaB8UB4.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant K as Kernel/QRTX
+  participant DM as Driver Manager
+  participant O as OptimizerService (gnn-optimizer)
+  participant MR as Model Registry
+  participant QFS as QFS
+
+  Note over K: Kernel decides whether optimizer is enabled for this job/device/policy
+
+  K->>DM: GetDeviceDetails(device_id)
+  DM-->>K: topology + capabilities + calibration_ref/hash
+
+  K->>O: OptimizeCircuit(contract_version, AQO_ref/hash,\n topology_hash, calibration_hash,\n policy, deterministic, seed)
+  O->>O: Canonicalize request + compute deterministic_key
+
+  alt deterministic cache hit
+    O->>QFS: Read optimizer/decision.json by deterministic_key
+    QFS-->>O: cached decision + artifacts refs
+    O-->>K: optimized_aqo_ref + decision (fallback_used=?, digest)
+  else cache miss
+    O->>MR: Fetch model(model_id) + verify signature/checksum
+    MR-->>O: model bytes + provenance
+
+    O->>O: Feature extraction (AQO graph + topo + calib)
+    O->>O: GNN inference (budgeted)
+    O->>O: Symbolic validation (constraints + invariants)
+
+    alt plan valid and confidence ok
+      O->>QFS: Write optimizer/* artifacts (request, decision, placement, routing, optimized_aqo)
+      QFS-->>O: refs + checksums
+      O-->>K: optimized_aqo_ref + placement/routing refs + digest
+    else invalid / low confidence / inference error
+      O->>O: Deterministic heuristic fallback
+      O->>O: Validate fallback output
+      O->>QFS: Write optimizer/* artifacts + fallback_reason
+      QFS-->>O: refs + checksums
+      O-->>K: optimized_aqo_ref + fallback_used=true + fallback_reason + digest
+    end
+  end
+```
+
+</details>
+
+---
+
+### A.5 Fallback Chain (deterministic)
+
+![Fallback Chain](https://i.imgur.com/eys1ZHY.png)
+
+<details>
+<summary>code</summary>
+
+```text
+stateDiagram-v2
+  [*] --> GNN: Start OptimizeCircuit
+  GNN --> VALIDATE: inference output
+  VALIDATE --> EMIT: valid && confidence>=threshold
+  VALIDATE --> HEU: invalid || confidence<threshold || model_error
+  HEU --> VALIDATE2: heuristic output
+  VALIDATE2 --> EMIT: valid
+  VALIDATE2 --> STATIC: still invalid
+  STATIC --> VALIDATE3: static mapping output
+  VALIDATE3 --> EMIT: valid
+  VALIDATE3 --> REJECT: invalid
+  REJECT --> [*]
+  EMIT --> [*]
+```
+
+</details>
+
+---
+
+### A.6 QFS Artifact Layout (normative folder view)
+
+![QFS Artifact Layout](https://i.imgur.com/t9Axw39.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  root["qfs://jobs/<job_id>/optimizer/"] --> req["request.json\n(normalized, bounded)"]
+  root --> inref["input_aqo.ref\n(hash/ref)"]
+  root --> toporef["topology.ref\n(hash/ref)"]
+  root --> calibref["calibration.ref\n(optional)"]
+  root --> optaqo["optimized_aqo.json\n(or ref)"]
+  root --> place["placement.json\n(optional)"]
+  root --> route["routing.json\n(optional)"]
+  root --> explain["explain.json\n(optional, bounded)"]
+  root --> decision["decision.json\n(fallback_used, reason, confidence, digest)"]
+
+  decision --> digest["optimizer_digest\n(sha256)"]
+```
+
+</details>
+
+---
+
+### A.7 Trace Span Outline (recommended)
+
+![Trace Span Outline](https://i.imgur.com/ELbGIz3.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  R["OptimizeCircuit RPC span\noptimizer.optimize"] --> F["feature_extract span\noptimizer.feature_extract"]
+  R --> I["inference span\noptimizer.inference"]
+  R --> V["validation span\noptimizer.validate"]
+  R --> FB["fallback span (optional)\noptimizer.fallback"]
+  R --> E["emit span\noptimizer.emit_qfs"]
+
+  Note1["attrs: contract_version, deterministic, model_id,\n aqo_sha256, topology_sha256, calibration_sha256,\n fallback_used, fallback_reason, optimizer_digest"] --- R
+```
+
+</details>
+
+---
+
+### A.8 Trust Boundaries (internal-only, supply-chain + secrets)
+
+![Trust Boundaries](https://i.imgur.com/n7HjeQ0.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+    subgraph Trusted["Trusted Zone (Eigen OS internal mesh, mTLS)"]
+        K[Kernel/QRTX] -->|"internal gRPC"| O[gnn-optimizer]
+        O -->|"internal gRPC"| DM[Driver Manager]
+        O -->|"read/write"| QFS[(QFS)]
+        O -->|"fetch+verify model"| MR[(Model Registry)]
+    end
+
+    subgraph Untrusted["Untrusted / External"]
+        HW[QPU / Vendor Cloud]
+        Internet[(External network)]
+    end
+
+    DM -->|"vendor APIs"| HW
+    O -.->|"NO direct access (policy)"| Internet
+
+    Note["No provider secrets in requests/artifacts/logs<br/>Models must be signed/verified<br/>Deterministic mode forbids nondeterministic outputs"]
+    Note -.-> O
+
+    classDef trusted fill:#e6f7e6,stroke:#2e8b57,stroke-width:2px
+    classDef untrusted fill:#fff0f0,stroke:#d9534f,stroke-width:2px
+    class Trusted trusted
+    class Untrusted untrusted
+```
+
+</details>
