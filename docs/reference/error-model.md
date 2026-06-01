@@ -909,3 +909,362 @@ Breaking changes require:
 - CLI compatibility updates,
 - migration documentation,
 - conformance test updates.
+
+---
+
+## Appendix A. Diagrams
+
+### A.1 Core Principles
+
+![Core Principles](https://i.imgur.com/viG5nZC.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  A[Failure occurs] --> B["Deterministic classify (failure class)"]
+  B --> C["gRPC status-first (code + message)"]
+  B --> D["Stable reason code (ErrorInfo.reason)"]
+  B --> E["Structured details (google.rpc.*)"]
+  B --> F["Retryability semantics (deterministic)"]
+  B --> G["Safe disclosure (redaction/sanitization)"]
+  C --> OUT["RPC terminates (no success=false wrappers)"]
+  E --> OUT
+  D --> OUT
+```
+
+</details>
+
+---
+
+### A.2 Transport-Level Failure Semantics
+
+![Transport-Level Failure Semantics](https://i.imgur.com/y7FheJo.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant Client
+  participant Svc as Service
+
+  Client->>Svc: RPC request
+  alt success
+    Svc-->>Client: Response payload (OK)
+  else failure
+    Note over Svc: NO payload-level wrappers (success=false / ok=false forbidden)
+    Svc-->>Client: gRPC status code + message
+    Svc-->>Client: google.rpc.Status.details[]
+  end
+```
+
+</details>
+
+---
+
+### A.3 Deterministic Mapping
+
+![Deterministic Mapping](https://i.imgur.com/hoem55t.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  IN[Same semantic failure] --> MAP["Same mapping function (versioned)"]
+  MAP --> S[Same gRPC status]
+  MAP --> R[Same reason-code family]
+  MAP --> RT[Same retry class]
+  MAP --> DT["Same detail types (where applicable)"]
+  MAP --> SER["Deterministic serialization (ordering + UTF-8)"]
+```
+
+</details>
+
+---
+
+### A.4 Structured Error Semantics
+
+![Structured Error Semantics](https://i.imgur.com/wws760x.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  ST[google.rpc.Status] --> CODE[code + message]
+  ST --> DETAILS["details[]"]
+
+  DETAILS --> EI["ErrorInfo (reason/domain/metadata)"]
+  DETAILS --> BR["BadRequest (field violations)"]
+  DETAILS --> PF[PreconditionFailure]
+  DETAILS --> QF[QuotaFailure]
+  DETAILS --> RI[RetryInfo]
+  DETAILS --> RS[ResourceInfo]
+  DETAILS --> DI["DebugInfo (internal only)"]
+  DETAILS --> HL["Help (runbook/remediation)"]
+  DETAILS --> LM["LocalizedMessage (optional)"]
+```
+
+</details>
+
+---
+
+### A.5 Async Failure Visibility
+
+![Async Failure Visibility](https://i.imgur.com/rR01eCL.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant Client
+  participant API as System API
+  participant K as Kernel/QRTX
+  participant Q as QFS
+
+  Client->>API: SubmitJob
+  API->>K: Enqueue
+  K->>Q: persist inputs
+  API-->>Client: job_id + state=PENDING
+
+  loop observe
+    Client->>API: GetJobStatus / Stream updates
+    API->>K: query/stream
+    K-->>API: lifecycle state
+    API-->>Client: lifecycle state
+  end
+
+  alt terminal ERROR
+    K->>Q: write results/error.json (durable)
+    K-->>API: state=ERROR + error_code + error_summary + error_details_ref
+    API-->>Client: ERROR envelope (inspectable)
+  else terminal DONE
+    K->>Q: write results.parquet (+ manifest)
+    API-->>Client: DONE (results available via refs)
+  end
+```
+
+</details>
+
+---
+
+### A.6 Security & Information Disclosure
+
+![Security & Information Disclosure](https://i.imgur.com/xfruTVw.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  RAW["Raw internal error (stack/provider payload/paths)"] --> SAN[Sanitize + redact]
+  SAN --> EXT["External-safe surface (public API)"]
+  SAN --> INT["Internal diagnostics (trusted env only)"]
+  EXT --> RULES[Rules: - no; secrets - no; credentials - no; provider-private payloads - no; filesystem internals]
+  INT --> ALLOW["Allowed: - DebugInfo<br>- internal IDs - richer traces (only if policy allows)"]
+```
+
+</details>
+
+---
+
+### A.7 Canonical Status Model
+
+![Canonical Status Model](https://i.imgur.com/6D7t9Ci.png)
+
+<details>
+<summary>code</summary>
+
+```text
+mindmap
+  root((Canonical gRPC statuses))
+    INVALID_ARGUMENT
+      request invalid
+      BadRequest
+    FAILED_PRECONDITION
+      state prevents execution
+      PreconditionFailure
+    NOT_FOUND
+      missing resource
+      ResourceInfo
+    ALREADY_EXISTS
+      creation conflict
+    RESOURCE_EXHAUSTED
+      quota/capacity/throttle
+      RetryInfo
+      QuotaFailure
+    UNAVAILABLE
+      transient outage
+      RetryInfo
+    DEADLINE_EXCEEDED
+      deadline budget exceeded
+    UNAUTHENTICATED
+      invalid/missing auth
+    PERMISSION_DENIED
+      lacks authorization
+    UNIMPLEMENTED
+      unsupported feature
+    INTERNAL
+      invariant violation
+      DebugInfo (internal)
+    ABORTED
+      concurrency/lease conflict
+    CANCELLED
+      explicit cancellation
+```
+
+</details>
+
+---
+
+### A.8 Structured Error Detail Model
+
+![Structured Error Detail Model](https://i.imgur.com/Yks1M9M.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  F[Failure classified] --> T{Type}
+  T -->|Validation| V[INVALID_ARGUMENT + BadRequest]
+  T -->|Precondition / lifecycle| P[FAILED_PRECONDITION + PreconditionFailure]
+  T -->|Quota / capacity| Q["RESOURCE_EXHAUSTED + RetryInfo (+ QuotaFailure)"]
+  T -->|Transient outage| U[UNAVAILABLE + RetryInfo]
+  T -->|Missing resource| N[NOT_FOUND + ResourceInfo]
+  T -->|AuthN| A[UNAUTHENTICATED]
+  T -->|AuthZ| Z[PERMISSION_DENIED]
+  T -->|Concurrency conflict| C[ABORTED]
+  T -->|Unsupported| X[UNIMPLEMENTED]
+  T -->|Invariant violation| I["INTERNAL (+ DebugInfo internal)"]
+  V --> EI["Always add ErrorInfo (reason/domain)"]
+  P --> EI
+  Q --> EI
+  U --> EI
+  N --> EI
+  A --> EI
+  Z --> EI
+  C --> EI
+  X --> EI
+  I --> EI
+```
+
+</details>
+
+---
+
+### A.9 Backend Normalization Model
+
+![Backend Normalization Model](https://i.imgur.com/PDQwJVn.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  PV["Provider/Vendor failure (raw)"] --> DM[Driver Manager normalize + classify]
+  DM --> EI[Emit ErrorInfo EIGEN_BACKEND_* + taxonomy]
+  DM --> ST[gRPC status canonical]
+  ST --> K[Kernel/QRTX]
+  K --> API[Public API / SDK]
+  DM -.optional, policy.-> QFS["qfs://jobs/<job_id>/execution/backend_response.json (raw stored)"]
+  style QFS stroke-dasharray: 5 5
+```
+
+</details>
+
+---
+
+### A.10 Distributed Runtime Error Semantics
+
+![Distributed Runtime Error Semantics](https://i.imgur.com/xqwzDIG.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  subgraph Queue & delivery
+    QITEM[Queue item] --> DEL["Deliver (lease)"]
+    DEL -->|ack| ACK[ACK]
+    DEL -->|lease expired| RED[Redeliver]
+    RED -->|retry limit| DLQ[Dead-letter]
+  end
+
+  subgraph Canonical statuses
+    LE[Lease expired/conflict] --> AB[ABORTED]
+    QNA[Queue unavailable] --> UA[UNAVAILABLE]
+    QOL[Queue overloaded] --> RE[RESOURCE_EXHAUSTED]
+    IQS[Invalid queue state] --> FP[FAILED_PRECONDITION]
+    POI[Poison message] --> IA[INVALID_ARGUMENT]
+    MQ[Missing quorum / merge prereq] --> FP2[FAILED_PRECONDITION]
+  end
+
+  DEL --> LE
+  QITEM --> QNA
+  QITEM --> QOL
+  QITEM --> IQS
+  QITEM --> POI
+  DLQ --> MQ
+```
+
+</details>
+
+---
+
+### A.11 Retryability Model
+
+![Retryability Model](https://i.imgur.com/LsBasw9.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  R[Received error] --> S{Status}
+  S -->|UNAVAILABLE| R1[Retry exp backoff + jitter]
+  S -->|RESOURCE_EXHAUSTED| R2[Retry backoff + respect RetryInfo]
+  S -->|ABORTED| R3["Retry (conflict) with jitter"]
+  S -->|DEADLINE_EXCEEDED| R4{Idempotent?}
+  R4 -->|yes| R4a[Retry new deadline budget]
+  R4 -->|no| N4[No retry without idempotency]
+  S -->|FAILED_PRECONDITION| R5[Retry only after state change]
+  S -->|NOT_FOUND| R6["Conditional retry (eventual consistency)"]
+  S -->|INVALID_ARGUMENT| N1[No retry fix request]
+  S -->|PERMISSION_DENIED| N2[No retry policy/permissions]
+  S -->|UNAUTHENTICATED| N3[Re-authenticate then retry]
+  S -->|UNIMPLEMENTED| N5[No retry feature unsupported]
+  S -->|ALREADY_EXISTS| N6[No retry resolve conflict]
+  S -->|INTERNAL| R7[Conditional retry bounded budget]
+  S -->|CANCELLED| N7[Caller-defined]
+```
+
+</details>
+
+---
+
+### A.12 Operational Invariants
+
+![Operational Invariants](https://i.imgur.com/VRiGnkk.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  I1[Deterministic semantics] --> I2[Stable reason codes]
+  I2 --> I3[No wrapper errors]
+  I3 --> I4[Backend normalization]
+  I4 --> I5[Async failure inspectability]
+  I5 --> I6[Traceability across hops]
+  I6 --> I7["Bounded diagnostics (size/shape)"]
+  I7 --> I8["Safe observability (no secrets in telemetry)"]
+```
+
+</details>
