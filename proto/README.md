@@ -5,15 +5,15 @@ These files are the canonical source for generated client/server stubs.
 
 ## Packages
 
-### Public API (`eigen.api.v1`, product version `0.1`)
+### Public API (`eigen.api.v1`, namespace compatibility line `v1`)
 - Path: `proto/eigen/api/v1/*.proto`
 - Services: `JobService`, `DeviceService`
 
-### Internal API (`eigen.internal.v1`, product version `0.1`)
+### Internal API (`eigen.internal.v1`, namespace compatibility line `v1`)
 - Path: `proto/eigen/internal/v1/*.proto`
 - Services: `KernelGateway`, `DriverManagerService`, `CompilationService`
 
-> Note: `v1` in package/path is a protobuf namespace. MVP contract version is fixed at **`0.1`**.
+> Note: `v1` in package/path is a protobuf namespace compatibility line, not the Product release version. Product 1.0 contract package versions and implementation alignment status are tracked in `contracts/product-1.0/manifest.json`.
 
 ## Rust code generation
 

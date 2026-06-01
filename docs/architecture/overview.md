@@ -312,7 +312,7 @@ Storage backends (deployment dependent):
 - MinIO / S3-compatible object storage (artifact payloads),
 - alternative backends are allowed if they preserve QFS semantics.
 
-Authoritative artifact layout contract: `reference/qfs-layout.md`.
+Authoritative artifact layout contract: `reference/formats/qfs-layout.md`.
 
 ---
 
@@ -354,7 +354,7 @@ Properties:
 - serializable,
 - supports symbolic parameters.
 
-Authoritative AQO contract: `reference/aqo.md`.
+Authoritative AQO contract: `reference/formats/aqo.md`.
 
 ---
 

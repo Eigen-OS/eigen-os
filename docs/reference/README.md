@@ -6,7 +6,7 @@ They should stay precise, explicit, and implementation-agnostic.
 ## Index
 
 - JobSpec: [`jobspec.md`](jobspec.md)
-- Eigen-Lang submission: [`eigen-lang-submission.md`](eigen-lang-submission.md)
+- Eigen-Lang language reference: [`eigen-lang.md`](eigen-lang.md)
 - Public API: [`api/grpc-public.md`](api/grpc-public.md)
 - Explain API (backend selection): [`api/explain-backend-selection.md`](api/explain-backend-selection.md)
 - Benchmark Run API: [`api/benchmark-run.md`](api/benchmark-run.md)
@@ -21,7 +21,8 @@ They should stay precise, explicit, and implementation-agnostic.
 - Formats:
   - [`formats/aqo.md`](formats/aqo.md)
   - [`formats/qfs-layout.md`](formats/qfs-layout.md)
-- Eigen-Lang language reference: [`eigen-lang/README.md`](eigen-lang/README.md)
+- Public REST API envelope: [`api/rest-public.md`](api/rest-public.md)
+- Authorization policy: [`security/authz.md`](security/authz.md)
 
 ## Change policy
 

@@ -33,7 +33,7 @@ This document is aligned with:
 
 - `docs/architecture/contract-map.md`
 - `docs/reference/jobspec.md`
-- `docs/reference/qfs-layout.md`
+- `docs/reference/formats/qfs-layout.md`
 - `docs/reference/error-model.md`
 - `docs/reference/error-mapping.md`
 
@@ -347,7 +347,7 @@ Kernel responsibilities:
 
 ### 8.1 QFS (CircuitFS) Layout (v1.0)
 
-Reference: `docs/reference/qfs-layout.md`
+Reference: `docs/reference/formats/qfs-layout.md`
 
 Normative job root: `{qfs_root}/{job_id}/`
 

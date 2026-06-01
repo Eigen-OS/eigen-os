@@ -83,13 +83,13 @@ Responsibilities:
 Normative references:
 
 ```text
-docs/reference/runtime-decisioning.md
+docs/reference/intelligent-runtime-observability-contract.md
 docs/reference/multi-device-execution-contract.md
 ```
 
 ### 2.3 Compiler
 
-Document: c`omponents/compiler.md`
+Document: `components/compiler.md`
 
 Responsibilities:
 
@@ -104,7 +104,8 @@ Normative references:
 
 ```text
 docs/reference/jobspec.md
-docs/reference/compiler-contracts/
+docs/reference/eigen-lang.md
+docs/reference/formats/aqo.md
 ```
 
 ---
@@ -126,7 +127,7 @@ Normative references:
 
 ```text
 docs/reference/error-model.md
-docs/reference/runtime-decisioning.md
+docs/reference/intelligent-runtime-observability-contract.md
 ```
 
 ---
@@ -147,7 +148,7 @@ Responsibilities:
 Normative references:
 
 ```text
-docs/reference/qfs-contracts/
+docs/reference/formats/qfs-layout.md
 docs/reference/multi-device-execution-contract.md
 ```
 
@@ -193,7 +194,7 @@ Normative references:
 
 ```text
 docs/reference/orchestration-observability-contract.md
-docs/reference/runtime-decisioning.md
+docs/reference/intelligent-runtime-observability-contract.md
 ```
 
 ---
@@ -216,7 +217,6 @@ Normative references:
 
 ```text
 docs/reference/intelligent-runtime-observability-contract.md
-docs/reference/runtime-decisioning.md
 ```
 
 ---
@@ -242,8 +242,8 @@ Notes:
 Normative references:
 
 ```text
-docs/reference/benchmark-contracts/
-docs/reference/observability-contracts/
+docs/reference/api/benchmark-run.md
+docs/reference/benchmark-observability-contract.md
 ```
 
 ---
@@ -264,7 +264,7 @@ Responsibilities:
 Normative references:
 
 ```text
-docs/reference/security-contracts/
+docs/reference/security/authz.md
 docs/reference/jobspec.md
 ```
 

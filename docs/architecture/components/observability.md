@@ -57,10 +57,10 @@ eigen_observability_contract_info{version="1.0.0"} 1
 
 This document delegates detailed metric catalogs to contract docs:
 
-- `docs/architecture/orchestration-observability-contract.md` (scheduler/control plane metrics)
-- `docs/architecture/intelligent-runtime-observability-contract.md` (runtime decisioning + explainability metrics)
-- `docs/reference/error-model.md and docs/reference/error-mapping.md` (failure semantics and reason codes)
-- `docs/architecture/contract-map.md and docs/architecture/data-flow.md` (end-to-end flow + correlation boundaries)
+- `docs/reference/orchestration-observability-contract.md` (scheduler/control plane metrics)
+- `docs/reference/intelligent-runtime-observability-contract.md` (runtime decisioning + explainability metrics)
+- `docs/reference/error-model.md` and `docs/reference/error-mapping.md` (failure semantics and reason codes)
+- `docs/architecture/contract-map.md` and `docs/architecture/data-flow.md` (end-to-end flow + correlation boundaries)
 
 If a detail conflicts: **the specialized contract for that subsystem wins**, unless this document explicitly states a global rule (e.g., label cardinality prohibitions).
 
@@ -228,8 +228,8 @@ eigen_service_snapshot_age_seconds
 
 Use the dedicated contracts for required catalogs:
 
-- Orchestration control plane metrics: `docs/architecture/orchestration-observability-contract.md`
-- Intelligent runtime decisioning metrics: `docs/architecture/intelligent-runtime-observability-contract.md`
+- Orchestration control plane metrics: `docs/reference/orchestration-observability-contract.md`
+- Intelligent runtime decisioning metrics: `docs/reference/intelligent-runtime-observability-contract.md`
 
 ---
 
