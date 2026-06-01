@@ -887,3 +887,342 @@ These guarantees apply to:
 - enterprise monitoring integrations,
 - replay tooling,
 - distributed runtime orchestration systems.
+
+---
+
+## Appendix A. Diagrams
+
+### A.1 Telemetry Architecture Requirements
+
+![Telemetry Architecture Requirements](https://i.imgur.com/Vccyldh.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  subgraph Runtime
+    SCH[Benchmark Scheduler]
+    RUN[Benchmark Runtime]
+    ING[Ingestion Pipeline]
+    REP[Replay Validator]
+    QFS[(QFS / CircuitFS)]
+  end
+
+  subgraph Telemetry
+    EXP[Prometheus Exporter\n/metrics]
+    OTEL[OpenTelemetry SDK]
+    LOG[Structured Logs]
+  end
+
+  subgraph Backends
+    SIM[Simulators]
+    HW[Quantum Hardware]
+  end
+
+  subgraph ObservabilityStack
+    PROM[Prometheus]
+    GRAF[Grafana]
+    LOKI[Loki/ES]
+    JAEG[Jaeger/Tempo]
+    AM[Alertmanager]
+  end
+
+  SCH --> RUN
+  RUN --> SIM
+  RUN --> HW
+
+  RUN --> QFS
+  ING --> QFS
+  REP --> QFS
+
+  SCH --> OTEL
+  RUN --> OTEL
+  ING --> OTEL
+  REP --> OTEL
+
+  SCH --> LOG
+  RUN --> LOG
+  ING --> LOG
+  REP --> LOG
+
+  EXP --> PROM
+  OTEL --> JAEG
+  LOG --> LOKI
+  PROM --> GRAF
+  PROM --> AM
+
+  note1{{Telemetry MUST NOT be a hard dependency\nfor execution progress}}
+  EXP --- note1
+```
+
+</details>
+
+---
+
+### A.2 Required Metrics
+
+![Required Metrics](https://i.imgur.com/rH2XSvq.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  Q[Queue Health] --> Q1[eigen_bench_queue_depth]
+  Q --> Q2[eigen_bench_queue_oldest_age_seconds]
+  Q --> Q3["eigen_bench_queue_dispatch_total{result}"]
+
+  L[Execution Lifecycle] --> L1[eigen_bench_run_duration_seconds_bucket]
+  L --> L2["eigen_bench_runs_succeeded_total{backend,mode}"]
+  L --> L3["eigen_bench_runs_failed_total{backend,reason}"]
+  L --> L4[eigen_bench_runs_cancelled_total]
+  L --> L5[eigen_bench_active_runs]
+
+  I[Ingestion & Artifacts] --> I1["eigen_bench_ingestion_failures_total{stage,reason}"]
+  I --> I2[eigen_bench_artifact_persist_latency_seconds_bucket]
+  I --> I3[eigen_bench_artifact_validation_failures_total]
+  I --> I4[eigen_bench_artifact_persist_failures_total]
+
+  R[Reliability & Safety] --> R1[eigen_bench_stalled_runs]
+  R --> R2[eigen_bench_replay_mismatch_total]
+  R --> R3[eigen_bench_runtime_panics_total]
+  R --> R4[eigen_bench_runtime_restarts_total]
+
+  S[Scheduler & Resource Pressure] --> S1[eigen_bench_scheduler_latency_seconds_bucket]
+  S --> S2["eigen_bench_resource_exhausted_total{resource}"]
+  S --> S3[eigen_bench_scheduler_retries_total]
+```
+
+</details>
+
+---
+
+### A.3 Queue Health
+
+![Queue Health](https://i.imgur.com/XVjzm76.png)
+
+<details>
+<summary>code</summary>
+
+```text
+stateDiagram-v2
+  [*] --> Enqueued: enqueue
+  Enqueued --> Scheduled: dispatch result=scheduled
+  Enqueued --> Rejected: dispatch result=rejected
+  Enqueued --> Delayed: dispatch result=delayed
+  Delayed --> Scheduled: later scheduled
+  Delayed --> Rejected: later rejected
+
+  note right of Enqueued
+    eigen_bench_queue_depth tracks count of Enqueued + Delayed (queued)
+    eigen_bench_queue_oldest_age_seconds tracks max age among queued items
+  end note
+```
+
+</details>
+
+---
+
+### A.4 Benchmark Execution Lifecycle
+
+![Benchmark Execution Lifecycle](https://i.imgur.com/um8n3tb.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  P[PENDING/QUEUED] --> ST[START]
+  ST --> EX[EXECUTING]
+  EX -->|success| OK[DONE]
+  EX -->|failure| ER[ERROR]
+  EX -->|cancel| CA[CANCELLED]
+
+  subgraph Metrics
+    D["eigen_bench_run_duration_seconds (hist: start->terminal)"]
+    A["eigen_bench_active_runs (gauge)"]
+    S[eigen_bench_runs_succeeded_total]
+    F["eigen_bench_runs_failed_total{reason}"]
+    C[eigen_bench_runs_cancelled_total]
+  end
+
+  ST --- A
+  EX --- A
+  ST --- D
+  OK --- S
+  ER --- F
+  CA --- C
+```
+
+</details>
+
+---
+
+### A.5 Label Contract
+
+![Label Contract](https://i.imgur.com/YSrSNv5.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  M[Metric emission] --> L{Label candidate}
+  L -->|bounded enum / finite configured set| OK[Allowed label]
+  L -->|correlation id / unbounded string| NO[FORBIDDEN as label]
+  NO --> ALT[Put into traces/logs/events/QFS artifacts]
+
+  subgraph Forbidden Examples
+    F1[job_id]
+    F2[trace_id]
+    F3[request_id]
+    F4[correlation_id]
+    F5[raw tenant/user ids]
+    F6[raw AQO hashes]
+  end
+
+  NO --- F1
+  NO --- F2
+  NO --- F3
+  NO --- F4
+  NO --- F5
+  NO --- F6
+```
+
+</details>
+
+---
+
+### A.6 Tracing Contract
+
+![Tracing Contract](https://i.imgur.com/ytsEJbH.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant CLI as Client/CI
+  participant SCH as Scheduler
+  participant RUN as Runtime
+  participant QFS as QFS
+  participant ING as Ingestion
+  participant REP as Replay
+
+  CLI->>SCH: benchmark.enqueue (traceparent propagated)
+  SCH->>RUN: benchmark.schedule (decision + placement)
+  RUN->>RUN: benchmark.execute (runtime spans)
+  RUN->>QFS: benchmark.persist (artifacts)
+  RUN->>ING: benchmark.ingest (telemetry/artifacts)
+  ING->>REP: benchmark.replay (optional)
+  REP-->>ING: replay verdict
+
+  Note over CLI,REP: Required attributes (bounded):run_id, backend, mode, contract_version, result_state
+```
+
+</details>
+
+---
+
+### A.7 Exporter Requirements
+
+![Exporter Requirements](https://i.imgur.com/2DBzQdb.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  RT[Benchmark runtime hot path] -->|updates| REG[In-process metrics registry]
+  SCRAPE[Prometheus scrape] --> EXP[Exporter /metrics endpoint]
+  EXP --> REG
+  EXP --> OUT[Text exposition snapshot]
+
+  OUT -->|success| PROM[Prometheus]
+  OUT -->|failure| ERR[Scrape error]
+
+  note1{{Exporter MUST NOT block runtime progress; napshot consistency required; No panics on scrape}}
+  EXP --- note1
+```
+
+</details>
+
+---
+
+### A.8 Alert Compatibility Contract
+
+![Alert Compatibility Contract](https://i.imgur.com/TS5PPYk.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  subgraph Signals
+    QD[eigen_bench_queue_depth]
+    QA[eigen_bench_queue_oldest_age_seconds]
+    SL[eigen_bench_scheduler_latency_seconds]
+    FR[eigen_bench_runs_failed_total / succeeded_total]
+    ING[eigen_bench_ingestion_failures_total]
+    ST[eigen_bench_stalled_runs]
+    RP[eigen_bench_replay_mismatch_total]
+    EH[eigen_bench_runtime_restarts_total + exporter freshness]
+  end
+
+  subgraph Alerts
+    A1[Queue stall]
+    A2[Scheduler degradation]
+    A3[Failure-rate breach]
+    A4[Ingestion surge]
+    A5[Stalled execution]
+    A6[Replay divergence]
+    A7[Exporter health]
+  end
+
+  QD --> A1
+  QA --> A1
+  SL --> A2
+  FR --> A3
+  ING --> A4
+  ST --> A5
+  RP --> A6
+  EH --> A7
+```
+
+</details>
+
+---
+
+### A.9 CI & Conformance Requirements
+
+![CI & Conformance Requirements](https://i.imgur.com/LgGSP0Y.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  PR[Change set] --> CI[CI pipeline]
+  CI --> T1["Scrape validation (text format + TYPE)"]
+  CI --> T2[Metric family presence]
+  CI --> T3["Type validation (counter/gauge/hist)"]
+  CI --> T4["Histogram bucket validation (stable boundaries)"]
+  CI --> T5[Alert query validation]
+  CI --> T6[Dashboard query validation]
+  CI --> T7[Label boundedness checks]
+  CI --> T8[Trace propagation smoke test]
+  T1 --> PASS{All pass?}
+  T2 --> PASS
+  T3 --> PASS
+  T4 --> PASS
+  T5 --> PASS
+  T6 --> PASS
+  T7 --> PASS
+  T8 --> PASS
+  PASS -->|yes| MERGE[Merge allowed]
+  PASS -->|no| BLOCK[Block incompatible change]
+```
+
+</details>
