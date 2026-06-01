@@ -526,3 +526,470 @@ Minimum required tests:
 - production-grade retries/circuit breakers and degraded modes.
 
 These gaps are intentionally preserved as required Phase-1+ work and MUST NOT be erased by documentation drift.
+
+---
+
+## Appendix A. Diagrams (normative)
+
+### A.1 C4 Context — Kernel as orchestration core
+
+![C4 Context](https://i.imgur.com/yNElbh8.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  subgraph Clients["Clients"]
+    SDK[SDK/CLI]
+  end
+
+  subgraph Public["Public Edge"]
+    API[System API]
+  end
+
+  subgraph Runtime["Runtime Core"]
+    K[Kernel / QRTX]
+    C[Compiler Service]
+    DM[Driver Manager]
+    QFS[(QFS)]
+  end
+
+  SDK --> API --> K
+  K --> C
+  K --> DM
+  K --> QFS
+  C --> QFS
+  DM --> QFS
+```
+
+</details>
+
+---
+
+### A.2 C4 Container — Internal API boundary
+
+![Internal API boundary](https://i.imgur.com/BT7C0Wi.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+    API["System API\n(public)"] -->|internal gRPC| KG["KernelGatewayService\n(eigen.internal.v1)"]
+    KG --> Orchestrator["Orchestrator Core\n(state machine + deadlines)"]
+    Orchestrator --> JobStore[(JobStore\nin-memory MVP)]
+    Orchestrator -->|gRPC| C[CompilationService]
+    Orchestrator -->|gRPC| DM[DriverManagerService]
+    Orchestrator -->|store/load| QFS[(QFS)]
+
+    classDef service fill:#e3f2fd,stroke:#1976d2
+    classDef store fill:#f0f4c3,stroke:#689f38
+    class API,KG,Orchestrator,C,DM service
+    class JobStore,QFS store
+```
+
+</details>
+
+---
+
+### A.3 State machine — internal states (incl. optional substates)
+
+![internal states](https://i.imgur.com/l6IygS1.png)
+
+<details>
+<summary>code</summary>
+
+```text
+stateDiagram-v2
+  [*] --> PENDING
+  PENDING --> COMPILING: start_compile
+  PENDING --> CANCELLED: cancel
+
+  COMPILING --> QUEUED: compile_ok
+  COMPILING --> ERROR: compile_fail
+  COMPILING --> CANCELLED: cancel
+
+  QUEUED --> RUNNING: dispatch
+  QUEUED --> CANCELLED: cancel
+  QUEUED --> ERROR: dispatch_fail
+
+  RUNNING --> DONE: exec_ok + persist_ok
+  RUNNING --> ERROR: exec_fail OR persist_fail
+  RUNNING --> CANCELLED: cancel_best_effort
+  RUNNING --> TIMEOUT_INTERNAL: deadline_exceeded
+
+  TIMEOUT_INTERNAL --> ERROR: map_to_public_error
+
+  DONE --> [*]
+  ERROR --> [*]
+  CANCELLED --> [*]
+
+  note right of TIMEOUT_INTERNAL
+    Internal-only terminal reason.
+    MUST map to public ERROR with DEADLINE_EXCEEDED semantics.
+  end note
+```
+
+</details>
+
+---
+
+### A.4 Mapping — internal → public lifecycle (visual)
+
+![Mapping — internal → public lifecycle](https://i.imgur.com/l6IygS1.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  subgraph Internal["Kernel internal (may include substates)"]
+    P[PENDING]
+    V[VALIDATING]
+    C[COMPILING]
+    Q[QUEUED]
+    A[ALLOCATING]
+    R[RUNNING]
+    E1[EXECUTING]
+    C2[COMPLETING]
+    D[DONE]
+    X[ERROR]
+    Z[CANCELLED]
+    T[TIMEOUT_INTERNAL]
+  end
+
+  subgraph Public["Public lifecycle (stable)"]
+    pP[PENDING]
+    pC[COMPILING]
+    pQ[QUEUED]
+    pR[RUNNING]
+    pD[DONE]
+    pX[ERROR]
+    pZ[CANCELLED]
+  end
+
+  P --> pP
+  V --> pP
+  C --> pC
+  Q --> pQ
+  A --> pQ
+  R --> pR
+  E1 --> pR
+  C2 --> pR
+  D --> pD
+  X --> pX
+  Z --> pZ
+  T --> pX
+```
+
+</details>
+
+---
+
+### A.5 Sequence — EnqueueJob (persist inputs, accept job_id)
+
+![EnqueueJob](https://i.imgur.com/HPGUO39.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant API as System API
+  participant K as KernelGatewayService
+  participant Q as QFS
+  participant S as JobStore
+
+  API->>K: EnqueueJob(JobSpec + source_ref/bytes)\n(traceparent, auth ctx)
+  K->>S: create job record (PENDING)
+  K->>Q: atomic_write input/job.yaml
+  K->>Q: atomic_write source/<program> (or bundle)
+  K-->>API: EnqueueJobResponse(job_id, state=PENDING)
+```
+
+</details>
+
+---
+
+### A.6 Sequence — Orchestrate compile→execute→persist
+
+![Orchestrate compile→execute→persist](https://i.imgur.com/mTPpfxb.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant K as QRTX Orchestrator
+  participant C as CompilationService
+  participant DM as DriverManagerService
+  participant Q as QFS
+
+  K->>K: transition PENDING→COMPILING
+  K->>C: CompileJob(job_id, source_ref/bytes)
+  alt compile ok
+    C->>Q: atomic_write compiled/compiled.aqo.json
+    C->>Q: atomic_write compiled/metadata.json
+    C-->>K: compiled_aqo_ref + aqo_digest
+    K->>K: transition COMPILING→QUEUED
+    K->>K: transition QUEUED→RUNNING
+    K->>DM: ExecuteCircuit(job_id, device_id, aqo_ref)
+    alt exec ok
+      DM-->>K: ExecutionResult
+      K->>Q: atomic_write results/results.json
+      K->>Q: atomic_write timeline/timeline.json (recommended)
+      K->>K: transition RUNNING→DONE
+    else exec fail
+      DM-->>K: gRPC error + reason
+      K->>Q: atomic_write results/error.json
+      K->>Q: atomic_write timeline/timeline.json (recommended)
+      K->>K: transition RUNNING→ERROR
+    end
+  else compile fail
+    C-->>K: gRPC error + reason
+    K->>Q: atomic_write results/error.json
+    K->>Q: atomic_write timeline/timeline.json (recommended)
+    K->>K: transition COMPILING→ERROR
+  end
+```
+
+</details>
+
+---
+
+### A.7 Sequence — GetJobResults (precondition vs terminal)
+
+![GetJobResults](https://i.imgur.com/Vl6oJGx.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant API as System API
+  participant K as KernelGatewayService
+  participant Q as QFS
+
+  API->>K: GetJobResults(job_id)
+  alt job state is DONE
+    K->>Q: load results/results.json
+    Q-->>K: results bytes
+    K-->>API: GetJobResultsResponse(results + refs)
+  else job state is ERROR
+    K->>Q: load results/error.json
+    Q-->>K: error artifact
+    K-->>API: GetJobResultsResponse(error_code, summary, error_details_ref)
+  else non-terminal
+    K-->>API: FAILED_PRECONDITION (results not ready)
+  end
+```
+
+</details>
+
+---
+
+### A.8 Idempotent terminalization rule (race-safe)
+
+![Idempotent terminalization rule](https://i.imgur.com/7szSTNc.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+    Evt["Terminalization event arrives\n(exec_ok / exec_fail / cancel / timeout)"] --> Read["Read current state"]
+    Read --> T{"Is job already terminal?"}
+    T -- yes --> Same{"Does event match existing terminal outcome?"}
+    Same -- yes --> Noop["No-op (idempotent)\nreturn existing terminal state"]
+    Same -- no --> Reject["Reject/ignore conflicting terminalization\nlog + reason code"]
+    T -- no --> Apply["Apply terminal transition\npersist required artifacts"]
+    Apply --> Freeze["Freeze terminal state\n(DONE/ERROR/CANCELLED)"]
+
+    classDef terminal fill:#e8f5e9,stroke:#2e7d32
+    classDef decision fill:#fff3e0,stroke:#f57c00
+    class Noop,Freeze terminal
+    class T,Same decision
+```
+
+</details>
+
+---
+
+### A.9 Sequence — CancelJob (best-effort for RUNNING)
+
+![CancelJob](https://i.imgur.com/rAcDd2r.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant API as System API
+  participant K as KernelGatewayService
+  participant DM as DriverManagerService
+  participant Q as QFS
+
+  API->>K: CancelJob(job_id)
+  alt state is PENDING/COMPILING/QUEUED
+    K->>K: transition -> CANCELLED (idempotent)
+    K->>Q: atomic_write timeline/timeline.json (recommended)
+    K-->>API: CancelJobResponse(state=CANCELLED)
+  else state is RUNNING
+    K->>DM: AbortExecution(job_id, device_id) (if supported)
+    Note over DM: If not supported,\nDM may return UNIMPLEMENTED
+    K->>K: transition -> CANCELLED (best-effort)
+    K->>Q: atomic_write timeline/timeline.json (recommended)
+    K-->>API: CancelJobResponse(state=CANCELLED)
+  else terminal already
+    K-->>API: CancelJobResponse(state=<terminal>) (idempotent)
+  end
+```
+
+</details>
+
+---
+
+### A.10 Timeout mapping — TIMEOUT_INTERNAL → public ERROR
+
+![Timeout mapping](https://i.imgur.com/ph8mmQe.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+    Deadline[deadline exceeded] --> T["TIMEOUT_INTERNAL\n(internal reason)"]
+    T --> Persist["Persist results/error.json\n+ timeline marker"]
+    Persist --> Pub["Public state = ERROR\nAsync error includes EIGEN_TIMEOUT\nSynchronous: DEADLINE_EXCEEDED"]
+```
+
+</details>
+
+---
+
+### A.11 Required artifacts by phase (overview)
+
+![Required artifacts by phase](https://i.imgur.com/fIL4MSt.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+    subgraph Enqueue["On EnqueueJob"]
+        A1["input/job.yaml"]
+        A2["source/..."]
+    end
+
+    subgraph Compile["On compile success"]
+        B1["compiled/compiled.aqo.json"]
+        B2["compiled/compiled.qasm (optional)"]
+        B3["compiled/diagnostics.json (optional)"]
+    end
+
+    subgraph Terminal["On terminalization"]
+        C1["results/results.json (DONE)"]
+        C2["results/error.json (ERROR) — required for async visibility"]
+        C3["timeline/timeline.json (recommended)"]
+    end
+
+    Enqueue --> Compile --> Terminal
+
+    classDef phase fill:#e3f2fd,stroke:#1976d2,color:#000
+    class Enqueue,Compile,Terminal phase
+```
+
+</details>
+
+---
+
+### A.12 Trace propagation across orchestration path
+
+![Trace propagation across orchestration path](https://i.imgur.com/BcPSxNg.png)
+
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant SDK as SDK/CLI
+  participant API as System API
+  participant K as Kernel/QRTX
+  participant C as Compiler
+  participant DM as Driver Manager
+  participant Q as QFS
+
+  SDK->>API: SubmitJob (traceparent)
+  API->>K: EnqueueJob (same traceparent)
+  K->>C: CompileJob (child span)
+  C->>Q: store compiled/* (child span)
+  K->>DM: ExecuteCircuit (child span)
+  K->>Q: store results/* (child span)
+  Note over K: Logs include trace_id + job_id\nMetrics exclude job_id/trace_id labels
+```
+
+</details>
+
+---
+
+### A.13 Health model (target) — dependencies & readiness
+
+![Health model](https://i.imgur.com/CobiZh5.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+    Live["/live"] --> Proc["process alive"]
+    Ready["/ready"] --> Dep{"deps reachable?"}
+    
+    Dep --> C["Compiler reachable"]
+    Dep --> DM["Driver Manager reachable"]
+    Dep --> Q["QFS reachable"]
+    Dep --> OK["ready = true"]
+    Dep --> NotOK["ready = false"]
+
+    classDef healthCheck fill:#e8f5e9,stroke:#2e7d32
+    class Live,Ready,OK healthCheck
+```
+
+</details>
+
+---
+
+### A.14 Future scheduling loop (QueueJob / AllocateResources)
+
+![Future scheduling loop](https://i.imgur.com/DSm8Be7.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant K as Kernel/QRTX
+  participant RM as Resource Manager (future)
+  participant HWE as HWE (future)
+  participant DM as Driver Manager
+
+  K->>K: QUEUED
+  K->>RM: AllocateResources(job_id, constraints)
+  RM-->>K: allocation (device_id/slot) or deny
+  alt allocated
+    K->>HWE: PlanExecution(job_id, device_snapshot)
+    HWE-->>K: plan (may include optimizer refs)
+    K->>DM: ExecuteCircuit(job_id, device_id, payload/ref)
+  else denied
+    K->>K: remain QUEUED or ERROR (policy)
+  end
+```
+
+</details>
