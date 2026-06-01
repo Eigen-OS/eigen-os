@@ -50,19 +50,90 @@ def _metadata(context: grpc.ServicerContext) -> dict[str, str]:
     return {k.lower(): v for k, v in (context.invocation_metadata() or [])}
 
 
-def _public_envelope(request, context: grpc.ServicerContext):
+@dataclass(frozen=True)
+class NormalizedPublicEnvelope:
+    contract_version: str
+    request_id: str
+    idempotency_key: str
+    traceparent: str
+    tenant_id: str
+    project_id: str
+    client_version: str
+
+
+def _stable_request_id(request) -> str:
+    raw = request.SerializeToString(deterministic=True)
+    return f"req_{sha256(raw).hexdigest()[:24]}"
+
+
+def _public_envelope(request, context: grpc.ServicerContext) -> NormalizedPublicEnvelope:
+
     envelope = getattr(request, "envelope", None)
     md = _metadata(context)
+    _subject, _roles, auth_tenant = auth_context(context)
     contract_version = (
         getattr(envelope, "contract_version", "")
         or md.get("x-eigen-contract-version", "")
         or PUBLIC_API_CONTRACT_VERSION
     ).strip()
     if not _SEMVER_RE.match(contract_version):
-        context.abort(grpc.StatusCode.INVALID_ARGUMENT, f"malformed public contract_version: {contract_version}")
+        abort_with_error_info(
+            context,
+            grpc_code=grpc.StatusCode.INVALID_ARGUMENT,
+            message=f"malformed public contract_version: {contract_version}",
+            reason="PUBLIC_CONTRACT_VERSION_MALFORMED",
+            domain="eigen.api.v1",
+            metadata={"contract_version": contract_version},
+        )
     if contract_version != PUBLIC_API_CONTRACT_VERSION:
-        context.abort(grpc.StatusCode.FAILED_PRECONDITION, f"unsupported public contract_version: {contract_version}")
-    return envelope
+        abort_with_error_info(
+            context,
+            grpc_code=grpc.StatusCode.FAILED_PRECONDITION,
+            message=f"unsupported public contract_version: {contract_version}",
+            reason="PUBLIC_CONTRACT_VERSION_UNSUPPORTED",
+            domain="eigen.api.v1",
+            metadata={
+                "contract_version": contract_version,
+                "supported_contract_version": PUBLIC_API_CONTRACT_VERSION,
+            },
+        )
+
+    request_id = (
+        getattr(envelope, "request_id", "")
+        or md.get("x-request-id", "")
+        or _stable_request_id(request)
+    ).strip()
+    tenant_id = (
+        auth_tenant
+        or getattr(envelope, "tenant_id", "")
+        or md.get("x-eigen-tenant", "")
+        or "tenant-default"
+    ).strip()
+    project_id = (
+        getattr(envelope, "project_id", "")
+        or md.get("x-eigen-project", "")
+        or md.get("x-project-id", "")
+        or "project-default"
+    ).strip()
+    return NormalizedPublicEnvelope(
+        contract_version=contract_version,
+        request_id=request_id,
+        idempotency_key=(
+            getattr(envelope, "idempotency_key", "")
+            or md.get("x-idempotency-key", "")
+            or md.get("x-eigen-idempotency-key", "")
+        ).strip(),
+        traceparent=(getattr(envelope, "traceparent", "") or md.get("traceparent", "")).strip(),
+        tenant_id=tenant_id or "tenant-default",
+        project_id=project_id or "project-default",
+        client_version=(getattr(envelope, "client_version", "") or md.get("x-client-version", "")).strip(),
+    )
+
+
+def _apply_public_envelope_context(rc, envelope: NormalizedPublicEnvelope) -> None:
+    rc.request_id = envelope.request_id
+    if envelope.traceparent and not rc.traceparent:
+        rc.traceparent = envelope.traceparent
 
 
 def _envelope_value(envelope, field: str) -> str:
@@ -159,12 +230,13 @@ class JobService:
         self._starvation_threshold_sec = max(float(os.getenv("EIGEN_SCHED_STARVATION_SEC", "2.0")), 0.0)
         self._dispatch_slot_seq = 0
 
-    def _request_fingerprint(self, request) -> str:
-        envelope = getattr(request, "envelope", None)
+    def _request_fingerprint(
+        self, request, envelope: NormalizedPublicEnvelope
+    ) -> str:
         payload = {
-            "contract_version": _envelope_value(envelope, "contract_version") or PUBLIC_API_CONTRACT_VERSION,
-            "tenant_id": _envelope_value(envelope, "tenant_id") or request.metadata.get("tenant_id", ""),
-            "project_id": _envelope_value(envelope, "project_id") or request.metadata.get("project_id", ""),
+            "contract_version": envelope.contract_version,
+            "tenant_id": envelope.tenant_id,
+            "project_id": envelope.project_id,
             "name": request.name,
             "target": request.target,
             "priority": int(request.priority),
@@ -191,18 +263,17 @@ class JobService:
         raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
         return sha256(raw).hexdigest()
 
-    def _idempotency_key(self, request, context: grpc.ServicerContext, envelope) -> str | None:
-        md = _metadata(context)
+    def _idempotency_key(
+        self,
+        request,
+        _context: grpc.ServicerContext,
+        envelope: NormalizedPublicEnvelope,
+    ) -> str | None:
         tenant_id = (
-            _envelope_value(envelope, "tenant_id")
-            or md.get("x-eigen-tenant", "")
-            or request.metadata.get("tenant_id", "tenant-default")
+            envelope.tenant_id or request.metadata.get("tenant_id", "tenant-default")
         ).strip() or "tenant-default"
         key = (
-            _envelope_value(envelope, "idempotency_key")
-            or md.get("x-idempotency-key", "")
-            or md.get("x-eigen-idempotency-key", "")
-            or request.metadata.get("client_request_id", "")
+            envelope.idempotency_key or request.metadata.get("client_request_id", "")
         ).strip()
         if key:
             return ":".join(("tenant", tenant_id, "idempotency", key))
@@ -603,11 +674,17 @@ class JobService:
         trace_id: str | None,
         owner_subject: str,
         owner_tenant: str,
+        owner_project: str,
     ) -> _JobRecord:
         metadata = dict(request.metadata)
         tenant_envelope = request.tenant
         tenant_id = (tenant_envelope.tenant_id or metadata.get("tenant_id") or owner_tenant or "tenant-default").strip() or "tenant-default"
-        project_id = (tenant_envelope.project_id or metadata.get("project_id") or "project-default").strip() or "project-default"
+        project_id = (
+            tenant_envelope.project_id
+            or metadata.get("project_id")
+            or owner_project
+            or "project-default"
+        ).strip() or "project-default"
         tenant_quota_limit = int(tenant_envelope.tenant_max_queued_jobs or os.getenv("EIGEN_SCHED_TENANT_QUOTA_MAX_QUEUED", "16"))
         project_quota_limit = int(tenant_envelope.project_max_queued_jobs or os.getenv("EIGEN_SCHED_PROJECT_QUOTA_MAX_QUEUED", "8"))
         created_at_dt = created_at.ToDatetime().replace(tzinfo=timezone.utc)
@@ -1015,6 +1092,7 @@ class JobService:
         log_request_start("JobService.SubmitJob", rc)
 
         envelope = _public_envelope(request, context)
+        _apply_public_envelope_context(rc, envelope)
 
         violations = validate_submit_job(request)
         if violations:
@@ -1026,7 +1104,7 @@ class JobService:
             context.abort(grpc.StatusCode.INVALID_ARGUMENT, f"dag resolution failed: {dag.reason_code}: {dag.detail}")
 
         idem_key = self._idempotency_key(request, context, envelope)
-        request_fingerprint = self._request_fingerprint(request)
+        request_fingerprint = self._request_fingerprint(request, envelope)
 
         with self._lock:
             if idem_key:
@@ -1060,14 +1138,15 @@ class JobService:
             rc.job_id = job_id
             now = _ts_now()
             trace_id = rc.trace_id or request.metadata.get("trace_id", "").strip() or None
-            owner_subject, _, owner_tenant = auth_context(context)
+            owner_subject, _, _owner_tenant = auth_context(context)
             record = self._build_job_record(
                 request,
                 job_id=job_id,
                 created_at=now,
                 trace_id=trace_id,
                 owner_subject=owner_subject,
-                owner_tenant=owner_tenant,
+                owner_tenant=envelope.tenant_id,
+                owner_project=envelope.project_id,
             )
             self._jobs[job_id] = record
             self._assign_scheduler_slot(record)
@@ -1099,6 +1178,8 @@ class JobService:
         rc = new_request_context(context)
         rc.job_id = request.job_id
         log_request_start("JobService.GetJobStatus", rc)
+        envelope = _public_envelope(request, context)
+        _apply_public_envelope_context(rc, envelope)
 
         violations = validate_job_id(request)
         if violations:
@@ -1140,6 +1221,8 @@ class JobService:
         rc = new_request_context(context)
         rc.job_id = request.job_id
         log_request_start("JobService.CancelJob", rc)
+        envelope = _public_envelope(request, context)
+        _apply_public_envelope_context(rc, envelope)
 
         violations = validate_job_id(request)
         if violations:
@@ -1173,6 +1256,8 @@ class JobService:
         rc = new_request_context(context)
         rc.job_id = request.job_id
         log_request_start("JobService.StreamJobUpdates", rc)
+        envelope = _public_envelope(request, context)
+        _apply_public_envelope_context(rc, envelope)
 
         violations = validate_job_id(request)
         if violations:
@@ -1211,6 +1296,8 @@ class JobService:
         rc = new_request_context(context)
         rc.job_id = request.job_id
         log_request_start("JobService.GetJobResults", rc)
+        envelope = _public_envelope(request, context)
+        _apply_public_envelope_context(rc, envelope)
 
         violations = validate_job_id(request)
         if violations:
@@ -1258,6 +1345,8 @@ class JobService:
         rc = new_request_context(context)
         rc.job_id = request.job_id
         log_request_start("JobService.GetDispatchRationale", rc)
+        envelope = _public_envelope(request, context)
+        _apply_public_envelope_context(rc, envelope)
 
         violations = validate_job_id(request)
         if violations:
@@ -1327,7 +1416,8 @@ class DeviceService:
         enforce_authz(context, required_permission="devices:list")
         rc = new_request_context(context)
         log_request_start("DeviceService.ListDevices", rc)
-        _public_envelope(request, context)
+        envelope = _public_envelope(request, context)
+        _apply_public_envelope_context(rc, envelope)
 
         # backend_type is optional
         resp = self._dev_pb.ListDevicesResponse(
@@ -1352,7 +1442,8 @@ class DeviceService:
         enforce_authz(context, required_permission="devices:list")
         rc = new_request_context(context)
         log_request_start("DeviceService.GetDeviceDetails", rc)
-        _public_envelope(request, context)
+        envelope = _public_envelope(request, context)
+        _apply_public_envelope_context(rc, envelope)
 
         violations = validate_device_id(request)
         if violations:
@@ -1375,7 +1466,8 @@ class DeviceService:
         enforce_authz(context, required_permission="devices:list")
         rc = new_request_context(context)
         log_request_start("DeviceService.GetDeviceStatus", rc)
-        _public_envelope(request, context)
+        envelope = _public_envelope(request, context)
+        _apply_public_envelope_context(rc, envelope)
 
         violations = validate_device_id(request)
         if violations:
@@ -1397,7 +1489,8 @@ class DeviceService:
         enforce_authz(context, required_permission="devices:reserve")
         rc = new_request_context(context)
         log_request_start("DeviceService.ReserveDevice", rc)
-        _public_envelope(request, context)
+        envelope = _public_envelope(request, context)
+        _apply_public_envelope_context(rc, envelope)
 
         violations = validate_reserve_device(request)
         if violations:

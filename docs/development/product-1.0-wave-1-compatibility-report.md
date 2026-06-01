@@ -26,7 +26,7 @@ Wave 1 changes must follow these rules:
 | Issue | Version Impact | Affected Interfaces | Compatibility | Breaking Marker | Migration Notes | Release Notes Draft | Evidence |
 |---|---|---|---|---|---|---|---|
 | W1-01 Public proto/reference coverage matrix and envelope decisions | TBD | API; CLI payloads; Compatibility matrix | TBD | TBD | TBD | TBD | TBD |
-| W1-02 Public gRPC envelopes, version negotiation, and compatibility rejection | MINOR | API; CLI payloads; Compatibility matrix | Backward-compatible | false | None; MVP metadata clients remain accepted by deterministic envelope derivation while Product 1.0 clients may send `ApiRequestEnvelope` directly. | Added Product 1.0 public request envelope and documented version-negotiation rejection semantics for `eigen.api.v1`. | `proto/eigen/api/v1/types.proto`; `proto/eigen/api/v1/job_service.proto`; `proto/eigen/api/v1/device_service.proto`; `proto/eigen/api/v1/knowledge_base_service.proto`; `docs/reference/api/grpc-public.md`; `docs/architecture/components/system-api.md` |
+| W1-02 Public gRPC envelopes, version negotiation, and compatibility rejection | MINOR | API; CLI payloads; Compatibility matrix | Backward-compatible | false | None; MVP metadata clients remain accepted by deterministic envelope derivation while Product 1.0 clients may send `ApiRequestEnvelope` directly. | Added Product 1.0 public request envelope and runtime version-negotiation rejection semantics for `eigen.api.v1`. | `proto/eigen/api/v1/types.proto`; `proto/eigen/api/v1/job_service.proto`; `proto/eigen/api/v1/device_service.proto`; `proto/eigen/api/v1/knowledge_base_service.proto`; `src/services/system-api/src/system_api/grpc_impl.py`; `src/services/system-api/tests/test_public_envelope_versioning.py`; `docs/reference/api/grpc-public.md`; `docs/architecture/components/system-api.md` |
 | W1-03 SubmitJob idempotency, payload limits, and request persistence | TBD | API; JobSpec; Metrics | TBD | TBD | TBD | TBD | TBD |
 | W1-04 JobSpec 1.0 schema, parser/normalizer, canonical digest, and fixtures | TBD | JobSpec; CLI payloads; AQO | TBD | TBD | TBD | TBD | TBD |
 | W1-05 Canonical public error model and error mapping conformance | TBD | API; CLI payloads; Metrics | TBD | TBD | TBD | TBD | TBD |
@@ -67,7 +67,7 @@ Required issue completion block MUST retain and complete this block before closu
 
 ## Summary
 - Added canonical Product 1.0 `ApiRequestEnvelope` for public gRPC requests and attached it to public Job, Device, and Knowledge Base request surfaces.
-- Documented deterministic version negotiation, envelope derivation from metadata/auth context, `SubmitJob` idempotency digest semantics, and System API ownership responsibilities.
+- Implemented and documented deterministic version negotiation, envelope derivation from metadata/auth context, structured compatibility rejection details, `SubmitJob` idempotency digest semantics, and System API ownership responsibilities.
 
 ## Validation
 - [x] Tests added/updated
@@ -83,11 +83,11 @@ Required issue completion block MUST retain and complete this block before closu
 ## Release Notes Draft
 ```markdown
 ### Added
-- Added Product 1.0 public request envelope fields for contract version, request identity, idempotency identity, trace context, deadline, tenant/project scope, and client version.
+- Added Product 1.0 public request envelope fields for contract version, request identity, idempotency identity, trace context, deadline, tenant/project scope, and client version, including read-side JobService requests.
 
 ### Changed
-- Documented version-negotiation rejection behavior and normalized `SubmitJob` idempotency digest semantics for public gRPC.
+- Implemented and documented version-negotiation rejection behavior and normalized `SubmitJob` idempotency digest semantics for public gRPC.
 
 ### Fixed
-- Aligned public gRPC reference documentation with existing proto surfaces for `reservation_id`, `QueryDecisionLogs`, canonical job states, and stream replay errors.
+- Aligned public gRPC reference documentation with proto and System API runtime behavior for request envelopes, `reservation_id`, `QueryDecisionLogs`, canonical job states, and stream replay errors.
 ```

@@ -60,6 +60,8 @@ message SubmitJobResponse {
 }
 
 message GetJobStatusRequest {
+  ApiRequestEnvelope envelope = 10;
+
   string job_id = 1;
 }
 
@@ -68,6 +70,8 @@ message GetJobStatusResponse {
 }
 
 message CancelJobRequest {
+  ApiRequestEnvelope envelope = 10;
+
   string job_id = 1;
 }
 
@@ -77,6 +81,8 @@ message CancelJobResponse {
 }
 
 message StreamJobUpdatesRequest {
+  ApiRequestEnvelope envelope = 10;
+
   string job_id = 1;
 
   // Best-effort resume point (MVP): server MAY start from the next event.
@@ -88,6 +94,8 @@ message StreamJobUpdatesResponse {
 }
 
 message GetJobResultsRequest {
+  ApiRequestEnvelope envelope = 10;
+
   string job_id = 1;
 }
 
@@ -108,6 +116,8 @@ message GetJobResultsResponse {
 }
 
 message GetDispatchRationaleRequest {
+  ApiRequestEnvelope envelope = 10;
+  
   string job_id = 1;
 }
 

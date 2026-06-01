@@ -134,19 +134,20 @@ message ApiRequestEnvelope {
 | Field | Required | Source | Semantics |
 |---|---|---|---|
 | `contract_version` | YES | Request payload or negotiated default | SemVer public payload contract. Product 1.0 accepts `1.0.0` on `eigen.api.v1`. |
-| `request_id` | YES | `x-request-id` or payload | Client correlation ID used in audit, logs, metrics exemplars, and traces. |
+| `request_id` | YES | `x-request-id`, payload, or deterministic server derivation | Client correlation ID used in audit, logs, metrics exemplars, and traces. If omitted by an MVP client, the System API derives `req_<sha256-prefix>` from the deterministic serialized request bytes before audit/logging. |
 | `idempotency_key` | CONDITIONAL | `x-idempotency-key` or payload | Required for idempotent `SubmitJob`; optional for read-only calls. |
 | `traceparent` | RECOMMENDED | `traceparent` metadata or payload | W3C TraceContext parent propagated to internal services. |
 | `deadline` | OPTIONAL | gRPC deadline or payload | Client deadline hint normalized before internal dispatch. |
-| `tenant_id` | YES | JWT/auth context or payload | Canonical tenant scope. Auth context wins on conflict. |
-| `project_id` | YES | JWT/auth context or payload | Canonical project scope. Auth context wins on conflict. |
+| `tenant_id` | YES | JWT/auth context, metadata, payload, or deterministic local-dev default | Canonical tenant scope. Auth context wins on conflict; local/dev allow-all mode defaults to `tenant-default` when no tenant is supplied. |
+| `project_id` | YES | JWT/auth context, metadata, payload, or deterministic local-dev default | Canonical project scope. Auth context wins on conflict; local/dev allow-all mode defaults to `project-default` when no project is supplied. |
 | `client_version` | OPTIONAL | `x-client-version` or payload | SDK/CLI version for compatibility diagnostics. |
 
 Version negotiation rules:
 
 - Missing `contract_version` MAY default to `1.0.0` only for backward-compatible MVP clients on the `eigen.api.v1` namespace.
-- Malformed SemVer MUST return `INVALID_ARGUMENT`.
-- Unsupported but well-formed versions MUST return `FAILED_PRECONDITION` with canonical version details.
+- Missing `request_id`, `tenant_id`, or `project_id` is normalized deterministically before dispatch using the sources above; the normalized envelope is the value used for audit, logs, metrics, idempotency scope, and internal forwarding.
+- Malformed SemVer MUST return `INVALID_ARGUMENT` with `google.rpc.ErrorInfo.reason = PUBLIC_CONTRACT_VERSION_MALFORMED`.
+- Unsupported but well-formed versions MUST return `FAILED_PRECONDITION` with `google.rpc.ErrorInfo.reason = PUBLIC_CONTRACT_VERSION_UNSUPPORTED` and the supported version in details metadata.
 - Incompatible MAJOR versions MUST be rejected; they MUST NOT be silently coerced.
 - Compatible MINOR/PATCH versions MAY be accepted only when documented in this file or the Product 1.0 manifest.
 
@@ -196,7 +197,7 @@ message SubmitJobRequest {
 
 | **Field** | **Required** | **Notes** |
 |-------------|------------|-----------|
-| `envelope` | YES | Canonical Product 1.0 request envelope; transport metadata MAY be normalized into this field by the System API |
+| `envelope` | NORMALIZED YES | Canonical Product 1.0 request envelope; transport metadata and deterministic defaults MAY be normalized into this field by the System API for MVP clients |
 | `name` | YES | Human-readable job name |
 | `program` | YES | Exactly one variant required |
 | `target` | YES | Backend/device identifier |
@@ -227,7 +228,6 @@ Rules:
 | Priority outside range | `INVALID_ARGUMENT` |
 | Unknown target | `NOT_FOUND` |
 | Invalid reservation | `FAILED_PRECONDITION` |
-| Missing required envelope identity | `INVALID_ARGUMENT` |
 | Unsupported contract version | `FAILED_PRECONDITION` |
 | Payload exceeds public limit | `RESOURCE_EXHAUSTED` |
 
@@ -261,6 +261,15 @@ The response MUST contain the canonical assigned `job_id`.
 
 Returns current job state.
 
+#### Request
+
+```protobuf
+message GetJobStatusRequest {
+  string job_id = 1;
+  ApiRequestEnvelope envelope = 10;
+}
+```
+
 #### Guarantees
 
 - Read-after-write consistency for same client session
@@ -276,6 +285,7 @@ Returns current job state.
 ```protobuf
 message CancelJobRequest {
   string job_id = 1;
+  ApiRequestEnvelope envelope = 10;
 }
 ```
 
@@ -315,8 +325,8 @@ message CancelJobResponse {
 ```protobuf
 message StreamJobUpdatesRequest {
   string job_id = 1;
-
   uint64 last_event_seq = 2;
+  ApiRequestEnvelope envelope = 10;
 }
 ```
 
@@ -358,6 +368,15 @@ If replay window expired:
 
 Returns immutable final outputs.
 
+#### Request
+
+```protobuf
+message GetJobResultsRequest {
+  string job_id = 1;
+  ApiRequestEnvelope envelope = 10;
+}
+```
+
 #### Preconditions
 
 Job MUST be in terminal state:
@@ -380,6 +399,15 @@ MUST be returned.
 ### 5.6 GetDispatchRationale
 
 Returns scheduler explanation for backend selection.
+
+#### Request
+
+```protobuf
+message GetDispatchRationaleRequest {
+  string job_id = 1;
+  ApiRequestEnvelope envelope = 10;
+}
+```
 
 #### Semantics
 
