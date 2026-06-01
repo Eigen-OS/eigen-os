@@ -9,6 +9,7 @@ import time
 import threading
 import uuid
 from dataclasses import dataclass
+from pathlib import Path
 from datetime import datetime, timezone
 from datetime import timedelta
 from hashlib import sha256
@@ -22,7 +23,12 @@ import pyarrow.parquet as pq
 from .errors import abort_invalid_argument, abort_with_error_info
 from .lifecycle import apply_signal
 from .scheduling import resolve_dag
-from .observability import log_request_end, log_request_start, new_request_context
+from .observability import (
+    log_request_end,
+    log_request_start,
+    new_request_context,
+    record_submit_job_outcome,
+)
 from .qfs_store import QFS_STORE
 from .security import auth_context, enforce_authn, enforce_authz
 from .validation import (
@@ -210,6 +216,28 @@ class _JobRecord:
 class _IdempotencyRecord:
     job_id: str
     request_fingerprint: str
+    expires_at_unix: float
+    tenant_id: str
+    project_id: str
+
+    @classmethod
+    def from_json(cls, payload: dict[str, object]) -> "_IdempotencyRecord":
+        return cls(
+            job_id=str(payload["job_id"]),
+            request_fingerprint=str(payload["request_fingerprint"]),
+            expires_at_unix=float(payload["expires_at_unix"]),
+            tenant_id=str(payload.get("tenant_id", "tenant-default")),
+            project_id=str(payload.get("project_id", "project-default")),
+        )
+
+    def to_json(self) -> dict[str, object]:
+        return {
+            "job_id": self.job_id,
+            "request_fingerprint": self.request_fingerprint,
+            "expires_at_unix": self.expires_at_unix,
+            "tenant_id": self.tenant_id,
+            "project_id": self.project_id,
+        }
 
 
 class JobService:
@@ -220,7 +248,12 @@ class JobService:
         self._types_pb = types_pb
         self._jobs: dict[str, _JobRecord] = {}
         self._idempotency: dict[str, _IdempotencyRecord] = {}
+        self._idempotency_ttl_sec = max(float(os.getenv("SYSTEM_API_IDEMPOTENCY_TTL_SECONDS", "86400")), 1.0)
+        self._idempotency_store_path = Path(
+            os.getenv("SYSTEM_API_IDEMPOTENCY_STORE_PATH", "/tmp/eigen-system-api-idempotency.json")
+        )
         self._lock = threading.RLock()
+        self._load_idempotency_records()
         self._batch_mode_enabled = os.getenv("EIGEN_BATCH_MODE", "1").strip() not in {"0", "false", "off"}
         self._batch_size = max(int(os.getenv("EIGEN_BATCH_SIZE", "4")), 2)
         self._batch_wait_window_sec = max(float(os.getenv("EIGEN_BATCH_WAIT_WINDOW_SEC", "0.2")), 0.0)
@@ -229,6 +262,74 @@ class JobService:
         self._quota_per_target = max(int(os.getenv("EIGEN_SCHED_QUOTA_PER_TARGET", "8")), 1)
         self._starvation_threshold_sec = max(float(os.getenv("EIGEN_SCHED_STARVATION_SEC", "2.0")), 0.0)
         self._dispatch_slot_seq = 0
+
+    def _load_idempotency_records(self) -> None:
+        if not self._idempotency_store_path.exists():
+            return
+        try:
+            payload = json.loads(self._idempotency_store_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
+        now = time.time()
+        records = payload.get("records", {}) if isinstance(payload, dict) else {}
+        if not isinstance(records, dict):
+            return
+        for key, raw in records.items():
+            if not isinstance(raw, dict):
+                continue
+            try:
+                record = _IdempotencyRecord.from_json(raw)
+            except (KeyError, TypeError, ValueError):
+                continue
+            if record.expires_at_unix > now:
+                self._idempotency[str(key)] = record
+
+    def _persist_idempotency_records(self) -> None:
+        now = time.time()
+        self._idempotency = {
+            key: record
+            for key, record in self._idempotency.items()
+            if record.expires_at_unix > now
+        }
+        payload = {
+            "version": "1.0.0",
+            "ttl_seconds": self._idempotency_ttl_sec,
+            "records": {
+                key: record.to_json()
+                for key, record in sorted(self._idempotency.items())
+            },
+        }
+        self._idempotency_store_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self._idempotency_store_path.with_suffix(self._idempotency_store_path.suffix + ".tmp")
+        tmp.write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")), encoding="utf-8")
+        tmp.replace(self._idempotency_store_path)
+
+    def _get_idempotency_record(self, key: str) -> _IdempotencyRecord | None:
+        record = self._idempotency.get(key)
+        if record is None:
+            return None
+        if record.expires_at_unix <= time.time():
+            self._idempotency.pop(key, None)
+            self._persist_idempotency_records()
+            return None
+        return record
+
+    def _remember_idempotency_record(
+        self,
+        *,
+        key: str,
+        job_id: str,
+        request_fingerprint: str,
+        envelope: NormalizedPublicEnvelope,
+    ) -> None:
+        self._idempotency[key] = _IdempotencyRecord(
+            job_id=job_id,
+            request_fingerprint=request_fingerprint,
+            expires_at_unix=time.time() + self._idempotency_ttl_sec,
+            tenant_id=envelope.tenant_id,
+            project_id=envelope.project_id,
+        )
+        self._persist_idempotency_records()
 
     def _request_fingerprint(
         self, request, envelope: NormalizedPublicEnvelope
@@ -1096,6 +1197,8 @@ class JobService:
 
         violations = validate_submit_job(request)
         if violations:
+            if any("exceeds max allowed size" in violation.description for violation in violations):
+                record_submit_job_outcome("limit")
             abort_invalid_argument(context, "validation failed", violations)
 
         dag_nodes = sorted({request.name, *list(request.dependencies)})
@@ -1108,17 +1211,36 @@ class JobService:
 
         with self._lock:
             if idem_key:
-                previous = self._idempotency.get(idem_key)
+                previous = self._get_idempotency_record(idem_key)
                 if previous:
                     if previous.request_fingerprint != request_fingerprint:
+                        record_submit_job_outcome("conflict")
                         context.abort(
-                            grpc.StatusCode.ALREADY_EXISTS,
-                            f"idempotency key reuse with different payload: {idem_key}",
+                            grpc.StatusCode.FAILED_PRECONDITION,
+                            f"idempotency key reuse with different normalized payload: {idem_key}",
                         )
-                    existing = self._jobs[previous.job_id]
+                    existing = self._jobs.get(previous.job_id)
+                    if existing is None:
+                        now = _ts_now()
+                        rc.job_id = previous.job_id
+                        record_submit_job_outcome("replayed")
+                        log_request_end("JobService.SubmitJob", rc)
+                        return self._job_pb.SubmitJobResponse(
+                            job_id=previous.job_id,
+                            status=self._types_pb.JobStatus(
+                                job_id=previous.job_id,
+                                state=self._types_pb.JOB_STATE_PENDING,
+                                stage="QUEUED",
+                                progress=0.0,
+                                message="accepted (idempotent replay from persisted request record)",
+                                created_at=now,
+                                updated_at=now,
+                            ),
+                        )
                     self._advance_job(existing)
                     latest = existing.updates[-1]
                     rc.job_id = existing.job_id
+                    record_submit_job_outcome("replayed")
                     log_request_end("JobService.SubmitJob", rc)
                     return self._job_pb.SubmitJobResponse(
                         job_id=existing.job_id,
@@ -1151,9 +1273,13 @@ class JobService:
             self._jobs[job_id] = record
             self._assign_scheduler_slot(record)
             if idem_key:
-                self._idempotency[idem_key] = _IdempotencyRecord(
-                    job_id=job_id, request_fingerprint=request_fingerprint
+                self._remember_idempotency_record(
+                    key=idem_key,
+                    job_id=job_id,
+                    request_fingerprint=request_fingerprint,
+                    envelope=envelope,
                 )
+            record_submit_job_outcome("accepted")
 
         resp = self._job_pb.SubmitJobResponse(
             job_id=job_id,

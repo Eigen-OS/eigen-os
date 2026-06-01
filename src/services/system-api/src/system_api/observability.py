@@ -50,6 +50,12 @@ class _MetricsState:
     requests_total = 0
     request_duration_seconds_sum = 0.0
     authz_denied_total = 0
+    submit_job_outcomes_total: dict[str, int] = {
+        "accepted": 0,
+        "replayed": 0,
+        "conflict": 0,
+        "limit": 0,
+    }
 
 
 class _MetricsHandler(BaseHTTPRequestHandler):
@@ -62,6 +68,11 @@ class _MetricsHandler(BaseHTTPRequestHandler):
             req_total = _MetricsState.requests_total
             req_sum = _MetricsState.request_duration_seconds_sum
             authz_denied = _MetricsState.authz_denied_total
+            submit_outcomes = dict(_MetricsState.submit_job_outcomes_total)
+        outcome_lines = "".join(
+            f'eigen_api_submit_job_outcomes_total{{outcome="{outcome}"}} {count}\n'
+            for outcome, count in sorted(submit_outcomes.items())
+        )
         body = (
             "# TYPE eigen_api_requests_total counter\n"
             f"eigen_api_requests_total {req_total}\n"
@@ -69,6 +80,8 @@ class _MetricsHandler(BaseHTTPRequestHandler):
             f"eigen_api_request_duration_seconds {req_sum:.6f}\n"
             "# TYPE eigen_api_authz_denied_total counter\n"
             f"eigen_api_authz_denied_total {authz_denied}\n"
+            "# TYPE eigen_api_submit_job_outcomes_total counter\n"
+            f"{outcome_lines}"
         ).encode()
         self.send_response(200)
         self.send_header("Content-Type", "text/plain; version=0.0.4")
@@ -130,3 +143,13 @@ def log_authz_denied(*, method: str, subject: str, permission: str, job_id: str 
             "job_id": job_id,
         },
     )
+
+
+def record_submit_job_outcome(outcome: str) -> None:
+    """Increment bounded-label SubmitJob outcome metrics."""
+    if outcome not in {"accepted", "replayed", "conflict", "limit"}:
+        outcome = "limit"
+    with _MetricsState.lock:
+        _MetricsState.submit_job_outcomes_total[outcome] = (
+            _MetricsState.submit_job_outcomes_total.get(outcome, 0) + 1
+        )
