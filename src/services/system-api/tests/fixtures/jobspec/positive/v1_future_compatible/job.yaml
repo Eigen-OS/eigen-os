@@ -1,0 +1,12 @@
+apiVersion: eigen.os/v1
+kind: QuantumJob
+metadata:
+  name: v1-future-compatible
+spec:
+  target: sim:local
+  program:
+    path: program.eigen.py
+observability:
+  trace: optional
+  future_hint: accepted-by-normalizer
+  
