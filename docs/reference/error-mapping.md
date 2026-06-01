@@ -421,11 +421,12 @@ Retryability:
 | Invalid JobSpec | Compiler/parser | `INVALID_ARGUMENT` | RPC failure or async `ERROR` | No |
 | Invalid AQO schema | Compiler/runtime | `INVALID_ARGUMENT` | RPC failure | No |
 | Invalid artifact checksum | Artifact layer | `INVALID_ARGUMENT` | RPC failure | No |
+| Payload exceeds public API limit | API gateway | `RESOURCE_EXHAUSTED` + `EIGEN_PUBLIC_PAYLOAD_LIMIT_EXCEEDED` | RPC failure | No until caller reduces payload |
 | Unknown job_id | Kernel/QFS | `NOT_FOUND` | RPC failure | Conditional |
 | Unknown shard | Distributed runtime | `NOT_FOUND` | RPC failure | No |
 | Unknown reservation | Reservation manager | `NOT_FOUND` | RPC failure | No |
 | Duplicate artifact upload | Artifact store | `ALREADY_EXISTS` | RPC failure | No |
-| Duplicate idempotency key with different normalized payload | API gateway | `FAILED_PRECONDITION` | RPC failure | No |
+| Duplicate idempotency key with different normalized payload | API gateway | `FAILED_PRECONDITION` + `EIGEN_PUBLIC_IDEMPOTENCY_CONFLICT` | RPC failure | No |
 | Results requested before completion | Runtime lifecycle | `FAILED_PRECONDITION` | RPC failure | Yes |
 | Merge before quorum satisfied | Runtime merge layer | `FAILED_PRECONDITION` | RPC failure | Yes |
 | Reservation expired | Device runtime | `FAILED_PRECONDITION` | RPC failure | Conditional |
@@ -440,11 +441,12 @@ Retryability:
 | Lease conflict | Cluster runtime | `ABORTED` | RPC failure | Yes |
 | Worker unavailable | Cluster runtime | `UNAVAILABLE` | RPC failure | Yes |
 | Cluster partition | Distributed runtime | `UNAVAILABLE` | RPC failure | Yes |
-| Deadline exceeded | Any service | `DEADLINE_EXCEEDED` | RPC failure | Conditional |
-| Invalid authentication | Auth layer | `UNAUTHENTICATED` | RPC failure | Yes |
-| Permission denied | Authorization layer | `PERMISSION_DENIED` | RPC failure | No |
-| Runtime invariant violation | Any service | `INTERNAL` | RPC failure | Conditional |
-| Explicit cancellation | Caller/runtime | `CANCELLED` | RPC failure | Caller-defined |
+| Deadline exceeded | Any service | `DEADLINE_EXCEEDED` + `EIGEN_PUBLIC_DEADLINE_EXCEEDED` | RPC failure | Conditional |
+| Invalid authentication | Auth layer | `UNAUTHENTICATED` + `EIGEN_PUBLIC_UNAUTHENTICATED` | RPC failure | Yes, after re-authentication |
+| Permission denied | Authorization layer | `PERMISSION_DENIED` + `EIGEN_PUBLIC_PERMISSION_DENIED` | RPC failure | No |
+| Runtime invariant violation | Any service | `INTERNAL` + `EIGEN_PUBLIC_INTERNAL` | RPC failure | Conditional |
+| Explicit cancellation | Caller/runtime | `CANCELLED` + `EIGEN_PUBLIC_CANCELLED` | RPC failure | Caller-defined |
+
 
 ---
 

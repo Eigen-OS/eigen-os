@@ -634,12 +634,14 @@ Canonical statuses:
 - `ABORTED`
 - `CANCELLED`
 
-Structured details (where applicable):
+Structured details at public boundaries must be encoded as deterministic `google.rpc.Status` details with `google.rpc.ErrorInfo` first. `ErrorInfo.reason` carries the stable `EIGEN_PUBLIC_*` or normalized `EIGEN_BACKEND_*` reason code, and `ErrorInfo.metadata.retryable` carries the public retryability decision. Additional detail types are attached according to the scenario:
 
-- `google.rpc.BadRequest`
-- `google.rpc.ErrorInfo`
-- `google.rpc.ResourceInfo`
-- `google.rpc.RetryInfo`
+- `google.rpc.BadRequest` for validation and payload shape failures
+- `google.rpc.QuotaFailure` for payload/quota limits
+- `google.rpc.PreconditionFailure` for lifecycle, version, and idempotency conflicts
+- `google.rpc.ResourceInfo` for missing or inaccessible resources
+- `google.rpc.RetryInfo` for retryable transient failures
+- `google.rpc.RequestInfo` for cancellation/internal correlation when available
 
 Backend/provider failures must be normalized before reaching public contracts.
 

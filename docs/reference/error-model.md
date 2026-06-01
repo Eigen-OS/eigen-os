@@ -517,7 +517,28 @@ Examples:
 
 ---
 
-### 3.7 Localization Safety
+### 3.7 Public Boundary Conformance
+
+Public API implementations MUST normalize every public error into a deterministic `google.rpc.Status` before returning it to SDKs, CLI tools, or external callers. The public boundary contract is:
+
+| **Failure class** | **Status** | **Reason** | **Retryable metadata** | **Required detail shape** |
+|---|---|---|---|---|
+| Validation failure | `INVALID_ARGUMENT` | `EIGEN_PUBLIC_VALIDATION_FAILED` | `false` | `ErrorInfo`, `BadRequest` |
+| Authentication failure | `UNAUTHENTICATED` | `EIGEN_PUBLIC_UNAUTHENTICATED` | `true` after re-authentication | `ErrorInfo` |
+| Authorization denial | `PERMISSION_DENIED` | `EIGEN_PUBLIC_PERMISSION_DENIED` | `false` | `ErrorInfo` |
+| Idempotency payload conflict | `FAILED_PRECONDITION` | `EIGEN_PUBLIC_IDEMPOTENCY_CONFLICT` | `false` | `ErrorInfo`, `PreconditionFailure` |
+| Public contract version mismatch | `FAILED_PRECONDITION` | `EIGEN_PUBLIC_CONTRACT_VERSION_UNSUPPORTED` | `false` | `ErrorInfo`, optional `PreconditionFailure` |
+| Payload limit exceeded | `RESOURCE_EXHAUSTED` | `EIGEN_PUBLIC_PAYLOAD_LIMIT_EXCEEDED` | `false` | `ErrorInfo`, `BadRequest`, `QuotaFailure` |
+| Deadline exceeded | `DEADLINE_EXCEEDED` | `EIGEN_PUBLIC_DEADLINE_EXCEEDED` | conditional | `ErrorInfo`, optional `RetryInfo` |
+| Cancellation | `CANCELLED` | `EIGEN_PUBLIC_CANCELLED` | caller-defined | `ErrorInfo`, optional `RequestInfo` |
+| Temporary unavailable | `UNAVAILABLE` | `EIGEN_PUBLIC_UNAVAILABLE` or normalized `EIGEN_BACKEND_UNAVAILABLE` | `true` | `ErrorInfo`, `RetryInfo` |
+| Unexpected internal failure | `INTERNAL` | `EIGEN_PUBLIC_INTERNAL` | conditional | `ErrorInfo`, optional `RequestInfo`; `DebugInfo` only for trusted/internal callers |
+
+`google.rpc.ErrorInfo` MUST be the first detail entry for public errors. Its metadata MUST include `retryable` with a string value of `true` or `false`. Implementations MAY add bounded, non-sensitive correlation metadata, but MUST NOT expose raw internal exceptions, provider-private payloads, secrets, filesystem paths, or stack traces to public callers.
+
+---
+
+### 3.8 Localization Safety
 
 User-facing messages MAY include: `google.rpc.LocalizedMessage`
 
