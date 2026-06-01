@@ -33,7 +33,7 @@ def _extract_bad_request(err: grpc.RpcError) -> error_details_pb2.BadRequest:
     assert st is not None
     bad = error_details_pb2.BadRequest()
     assert len(st.details) >= 1
-    assert st.details[0].Unpack(bad)
+    assert any(detail.Unpack(bad) for detail in st.details)
     return bad
 
 
@@ -97,7 +97,7 @@ def test_submit_job_enforces_source_and_yaml_size_limits(
             )
         )
 
-    assert exc.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+    assert exc.value.code() == grpc.StatusCode.RESOURCE_EXHAUSTED
     bad = _extract_bad_request(exc.value)
     fields = {v.field for v in bad.field_violations}
     assert "eigen_lang.source" in fields

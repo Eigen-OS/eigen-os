@@ -18,6 +18,7 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 
 ### Added
 
+- Product 1.0 Wave-1 W1-05 public error conformance (`system-api` package `1.0.0-major-marker`) with canonical `google.rpc.Status` construction, `EIGEN_PUBLIC_*` reason codes, retryability metadata, and conformance coverage for validation, auth, idempotency conflict, version mismatch, payload limit, deadline, cancellation, unavailable, and internal failure shapes.
 - Phase-9B P9B-06 canary rollout + auto-rollback safety pack (`benchmark-service` package `0.11.0`) with deterministic canary cohort/window policy fields, auditable stable canary reason codes, and automatic rollback envelopes that pin stable target model version and 15-minute restore SLO metadata.
 - Phase-8D P8D-06 developer surfaces skeleton pack (`governance-docs` package `0.13.0`) with non-GA bootstrap artifacts for web dashboard, VS Code, and Jupyter surfaces, simulator walkthrough docs, and explicit System API parity alignment constraints.
 - Phase-8D P8D-07 operator rollback governance pack (`driver-manager` package `0.8.0`) with official-provider runbooks for outage/degradation/auth/quota incidents, deterministic rollback controls (adapter pin/quarantine/matrix demotion), and fixture-tested rollback-safety rehearsal checks for simulator/IBM/AWS.
@@ -226,6 +227,8 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 
 ### Changed
 
+- **MAJOR marker:** Public error reason codes for contract-version failures now use the `EIGEN_PUBLIC_*` namespace (`EIGEN_PUBLIC_CONTRACT_VERSION_MALFORMED`, `EIGEN_PUBLIC_CONTRACT_VERSION_UNSUPPORTED`), validation errors expose `ErrorInfo` before `BadRequest`, and public payload-limit failures map to `RESOURCE_EXHAUSTED` with `EIGEN_PUBLIC_PAYLOAD_LIMIT_EXCEEDED` plus `BadRequest`/`QuotaFailure` details.
+- **Migration notes:** SDKs and clients that previously matched `PUBLIC_CONTRACT_VERSION_*` or expected `BadRequest` as the first detail must switch to reading `google.rpc.ErrorInfo` from detail index 0 and use `ErrorInfo.reason` + `ErrorInfo.metadata.retryable`; clients that treated payload-limit validation as `INVALID_ARGUMENT` must handle `RESOURCE_EXHAUSTED` and surface the included field violations/quota detail.
 - Phase-1 is marked complete in roadmap and development planning docs with explicit closure date (**2026-04-27**).
 - Product/service package versions advanced from `0.2.0` to `0.3.0` for Phase-2 release closure.
 
