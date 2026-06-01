@@ -186,6 +186,10 @@ Target environments SHOULD additionally expose:
   - cluster/distributed runtime (split/merge): `eigen_cluster_*` (where defined by contract)
 - Global contract markers:
   - `eigen_observability_contract_info{version=...} 1`
+- Public API ingress contract markers (System API):
+  - `eigen_api_public_contract_requests_total{contract_version,outcome}`
+  - `eigen_public_api_contract_requests_total{contract_version,outcome}` (catalog-compatible alias)
+  - labels MUST remain bounded to `contract_version in {1.0.0,unsupported}` and `outcome in {accepted,replayed,conflict,limit,error}`.
 
 ---
 
@@ -238,6 +242,8 @@ Use the dedicated contracts for required catalogs:
 ### 7.1 Propagation
 
 Eigen OS uses **W3C TraceContext**. Required header: `traceparent`
+
+System API MUST accept `traceparent` from gRPC metadata or the Product 1.0 public request envelope, preserve the original parent string, and derive `trace_id` from it before emitting public-boundary logs or constructing job/runtime correlation metadata.
 
 Propagation path (minimum MVP baseline):
 
