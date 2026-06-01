@@ -488,3 +488,336 @@ The component architecture index is considered complete only when:
 6. orchestration/runtime ownership is unambiguous,
 7. contract-vs-explanation separation is enforced,
 8. all public runtime surfaces map to stable contracts.
+
+---
+
+## Appendix A. Diagrams (normative)
+
+### A.1 Layered architecture map (high-level)
+
+![Layered architecture map](https://i.imgur.com/7Mcy4YS.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  subgraph L0["Client / UX"]
+    SDK[Client SDKs / CLI]
+    Apps[External Clients]
+  end
+
+  subgraph L1["API Layer"]
+    SysAPI["System API\n(public ingress)"]
+  end
+
+  subgraph L2["Runtime Layer"]
+    Kernel["Kernel / QRTX\n(orchestration)"]
+    RM["Resource Manager\n(allocation/reservations)"]
+    Scheduler["Scheduler & Orchestration"]
+    RC["Intelligent Runtime Controller"]
+    HWE["HWE\n(post-MVP)"]
+  end
+
+  subgraph L3["Compilation Layer"]
+    Compiler["Compiler\n(AST-only → AQO)"]
+    NSC["Neuro-Symbolic Core\n(post-MVP)"]
+  end
+
+  subgraph L4["Execution Abstraction"]
+    DM[Driver Manager]
+    Drivers[QDriver Plugins / Remote QDrivers]
+    Backends[(Quantum Hardware / Vendor Cloud / Simulators)]
+  end
+
+  subgraph L5["Storage Layer"]
+    QFS["QFS\n(CircuitFS / StateStore / LiveQubitManager)"]
+    KB["Knowledge Base / OKB\n(post-MVP)"]
+  end
+
+  subgraph L6["Cross-cutting"]
+    Sec[Security & Isolation]
+    Obs[Observability]
+  end
+
+  SDK --> SysAPI
+  Apps --> SysAPI
+
+  SysAPI --> Kernel
+
+  Kernel --> Compiler
+  Kernel --> Scheduler
+  Kernel --> RM
+  Kernel --> RC
+  Kernel --> DM
+  Kernel --> QFS
+
+  Compiler -. "advisory" .-> NSC
+  RC -. "advisory" .-> NSC
+  HWE -. "uses" .-> DM
+
+  DM --> Drivers --> Backends
+
+  NSC -. "optional" .-> KB
+  RC -. "optional" .-> KB
+
+  Sec -. "applies" .-> SysAPI
+  Sec -. "applies" .-> Kernel
+  Sec -. "applies" .-> Compiler
+  Sec -. "applies" .-> DM
+  Sec -. "applies" .-> QFS
+
+  Obs -. "exports" .-> SysAPI
+  Obs -. "exports" .-> Kernel
+  Obs -. "exports" .-> Compiler
+  Obs -. "exports" .-> DM
+  Obs -. "exports" .-> QFS
+
+  %% Цвета слоёв
+  classDef L0 fill:#e0f7fa,stroke:#006064
+  classDef L1 fill:#ffe0b2,stroke:#e65100
+  classDef L2 fill:#c8e6c9,stroke:#1b5e20
+  classDef L3 fill:#f8bbd0,stroke:#880e4f
+  classDef L4 fill:#d1c4e9,stroke:#4527a0
+  classDef L5 fill:#fff9c4,stroke:#f57f17
+  classDef L6 fill:#f5f5f5,stroke:#616161,stroke-dasharray: 3 3
+
+  class SDK,Apps L0
+  class SysAPI L1
+  class Kernel,RM,Scheduler,RC,HWE L2
+  class Compiler,NSC L3
+  class DM,Drivers,Backends L4
+  class QFS,KB L5
+  class Sec,Obs L6
+```
+
+</details>
+
+---
+
+### A.2 C4-ish container topology (MVP baseline vs Post-MVP extensions)
+
+![C4-ish container topology](https://i.imgur.com/xbs5ODx.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  subgraph MVP["MVP baseline (required for 1.x)"]
+    SysAPI[system-api]
+    Kernel["eigen-kernel (QRTX)"]
+    Compiler[eigen-compiler]
+    DM[driver-manager]
+    QFS["qfs (CircuitFS L3 + facade)"]
+    Sec["security-isolation (baseline rules)"]
+    Obs["observability (metrics/logs/traces)"]
+  end
+
+  subgraph Post["Post-MVP extensions (Phase-1+)"]
+    RM["resource-manager (standalone)"]
+    Scheduler["scheduler (standalone)"]
+    RC[runtime-controller]
+    HWE[hwe]
+    GNN[gnn-optimizer]
+    KB["knowledge-base / OKB"]
+    NSC[neuro-symbolic-core]
+  end
+
+  SysAPI --> Kernel
+  Kernel --> Compiler
+  Kernel --> DM
+  Kernel --> QFS
+
+  Kernel -. "may call" .-> RM
+  Kernel -. "may call" .-> Scheduler
+  Kernel -. "may call" .-> RC
+  RC -. "may call" .-> HWE
+  HWE -. "may call" .-> GNN
+  NSC -. "may coordinate" .-> GNN
+  NSC -. "may read/write" .-> KB
+
+  Sec -. "governs" .-> MVP
+  Obs -. "instruments" .-> MVP
+  Sec -. "governs" .-> Post
+  Obs -. "instruments" .-> Post
+```
+
+</details>
+
+---
+
+### A.3 Sequence (E2E job flow): Submit → Compile → Execute → Persist → Results
+
+![E2E job flow](https://i.imgur.com/LBXudDY.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant C as Client SDK/CLI
+  participant API as System API
+  participant K as Kernel/QRTX
+  participant CC as Compiler
+  participant Q as QFS
+  participant DM as Driver Manager
+  participant B as Backend/Simulator
+
+  C->>API: SubmitJob (JobSpec + metadata)
+  API->>K: EnqueueJob (forward)
+  K->>Q: Persist input/source (job scope)
+  K->>CC: CompileJob / CompileCircuit
+  CC->>Q: Write compiled AQO + metadata
+  K->>DM: ExecuteCircuit (AQO + device_id)
+  DM->>B: Provider execution
+  B-->>DM: Raw result / error
+  DM-->>K: Normalized ExecutionResult
+  K->>Q: Write results.json (or error.json)
+  K-->>API: job status/results available
+  API-->>C: GetJobStatus / GetJobResults
+```
+
+</details>
+
+---
+
+### A.4 Sequence (Device discovery & reservation): List → Status → Reserve
+
+![Device discovery & reservation](https://i.imgur.com/Y29mN92.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant C as Client SDK/CLI
+  participant API as System API
+  participant K as Kernel/QRTX
+  participant DM as Driver Manager
+  participant RM as Resource Manager (Phase-1+)
+
+  C->>API: ListDevices
+  API->>K: (forward) ListDevices / QueryDevices
+  K->>DM: ListDevices (internal)
+  DM-->>K: Device catalog snapshot
+  K-->>API: Device list
+  API-->>C: Device list
+
+  C->>API: GetDeviceStatus(device_id)
+  API->>K: forward
+  K->>DM: GetDeviceStatus
+  DM-->>K: Status/topology hints
+  K-->>API: Status
+  API-->>C: Status
+
+  C->>API: ReserveDevice(device_id)
+  alt MVP placeholder reservation
+    API-->>C: reservation token (non-enforced)
+  else Phase-1 enforced reservation
+    API->>K: forward
+    K->>RM: ReserveExecutionSlot
+    RM-->>K: reservation_id / expiry / constraints
+    K-->>API: reservation response
+    API-->>C: reservation response
+  end
+```
+
+</details>
+
+---
+
+### A.5 Contract vs Explanation ownership boundary
+
+![Contract vs Explanation ownership boundary](https://i.imgur.com/jC4SFJz.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  Expl["Component docs\n(components/*.md)\nExplanation only"] -->|MUST reference| Ref["Normative contracts\n(docs/reference/*)"]
+  Expl -. "MUST NOT redefine" .-> Wire["Wire contracts\n(proto / schemas / error model)"]
+  Ref --> Wire
+```
+
+</details>
+
+---
+
+### A.6 Allowed call graph (hard boundaries)
+
+![Allowed call graph](https://i.imgur.com/dlC4lnh.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  SDK[SDK/CLI] --> API[System API]
+
+  API --> K[Kernel/QRTX]
+
+  K --> CC[Compiler]
+  K --> DM[Driver Manager]
+  K --> QFS[QFS]
+
+  subgraph Optional["Optional / Phase-1+"]
+    K -.-> RM[Resource Manager]
+    K -.-> SCH[Scheduler]
+    K -.-> RC[Intelligent Runtime Controller]
+    RC -.-> HWE[HWE]
+    HWE -.-> GNN[GNN Optimizer]
+    RC -.-> KB[Knowledge Base / OKB]
+    CC -.-> KB
+    RC -.-> NSC[Neuro-Symbolic Core]
+    CC -.-> NSC
+  end
+
+  DM --> Drivers[Drivers/QDrivers] --> Backend[(Providers/Simulators)]
+
+  %% hard constraints
+  API -. MUST NOT .-> Backend
+  K -. MUST NOT .-> Backend
+  CC -. MUST NOT .-> Backend
+```
+
+</details>
+
+---
+
+### A.7 Distributed execution topology (Split Planner → Workers → Merge)
+
+![Distributed execution topology](https://i.imgur.com/VCCkdne.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  API[System API] --> K[Kernel/QRTX]
+
+  subgraph Dist["Distributed Execution Layer (Phase-1+)"]
+    SP[Split Planner]
+    W1[Runtime Worker #1]
+    W2[Runtime Worker #2]
+    WN[Runtime Worker #N]
+    MC[Merge Coordinator]
+  end
+
+  K --> SP
+  SP --> W1
+  SP --> W2
+  SP --> WN
+  W1 --> MC
+  W2 --> MC
+  WN --> MC
+
+  MC --> QFS[(QFS lineage + artifacts)]
+  K --> QFS
+  MC --> K
+```
+
+</details>
