@@ -1,10 +1,12 @@
-"""JobSpec (job.yaml) parser for SubmitJobRequest canonical mapping.
+"""JobSpec parser/normalizer for SubmitJobRequest canonical mapping.
 
-Implements MVP-2 parser contract from RFC 0013 / ADR 0003.
+Implements the Product 1.0 JobSpec contract from docs/reference/jobspec.md and
+keeps documented v0.1 migration compatibility for MVP clients.
 """
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
@@ -24,6 +26,12 @@ except Exception as exc:  # pragma: no cover
     raise RuntimeError("PyYAML is required for job.yaml parsing") from exc
 
 
+JOBSPEC_VERSION = "1.0.0"
+JOBSPEC_API_VERSION = "eigen.os/v1"
+LEGACY_JOBSPEC_API_VERSION = "eigen.os/v0.1"
+JOBSPEC_KIND = "QuantumJob"
+ACCEPTED_API_VERSIONS = {JOBSPEC_API_VERSION, LEGACY_JOBSPEC_API_VERSION}
+
 REQUIRED_FIELD_MATRIX: dict[str, bool] = {
     "apiVersion": True,
     "kind": True,
@@ -33,13 +41,18 @@ REQUIRED_FIELD_MATRIX: dict[str, bool] = {
     "metadata.annotations": False,
     "spec": True,
     "spec.program": False,
+    "spec.program.path": False,
+    "spec.program.source": False,
     "spec.program_path": False,
     "spec.entrypoint": False,
     "spec.target": True,
-    "spec.priority": False,
+    "spec.compiler": False,
     "spec.compiler_options": False,
     "spec.metadata": False,
     "spec.dependencies": False,
+    "scheduling": False,
+    "security": False,
+    "observability": False,
 }
 
 
@@ -76,8 +89,65 @@ def _require_dict(value: Any, field: str, violations: list[FieldViolation]) -> d
     return value
 
 
-def parse_jobspec_to_submit_request(jobspec_path: Path) -> job_pb.SubmitJobRequest:
-    """Parse job.yaml and map it to canonical SubmitJobRequest."""
+def _string_map(raw_map: Any, field: str, violations: list[FieldViolation]) -> dict[str, str]:
+    if raw_map is None:
+        return {}
+    if not isinstance(raw_map, dict):
+        violations.append(FieldViolation(field=field, description="must be map<string,string>"))
+        return {}
+    out: dict[str, str] = {}
+    for k, v in raw_map.items():
+        if not isinstance(k, str) or not isinstance(v, str):
+            violations.append(FieldViolation(field=field, description="must be map<string,string>"))
+            return {}
+        out[k] = v
+    return out
+
+
+def _canonical_json(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def _extract_program(spec: dict[str, Any], violations: list[FieldViolation]) -> tuple[str | None, str | None]:
+    program_inline: str | None = None
+    program_path: str | None = None
+    program = spec.get("program")
+
+    if isinstance(program, dict):
+        raw_source = program.get("source")
+        raw_path = program.get("path")
+        if raw_source is not None:
+            if isinstance(raw_source, str):
+                program_inline = raw_source
+            else:
+                violations.append(FieldViolation(field="spec.program.source", description="must be string"))
+        if raw_path is not None:
+            if isinstance(raw_path, str):
+                program_path = raw_path
+            else:
+                violations.append(FieldViolation(field="spec.program.path", description="must be string"))
+    elif isinstance(program, str):
+        # v0.1 migration form: spec.program is inline source.
+        program_inline = program
+    elif program is not None:
+        violations.append(FieldViolation(field="spec.program", description="must be mapping"))
+
+    legacy_path = spec.get("program_path")
+    if legacy_path is not None:
+        if isinstance(legacy_path, str):
+            if program_path is not None:
+                violations.append(FieldViolation(field="spec.program_path", description="cannot be set with spec.program.path"))
+            program_path = legacy_path
+        else:
+            violations.append(FieldViolation(field="spec.program_path", description="must be string"))
+
+    if program_inline is not None and program_path is not None:
+        violations.append(FieldViolation(field="spec.program", description="cannot set both source and path"))
+    return program_inline, program_path
+
+
+def normalize_jobspec(jobspec_path: Path) -> dict[str, Any]:
+    """Return the byte-stable JobSpec 1.0 normalized payload dictionary."""
 
     cfg = load_security_config()
     raw = jobspec_path.read_bytes()
@@ -92,28 +162,34 @@ def parse_jobspec_to_submit_request(jobspec_path: Path) -> job_pb.SubmitJobReque
         )
 
     try:
-        parsed = yaml.safe_load(raw.decode("utf-8"))
+        raw_text = raw.decode("utf-8")
+        parsed = yaml.safe_load(raw_text)
     except UnicodeDecodeError:
+        raw_text = ""
         parsed = None
         violations.append(FieldViolation(field="job.yaml", description="must be valid UTF-8"))
     except yaml.YAMLError:
+        raw_text = ""
         parsed = None
         violations.append(FieldViolation(field="job.yaml", description="must be valid YAML"))
 
     root = _require_dict(parsed, "job.yaml", violations)
 
     api_version = root.get("apiVersion", "")
-    if api_version != "eigen.os/v0.1":
-        violations.append(FieldViolation(field="apiVersion", description="must be eigen.os/v0.1"))
+    if api_version not in ACCEPTED_API_VERSIONS:
+        violations.append(FieldViolation(field="apiVersion", description="must be eigen.os/v1"))
 
     kind = root.get("kind", "")
-    if kind != "QuantumJob":
+    if kind != JOBSPEC_KIND:
         violations.append(FieldViolation(field="kind", description="must be QuantumJob"))
 
     metadata = _require_dict(root.get("metadata"), "metadata", violations)
     name = metadata.get("name", "")
     if not isinstance(name, str) or not name.strip():
         violations.append(FieldViolation(field="metadata.name", description="field is required"))
+
+    labels = _string_map(metadata.get("labels"), "metadata.labels", violations)
+    annotations = _string_map(metadata.get("annotations"), "metadata.annotations", violations)
 
     spec = _require_dict(root.get("spec"), "spec", violations)
     target = spec.get("target", "")
@@ -123,38 +199,34 @@ def parse_jobspec_to_submit_request(jobspec_path: Path) -> job_pb.SubmitJobReque
     priority = spec.get("priority", 50)
     if not isinstance(priority, int):
         violations.append(FieldViolation(field="spec.priority", description="must be int32"))
+        priority = 50
     elif priority < 0 or priority > 100:
         violations.append(FieldViolation(field="spec.priority", description="must be in range [0,100]"))
 
     entrypoint = spec.get("entrypoint", "main")
     if not isinstance(entrypoint, str) or not entrypoint.strip():
         violations.append(FieldViolation(field="spec.entrypoint", description="must be non-empty string"))
+        entrypoint = "main"
 
-    source_bytes = b""
-    program_inline = spec.get("program")
-    program_path = spec.get("program_path")
+    program_inline, program_path = _extract_program(spec, violations)
     base_dir = jobspec_path.parent
-
-    if program_inline is not None and program_path is not None:
-        violations.append(
-            FieldViolation(field="spec.program_path", description="cannot be set when spec.program is provided")
-        )
+    source_bytes = b""
+    normalized_program: dict[str, Any] = {"entrypoint": entrypoint.strip()}
 
     if isinstance(program_inline, str) and program_inline.strip():
         source_bytes = program_inline.encode("utf-8")
+        normalized_program["source"] = program_inline
     else:
         ref = "program.eigen.py" if program_path is None else program_path
-        if not isinstance(ref, str):
-            violations.append(FieldViolation(field="spec.program_path", description="must be string"))
-        else:
-            resolved, err = _resolve_safe_path(base_dir, ref, "spec.program_path")
-            if err:
-                violations.append(err)
-            elif resolved is not None:
-                try:
-                    source_bytes = resolved.read_bytes()
-                except FileNotFoundError:
-                    violations.append(FieldViolation(field="spec.program_path", description="file not found"))
+        resolved, err = _resolve_safe_path(base_dir, ref, "spec.program.path")
+        if err:
+            violations.append(err)
+        elif resolved is not None:
+            try:
+                source_bytes = resolved.read_bytes()
+                normalized_program["path"] = ref
+            except FileNotFoundError:
+                violations.append(FieldViolation(field="spec.program.path", description="file not found"))
 
     if source_bytes and len(source_bytes) > cfg.max_program_source_bytes:
         violations.append(
@@ -166,25 +238,11 @@ def parse_jobspec_to_submit_request(jobspec_path: Path) -> job_pb.SubmitJobReque
     if not source_bytes:
         violations.append(FieldViolation(field="spec.program", description="program source is required"))
 
-    def _string_map(field: str) -> dict[str, str]:
-        raw_map = spec.get(field, {})
-        if raw_map is None:
-            return {}
-        if not isinstance(raw_map, dict):
-            violations.append(FieldViolation(field=f"spec.{field}", description="must be map<string,string>"))
-            return {}
-        out: dict[str, str] = {}
-        for k, v in raw_map.items():
-            if not isinstance(k, str) or not isinstance(v, str):
-                violations.append(
-                    FieldViolation(field=f"spec.{field}", description="must be map<string,string>")
-                )
-                return {}
-            out[k] = v
-        return out
+    source_digest = sha256(source_bytes).hexdigest() if source_bytes else ""
+    normalized_program["sha256"] = source_digest
 
-    compiler_options = _string_map("compiler_options")
-    submit_metadata = _string_map("metadata")
+    compiler_options = _string_map(spec.get("compiler_options") or spec.get("compiler"), "spec.compiler", violations)
+    submit_metadata = _string_map(spec.get("metadata"), "spec.metadata", violations)
 
     dependencies_raw = spec.get("dependencies", [])
     dependencies: list[str] = []
@@ -195,25 +253,101 @@ def parse_jobspec_to_submit_request(jobspec_path: Path) -> job_pb.SubmitJobReque
     else:
         for idx, item in enumerate(dependencies_raw):
             if not isinstance(item, str):
-                violations.append(
-                    FieldViolation(field=f"spec.dependencies[{idx}]", description="must be string")
-                )
+                violations.append(FieldViolation(field=f"spec.dependencies[{idx}]", description="must be string"))
             else:
                 dependencies.append(item)
+
+    for section_name in ("scheduling", "security", "observability"):
+        section = root.get(section_name, {})
+        if section is None:
+            section = {}
+        if not isinstance(section, dict):
+            violations.append(FieldViolation(field=section_name, description="must be a mapping"))
 
     if violations:
         raise JobSpecValidationError(tuple(violations))
 
+    normalized = {
+        "contract": "jobspec.normalized",
+        "version": JOBSPEC_VERSION,
+        "apiVersion": JOBSPEC_API_VERSION,
+        "kind": JOBSPEC_KIND,
+        "compatibility": {
+            "input_apiVersion": api_version,
+            "migration": "v0.1-inline-and-program_path" if api_version == LEGACY_JOBSPEC_API_VERSION else "none",
+        },
+        "metadata": {
+            "name": name.strip(),
+            "labels": labels,
+            "annotations": annotations,
+        },
+        "spec": {
+            "target": target.strip(),
+            "priority": priority,
+            "program": normalized_program,
+            "compiler_options": compiler_options,
+            "metadata": submit_metadata,
+            "dependencies": dependencies,
+        },
+        "scheduling": root.get("scheduling") or {},
+        "security": root.get("security") or {},
+        "observability": root.get("observability") or {},
+    }
+    normalized["digest"] = sha256(_canonical_json(normalized).encode("utf-8")).hexdigest()
+    normalized["package"] = {
+        "source_sha256": source_digest,
+        "canonical_digest": normalized["digest"],
+        "normalized_json_sha256": normalized["digest"],
+    }
+    return normalized
+
+
+def canonical_jobspec_json(jobspec_path: Path) -> str:
+    """Return byte-stable canonical JSON for the normalized JobSpec."""
+    return _canonical_json(normalize_jobspec(jobspec_path))
+
+
+def canonical_jobspec_digest(jobspec_path: Path) -> str:
+    """Return the deterministic sha256 digest of the normalized JobSpec."""
+    return normalize_jobspec(jobspec_path)["digest"]
+
+
+def parse_jobspec_to_submit_request(jobspec_path: Path) -> job_pb.SubmitJobRequest:
+    """Parse job.yaml and map it to canonical SubmitJobRequest."""
+
+    normalized = normalize_jobspec(jobspec_path)
+    program = normalized["spec"]["program"]
+    source_bytes = program.get("source", "").encode("utf-8")
+    if not source_bytes and "path" in program:
+        resolved, _ = _resolve_safe_path(jobspec_path.parent, program["path"], "spec.program.path")
+        source_bytes = resolved.read_bytes() if resolved else b""
+
+    public_metadata = dict(normalized["spec"]["metadata"])
+    # Internal envelope mapping: scheduler/security/observability become bounded
+    # internal metadata hints. Raw internal-only fields are not exposed in the
+    # public SubmitJobRequest schema.
+    public_metadata.update(
+        {
+            "jobspec_yaml": jobspec_path.read_text(encoding="utf-8"),
+            "jobspec_version": normalized["version"],
+            "jobspec_digest": normalized["digest"],
+            "source_sha256": program["sha256"],
+            "jobspec_scheduling": _canonical_json(normalized["scheduling"]),
+            "jobspec_security": _canonical_json(normalized["security"]),
+            "jobspec_observability": _canonical_json(normalized["observability"]),
+        }
+    )
+
     return job_pb.SubmitJobRequest(
-        name=name.strip(),
-        target=target.strip(),
-        priority=priority,
-        compiler_options=compiler_options,
-        metadata={**submit_metadata, "jobspec_yaml": raw.decode("utf-8")},
-        dependencies=dependencies,
+        name=normalized["metadata"]["name"],
+        target=normalized["spec"]["target"],
+        priority=normalized["spec"]["priority"],
+        compiler_options=normalized["spec"]["compiler_options"],
+        metadata=public_metadata,
+        dependencies=normalized["spec"]["dependencies"],
         eigen_lang=types_pb.EigenLangSource(
             source=source_bytes,
-            entrypoint=entrypoint.strip(),
-            sha256=sha256(source_bytes).hexdigest(),
+            entrypoint=program["entrypoint"],
+            sha256=program["sha256"],
         ),
     )

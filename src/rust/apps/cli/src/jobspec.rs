@@ -3,7 +3,9 @@ use std::fmt::{Display, Formatter};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub const JOBSPEC_API_VERSION: &str = "eigen.os/v0.1";
+pub const JOBSPEC_API_VERSION: &str = "eigen.os/v1";
+pub const LEGACY_JOBSPEC_API_VERSION: &str = "eigen.os/v0.1";
+pub const JOBSPEC_CONTRACT_VERSION: &str = "1.0.0";
 pub const JOBSPEC_KIND: &str = "QuantumJob";
 pub const EIGEN_LANG_RUNTIME_HINTS_VERSION: &str = "1.1.0";
 pub const EIGEN_LANG_RUNTIME_DIAGNOSTICS_VERSION: &str = "1.0.0";
@@ -198,6 +200,8 @@ pub fn parse_and_validate_jobspec(yaml: &str) -> Result<JobSpec, JobSpecValidati
                 if v == "|" {
                     in_program_block = true;
                     program_buf.clear();
+                } else if v.is_empty() {
+                    subsection = "program";
                 } else {
                     program_inline = Some(v);
                 }
@@ -252,6 +256,18 @@ pub fn parse_and_validate_jobspec(yaml: &str) -> Result<JobSpec, JobSpecValidati
                         dependencies.push(strip_quotes(dep.trim()));
                     }
                 }
+                "program" => {
+                    if let Some(v) = value_for(trimmed, "path:") {
+                        program_path = Some(v);
+                    } else if let Some(v) = value_for(trimmed, "source:") {
+                        if v == "|" {
+                            in_program_block = true;
+                            program_buf.clear();
+                        } else {
+                            program_inline = Some(v);
+                        }
+                    }
+                }
                 _ => {}
             }
         }
@@ -267,7 +283,7 @@ pub fn parse_and_validate_jobspec(yaml: &str) -> Result<JobSpec, JobSpecValidati
             field: "apiVersion".to_string(),
             description: "field is required".to_string(),
         });
-    } else if api_version != JOBSPEC_API_VERSION {
+    } else if api_version != JOBSPEC_API_VERSION && api_version != LEGACY_JOBSPEC_API_VERSION {
         violations.push(FieldViolation {
             field: "apiVersion".to_string(),
             description: format!("must be '{JOBSPEC_API_VERSION}'"),
@@ -359,6 +375,7 @@ pub fn map_to_submit_job_request_with_packaging(
         .program_path
         .clone()
         .unwrap_or_else(|| "program.eigen.py".to_string());
+    validate_safe_relative_path(&path)?;
     let program_path = resolve_program_path(basedir, &path);
 
     if !program_path.exists() {
@@ -399,6 +416,76 @@ pub fn map_to_submit_job_request_with_packaging(
         metadata,
         dependencies: job.spec.dependencies.clone(),
     })
+}
+
+pub fn canonical_jobspec_json_from_request(req: &SubmitJobRequest, input_api_version: &str) -> String {
+    let ProgramSource::EigenLangSource { source, entrypoint, sha256 } = &req.program;
+    let migration = if input_api_version == LEGACY_JOBSPEC_API_VERSION {
+        "v0.1-inline-and-program_path"
+    } else {
+        "none"
+    };
+    let mut metadata = req.metadata.clone();
+    metadata.remove("jobspec_yaml");
+    let base = format!(
+        concat!(
+            "{{",
+            "\"apiVersion\":\"{api_version}\",",
+            "\"compatibility\":{{\"input_apiVersion\":\"{input_api_version}\",\"migration\":\"{migration}\"}},",
+            "\"contract\":\"jobspec.normalized\",",
+            "\"kind\":\"QuantumJob\",",
+            "\"metadata\":{{\"annotations\":{{}},\"labels\":{{}},\"name\":\"{name}\"}},",
+            "\"observability\":{{}},",
+            "\"scheduling\":{{}},",
+            "\"security\":{{}},",
+            "\"spec\":{{",
+            "\"compiler_options\":{compiler_options},",
+            "\"dependencies\":{dependencies},",
+            "\"metadata\":{metadata},",
+            "\"priority\":{priority},",
+            "\"program\":{{\"entrypoint\":\"{entrypoint}\",\"sha256\":\"{sha256}\",\"source\":\"{source}\"}},",
+            "\"target\":\"{target}\"",
+            "}},",
+            "\"version\":\"{version}\"",
+            "}}"
+        ),
+        api_version = JOBSPEC_API_VERSION,
+        input_api_version = json_escape(input_api_version),
+        migration = migration,
+        name = json_escape(&req.name),
+        compiler_options = string_map_json(&req.compiler_options),
+        dependencies = string_vec_json(&req.dependencies),
+        metadata = string_map_json(&metadata),
+        priority = req.priority,
+        entrypoint = json_escape(entrypoint),
+        sha256 = json_escape(sha256),
+        source = json_escape(source),
+        target = json_escape(&req.target),
+        version = JOBSPEC_CONTRACT_VERSION,
+    );
+    let digest = sha256_hex(base.as_bytes());
+    format!(
+        "{{\"digest\":\"{}\",\"normalized\":{}}}",
+        digest, base
+    )
+}
+
+pub fn canonical_jobspec_digest_from_request(req: &SubmitJobRequest, input_api_version: &str) -> String {
+    let canonical = canonical_jobspec_json_from_request(req, input_api_version);
+    sha256_hex(canonical.as_bytes())
+}
+
+fn string_map_json(map: &BTreeMap<String, String>) -> String {
+    let mut parts = Vec::new();
+    for (k, v) in map {
+        parts.push(format!("\"{}\":\"{}\"", json_escape(k), json_escape(v)));
+    }
+    format!("{{{}}}", parts.join(","))
+}
+
+fn string_vec_json(values: &[String]) -> String {
+    let parts: Vec<String> = values.iter().map(|v| format!("\"{}\"", json_escape(v))).collect();
+    format!("[{}]", parts.join(","))
 }
 
 pub fn submit_job_to_system_api(req: &SubmitJobRequest) -> SubmitJobResponse {
@@ -515,6 +602,17 @@ fn validate_entrypoint(source: &str, entrypoint: &str) -> Result<(), JobSpecVali
 fn resolve_program_path(basedir: &Path, program_path: &str) -> PathBuf {
     let p = PathBuf::from(program_path);
     if p.is_absolute() { p } else { basedir.join(p) }
+}
+
+fn validate_safe_relative_path(program_path: &str) -> Result<(), JobSpecValidationError> {
+    let p = PathBuf::from(program_path);
+    if p.is_absolute() || p.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+        return Err(JobSpecValidationError::new(vec![FieldViolation {
+            field: "spec.program.path".to_string(),
+            description: "path traversal is not allowed".to_string(),
+        }]));
+    }
+    Ok(())
 }
 
 pub fn sha256_hex(bytes: &[u8]) -> String {
@@ -1404,6 +1502,48 @@ spec:
     }
 
     #[test]
+    fn jobspec_v1_nested_program_path_is_supported() {
+        let yaml = r#"
+apiVersion: eigen.os/v1
+kind: QuantumJob
+metadata:
+  name: test
+spec:
+  program:
+    path: custom.eigen.py
+  entrypoint: run
+  target: sim:local
+"#;
+        let spec = parse_and_validate_jobspec(yaml).expect("valid");
+        assert_eq!(spec.spec.program_path, Some("custom.eigen.py".to_string()));
+        assert_eq!(spec.spec.entrypoint, "run");
+    }
+
+    #[test]
+    fn canonical_jobspec_digest_from_request_is_deterministic() {
+        let req = SubmitJobRequest {
+            name: "bell".to_string(),
+            program: ProgramSource::EigenLangSource {
+                source: "@hybrid_program\ndef main():\n    return 1\n".to_string(),
+                entrypoint: "main".to_string(),
+                sha256: sha256_hex(b"@hybrid_program\ndef main():\n    return 1\n"),
+            },
+            target: "sim:local".to_string(),
+            priority: 50,
+            compiler_options: BTreeMap::new(),
+            metadata: BTreeMap::new(),
+            dependencies: Vec::new(),
+        };
+        let first = canonical_jobspec_digest_from_request(&req, JOBSPEC_API_VERSION);
+        let second = canonical_jobspec_digest_from_request(&req, JOBSPEC_API_VERSION);
+        let canonical = canonical_jobspec_json_from_request(&req, JOBSPEC_API_VERSION);
+        assert_eq!(first, second);
+        assert_eq!(first.len(), 64);
+        assert!(canonical.contains("\"version\":\"1.0.0\""));
+        assert!(canonical.contains("\"apiVersion\":\"eigen.os/v1\""));
+    }
+
+    #[test]
     fn status_watch_results_workflow_views_are_consistent() {
         let status = get_job_status_from_system_api("job-demo").expect("status");
         assert_eq!(status.state, "RUNNING");
@@ -1451,8 +1591,7 @@ spec:
         fs::write(
             &yaml_path,
             format!(
-                "apiVersion: eigen.os/v0.1\nkind: QuantumJob\nmetadata:\n  name: compile-test\nspec:\n  program_path: {}\n  target: sim:local\n",
-                program_path.display()
+                "apiVersion: eigen.os/v0.1\nkind: QuantumJob\nmetadata:\n  name: compile-test\nspec:\n  program_path: program.eigen.py\n  target: sim:local\n"
             ),
         )
         .expect("yaml");
