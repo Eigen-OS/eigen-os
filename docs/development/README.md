@@ -109,6 +109,7 @@ git fetch origin main:main
 
 ## Post-MVP planning
 
+- Product 1.0 contract alignment plan: [`product-1.0-contract-alignment-plan.md`](product-1.0-contract-alignment-plan.md)
 - Post-MVP open-source roadmap: [`post-mvp-open-source-roadmap.md`](post-mvp-open-source-roadmap.md)
 - Phase 1 runtime plan (completed): [`phase-1-production-runtime.md`](phase-1-production-runtime.md)
 - Phase 2 orchestration plan: [`phase-2-orchestration-layer.md`](phase-2-orchestration-layer.md)
