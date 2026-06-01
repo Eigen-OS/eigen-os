@@ -18,6 +18,12 @@ PRODUCT_DOCS = [
     ROOT / "docs" / "development" / "product-1.0-wave-0-execution-plan.md",
     ROOT / "docs" / "development" / "product-1.0-contract-inventory.md",
     ROOT / "docs" / "development" / "product-1.0-version-policy.md",
+    ROOT / "docs" / "development" / "product-1.0-wave-1-execution-plan.md",
+    ROOT / "docs" / "development" / "product-1.0-wave-1-issue-pack.md",
+    ROOT / "docs" / "development" / "product-1.0-wave-1-rfc-adr-gap-analysis.md",
+    ROOT / "docs" / "development" / "product-1.0-wave-1-compatibility-report.md",
+    ROOT / "docs" / "development" / "product-1.0-wave-1-release-readiness-checklist.md",
+    ROOT / "docs" / "development" / "product-1.0-wave-1-exit-evidence-bundle.md",
 ]
 REPO_PREFIXES = (
     "docs/",
