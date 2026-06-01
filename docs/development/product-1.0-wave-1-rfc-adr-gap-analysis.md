@@ -46,8 +46,8 @@ A dedicated Product 1.0 Wave 1 RFC and ADR are required because the existing MVP
 
 ## Follow-up checklist
 
-- [ ] Review RFC 0049 with API Platform, CLI/SDK, System API, and Architecture/Governance owners.
-- [ ] Keep ADR 0035 synchronized with accepted RFC 0049 decisions.
-- [ ] Update the Wave 1 compatibility report when public fields, errors, metrics, or JobSpec semantics change.
-- [ ] Ensure every Wave 1 GitHub issue contains the required Versioning & Compatibility and Release Notes Draft blocks.
-- [ ] Update Product 1.0 manifest/inventory when planned schema or conformance mappings become concrete.
+- [x] Review RFC 0049 with API Platform, CLI/SDK, System API, and Architecture/Governance owners.
+- [x] Keep ADR 0035 synchronized with accepted RFC 0049 decisions.
+- [x] Update the Wave 1 compatibility report when public fields, errors, metrics, or JobSpec semantics change.
+- [x] Ensure every Wave 1 GitHub issue contains the required Versioning & Compatibility and Release Notes Draft blocks.
+- [x] Update Product 1.0 manifest/inventory when planned schema or conformance mappings become concrete.

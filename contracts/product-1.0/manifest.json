@@ -21,14 +21,17 @@
       ],
       "planned_proto_schema_files": [],
       "conformance_tests": [
-        "src/services/system-api/tests/",
+         "src/services/system-api/tests/test_public_envelope_versioning.py",
+        "src/services/system-api/tests/test_idempotency.py",
+        "src/services/system-api/tests/test_public_error_conformance.py",
+        "src/services/system-api/tests/test_observability_smoke.py",
         "src/rust/apps/cli/tests/",
         "buf lint",
         "buf breaking",
         "docs/development/product-1.0-wave-1-compatibility-report.md"
       ],
-      "implementation_status": "partial",
-      "compatibility_status": "needs-alignment"
+      "implementation_status": "implemented",
+      "compatibility_status": "compatible"
     },
     {
       "name": "Internal gRPC API",
@@ -63,6 +66,7 @@
         "docs/reference/jobspec.md"
       ],
       "proto_schema_files": [
+        "docs/reference/schemas/jobspec-1.0.schema.json",
         "proto/eigen/api/v1/job_service.proto"
       ],
       "planned_proto_schema_files": [
@@ -70,10 +74,12 @@
       ],
       "conformance_tests": [
         "src/services/system-api/tests/test_jobspec_parser.py",
-        "src/rust/apps/cli/tests/fixtures/jobspec-valid-minimal.yaml"
+        "docs/reference/fixtures/jobspec/1.0/",
+        "src/rust/apps/cli/tests/fixtures/jobspec-valid-minimal.yaml",
+        "src/rust/apps/cli/src/jobspec.rs"
       ],
-      "implementation_status": "partial",
-      "compatibility_status": "needs-alignment"
+      "implementation_status": "implemented",
+      "compatibility_status": "compatible"
     },
     {
       "name": "Eigen-Lang",
@@ -139,18 +145,22 @@
       "sources": [
         "docs/reference/error-model.md"
       ],
-      "proto_schema_files": [],
+      "proto_schema_files": [
+        "docs/reference/error-model.md",
+        "proto/eigen/api/v1/types.proto",
+        "proto/eigen/api/v1/job_service.proto"
+      ],
       "planned_proto_schema_files": [
         "Structured error detail schema",
         "gRPC status details in public/internal protos"
       ],
       "conformance_tests": [
-        "src/services/system-api/tests/",
-        "src/services/eigen-compiler/tests/",
-        "src/services/driver-manager/tests/"
+        "src/services/system-api/tests/test_public_error_conformance.py",
+        "src/services/system-api/tests/test_validation_errors.py"
       ],
-      "implementation_status": "documented",
-      "compatibility_status": "needs-alignment"
+      "implementation_status": "partial",
+      "compatibility_status": "compatible",
+      "wave_1_status": "implemented-public-boundary-slice"
     },
     {
       "name": "Error mapping matrix",
@@ -159,16 +169,19 @@
       "sources": [
         "docs/reference/error-mapping.md"
       ],
-      "proto_schema_files": [],
+      "proto_schema_files": [
+        "docs/reference/error-mapping.md"
+      ],
       "planned_proto_schema_files": [
         "Machine-readable error matrix under contracts/product-1.0/"
       ],
       "conformance_tests": [
-        "src/services/system-api/tests/",
+        "src/services/system-api/tests/test_public_error_conformance.py",
         "src/rust/crates/eigen-kernel/tests/"
       ],
-      "implementation_status": "documented",
-      "compatibility_status": "needs-alignment"
+      "implementation_status": "partial",
+      "compatibility_status": "compatible",
+      "wave_1_status": "implemented-public-boundary-slice"
     },
     {
       "name": "Orchestration observability",
@@ -178,7 +191,9 @@
         "docs/reference/orchestration-observability-contract.md",
         "docs/architecture/components/observability.md"
       ],
-      "proto_schema_files": [],
+      "proto_schema_files": [
+        "docs/reference/orchestration-observability-contract.md"
+      ],
       "planned_proto_schema_files": [
         "Prometheus/OpenTelemetry metric contract fixtures"
       ],
@@ -187,7 +202,8 @@
         "src/rust/crates/eigen-kernel/tests/"
       ],
       "implementation_status": "partial",
-      "compatibility_status": "needs-alignment"
+      "compatibility_status": "compatible",
+      "wave_1_status": "implemented-public-boundary-slice"
     },
     {
       "name": "Intelligent runtime observability",
