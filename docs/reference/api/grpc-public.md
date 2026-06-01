@@ -220,6 +220,10 @@ Rules:
 - Idempotency retention window MUST be configurable and default to at least 24h.
 - Expired idempotency records MUST be purged before comparison; after expiry, a same-key request is treated as a new submission.
 
+#### CLI/SDK conformance baseline
+
+Product 1.0 clients MUST submit public payloads that contain the canonical `ApiRequestEnvelope` plus a normalized JobSpec representation. CLI and SDK implementations MUST prove conformance with at least one minimal inline JobSpec fixture and one full file-backed JobSpec fixture. Public clients MUST NOT depend on legacy bare `SubmitJobRequest` JSON shapes except as a transport-internal compatibility shim during migration.
+
 #### Validation Rules
 
 | **Rule** | **Error** |

@@ -2,6 +2,21 @@
 
 Current package version: `0.4.0`.
 
+## Submit command
+
+Product 1.0 submission emits a normalized public payload that includes the canonical request envelope, canonical JobSpec 1.0 normalization, and the legacy `SubmitJobRequest` body used by the current CLI transport shim. The command accepts both file-backed (`spec.program.path`) and inline (`spec.program.source`) JobSpec inputs.
+
+```bash
+eigen submit -f job.yaml \
+  --idempotency-key idem-demo \
+  --request-id req-demo \
+  --traceparent 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01 \
+  --tenant tenant-a \
+  --project project-a
+```
+
+If `--idempotency-key` is omitted, the CLI derives a deterministic `idem_<sha256>` value from the normalized JobSpec payload so same-input retries remain stable. If `--request-id` is omitted, the CLI derives `req_<sha256>` from the same normalized payload.
+
 ## Benchmark commands
 
 Phase-3 CLI benchmark UX provides reproducible run/compare flows with stable JSON contracts.

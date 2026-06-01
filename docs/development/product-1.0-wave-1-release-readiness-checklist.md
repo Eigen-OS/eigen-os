@@ -36,7 +36,7 @@ This checklist closes Product 1.0 Wave 1 and must be completed together with:
 - [ ] JobSpec 1.0 schema is versioned and fixture-tested.
 - [ ] Parser/normalizer behavior is shared or proven equivalent between CLI and System API.
 - [ ] Canonical digest generation is deterministic.
-- [ ] CLI supports file-based and inline JobSpec submissions using Product 1.0 public envelopes.
+- [x] CLI supports file-based and inline JobSpec submissions using Product 1.0 public envelopes.
 - [ ] Accepted previous JobSpec/API versions and migration behavior are documented.
 
 ## Error and compatibility gates

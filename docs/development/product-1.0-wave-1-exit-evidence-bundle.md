@@ -15,7 +15,7 @@
 | W1-E03 | SubmitJob idempotency conformance | TBD | Replay returns same job; conflict fails canonically | TBD | System API | TBD |
 | W1-E04 | JobSpec schema/parser/normalizer conformance | TBD | CLI and API produce identical canonical digest | TBD | CLI + System API | TBD |
 | W1-E05 | Public error mapping conformance | TBD | Status, reason, retryability, and details match reference | TBD | System API | TBD |
-| W1-E06 | CLI/SDK submission conformance | TBD | File and inline JobSpec payloads match Product 1.0 contract | TBD | Developer Experience | TBD |
+| W1-E06 | CLI/SDK submission conformance | `cargo test --manifest-path src/rust/Cargo.toml -p cli` | File and inline JobSpec payloads match Product 1.0 contract | PASS: CLI conformance tests normalize minimal inline and full file-backed fixtures with canonical envelopes | Developer Experience | `src/rust/apps/cli/src/jobspec.rs` |
 | W1-E07 | Public marker metrics and trace continuity | TBD | Bounded metrics and trace/request correlation present | TBD | Observability | TBD |
 | W1-E08 | Compatibility report and migration notes | `docs/development/product-1.0-wave-1-compatibility-report.md` | No unresolved completed-issue `TBD` values | TBD | Governance | TBD |
 
