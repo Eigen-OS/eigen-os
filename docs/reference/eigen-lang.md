@@ -668,3 +668,256 @@ New features MUST:
 - preserve backward compatibility within MAJOR version.
 
 Deprecated features MUST remain supported for at least one MINOR release unless a security exception applies.
+
+---
+
+## Appendix A. Diagrams
+
+### A.1 Overview
+
+![Overview](https://i.imgur.com/St3Ojqc.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  SRC[Eigen-Lang source *.eigen.py] --> AST[Parse → Python AST]
+  AST --> V["Static validation (allowed AST subset + limits)"]
+  V --> IR["Frontend IR (language-level)"]
+  IR --> MAP["AQO mapping (opcodes + params + ordering)"]
+  MAP --> AQO["AQO JSON (canonical) AQO_PROTO (transport)"]
+  AQO --> RUNTIME[Kernel/QRTX → Driver Manager execution envelope]
+```
+
+</details>
+
+---
+
+### A.2 Compiler Security Model
+
+![Compiler Security Model](https://i.imgur.com/NN9gb9W.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  U[Untrusted source text] --> P[Parser]
+  P --> A[AST]
+  A --> G{AST allowlist + import allowlist}
+  G -->|pass| IR[Build IR]
+  G -->|fail| ERR["Deterministic INVALID_ARGUMENT (structured violations)"]
+  IR --> AQO[Emit AQO]
+  AQO --> OUT[Persist/return AQO + hashes]
+
+  X1[Filesystem]:::forbidden
+  X2[Network]:::forbidden
+  X3[Subprocess]:::forbidden
+  X4[Dynamic import]:::forbidden
+  X5[Eval/exec]:::forbidden
+
+  P -. never .-> X1
+  P -. never .-> X2
+  P -. never .-> X3
+  P -. reject .-> X4
+  P -. reject .-> X5
+
+  classDef forbidden fill:#fff,stroke:#d33,stroke-width:1px;
+```
+
+</details>
+
+---
+
+### A.3 Allowed AST Subset
+
+![Allowed AST Subset](https://i.imgur.com/obtGtWv.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+    N[Parsed AST node] --> D{Node type}
+
+    D -->|"allowed"| OK[Accept node → build static IR]
+    D -->|"forbidden"| NO[Reject INVALID_ARGUMENT]
+
+    subgraph AllowedExamples ["✅ Allowed (examples)"]
+        A1[FunctionDef]
+        A2[Assign]
+        A3["Call (approved)"]
+        A4[Return]
+        A5[Dict/List/Tuple]
+    end
+
+    subgraph ForbiddenExamples ["❌ Forbidden (examples)"]
+        F1[If/Match]
+        F2[For/While]
+        F3[Try/With]
+        F4[Lambda]
+        F5[ClassDef]
+        F6[Await/Yield]
+    end
+
+    OK --- A1 & A2 & A3 & A4 & A5
+    NO --- F1 & F2 & F3 & F4 & F5 & F6
+
+    classDef allowed fill:#e6f7e6,stroke:#2e8b57
+    classDef forbidden fill:#ffe6e6,stroke:#d9534f
+
+    class AllowedExamples allowed
+    class ForbiddenExamples forbidden
+```
+
+</details>
+
+---
+
+### A.4 Determinism Guarantees
+
+![Determinism Guarantees](https://i.imgur.com/jFEPMj9.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+    subgraph "Inputs (must be identical)"
+        S["Source bytes<br/>(UTF-8, normalized)"]
+        CV[Compiler version]
+        LC["Eigen-Lang spec version"]
+        CFG["Compiler settings<br/>(opt level, target, seed)"]
+    end
+
+    subgraph "Deterministic pipeline"
+        PARSE[Parse → AST]
+        VAL[Validate + normalize]
+        MAP["Map to AQO<br/>(stable ordering)"]
+        CANON[Canonical JSON serialization]
+        HASH["sha256(canonical AQO)"]
+    end
+
+    S --> PARSE
+    CV --> VAL
+    LC --> VAL
+    CFG --> VAL
+    PARSE --> VAL --> MAP --> CANON --> HASH --> AQO["AQO JSON bytes<br/>(byte-identical)"]
+
+    classDef input fill:#e3f2fd,stroke:#1976d2
+    classDef pipeline fill:#f3e5f5,stroke:#7b1fa2
+    class S,CV,LC,CFG input
+    class PARSE,VAL,MAP,CANON,HASH,AQO pipeline
+```
+
+</details>
+
+---
+
+### A.5 Decorators
+
+![Decorators](https://i.imgur.com/0VEzOpr.png)
+
+</details>
+
+---
+
+### A.6 Determinism Guarantees
+
+![Determinism Guarantees](https://i.imgur.com/0VEzOpr.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  DEC["@hybrid_program(...) compiler,target,shots,opt_level,seed,noise_model,metadata"] --> NORM["Normalize + validate (known keys, bounded metadata)"]
+  NORM --> JS["JobSpec fields (spec.target, spec.compiler, spec.shots, ...)"]
+  JS --> ORCH["System API / Kernel submission pipeline"]
+
+  note1{{"Unknown fields: MAY reject deterministically (INVALID_ARGUMENT) or ignore only if explicitly allowed"}}
+  NORM --- note1
+```
+
+</details>
+
+---
+
+### A.7 AQO Mapping
+
+![AQO Mapping](https://i.imgur.com/V9aVUzL.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  CALL["Gate call in Eigen-Lang<br>rx(q, theta)"] --> RES["Resolve args<br>(q index, param symbol)"]
+  RES --> OP["Emit AQO operation<br>{op:'RX', q:[q], params:{theta:...}}"]
+  OP --> ORDER["Append to operations[]<br>(preserves source order)"]
+  ORDER --> AQO["AQO document<br>version/qubits/operations"]
+```
+
+</details>
+
+---
+
+### A.8 Error Model
+
+![Error Model](https://i.imgur.com/DaexEIJ.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant C as Compiler Frontend
+  participant V as Validator
+  participant E as Error Builder
+
+  C->>V: validate(source AST, imports, limits)
+  alt validation pass
+    V-->>C: OK
+  else validation fail
+    V-->>E: violations (field, reason)
+    E-->>C: INVALID_ARGUMENT + deterministic details
+  end
+```
+
+</details>
+
+---
+
+### A.9 Conformance Suite
+
+![Conformance Suite](https://i.imgur.com/F3NRYyI.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  SRC[Fixture source *.eigen.py] --> COMPILE[Compile]
+  COMPILE --> AQO[AQO JSON]
+  AQO --> CANON[Canonicalize]
+  CANON --> HASH[Hash]
+  HASH --> GOLD["Compare vs golden (AQO bytes + sha256)"]
+  COMPILE --> NEG[Negative fixtures]
+  NEG --> ERR[Expect deterministic INVALID_ARGUMENT + details]
+
+  subgraph CI Gates
+    G1[Golden AQO snapshots]
+    G2["Negative tests (forbidden AST/imports)"]
+    G3[Deterministic hash equality]
+    G4["Metadata stability (no timestamp in hash)"]
+  end
+
+  GOLD --> G1
+  ERR --> G2
+  HASH --> G3
+  CANON --> G4
+```
+
+</details>
