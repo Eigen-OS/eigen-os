@@ -1225,3 +1225,308 @@ Breaking changes require:
 - alert updates,
 - migration documentation,
 - conformance test updates.
+
+---
+
+## Appendix A. Diagrams
+
+### A.1 Contract Marker
+
+![Contract Marker](https://i.imgur.com/WBGnmwL.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  S[Prometheus scrape] --> E[Exporter endpoint]
+  E --> M["eigen_runtime_contract_info{version=&quot;2.1.0&quot;} 1"]
+  M --> D[Dashboards]
+  M --> A[Alerts]
+  M --> CI[CI conformance]
+  M --> Ops[Ops tooling]
+```
+
+</details>
+
+---
+
+### A.2 Observability Design Principles
+
+![Observability Design Principles](https://i.imgur.com/gXhMIVa.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  D[Runtime decision] --> T[Telemetry emitted]
+  T --> P["Prometheus metrics (bounded labels)"]
+  T --> Tr["Traces (W3C TraceContext)"]
+  T --> L["Structured logs (JSON/OTel logs)"]
+  T --> Art["Artifacts (QFS/KB snapshots)"]
+  P --> SLO[SLO/SRE signals]
+  Tr --> Corr[Cross-hop correlation]
+  Art --> Replay[Replay & forensics]
+```
+
+</details>
+
+---
+
+### A.3 Required Metrics
+
+![Required Metrics](https://i.imgur.com/gvBs7Hx.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  M[Metrics families] --> D1[Decisions throughput/latency/failures]
+  M --> S1[Scoring latency/failures/score gauge]
+  M --> P1[Policy branches/latency/failures]
+  M --> F1[Fallback & degraded fallbacks/degraded modes/ejections]
+  M --> E1[Explainability req/lat/err/payload bytes]
+  M --> A1[Adaptation reconfigs/model refresh/divergence]
+  M --> R1[Reliability internal errors/trace breakage]
+```
+
+</details>
+
+---
+
+### A.4 Runtime Decision Metrics
+
+![Runtime Decision Metrics](https://i.imgur.com/0pNTxg0.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant Sch as Scheduler
+  participant Pol as Policy Engine
+  participant Sc as Scoring
+  participant Ex as Explain Snapshot
+  participant Obs as Exporter/Telemetry
+
+  Sch->>Pol: Evaluate policy_mode + constraints
+  Obs-->>Obs: eigen_runtime_policy_branch_total{policy_mode,branch}++
+  Pol-->>Sch: Policy outcome
+
+  Sch->>Sc: Score candidates
+  Obs-->>Obs: eigen_runtime_scoring_requests_total++
+  Sc-->>Sch: scores + features
+  Obs-->>Obs: eigen_runtime_scoring_latency_ms observe
+
+  Sch->>Ex: Generate decision snapshot (if enabled)
+  Obs-->>Obs: eigen_runtime_decision_latency_ms observe
+  Obs-->>Obs: eigen_runtime_decisions_total{policy_mode,result}++
+  alt failure
+    Obs-->>Obs: eigen_runtime_decision_failures_total{reason}++
+  end
+```
+
+</details>
+
+---
+
+### A.5 Backend Scoring Metrics
+
+![Backend Scoring Metrics](https://i.imgur.com/N8485Yo.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  Start[Scoring cycle] --> Feat[Feature extraction]
+  Feat --> Score[Model scoring]
+  Score --> Norm[Normalize to score gauge]
+  Norm --> Emit[Emit metrics]
+  Emit --> R1[eigen_runtime_scoring_latency_ms]
+  Emit --> R2["eigen_runtime_scoring_failures_total{reason}"]
+  Emit --> R3["eigen_runtime_backend_score{backend,policy_mode}"]
+  Feat -.fail.-> F1[reason=feature_extraction_failure]
+  Score -.fail.-> F2[reason=invalid_score_model/internal_error/timeout]
+```
+
+</details>
+
+---
+
+### A.6 Policy Execution Metrics
+
+![Policy Execution Metrics](https://i.imgur.com/XQE1hES.pngg)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  PM[policy_mode] --> B1[primary]
+  PM --> B2[fallback]
+  PM --> B3[emergency]
+  PM --> B4[compliance_override]
+  PM --> B5[cost_guardrail]
+  PM --> B6[latency_guardrail]
+  PM --> B7[availability_guardrail]
+  PM --> B8[manual_override]
+  B1 --> C1["eigen_runtime_policy_branch_total{policy_mode,branch}++"]
+  B2 --> C1
+  B3 --> C1
+  B4 --> C1
+  B5 --> C1
+  B6 --> C1
+  B7 --> C1
+  B8 --> C1
+```
+
+</details>
+
+---
+
+### A.7 Fallback & Degradation Metrics
+
+![Fallback & Degradation Metrics](https://i.imgur.com/J0pWDuZ.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  D[Decision attempt] --> O{Outcome}
+  O -->|success| S[Normal routing]
+  O -->|fallback| F[Fallback routing]
+  O -->|degraded| G[Degraded mode]
+  O -->|rejected| R[Rejected]
+  O -->|failed| X[Failed]
+
+  F --> MF["eigen_runtime_fallback_total{reason}"]
+  G --> MG["eigen_runtime_degraded_mode_total{mode}"]
+  G --> EJ["eigen_runtime_backend_ejections_total{backend,reason} (if ejection triggers)"]
+```
+
+</details>
+
+---
+
+### A.8 Explainability Metrics
+
+![Explainability Metrics](https://i.imgur.com/OQTdxjz.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant C as Client
+  participant Exp as Explain API
+  participant Store as Snapshot Store (QFS/KB)
+  participant Obs as Exporter/Telemetry
+
+  C->>Exp: POST /explain/* (endpoint, level)
+  Obs-->>Obs: eigen_runtime_explain_requests_total{endpoint,level}
+  Exp->>Store: Load decision snapshot
+  Store-->>Exp: snapshot + provenance
+  Exp-->>C: Explain response
+  Obs-->>Obs: eigen_runtime_explain_latency_ms{endpoint,level} observe
+  Obs-->>Obs: eigen_runtime_explain_payload_bytes observe
+  alt error
+    Obs-->>Obs: eigen_runtime_explain_errors_total{endpoint,error_code}
+  end
+```
+
+</details>
+
+---
+
+### A.9 Label Contract
+
+![Label Contract](https://i.imgur.com/1KD2TSP.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  Good["Bounded labels (policy_mode, reason, branch, backend set, component, level)"] --> OK[Safe series growth]
+  Bad["Forbidden labels (job_id, trace_id, tenant_id, user_id, request_id, correlation_id, freeform msg)"] --> Boom[Cardinality explosion + cost + instability]
+  Bad --> Rule[Must go to traces/logs/artifacts]
+  Rule --> Tr[Traces]
+  Rule --> Log[Structured logs]
+  Rule --> Art[QFS/KB]
+```
+
+</details>
+
+---
+
+### A.10 Histogram Requirements
+
+![Histogram Requirements](https://i.imgur.com/yyPJOGL.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  H[Prometheus histogram family] --> B[Monotonic buckets]
+  H --> E[Exports _bucket/_sum/_count]
+  H --> C[Bucket compatibility within MAJOR]
+  H --> S[Scrape-safe exposition]
+  C --> CI[CI bucket validation]
+```
+
+</details>
+
+---
+
+### A.11 OpenTelemetry Compatibility
+
+![OpenTelemetry Compatibility](https://i.imgur.com/MR3UUHq.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  Ingress[Request enters runtime] --> Sch[Scheduler span]
+  Sch --> Pol[Policy span]
+  Pol --> Disp[Dispatcher span]
+  Disp --> W[Worker/Execution span]
+  Sch --> Exp["Explainability span (if requested)"]
+  W --> Art[Artifact store span]
+  Art --> Replay["Replay/Recovery span (optional)"]
+  Sch -.propagate traceparent.-> Pol
+  Pol -.propagate traceparent.-> Disp
+  Disp -.propagate traceparent.-> W
+  W -.propagate traceparent.-> Art
+```
+
+</details>
+
+---
+
+### A.12 Operational Invariants
+
+![Operational Invariants](https://i.imgur.com/VsI7HeS.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  I1[Deterministic decision telemetry] --> I2[Monotonic counters]
+  I2 --> I3[Stable histogram buckets]
+  I3 --> I4[Bounded cardinality]
+  I4 --> I5["Export isolation (telemetry must not block)"]
+  I5 --> I6["Runtime transparency (fallback/degraded visible)"]
+  I6 --> I7["Explainability consistency (aligned with decisions)"]
+  I7 --> I8["Trace continuity (across all hops)"]
+```
+
+</details>
