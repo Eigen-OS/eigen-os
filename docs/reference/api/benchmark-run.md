@@ -548,3 +548,274 @@ An implementation is considered compliant only if:
 - RFC 9110 (HTTP Semantics)
 - RFC 7519 (JWT)
 - RFC 8446 (TLS 1.3)
+
+---
+
+## Appendix A. Diagrams
+
+### A.1 Architectural Positioning
+
+![Architectural Positioning](https://i.imgur.com/H55roZd.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+
+  %% REST transport binding (no execution authority)
+
+  subgraph Public[Public Ingress]
+    C[Client] --> R["REST Adapter<br/>POST /benchmarks/run"]
+  end
+
+  subgraph Control[Control Plane]
+    R --> SA["System API<br/>(canonical gRPC)"]
+    SA --> K[Kernel / QRTX]
+  end
+
+  subgraph Runtime[Runtime Services]
+    K --> DS[Dataset Pipeline]
+    K --> DM[Driver Manager]
+    K --> KB[Knowledge Base]
+    K --> QFS["QFS (L3/L2)"]
+  end
+
+  DM --> QD[QDriver]
+  QD --> BE["Backend / Simulator / Hardware"]
+
+  %% key invariants
+  R -. transport-only .-> SA
+  R -. MUST NOT bypass .-> K
+  R -. MUST NOT bypass .-> DM
+  R -. MUST NOT bypass .-> QFS
+	style Public fill:#FFFFFF
+	style Control fill:#FFFFFF
+	style Runtime fill:#FFFFFF
+```
+
+</details>
+
+---
+
+### A.2 Internal JobSpec Mapping
+
+![Internal JobSpec Mapping](https://i.imgur.com/MZwRkrJ.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant Client
+  participant REST as REST Adapter
+  participant SA as System API (gRPC)
+  participant QRTX as Kernel/QRTX
+  participant SEC as Security Module
+  participant DS as Dataset Pipeline
+  participant DM as Driver Manager
+  participant QFS as QFS
+  participant KB as Knowledge Base
+
+  Client->>REST: POST /benchmarks/run {idempotency_key, config}
+  REST->>SEC: Validate JWT + tenant context
+  SEC-->>REST: authn/authz decision (allow/deny)
+  REST->>REST: Canonicalize payload + request_hash
+  REST->>SA: Submit benchmark JobSpec (gRPC)
+  SA->>QRTX: EnqueueJob (internal)
+  QRTX->>QFS: Persist snapshot + input artifacts
+  QRTX->>DS: Resolve dataset (dataset, version)
+  DS-->>QRTX: dataset_ref + provenance
+  QRTX->>DM: Validate backend + capabilities
+  DM-->>QRTX: ok | normalized error
+  QRTX->>KB: Ingest TaskRecord + provenance refs
+  QRTX-->>SA: Accepted(run_id, state=PENDING, snapshot refs)
+  SA-->>REST: Response payload (201)
+  REST-->>Client: 201 Created + run + snapshot + trace
+```
+
+</details>
+
+---
+
+### A.3 Canonical Lifecycle States
+
+![Internal JobSpec Mapping](https://i.imgur.com/COO46qW.png)
+
+<details>
+<summary>code</summary>
+
+```text
+stateDiagram-v2
+  [*] --> PENDING
+  PENDING --> COMPILING
+  COMPILING --> QUEUED
+  QUEUED --> RUNNING
+  RUNNING --> DONE
+  RUNNING --> ERROR
+  PENDING --> CANCELED
+  COMPILING --> CANCELED
+  QUEUED --> CANCELED
+  RUNNING --> CANCELED
+
+  %% terminal invariants
+  DONE --> [*]
+  ERROR --> [*]
+  CANCELED --> [*]
+```
+
+</details>
+
+---
+
+### A.4 Idempotency Semantics
+
+![Internal JobSpec Mapping](https://i.imgur.com/J9WreD9.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TD
+  A[Receive request] --> B[Validate idempotency_key present + non-empty]
+  B -->|fail| E1[Return INVALID_ARGUMENT]
+  B --> C["Canonicalize config JSON<br/>sorted keys, UTF-8, no NaN/Inf"]
+  C --> D["Compute request_hash = sha256(canonical_payload)"]
+  D --> F{Lookup idempotency_key}
+  F -->|miss| G["Create new run_id<br/>Persist snapshot + mapping"]
+  F -->|hit| H{"Stored request_hash == request_hash?"}
+  H -->|yes| I["Return original response<br/>201 (or 200 by transport policy)"]
+  H -->|no| E2["Return ALREADY_EXISTS<br/>(same key, different payload)"]
+```
+
+</details>
+
+---
+
+### A.5 Observability Requirements
+
+![Internal JobSpec Mapping](https://i.imgur.com/vGfzO5K.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  %% Observability propagation and “no sensitive leakage”
+  Client --> REST[REST Adapter]
+  REST -->|traceparent| SA[System API]
+  SA -->|traceparent| QRTX[Kernel/QRTX]
+  QRTX -->|spans| OTel[OTel Collector]
+  OTel --> Prom[Prometheus]
+  OTel --> Traces[Jaeger/Tempo]
+  OTel --> Logs[Loki/ES]
+
+  %% constraints
+  REST -. no secrets .-> OTel
+  SA -. bounded labels .-> Prom
+  QRTX -. job_id in traces/logs<br/>NOT in metrics labels .-> Prom
+```
+
+</details>
+
+---
+
+### A.6 Provenance Tracking
+
+![Internal JobSpec Mapping](https://i.imgur.com/kQnqjbL.png)
+
+<details>
+<summary>code</summary>
+
+```text
+erDiagram
+  BENCHMARK_RUN ||--|| SNAPSHOT : has
+  BENCHMARK_RUN ||--|| TASK_RECORD : ingests
+  TASK_RECORD ||--o{ CIRCUIT_RECORD : contains
+  CIRCUIT_RECORD ||--o{ COMPILER_TRACE : produced_by
+  BENCHMARK_RUN ||--|| DATASET_VERSION : uses
+  BENCHMARK_RUN ||--|| BACKEND_PROFILE : targets
+  BACKEND_PROFILE ||--|| TOPOLOGY_SNAPSHOT : includes
+  BACKEND_PROFILE ||--|| NOISE_SNAPSHOT : includes
+
+  SNAPSHOT {
+    string request_hash
+    string created_at
+    string payload_canonical
+  }
+  DATASET_VERSION {
+    string dataset
+    string version
+    string qfs_ref
+  }
+  COMPILER_TRACE {
+    string ref
+    string digest
+  }
+```
+
+</details>
+
+---
+
+### A.7 Storage Integration
+
+![Storage Integration](https://i.imgur.com/3rHi0f2.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  subgraph QFS_L3["QFS L3 (Persistent)"]
+    S1["qfs://benchmarks/runs/<run_id>/snapshot.json"]
+    S2["qfs://benchmarks/runs/<run_id>/reports/"]
+    S3["qfs://benchmarks/runs/<run_id>/logs/"]
+    S4["qfs://benchmarks/runs/<run_id>/outputs/"]
+    S5["qfs://benchmarks/runs/<run_id>/meta/provenance.json"]
+  end
+
+  subgraph QFS_L2["QFS L2 (Temporary / Checkpoints)"]
+    C1["qfs://benchmarks/runs/<run_id>/checkpoints/..."]
+    C2["qfs://benchmarks/runs/<run_id>/intermediate_state/..."]
+  end
+
+  QFS_L3 -->|immutable artifacts| Audit["Audit / Replay"]
+  QFS_L2 -->|TTL / bounded retention| GC["GC Policy"]
+```
+
+</details>
+
+---
+
+### A.8 Deadlines and Cancellation
+
+![Storage Integration](https://i.imgur.com/VH5k9TS.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant Client
+  participant REST as REST Adapter
+  participant SA as System API (gRPC)
+  participant QRTX as Kernel/QRTX
+  participant DM as Driver Manager
+  participant QD as QDriver
+
+  Client->>REST: Cancel / deadline exceeded
+  REST->>SA: Propagate cancellation / deadline
+  SA->>QRTX: CancelJob / enforce deadline
+  QRTX->>DM: Cancel execution (if dispatched)
+  DM->>QD: Cancel (provider-native)
+  QD-->>DM: ack / best-effort
+  DM-->>QRTX: normalized cancel outcome
+  QRTX-->>SA: terminal state CANCELED<br/>or ERROR (deadline)
+  SA-->>REST: response
+  REST-->>Client: CANCELED or DEADLINE_EXCEEDED
+```
+
+</details>
