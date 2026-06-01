@@ -27,7 +27,9 @@ from .observability import (
     log_request_end,
     log_request_start,
     new_request_context,
+    record_public_api_contract_marker,
     record_submit_job_outcome,
+    trace_id_from_traceparent,
 )
 from .qfs_store import QFS_STORE
 from .security import auth_context, enforce_authn, enforce_authz
@@ -83,6 +85,7 @@ def _public_envelope(request, context: grpc.ServicerContext) -> NormalizedPublic
         or PUBLIC_API_CONTRACT_VERSION
     ).strip()
     if not _SEMVER_RE.match(contract_version):
+        record_public_api_contract_marker(contract_version, "error")
         abort_with_error_info(
             context,
             grpc_code=grpc.StatusCode.INVALID_ARGUMENT,
@@ -92,6 +95,7 @@ def _public_envelope(request, context: grpc.ServicerContext) -> NormalizedPublic
             metadata={"contract_version": contract_version},
         )
     if contract_version != PUBLIC_API_CONTRACT_VERSION:
+        record_public_api_contract_marker(contract_version, "error")
         abort_with_error_info(
             context,
             grpc_code=grpc.StatusCode.FAILED_PRECONDITION,
@@ -155,6 +159,16 @@ def _apply_public_envelope_context(rc, envelope: NormalizedPublicEnvelope) -> No
     rc.request_id = envelope.request_id
     if envelope.traceparent and not rc.traceparent:
         rc.traceparent = envelope.traceparent
+    if rc.trace_id is None and rc.traceparent:
+        rc.trace_id = trace_id_from_traceparent(rc.traceparent)
+
+
+def _public_contract_version_label(envelope: NormalizedPublicEnvelope | None) -> str:
+    return envelope.contract_version if envelope is not None else PUBLIC_API_CONTRACT_VERSION
+
+
+def _record_submit_public_marker(envelope: NormalizedPublicEnvelope | None, outcome: str) -> None:
+    record_public_api_contract_marker(_public_contract_version_label(envelope), outcome)
 
 
 def _envelope_value(envelope, field: str) -> str:
@@ -1214,21 +1228,24 @@ class JobService:
         enforce_authn(context, method_name="JobService.SubmitJob")
         enforce_authz(context, required_permission="jobs:submit")
         rc = new_request_context(context)
-        log_request_start("JobService.SubmitJob", rc)
 
         envelope = _public_envelope(request, context)
         _apply_public_envelope_context(rc, envelope)
+        log_request_start("JobService.SubmitJob", rc)
 
         violations = validate_submit_job(request)
         if violations:
             if any("exceeds max allowed size" in violation.description for violation in violations):
                 record_submit_job_outcome("limit")
+                _record_submit_public_marker(envelope, "limit")
                 abort_payload_limit(context, "payload limit exceeded", violations)
+                _record_submit_public_marker(envelope, "error")
             abort_invalid_argument(context, "validation failed", violations)
 
         dag_nodes = sorted({request.name, *list(request.dependencies)})
         dag = resolve_dag(dag_nodes, {request.name: list(request.dependencies)})
         if not dag.ok:
+            _record_submit_public_marker(envelope, "error")
             abort_public(
                 context,
                 PublicErrorSpec(
@@ -1255,6 +1272,7 @@ class JobService:
                 if previous:
                     if previous.request_fingerprint != request_fingerprint:
                         record_submit_job_outcome("conflict")
+                        _record_submit_public_marker(envelope, "conflict")
                         abort_public(
                             context,
                             PublicErrorSpec(
@@ -1273,6 +1291,7 @@ class JobService:
                         now = _ts_now()
                         rc.job_id = previous.job_id
                         record_submit_job_outcome("replayed")
+                        _record_submit_public_marker(envelope, "replayed")
                         log_request_end("JobService.SubmitJob", rc)
                         return self._job_pb.SubmitJobResponse(
                             job_id=previous.job_id,
@@ -1290,6 +1309,7 @@ class JobService:
                     latest = existing.updates[-1]
                     rc.job_id = existing.job_id
                     record_submit_job_outcome("replayed")
+                    _record_submit_public_marker(envelope, "replayed")
                     log_request_end("JobService.SubmitJob", rc)
                     return self._job_pb.SubmitJobResponse(
                         job_id=existing.job_id,
@@ -1329,6 +1349,7 @@ class JobService:
                     envelope=envelope,
                 )
             record_submit_job_outcome("accepted")
+            _record_submit_public_marker(envelope, "accepted")
 
         resp = self._job_pb.SubmitJobResponse(
             job_id=job_id,

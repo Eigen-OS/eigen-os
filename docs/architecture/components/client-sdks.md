@@ -269,7 +269,7 @@ Every released SDK MUST include conformance tests for:
 - missing or malformed program source rejected as `INVALID_ARGUMENT`;
 - path traversal in `spec.program.path` rejected before transport;
 - idempotency-key replay guidance, including same-key/same-payload success and same-key/different-payload conflict handling;
-- W3C `traceparent` propagation without mutation;
+- W3C `traceparent` propagation without mutation and smoke coverage proving the System API derives the same trace ID from envelope- and metadata-carried trace context;
 - canonical error extraction from gRPC status and structured details.
 
 The CLI tests in `src/rust/apps/cli/src/jobspec.rs` are the Wave 1 reference baseline for future language SDKs.

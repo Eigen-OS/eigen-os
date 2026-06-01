@@ -420,8 +420,8 @@ Recommended outputs:
 
 - structured JSON logs
 - request correlation metadata
-- trace context extraction (`traceparent`)
-- Prometheus `/metrics`
+- trace context extraction (`traceparent`) from public metadata and `ApiRequestEnvelope`
+- Prometheus `/metrics`, including the bounded public API contract marker counters
 
 ---
 
@@ -430,6 +430,7 @@ Recommended outputs:
 System API SHALL:
 
 - propagate W3C TraceContext across downstream calls,
+- preserve public ingress `traceparent` and derived `trace_id` in request logs and job correlation metadata,
 - emit ingress spans and downstream forwarding spans,
 - export ingress metrics including propagation failures and downstream error rates,
 - ensure telemetry is safe (no secrets, bounded labels).

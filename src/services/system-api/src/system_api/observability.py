@@ -45,6 +45,10 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(payload, ensure_ascii=False)
 
 
+PUBLIC_API_CONTRACT_OUTCOMES = {"accepted", "replayed", "conflict", "limit", "error"}
+PUBLIC_API_CONTRACT_VERSION_LABELS = {"1.0.0", "unsupported"}
+
+
 class _MetricsState:
     lock = threading.Lock()
     requests_total = 0
@@ -55,6 +59,11 @@ class _MetricsState:
         "replayed": 0,
         "conflict": 0,
         "limit": 0,
+    }
+    public_api_contract_requests_total: dict[tuple[str, str], int] = {
+        (version, outcome): 0
+        for version in sorted(PUBLIC_API_CONTRACT_VERSION_LABELS)
+        for outcome in sorted(PUBLIC_API_CONTRACT_OUTCOMES)
     }
 
 
@@ -69,9 +78,24 @@ class _MetricsHandler(BaseHTTPRequestHandler):
             req_sum = _MetricsState.request_duration_seconds_sum
             authz_denied = _MetricsState.authz_denied_total
             submit_outcomes = dict(_MetricsState.submit_job_outcomes_total)
+            public_contract_outcomes = dict(_MetricsState.public_api_contract_requests_total)
         outcome_lines = "".join(
             f'eigen_api_submit_job_outcomes_total{{outcome="{outcome}"}} {count}\n'
             for outcome, count in sorted(submit_outcomes.items())
+        )
+        contract_marker_lines = "".join(
+            (
+                "eigen_api_public_contract_requests_total"
+                f'{{contract_version="{contract_version}",outcome="{outcome}"}} {count}\n'
+            )
+            for (contract_version, outcome), count in sorted(public_contract_outcomes.items())
+        )
+        public_api_contract_marker_lines = "".join(
+            (
+                "eigen_public_api_contract_requests_total"
+                f'{{contract_version="{contract_version}",outcome="{outcome}"}} {count}\n'
+            )
+            for (contract_version, outcome), count in sorted(public_contract_outcomes.items())
         )
         body = (
             "# TYPE eigen_api_requests_total counter\n"
@@ -82,6 +106,10 @@ class _MetricsHandler(BaseHTTPRequestHandler):
             f"eigen_api_authz_denied_total {authz_denied}\n"
             "# TYPE eigen_api_submit_job_outcomes_total counter\n"
             f"{outcome_lines}"
+            "# TYPE eigen_api_public_contract_requests_total counter\n"
+            f"{contract_marker_lines}"
+            "# TYPE eigen_public_api_contract_requests_total counter\n"
+            f"{public_api_contract_marker_lines}"
         ).encode()
         self.send_response(200)
         self.send_header("Content-Type", "text/plain; version=0.0.4")
@@ -100,16 +128,20 @@ def start_metrics_server(port: int) -> ThreadingHTTPServer:
     return server
 
 
+def trace_id_from_traceparent(traceparent: str | None) -> str | None:
+    if not traceparent:
+        return None
+    m = _TRACEPARENT_RE.match(traceparent)
+    if not m:
+        return None
+    return m.group("trace_id")
+
+
 def new_request_context(context: grpc.ServicerContext) -> RequestContext:
     md = {k.lower(): v for (k, v) in (context.invocation_metadata() or [])}
 
     traceparent = md.get("traceparent")
-    trace_id = md.get("trace_id")
-
-    if trace_id is None and traceparent:
-        m = _TRACEPARENT_RE.match(traceparent)
-        if m:
-            trace_id = m.group("trace_id")
+    trace_id = md.get("trace_id") or trace_id_from_traceparent(traceparent)
 
     return RequestContext(
         request_id=str(uuid.uuid4()),
@@ -120,7 +152,16 @@ def new_request_context(context: grpc.ServicerContext) -> RequestContext:
 
 def log_request_start(method: str, rc: RequestContext) -> None:
     setattr(rc, "_started_at", time.perf_counter())
-    _LOG.info("rpc_start", extra={"method": method, "request_id": rc.request_id, "trace_id": rc.trace_id, "traceparent": rc.traceparent, "job_id": rc.job_id})
+    _LOG.info(
+        "rpc_start",
+        extra={
+            "method": method,
+            "request_id": rc.request_id,
+            "trace_id": rc.trace_id,
+            "traceparent": rc.traceparent,
+            "job_id": rc.job_id,
+        },
+    )
 
 
 def log_request_end(method: str, rc: RequestContext) -> None:
@@ -128,7 +169,15 @@ def log_request_end(method: str, rc: RequestContext) -> None:
     with _MetricsState.lock:
         _MetricsState.requests_total += 1
         _MetricsState.request_duration_seconds_sum += elapsed
-    _LOG.info("rpc_end", extra={"method": method, "request_id": rc.request_id, "trace_id": rc.trace_id, "job_id": rc.job_id})
+    _LOG.info(
+        "rpc_end",
+        extra={
+            "method": method,
+            "request_id": rc.request_id,
+            "trace_id": rc.trace_id,
+            "job_id": rc.job_id,
+        },
+    )
 
 
 def log_authz_denied(*, method: str, subject: str, permission: str, job_id: str | None = None) -> None:
@@ -152,4 +201,17 @@ def record_submit_job_outcome(outcome: str) -> None:
     with _MetricsState.lock:
         _MetricsState.submit_job_outcomes_total[outcome] = (
             _MetricsState.submit_job_outcomes_total.get(outcome, 0) + 1
+        )
+
+
+def record_public_api_contract_marker(contract_version: str, outcome: str) -> None:
+    """Increment the public-boundary contract marker metric with bounded labels."""
+    version_label = (
+        contract_version if contract_version in PUBLIC_API_CONTRACT_VERSION_LABELS else "unsupported"
+    )
+    outcome_label = outcome if outcome in PUBLIC_API_CONTRACT_OUTCOMES else "error"
+    with _MetricsState.lock:
+        _MetricsState.public_api_contract_requests_total[(version_label, outcome_label)] = (
+            _MetricsState.public_api_contract_requests_total.get((version_label, outcome_label), 0)
+            + 1
         )

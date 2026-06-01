@@ -618,7 +618,7 @@ Structured protobuf error details are mandatory at the public boundary where sup
 
 #### Required Trace Propagation
 
-All services MUST propagate:
+All public clients (CLI and SDKs) SHOULD send W3C TraceContext as the `traceparent` gRPC metadata key or as `ApiRequestEnvelope.traceparent`. System API MUST preserve that value, derive the 32-character `trace_id` from it when present, and include the correlation identifiers in request logs, downstream trace context, job status messages, result metadata, and dispatch rationale where the downstream contract exposes them.
 
 ```text
 traceparent
@@ -632,7 +632,8 @@ Minimum metrics:
 
 | **Metric** | **Type** |
 |----------|-----------|
-| `eigen_public_api_contract_requests_total` | Counter |
+| `eigen_api_public_contract_requests_total{contract_version,outcome}` | Counter with bounded `contract_version in {1.0.0,unsupported}` and `outcome in {accepted,replayed,conflict,limit,error}`; canonical System API public-boundary marker. |
+| `eigen_public_api_contract_requests_total{contract_version,outcome}` | Counter alias for the public API contract marker, emitted with the same bounded labels for compatibility with the global public API catalog. |
 | `eigen_public_api_contract_request_duration_ms` | Histogram |
 | `grpc.requests_total` | Counter |
 | `grpc.request_duration_ms` | Histogram |

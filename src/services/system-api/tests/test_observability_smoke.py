@@ -3,7 +3,14 @@ from __future__ import annotations
 import socket
 import urllib.request
 
-from system_api.observability import _MetricsState, start_metrics_server
+from system_api.grpc_impl import JobService
+from system_api.observability import _MetricsState, record_public_api_contract_marker, start_metrics_server
+from system_api.proto_gen import ensure_generated
+
+ensure_generated()
+
+from eigen.api.v1 import job_service_pb2 as job_pb  # noqa: E402
+from eigen.api.v1 import types_pb2 as types_pb  # noqa: E402
 
 
 def _free_port() -> int:
@@ -22,6 +29,18 @@ def test_metrics_endpoint_exposes_prometheus_payload():
         "conflict": 1,
         "limit": 1,
     }
+    _MetricsState.public_api_contract_requests_total = {
+        ("1.0.0", "accepted"): 2,
+        ("1.0.0", "replayed"): 1,
+        ("1.0.0", "conflict"): 1,
+        ("1.0.0", "limit"): 1,
+        ("1.0.0", "error"): 0,
+        ("unsupported", "accepted"): 0,
+        ("unsupported", "replayed"): 0,
+        ("unsupported", "conflict"): 0,
+        ("unsupported", "limit"): 0,
+        ("unsupported", "error"): 0,
+    }
     server = start_metrics_server(port)
     try:
         body = urllib.request.urlopen(f"http://127.0.0.1:{port}/metrics", timeout=2).read().decode()
@@ -35,3 +54,75 @@ def test_metrics_endpoint_exposes_prometheus_payload():
     assert 'eigen_api_submit_job_outcomes_total{outcome="replayed"} 1' in body
     assert 'eigen_api_submit_job_outcomes_total{outcome="conflict"} 1' in body
     assert 'eigen_api_submit_job_outcomes_total{outcome="limit"} 1' in body
+    assert (
+        'eigen_api_public_contract_requests_total{contract_version="1.0.0",outcome="accepted"} 2'
+        in body
+    )
+    assert (
+        'eigen_public_api_contract_requests_total{contract_version="1.0.0",outcome="accepted"} 2'
+        in body
+    )
+
+
+def _reset_public_contract_metrics() -> None:
+    _MetricsState.public_api_contract_requests_total = {
+        (version, outcome): 0
+        for version in ("1.0.0", "unsupported")
+        for outcome in ("accepted", "conflict", "error", "limit", "replayed")
+    }
+
+
+def test_public_contract_marker_uses_bounded_labels_and_contract_version():
+    _reset_public_contract_metrics()
+
+    record_public_api_contract_marker("1.0.0", "accepted")
+    record_public_api_contract_marker("9.9.9-custom-build", "tenant-freeform-outcome")
+
+    assert _MetricsState.public_api_contract_requests_total[("1.0.0", "accepted")] == 1
+    assert _MetricsState.public_api_contract_requests_total[("unsupported", "error")] == 1
+    assert {version for version, _ in _MetricsState.public_api_contract_requests_total} == {
+        "1.0.0",
+        "unsupported",
+    }
+    assert {outcome for _, outcome in _MetricsState.public_api_contract_requests_total} == {
+        "accepted",
+        "conflict",
+        "error",
+        "limit",
+        "replayed",
+    }
+
+
+def test_submit_job_marker_and_traceparent_correlation_from_public_envelope(caplog):
+    class _Context:
+        def invocation_metadata(self):
+            return []
+
+        def abort(self, code, details):
+            raise RuntimeError(f"{code}: {details}")
+
+    _reset_public_contract_metrics()
+    traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+    request = job_pb.SubmitJobRequest(
+        name="observability-smoke",
+        target="sim:local",
+        envelope=types_pb.ApiRequestEnvelope(
+            contract_version="1.0.0",
+            request_id="req-observability-smoke",
+            traceparent=traceparent,
+        ),
+        eigen_lang=types_pb.EigenLangSource(source=b"fn main() {}\n", entrypoint="main"),
+    )
+
+    caplog.set_level("INFO", logger="system_api")
+    response = JobService(job_pb=job_pb, types_pb=types_pb).SubmitJob(request, _Context())
+
+    assert response.job_id
+    assert _MetricsState.public_api_contract_requests_total[("1.0.0", "accepted")] == 1
+    assert any(
+        record.message == "rpc_start"
+        and record.request_id == "req-observability-smoke"
+        and record.traceparent == traceparent
+        and record.trace_id == "4bf92f3577b34da6a3ce929d0e0e4736"
+        for record in caplog.records
+    )
