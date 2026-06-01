@@ -4,8 +4,46 @@ package eigen.api.v1;
 
 import "google/protobuf/timestamp.proto";
 
+import "google/protobuf/duration.proto";
+
 // Common types for the public Eigen OS API (MVP).
 // Source of truth: proto/ (see RFC 0004).
+
+
+// Canonical public request envelope for Product 1.0 public-boundary
+// closure. Servers MAY derive missing identity fields from transport
+// metadata, but persisted requests and conformance fixtures MUST use
+// these normalized semantics.
+message ApiRequestEnvelope {
+  // SemVer for the public contract payload. Default accepted value is
+  // "1.0.0" on the eigen.api.v1 compatibility line.
+  string contract_version = 1;
+
+  // Client request/correlation identifier. Mirrors x-request-id when
+  // carried in transport metadata.
+  string request_id = 2;
+
+  // Retry identity for idempotent mutating calls such as SubmitJob.
+  // Mirrors x-idempotency-key when carried in transport metadata.
+  string idempotency_key = 3;
+
+  // W3C TraceContext traceparent value. Mirrors traceparent metadata.
+  string traceparent = 4;
+
+  // Optional client deadline hint normalized by the System API before
+  // forwarding to internal services.
+  google.protobuf.Duration deadline = 5;
+
+  // Canonical tenant scope derived from auth context or request payload.
+  string tenant_id = 6;
+
+  // Canonical project scope inside tenant derived from auth context or
+  // request payload.
+  string project_id = 7;
+
+  // Optional SDK/CLI version. Mirrors x-client-version metadata.
+  string client_version = 8;
+}
 
 // --- Jobs ---
 

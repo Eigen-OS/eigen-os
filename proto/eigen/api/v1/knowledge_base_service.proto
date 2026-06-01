@@ -4,6 +4,8 @@ package eigen.api.v1;
 
 import "google/protobuf/timestamp.proto";
 
+import "eigen/api/v1/types.proto";
+
 // Knowledge Base API contract v1.
 // Source of truth: RFC 0034.
 service KnowledgeBaseService {
@@ -18,6 +20,9 @@ service KnowledgeBaseService {
 message ApiContractEnvelope {
   // SemVer for the stable API payload contract.
   string contract_version = 1;
+
+  // Product 1.0 canonical public request envelope.
+  ApiRequestEnvelope request = 2;
 }
 
 message RecordProvenance {

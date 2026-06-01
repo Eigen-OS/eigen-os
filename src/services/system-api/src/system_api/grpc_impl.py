@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 import threading
 import uuid
@@ -41,6 +42,31 @@ TERMINAL_JOB_STATES = {
 TOPOLOGY_CONTRACT_VERSION = "1.1.0"
 TOPOLOGY_LINEAGE_VERSION = "1.1.0"
 TENANT_ENVELOPE_CONTRACT_VERSION = "1.0.0"
+PUBLIC_API_CONTRACT_VERSION = "1.0.0"
+_SEMVER_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:[-+][0-9A-Za-z.-]+)?$")
+
+
+def _metadata(context: grpc.ServicerContext) -> dict[str, str]:
+    return {k.lower(): v for k, v in (context.invocation_metadata() or [])}
+
+
+def _public_envelope(request, context: grpc.ServicerContext):
+    envelope = getattr(request, "envelope", None)
+    md = _metadata(context)
+    contract_version = (
+        getattr(envelope, "contract_version", "")
+        or md.get("x-eigen-contract-version", "")
+        or PUBLIC_API_CONTRACT_VERSION
+    ).strip()
+    if not _SEMVER_RE.match(contract_version):
+        context.abort(grpc.StatusCode.INVALID_ARGUMENT, f"malformed public contract_version: {contract_version}")
+    if contract_version != PUBLIC_API_CONTRACT_VERSION:
+        context.abort(grpc.StatusCode.FAILED_PRECONDITION, f"unsupported public contract_version: {contract_version}")
+    return envelope
+
+
+def _envelope_value(envelope, field: str) -> str:
+    return str(getattr(envelope, field, "") or "").strip() if envelope is not None else ""
 
 
 def _ts_now() -> Timestamp:
@@ -134,14 +160,19 @@ class JobService:
         self._dispatch_slot_seq = 0
 
     def _request_fingerprint(self, request) -> str:
+        envelope = getattr(request, "envelope", None)
         payload = {
+            "contract_version": _envelope_value(envelope, "contract_version") or PUBLIC_API_CONTRACT_VERSION,
+            "tenant_id": _envelope_value(envelope, "tenant_id") or request.metadata.get("tenant_id", ""),
+            "project_id": _envelope_value(envelope, "project_id") or request.metadata.get("project_id", ""),
             "name": request.name,
             "target": request.target,
             "priority": int(request.priority),
             "compiler_options": sorted(request.compiler_options.items()),
             "dependencies": list(request.dependencies),
-            "metadata": sorted(request.metadata.items()),
+            "metadata": sorted((k, v) for k, v in request.metadata.items() if k not in {"trace_id"}),
             "program": request.WhichOneof("program") or "",
+            "reservation_id": getattr(request, "reservation_id", ""),
         }
         program = request.WhichOneof("program")
         if program == "eigen_lang":
@@ -160,14 +191,25 @@ class JobService:
         raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
         return sha256(raw).hexdigest()
 
-    def _idempotency_key(self, request) -> str | None:
-        key = request.metadata.get("client_request_id", "").strip()
+    def _idempotency_key(self, request, context: grpc.ServicerContext, envelope) -> str | None:
+        md = _metadata(context)
+        tenant_id = (
+            _envelope_value(envelope, "tenant_id")
+            or md.get("x-eigen-tenant", "")
+            or request.metadata.get("tenant_id", "tenant-default")
+        ).strip() or "tenant-default"
+        key = (
+            _envelope_value(envelope, "idempotency_key")
+            or md.get("x-idempotency-key", "")
+            or md.get("x-eigen-idempotency-key", "")
+            or request.metadata.get("client_request_id", "")
+        ).strip()
         if key:
-            return ":".join(("client_request_id", key))
+            return ":".join(("tenant", tenant_id, "idempotency", key))
         if request.WhichOneof("program") == "eigen_lang":
             digest = request.eigen_lang.sha256.strip()
             if digest:
-                return f"eigen_lang.sha256:{digest}:{request.eigen_lang.entrypoint}:{request.target}"
+                return f"tenant:{tenant_id}:eigen_lang.sha256:{digest}:{request.eigen_lang.entrypoint}:{request.target}"
         return None
     
     def _msg_with_trace(self, message: str, trace_id: str | None) -> str:
@@ -972,6 +1014,8 @@ class JobService:
         rc = new_request_context(context)
         log_request_start("JobService.SubmitJob", rc)
 
+        envelope = _public_envelope(request, context)
+
         violations = validate_submit_job(request)
         if violations:
             abort_invalid_argument(context, "validation failed", violations)
@@ -981,7 +1025,7 @@ class JobService:
         if not dag.ok:
             context.abort(grpc.StatusCode.INVALID_ARGUMENT, f"dag resolution failed: {dag.reason_code}: {dag.detail}")
 
-        idem_key = self._idempotency_key(request)
+        idem_key = self._idempotency_key(request, context, envelope)
         request_fingerprint = self._request_fingerprint(request)
 
         with self._lock:
@@ -990,7 +1034,7 @@ class JobService:
                 if previous:
                     if previous.request_fingerprint != request_fingerprint:
                         context.abort(
-                            grpc.StatusCode.INVALID_ARGUMENT,
+                            grpc.StatusCode.ALREADY_EXISTS,
                             f"idempotency key reuse with different payload: {idem_key}",
                         )
                     existing = self._jobs[previous.job_id]
@@ -1283,6 +1327,7 @@ class DeviceService:
         enforce_authz(context, required_permission="devices:list")
         rc = new_request_context(context)
         log_request_start("DeviceService.ListDevices", rc)
+        _public_envelope(request, context)
 
         # backend_type is optional
         resp = self._dev_pb.ListDevicesResponse(
@@ -1307,6 +1352,7 @@ class DeviceService:
         enforce_authz(context, required_permission="devices:list")
         rc = new_request_context(context)
         log_request_start("DeviceService.GetDeviceDetails", rc)
+        _public_envelope(request, context)
 
         violations = validate_device_id(request)
         if violations:
@@ -1329,6 +1375,7 @@ class DeviceService:
         enforce_authz(context, required_permission="devices:list")
         rc = new_request_context(context)
         log_request_start("DeviceService.GetDeviceStatus", rc)
+        _public_envelope(request, context)
 
         violations = validate_device_id(request)
         if violations:
@@ -1350,6 +1397,7 @@ class DeviceService:
         enforce_authz(context, required_permission="devices:reserve")
         rc = new_request_context(context)
         log_request_start("DeviceService.ReserveDevice", rc)
+        _public_envelope(request, context)
 
         violations = validate_reserve_device(request)
         if violations:
