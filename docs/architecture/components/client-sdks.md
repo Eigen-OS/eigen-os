@@ -4,7 +4,7 @@
 - **Subsystem:** Client SDKs / CLI
 - **Applies to:** SDKs, CLI, integration clients
 - **Compatibility target:** Eigen OS `1.x` public API (`eigen.api.v1`)
-- **Last updated:** 2026-05-25
+- **Last updated:** 2026-06-01
 
 This document is the canonical specification of the Eigen OS Client SDK layer. It separates:
 
@@ -148,7 +148,7 @@ Implemented now:
 - gRPC transport to `eigen.api.v1`,
 - server-streaming job updates (`StreamJobUpdates`),
 - status/results polling,
-- CLI-based submission flows.
+- CLI-based submission flows with Product 1.0 public envelope normalization for file-backed and inline JobSpecs.
 
 Not implemented as a released SDK feature:
 
@@ -177,7 +177,9 @@ SDKs MUST support (and propagate) these metadata keys:
 
 - `authorization` — bearer token (if applicable),
 - `traceparent` — W3C TraceContext parent,
-- `x-client-request-id` — client idempotency / correlation key (bounded),
+- `x-request-id` — client correlation key (bounded),
+- `x-idempotency-key` — idempotency key for resource-creating calls such as `SubmitJob`,
+- `x-client-version` — SDK/client compatibility marker,
 - `x-eigen-tenant` — tenant context (if applicable in deployment),
 - `x-eigen-project` — project context (if applicable in deployment).
 
@@ -185,12 +187,12 @@ SDKs MUST NOT emit unbounded identifiers as metadata.
 
 ### 6.4 Idempotency rule (normative)
 
-For operations that create resources (e.g., job submission), SDKs MUST support a client-provided idempotency/correlation key using:
+For operations that create resources (e.g., job submission), SDKs MUST support a client-provided idempotency key using:
 
-- `x-client-request-id` metadata (preferred),
-- OR a request field **only if** the public proto adds such a field in a future version.
+- `x-idempotency-key` metadata,
+- OR `ApiRequestEnvelope.idempotency_key` when the request message exposes the canonical Product 1.0 envelope.
 
-Retries MUST reuse the same idempotency key for the same logical operation.
+Retries MUST reuse the same idempotency key for the same logical operation. SDKs MAY derive a deterministic key from the normalized JobSpec when the caller omits one in local/development modes, but production integrations SHOULD provide an explicit key.
 
 ---
 
@@ -254,9 +256,23 @@ SDK packaging MUST:
 `SubmitJob` MUST:
 
 - propagate `traceparent` and auth metadata,
-- attach `x-client-request-id` if provided,
+- attach or populate the canonical Product 1.0 `ApiRequestEnvelope`, including `contract_version`, `request_id`, `idempotency_key`, `tenant_id`, `project_id`, and `client_version`,
 - enforce a request deadline (caller-provided or SDK default),
 - return the server-assigned `job_id` and initial status.
+
+### 8.4 SDK conformance baseline
+
+Every released SDK MUST include conformance tests for:
+
+- minimal inline JobSpec submission normalized to `apiVersion: eigen.os/v1`;
+- full file-backed JobSpec submission with `spec.program.path`, compiler options, metadata, dependencies, and explicit envelope metadata;
+- missing or malformed program source rejected as `INVALID_ARGUMENT`;
+- path traversal in `spec.program.path` rejected before transport;
+- idempotency-key replay guidance, including same-key/same-payload success and same-key/different-payload conflict handling;
+- W3C `traceparent` propagation without mutation;
+- canonical error extraction from gRPC status and structured details.
+
+The CLI tests in `src/rust/apps/cli/src/jobspec.rs` are the Wave 1 reference baseline for future language SDKs.
 
 ---
 
