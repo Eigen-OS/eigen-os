@@ -21,8 +21,8 @@ Wave 0 makes Product `1.0.0` implementation unambiguous before service logic cha
 | Machine-readable manifest | `contracts/product-1.0/manifest.json` | JSON validates structurally; every contract has owner and conformance-test mapping; all listed source/proto/schema paths either exist or are explicitly marked as planned. |
 | Version policy | `docs/development/product-1.0-version-policy.md` | Distinguishes Product release version, contract package version, protobuf namespace version, and implementation package version. |
 | Canonical-reference cleanup | Architecture/reference docs | Stale canonical links are redirected or backed by new reference docs. |
-| Docs link gate | `scripts/ci/check-docs-links.py` and CI job | Fails when docs under `docs/architecture` or `docs/reference` point at missing canonical markdown files. |
-| Manifest owner/test gate | `scripts/ci/check-product-1-0-manifest.py` and CI job | Fails when a Product 1.0 manifest row has no owner, source, or conformance-test mapping. |
+| Docs link gate | `scripts/ci/check-docs-links.py` and CI job | Fails when docs under `docs/architecture`, `docs/reference`, or Product 1.0 planning docs point at missing canonical markdown files. |
+| Manifest owner/test gate | `scripts/ci/check-product-1-0-manifest.py` and CI job | Fails when a Product 1.0 manifest row has no owner, source, schema/proto mapping, conformance-test mapping, matching inventory row, or resolvable existing path. |
 
 ---
 
@@ -48,8 +48,8 @@ Wave 0 is 100% complete when:
 - all contract owners are known,
 - every canonical source path resolves,
 - Product release/version policy is documented,
-- CI can detect missing canonical links,
-- CI can detect owner/test mapping omissions,
+- CI can detect missing canonical links in architecture, reference, and Product 1.0 planning docs,
+- CI can detect owner/test mapping omissions, inventory/manifest drift, and unresolved existing path mappings,
 - no service implementation PR is required to understand the Product 1.0 target.
 
 ---
