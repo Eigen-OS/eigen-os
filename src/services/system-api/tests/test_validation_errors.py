@@ -22,8 +22,7 @@ def _extract_bad_request(err: grpc.RpcError) -> error_details_pb2.BadRequest:
 
     bad = error_details_pb2.BadRequest()
     assert len(st.details) >= 1
-    unpacked = st.details[0].Unpack(bad)
-    assert unpacked
+    assert any(detail.Unpack(bad) for detail in st.details)
     return bad
 
 

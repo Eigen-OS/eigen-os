@@ -20,7 +20,7 @@ from google.protobuf.timestamp_pb2 import Timestamp
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from .errors import abort_invalid_argument, abort_with_error_info
+from .errors import FieldViolation, PublicErrorSpec, abort_invalid_argument, abort_payload_limit, abort_public, abort_with_error_info
 from .lifecycle import apply_signal
 from .scheduling import resolve_dag
 from .observability import (
@@ -87,7 +87,7 @@ def _public_envelope(request, context: grpc.ServicerContext) -> NormalizedPublic
             context,
             grpc_code=grpc.StatusCode.INVALID_ARGUMENT,
             message=f"malformed public contract_version: {contract_version}",
-            reason="PUBLIC_CONTRACT_VERSION_MALFORMED",
+            reason="EIGEN_PUBLIC_CONTRACT_VERSION_MALFORMED",
             domain="eigen.api.v1",
             metadata={"contract_version": contract_version},
         )
@@ -96,7 +96,7 @@ def _public_envelope(request, context: grpc.ServicerContext) -> NormalizedPublic
             context,
             grpc_code=grpc.StatusCode.FAILED_PRECONDITION,
             message=f"unsupported public contract_version: {contract_version}",
-            reason="PUBLIC_CONTRACT_VERSION_UNSUPPORTED",
+            reason="EIGEN_PUBLIC_CONTRACT_VERSION_UNSUPPORTED",
             domain="eigen.api.v1",
             metadata={
                 "contract_version": contract_version,
@@ -133,6 +133,21 @@ def _public_envelope(request, context: grpc.ServicerContext) -> NormalizedPublic
         tenant_id=tenant_id or "tenant-default",
         project_id=project_id or "project-default",
         client_version=(getattr(envelope, "client_version", "") or md.get("x-client-version", "")).strip(),
+    )
+
+
+def _abort_job_not_found(context: grpc.ServicerContext, job_id: str) -> None:
+    abort_public(
+        context,
+        PublicErrorSpec(
+            grpc_code=grpc.StatusCode.NOT_FOUND,
+            message=f"job_id not found: {job_id}",
+            reason="EIGEN_PUBLIC_JOB_NOT_FOUND",
+            retryable=False,
+            resource_type="eigen.api.v1.Job",
+            resource_name=job_id,
+            detail="No job exists for the supplied job_id.",
+        ),
     )
 
 
@@ -1181,9 +1196,18 @@ class JobService:
         if "*" in roles or "admin" in roles:
             return
         if tenant != record.owner_tenant:
-            context.abort(
-                grpc.StatusCode.PERMISSION_DENIED,
-                "POLICY_DENY_TENANT_MISMATCH: cross-tenant access denied",
+            abort_public(
+                context,
+                PublicErrorSpec(
+                    grpc_code=grpc.StatusCode.PERMISSION_DENIED,
+                    message="cross-tenant access denied",
+                    reason="EIGEN_PUBLIC_PERMISSION_DENIED",
+                    retryable=False,
+                    metadata={"policy": "POLICY_DENY_TENANT_MISMATCH"},
+                    precondition_type="AUTHORIZATION_POLICY",
+                    precondition_subject=record.job_id,
+                    detail="Caller tenant does not match the job owner tenant.",
+                ),
             )
 
     def SubmitJob(self, request, context: grpc.ServicerContext):
@@ -1199,12 +1223,28 @@ class JobService:
         if violations:
             if any("exceeds max allowed size" in violation.description for violation in violations):
                 record_submit_job_outcome("limit")
+                abort_payload_limit(context, "payload limit exceeded", violations)
             abort_invalid_argument(context, "validation failed", violations)
 
         dag_nodes = sorted({request.name, *list(request.dependencies)})
         dag = resolve_dag(dag_nodes, {request.name: list(request.dependencies)})
         if not dag.ok:
-            context.abort(grpc.StatusCode.INVALID_ARGUMENT, f"dag resolution failed: {dag.reason_code}: {dag.detail}")
+            abort_public(
+                context,
+                PublicErrorSpec(
+                    grpc_code=grpc.StatusCode.INVALID_ARGUMENT,
+                    message="dag resolution failed",
+                    reason="EIGEN_PUBLIC_VALIDATION_FAILED",
+                    retryable=False,
+                    metadata={"reason_code": dag.reason_code},
+                    violations=[
+                        FieldViolation(
+                            field="dependencies",
+                            description=f"{dag.reason_code}: {dag.detail}",
+                        )
+                    ],
+                ),
+            )
 
         idem_key = self._idempotency_key(request, context, envelope)
         request_fingerprint = self._request_fingerprint(request, envelope)
@@ -1215,9 +1255,18 @@ class JobService:
                 if previous:
                     if previous.request_fingerprint != request_fingerprint:
                         record_submit_job_outcome("conflict")
-                        context.abort(
-                            grpc.StatusCode.FAILED_PRECONDITION,
-                            f"idempotency key reuse with different normalized payload: {idem_key}",
+                        abort_public(
+                            context,
+                            PublicErrorSpec(
+                                grpc_code=grpc.StatusCode.FAILED_PRECONDITION,
+                                message="idempotency key reuse with different normalized payload",
+                                reason="EIGEN_PUBLIC_IDEMPOTENCY_CONFLICT",
+                                retryable=False,
+                                metadata={"idempotency_scope": "tenant"},
+                                precondition_type="IDEMPOTENCY_CONFLICT",
+                                precondition_subject=idem_key,
+                                detail="Reuse the key only with the same normalized request payload or choose a new key.",
+                            ),
                         )
                     existing = self._jobs.get(previous.job_id)
                     if existing is None:
@@ -1315,7 +1364,7 @@ class JobService:
             record = self._jobs.get(request.job_id)
 
         if record is None:
-            context.abort(grpc.StatusCode.NOT_FOUND, f"job_id not found: {request.job_id}")
+            _abort_job_not_found(context, request.job_id)
         with self._lock:
             self._enforce_job_access(context=context, record=record)
             self._advance_job(record)
@@ -1358,7 +1407,7 @@ class JobService:
         with self._lock:
             record = self._jobs.get(request.job_id)
             if record is None:
-                context.abort(grpc.StatusCode.NOT_FOUND, f"job_id not found: {request.job_id}")
+                _abort_job_not_found(context, request.job_id)
             self._enforce_job_access(context=context, record=record)
             self._advance_job(record)
             terminal_values = {getattr(self._types_pb, name) for name in TERMINAL_JOB_STATES}
@@ -1395,7 +1444,7 @@ class JobService:
             with self._lock:
                 record = self._jobs.get(request.job_id)
                 if record is None:
-                    context.abort(grpc.StatusCode.NOT_FOUND, f"job_id not found: {request.job_id}")
+                    _abort_job_not_found(context, request.job_id)
                 self._enforce_job_access(context=context, record=record)
                 self._advance_job(record)
                 selected_updates = list(record.updates)
@@ -1436,16 +1485,26 @@ class JobService:
                 self._advance_job(record)
 
         if record is None:
-            context.abort(grpc.StatusCode.NOT_FOUND, f"job_id not found: {request.job_id}")
+            _abort_job_not_found(context, request.job_id)
         current_state = record.updates[-1].state
         if current_state in {
             self._types_pb.JOB_STATE_PENDING,
             self._types_pb.JOB_STATE_COMPILING,
             self._types_pb.JOB_STATE_RUNNING,
         }:
-            context.abort(
-                grpc.StatusCode.FAILED_PRECONDITION,
-                f"results are not ready yet for job_id={request.job_id}; current_state={self._types_pb.JobState.Name(current_state)}",
+            abort_public(
+                context,
+                PublicErrorSpec(
+                    grpc_code=grpc.StatusCode.FAILED_PRECONDITION,
+                    message="results are not ready yet",
+                    reason="EIGEN_PUBLIC_RESULTS_NOT_READY",
+                    retryable=True,
+                    metadata={"current_state": self._types_pb.JobState.Name(current_state)},
+                    retry_delay_seconds=1,
+                    precondition_type="JOB_LIFECYCLE",
+                    precondition_subject=request.job_id,
+                    detail="Poll GetJobStatus until the job reaches a terminal state before reading results.",
+                ),
             )
 
         resp = self._job_pb.GetJobResultsResponse(
@@ -1480,7 +1539,7 @@ class JobService:
                 context,
                 grpc_code=grpc.StatusCode.INVALID_ARGUMENT,
                 message="validation failed",
-                reason="EXPLAIN_INVALID_REQUEST",
+                reason="EIGEN_PUBLIC_EXPLAIN_INVALID_REQUEST",
                 domain="eigen.api.v1.explain",
                 metadata={"field": ",".join(v.field for v in violations)},
             )
@@ -1492,7 +1551,7 @@ class JobService:
                     context,
                     grpc_code=grpc.StatusCode.NOT_FOUND,
                     message=f"job_id not found: {request.job_id}",
-                    reason="EXPLAIN_DECISION_NOT_FOUND",
+                    reason="EIGEN_PUBLIC_EXPLAIN_DECISION_NOT_FOUND",
                     domain="eigen.api.v1.explain",
                     metadata={"job_id": request.job_id},
                 )

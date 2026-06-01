@@ -10,6 +10,8 @@ import os
 from dataclasses import dataclass
 
 import grpc
+
+from .errors import PublicErrorSpec, abort_public
 from .observability import log_authz_denied
 
 _AUTH_ALLOW_ALL = "allow_all"
@@ -84,18 +86,28 @@ def enforce_authn(context: grpc.ServicerContext, *, method_name: str) -> None:
     authorization = md.get("authorization", "")
     expected = f"Bearer {cfg.static_token}"
     if authorization != expected:
-        context.abort(
-            grpc.StatusCode.UNAUTHENTICATED,
-            f"authentication required for {method_name}; configure SYSTEM_API_AUTH_MODE=allow_all for local dev",
+        abort_public(
+            context,
+            PublicErrorSpec(
+                grpc_code=grpc.StatusCode.UNAUTHENTICATED,
+                message=f"authentication required for {method_name}",
+                reason="EIGEN_PUBLIC_UNAUTHENTICATED",
+                retryable=True,
+                metadata={"auth_mode": cfg.auth_mode},
+                detail="Authenticate with a valid bearer token before retrying.",
+            ),
         )
 
 
 def auth_context(context: grpc.ServicerContext) -> tuple[str, tuple[str, ...], str]:
     cfg = load_security_config()
-    if cfg.auth_mode == _AUTH_STATIC_TOKEN:
-        return cfg.static_token_subject, cfg.static_token_roles, cfg.static_token_tenant
-
     md = _metadata(context)
+    if cfg.auth_mode == _AUTH_STATIC_TOKEN:
+        tenant = md.get("x-eigen-tenant", "") or cfg.static_token_tenant
+        raw_roles = md.get("x-eigen-roles", "")
+        roles = tuple(role.strip().lower() for role in raw_roles.split(",") if role.strip())
+        return cfg.static_token_subject, roles or cfg.static_token_roles, tenant
+
     subject = md.get("x-eigen-sub", "anonymous")
     tenant = md.get("x-eigen-tenant", "")
     raw_roles = md.get("x-eigen-roles", "admin")
@@ -160,9 +172,16 @@ def enforce_authz(context: grpc.ServicerContext, *, required_permission: str) ->
             subject=subject or "unknown",
             permission="POLICY_DENY_MISSING_AUTH_CONTEXT",
         )
-        context.abort(
-            grpc.StatusCode.PERMISSION_DENIED,
-            "POLICY_DENY_MISSING_AUTH_CONTEXT: subject and tenant are required",
+        abort_public(
+            context,
+            PublicErrorSpec(
+                grpc_code=grpc.StatusCode.PERMISSION_DENIED,
+                message="subject and tenant are required",
+                reason="EIGEN_PUBLIC_PERMISSION_DENIED",
+                retryable=False,
+                metadata={"policy": "POLICY_DENY_MISSING_AUTH_CONTEXT"},
+                detail="Provide authenticated subject and tenant context.",
+            ),
         )
 
     if need in granted or wildcard in granted or "*" in granted:
@@ -173,7 +192,14 @@ def enforce_authz(context: grpc.ServicerContext, *, required_permission: str) ->
         subject=subject,
         permission=f"POLICY_DENY_PERMISSION_REQUIRED:{need}",
     )
-    context.abort(
-        grpc.StatusCode.PERMISSION_DENIED,
-        f"POLICY_DENY_PERMISSION_REQUIRED: requires {required_permission}",
+    abort_public(
+        context,
+        PublicErrorSpec(
+            grpc_code=grpc.StatusCode.PERMISSION_DENIED,
+            message=f"requires {required_permission}",
+            reason="EIGEN_PUBLIC_PERMISSION_DENIED",
+            retryable=False,
+            metadata={"policy": "POLICY_DENY_PERMISSION_REQUIRED", "permission": required_permission},
+            detail="Caller lacks the required permission for this public API method.",
+        ),
     )

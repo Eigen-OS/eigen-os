@@ -146,8 +146,8 @@ Version negotiation rules:
 
 - Missing `contract_version` MAY default to `1.0.0` only for backward-compatible MVP clients on the `eigen.api.v1` namespace.
 - Missing `request_id`, `tenant_id`, or `project_id` is normalized deterministically before dispatch using the sources above; the normalized envelope is the value used for audit, logs, metrics, idempotency scope, and internal forwarding.
-- Malformed SemVer MUST return `INVALID_ARGUMENT` with `google.rpc.ErrorInfo.reason = PUBLIC_CONTRACT_VERSION_MALFORMED`.
-- Unsupported but well-formed versions MUST return `FAILED_PRECONDITION` with `google.rpc.ErrorInfo.reason = PUBLIC_CONTRACT_VERSION_UNSUPPORTED` and the supported version in details metadata.
+- Malformed SemVer MUST return `INVALID_ARGUMENT` with `google.rpc.ErrorInfo.reason = EIGEN_PUBLIC_CONTRACT_VERSION_MALFORMED`.
+- Unsupported but well-formed versions MUST return `FAILED_PRECONDITION` with `google.rpc.ErrorInfo.reason = EIGEN_PUBLIC_CONTRACT_VERSION_UNSUPPORTED` and the supported version in details metadata.
 - Incompatible MAJOR versions MUST be rejected; they MUST NOT be silently coerced.
 - Compatible MINOR/PATCH versions MAY be accepted only when documented in this file or the Product 1.0 manifest.
 
@@ -230,7 +230,7 @@ Rules:
 | Unknown target | `NOT_FOUND` |
 | Invalid reservation | `FAILED_PRECONDITION` |
 | Unsupported contract version | `FAILED_PRECONDITION` |
-| Payload exceeds public limit | `INVALID_ARGUMENT` with field violations at the System API boundary; deployments MAY map ingress byte-quota failures to `RESOURCE_EXHAUSTED` before deserialization |
+| Payload exceeds public limit | `RESOURCE_EXHAUSTED` with `EIGEN_PUBLIC_PAYLOAD_LIMIT_EXCEEDED`, `BadRequest`, and `QuotaFailure` details |
 
 #### Response
 
@@ -557,32 +557,35 @@ Returns paginated immutable decision logs filtered by trace ID and/or model vers
 
 ## 8. Error Model
 
-Public APIs use canonical gRPC status codes.
+Public APIs use the canonical public error model in `docs/reference/error-model.md` and the mapping matrix in `docs/reference/error-mapping.md`. Every public failure MUST be represented as `google.rpc.Status` with a deterministic gRPC status code, stable `google.rpc.ErrorInfo.reason`, retryability metadata, and structured details appropriate for the failure shape. Public responses MUST NOT leak raw internal exceptions, stack traces, provider-private payloads, credentials, filesystem paths, or unnormalized backend errors.
 
 #### Allowed Status Codes
 
-| **Code** | **Meaning** |
-|----------|-----------|
-| `INVALID_ARGUMENT` | Validation failure |
-| `UNAUTHENTICATED` | Missing/invalid auth |
-| `PERMISSION_DENIED` | Insufficient scope |
-| `NOT_FOUND` | Missing resource |
-| `FAILED_PRECONDITION` | Invalid state transition |
-| `RESOURCE_EXHAUSTED` | Quota exceeded |
-| `UNAVAILABLE` | Backend unavailable |
-| `DEADLINE_EXCEEDED` | Timeout |
-| `FAILED_PRECONDITION` | Invalid state transition or idempotency conflict |
-| `OUT_OF_RANGE` | Stream replay cursor outside retention window |
-| `INTERNAL` | Unexpected failure |
+| **Code** | **Meaning** | **Canonical public reason examples** | **Retryability** |
+|----------|-----------|-----------|-----------|
+| `INVALID_ARGUMENT` | Validation failure | `EIGEN_PUBLIC_VALIDATION_FAILED`, `EIGEN_PUBLIC_CONTRACT_VERSION_MALFORMED` | No |
+| `UNAUTHENTICATED` | Missing/invalid auth | `EIGEN_PUBLIC_UNAUTHENTICATED` | After re-authentication |
+| `PERMISSION_DENIED` | Insufficient scope | `EIGEN_PUBLIC_PERMISSION_DENIED` | No |
+| `NOT_FOUND` | Missing resource | `EIGEN_PUBLIC_JOB_NOT_FOUND` | No unless documented eventual consistency applies |
+| `FAILED_PRECONDITION` | Invalid state transition, version mismatch, or idempotency conflict | `EIGEN_PUBLIC_RESULTS_NOT_READY`, `EIGEN_PUBLIC_CONTRACT_VERSION_UNSUPPORTED`, `EIGEN_PUBLIC_IDEMPOTENCY_CONFLICT` | Conditional |
+| `RESOURCE_EXHAUSTED` | Payload/quota/capacity limit exceeded | `EIGEN_PUBLIC_PAYLOAD_LIMIT_EXCEEDED` | Retry only after reducing payload or waiting for quota/capacity recovery |
+| `UNAVAILABLE` | Backend/service temporarily unavailable | `EIGEN_PUBLIC_UNAVAILABLE`, `EIGEN_BACKEND_UNAVAILABLE` | Yes with backoff |
+| `DEADLINE_EXCEEDED` | Deadline budget exceeded | `EIGEN_PUBLIC_DEADLINE_EXCEEDED` | Conditional on idempotency |
+| `ABORTED` | Coordination/idempotent conflict that can be retried | `EIGEN_PUBLIC_CONFLICT_ABORTED` | Yes with backoff/jitter |
+| `CANCELLED` | Caller/runtime cancellation | `EIGEN_PUBLIC_CANCELLED` | Caller-defined |
+| `OUT_OF_RANGE` | Stream replay cursor outside retention window | `EIGEN_PUBLIC_STREAM_CURSOR_OUT_OF_RANGE` | No without a new cursor |
+| `INTERNAL` | Unexpected failure | `EIGEN_PUBLIC_INTERNAL` | Conditional, bounded retry only |
 
 #### Error Details
 
-Structured protobuf error details SHOULD be attached:
+Structured protobuf error details are mandatory at the public boundary where supported. Detail ordering MUST be deterministic with `google.rpc.ErrorInfo` first so SDKs can extract `reason` and `metadata.retryable` uniformly. Scenario-specific details then follow:
 
-- field violations
-- quota failures
-- retry hints
-- resource metadata
+- validation: `BadRequest` field violations,
+- payload/quota limits: `BadRequest` plus `QuotaFailure`,
+- retryable transient failures: `RetryInfo`,
+- missing resources: `ResourceInfo`,
+- lifecycle/idempotency/version conflicts: `PreconditionFailure`,
+- cancellation/internal correlation: `RequestInfo` when a request identifier is available.
 
 ---
 

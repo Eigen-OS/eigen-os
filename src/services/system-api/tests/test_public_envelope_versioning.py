@@ -61,7 +61,7 @@ def test_missing_contract_version_defaults_to_product_1(grpc_addr: str) -> None:
                 envelope=types_pb.ApiRequestEnvelope(contract_version="not-semver"),
             ),
             grpc.StatusCode.INVALID_ARGUMENT,
-            "PUBLIC_CONTRACT_VERSION_MALFORMED",
+            "EIGEN_PUBLIC_CONTRACT_VERSION_MALFORMED",
         ),
         (
             job_pb.GetJobStatusRequest(
@@ -69,7 +69,7 @@ def test_missing_contract_version_defaults_to_product_1(grpc_addr: str) -> None:
                 envelope=types_pb.ApiRequestEnvelope(contract_version="2.0.0"),
             ),
             grpc.StatusCode.FAILED_PRECONDITION,
-            "PUBLIC_CONTRACT_VERSION_UNSUPPORTED",
+            "EIGEN_PUBLIC_CONTRACT_VERSION_UNSUPPORTED",
         ),
         (
             job_pb.GetJobStatusRequest(
@@ -77,7 +77,7 @@ def test_missing_contract_version_defaults_to_product_1(grpc_addr: str) -> None:
                 envelope=types_pb.ApiRequestEnvelope(contract_version="1.1.0"),
             ),
             grpc.StatusCode.FAILED_PRECONDITION,
-            "PUBLIC_CONTRACT_VERSION_UNSUPPORTED",
+            "EIGEN_PUBLIC_CONTRACT_VERSION_UNSUPPORTED",
         ),
     ],
 )
@@ -109,6 +109,6 @@ def test_metadata_contract_version_is_validated_before_device_dispatch(grpc_addr
 
     assert err.value.code() == grpc.StatusCode.FAILED_PRECONDITION
     info = _error_info(err.value)
-    assert info.reason == "PUBLIC_CONTRACT_VERSION_UNSUPPORTED"
+    assert info.reason == "EIGEN_PUBLIC_CONTRACT_VERSION_UNSUPPORTED"
     assert info.metadata["supported_contract_version"] == "1.0.0"
     
