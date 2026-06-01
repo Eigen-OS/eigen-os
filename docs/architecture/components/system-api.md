@@ -81,9 +81,10 @@ For Wave 1 public-boundary closure, the System API owns canonical envelope norma
 - validate `contract_version` before dispatching to Kernel/QRTX or any other internal service,
 - reject malformed versions with `INVALID_ARGUMENT` plus `PUBLIC_CONTRACT_VERSION_MALFORMED` details and unsupported/incompatible versions with `FAILED_PRECONDITION` plus `PUBLIC_CONTRACT_VERSION_UNSUPPORTED` details,
 - derive deterministic defaults for missing MVP-client envelope fields (`contract_version=1.0.0`, stable `req_<sha256-prefix>` request IDs, `tenant-default`, and `project-default`) before audit, idempotency, or internal forwarding,
-- compute the `SubmitJob` idempotency digest from the normalized request and persist it with tenant/project scope,
+- compute the `SubmitJob` idempotency digest from the normalized request and persist it with tenant/project scope, assigned `job_id`, and configurable TTL,
+- purge expired idempotency records before comparison so same-key submissions after TTL create new jobs,
 - enforce public payload limits before forwarding requests to internal services,
-- emit public API contract marker metrics with bounded labels and request/trace correlation,
+- emit public API contract marker metrics with bounded labels and request/trace correlation, including `SubmitJob` outcomes `accepted`, `replayed`, `conflict`, and `limit`,
 - never leak raw internal exceptions, credentials, or provider details through public errors.
 
 The public wire contract for these requirements is defined in `docs/reference/api/grpc-public.md`; this component document describes ownership only.
@@ -290,10 +291,10 @@ Recommended metadata key:
 
 Rules:
 
-- same key + same normalized request body MUST yield the same `job_id`,
-- same key + different request MUST return `FAILED_PRECONDITION` (or `ALREADY_EXISTS` if modeled as resource conflict).
+- same key + different request MUST return `FAILED_PRECONDITION`.
+- records MUST be persisted with tenant/project scope, assigned `job_id`, and configurable TTL.
 
-This is not fully implemented today.
+This is implemented in the MVP System API server for `SubmitJob`.
 
 ---
 
@@ -773,14 +774,18 @@ sequenceDiagram
   participant K as Kernel/QRTX
 
   C->>API: SubmitJob (x-eigen-idempotency-key=K)
-  API->>API: cache miss -> forward
+  API->>API: normalize + payload-limit check
+  API->>API: persisted idempotency miss -> forward
   API->>K: EnqueueJob
-  K-->>API: job_id=J
+  API->>API: persist key + digest + job_id + TTL
   API-->>C: job_id=J
 
-  C->>API: SubmitJob retry (same key=K, same body)
-  API->>API: cache hit -> job_id=J
+  C->>API: SubmitJob retry (same key=K, same normalized body)
+  API->>API: persisted hit before TTL -> job_id=J
   API-->>C: job_id=J (no duplicate)
+
+  C->>API: SubmitJob retry (same key=K, different normalized body)
+  API-->>C: FAILED_PRECONDITION idempotency conflict
 ```
 
 </details>

@@ -39,6 +39,18 @@ Validation hardening knobs:
 
 - `SYSTEM_API_MAX_PROGRAM_SOURCE_BYTES` (default: `262144`)
 - `SYSTEM_API_MAX_JOBSPEC_YAML_BYTES` (default: `65536`, applies to `metadata[jobspec_yaml]`)
+- `SYSTEM_API_MAX_SUBMIT_METADATA_ENTRIES` (default: `64`)
+- `SYSTEM_API_MAX_SUBMIT_METADATA_KEY_BYTES` (default: `128`)
+- `SYSTEM_API_MAX_SUBMIT_METADATA_VALUE_BYTES` (default: `4096`)
+- `SYSTEM_API_MAX_SUBMIT_DEPENDENCIES` (default: `64`)
+
+SubmitJob idempotency knobs:
+
+- `SYSTEM_API_IDEMPOTENCY_TTL_SECONDS` (default: `86400`)
+- `SYSTEM_API_IDEMPOTENCY_STORE_PATH` (default: `/tmp/eigen-system-api-idempotency.json`)
+
+SubmitJob emits `eigen_api_submit_job_outcomes_total{outcome}` with bounded
+`outcome` labels: `accepted`, `replayed`, `conflict`, and `limit`.
 
 ***System API Server** is the primary interface layer for Eigen OS, providing unified access to quantum computing resources through a high-performance gRPC interface and a compatible REST adapter.
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import socket
 import time
 from typing import Iterator
@@ -17,9 +18,13 @@ def _free_port() -> int:
 
 
 @pytest.fixture(scope="module")
-def grpc_addr() -> Iterator[str]:
+def grpc_addr(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
     port = _free_port()
     addr = f"127.0.0.1:{port}"
+    previous_store_path = os.environ.get("SYSTEM_API_IDEMPOTENCY_STORE_PATH")
+    os.environ["SYSTEM_API_IDEMPOTENCY_STORE_PATH"] = str(
+        tmp_path_factory.mktemp("system-api") / "idempotency.json"
+    )
 
     server = serve(bind=addr)
 
@@ -29,6 +34,10 @@ def grpc_addr() -> Iterator[str]:
     yield addr
 
     server.stop(grace=None)
+    if previous_store_path is None:
+        os.environ.pop("SYSTEM_API_IDEMPOTENCY_STORE_PATH", None)
+    else:
+        os.environ["SYSTEM_API_IDEMPOTENCY_STORE_PATH"] = previous_store_path
 
 
 @pytest.fixture(autouse=True)
