@@ -802,3 +802,256 @@ followed by:
 - results retrieval.
 
 This path must operate consistently on at least one supported simulator/runtime profile for Eigen OS 1.x.
+
+---
+
+## Appendix A. Diagrams (normative)
+
+### A.1 System contract topology (E2E map)
+
+![System contract topology](https://i.imgur.com/s3pkqQL.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  subgraph External["External clients"]
+    CLI[eigen-cli]
+    SDK[SDKs]
+    Auto[Automation clients]
+  end
+
+  subgraph Public["Public surface (stable)"]
+    API["System API\n(gRPC eigen.api.v1 / REST /v1)"]
+  end
+
+  subgraph Internal["Internal runtime (eigen.internal.v1)"]
+    K["Kernel / QRTX"]
+    C["CompilationService\n(Eigen-DPDA)"]
+    O["OptimizerService\n(GNN)"]
+    DM["DriverManagerService"]
+    Sec["SecurityService\n(policy/secrets/audit)\n(optional split)"]
+    QFS["QFS\n(L3 CircuitFS + future L2/L1)"]
+    KB["KnowledgeBaseService (public records)\n+ OKB (internal target)"]
+  end
+
+  subgraph Hardware["Hardware abstraction"]
+    QD["QDriver\n(plugin or remote service)"]
+    BE[(Backends / Simulators / Vendor clouds)]
+  end
+
+  subgraph Obs["Observability stack"]
+    OTel[OpenTelemetry]
+    Prom[(Prometheus)]
+    Logs[(Loki/ES)]
+    Trace[(Jaeger)]
+    Graf[(Grafana)]
+  end
+
+  CLI --> API
+  SDK --> API
+  Auto --> API
+
+  API --> K
+
+  K --> C
+  K --> O
+  K --> DM
+  K --> QFS
+  K -. "optional" .-> Sec
+  C -. "optional" .-> KB
+  O -. "optional" .-> KB
+
+  DM --> QD --> BE
+
+  API -. "emits" .-> OTel
+  K -. "emits" .-> OTel
+  C -. "emits" .-> OTel
+  O -. "emits" .-> OTel
+  DM -. "emits" .-> OTel
+  QFS -. "emits" .-> OTel
+  KB -. "emits" .-> OTel
+
+  OTel --> Prom
+  OTel --> Logs
+  OTel --> Trace
+  Prom --> Graf
+  Logs --> Graf
+  Trace --> Graf
+
+  %% Цвета слоёв
+  classDef external fill:#e3f2fd,stroke:#1565c0
+  classDef public fill:#fff3e0,stroke:#ef6c00
+  classDef internal fill:#e8f5e9,stroke:#2e7d32
+  classDef hardware fill:#f3e5f5,stroke:#6a1b9a
+  classDef obs fill:#fce4ec,stroke:#c62828
+
+  class CLI,SDK,Auto external
+  class API public
+  class K,C,O,DM,Sec,QFS,KB internal
+  class QD,BE hardware
+  class OTel,Prom,Logs,Trace,Graf obs
+```
+
+</details>
+
+---
+
+### A.2 Contract namespace map (public vs internal vs device-facing)
+
+![Contract namespace map](https://i.imgur.com/PZIHMEY.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  subgraph Public["Public contracts (stable)"]
+    P1["eigen.api.v1\n(JobService, DeviceService, KnowledgeBaseService)"]
+    R1[/"REST /v1/*\n(semantic mirror)"/]
+  end
+
+  subgraph Internal["Internal contracts (SemVer, rolling policy)"]
+    I1["eigen.internal.v1\n(KernelGatewayService,\nCompilationService,\nOptimizerService,\nDriverManagerService,\nStorage/Security if separated)"]
+  end
+
+  subgraph Device["Device-facing contracts (versioned)"]
+    D1["QDriver API (gRPC)\nInitialize/Execute/GetStatus/Calibrate/Cancel"]
+    V1[("Vendor/provider SDKs/APIs\n(non-contractual)")]
+  end
+
+  P1 --> I1
+  R1 --> P1
+  I1 --> D1
+  D1 --> V1
+```
+
+</details>
+
+---
+
+### A.3 Sequence: Submit → persist input → compile → optimize → execute → persist results
+
+![Submit → persist input → compile → optimize → execute → persist results](https://i.imgur.com/bguEyhe.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant Client as SDK/CLI
+  participant API as System API (eigen.api.v1)
+  participant K as Kernel/QRTX (eigen.internal.v1)
+  participant Q as QFS (L3)
+  participant C as CompilationService (Eigen-DPDA)
+  participant O as OptimizerService (GNN)
+  participant DM as DriverManagerService
+  participant QD as QDriver
+  participant BE as Backend/Simulator
+
+  Client->>API: SubmitJob / POST /v1/jobs
+  API->>K: EnqueueJob (KernelGatewayService)
+  K->>Q: store input/job.yaml + source bundle
+  K->>C: CompileJob/CompileCircuit
+  C->>Q: write compiled/* (AQO + metadata + diagnostics ref)
+  K->>DM: GetDeviceStatus (topology/capabilities snapshot)
+  DM-->>K: topology + capability snapshot (bounded)
+  K->>O: OptimizeCircuit (AQO + topology + policy + seed)
+  O->>Q: write optimizer/* (placement/routing/decision)
+  K->>DM: ExecuteCircuit (lowered payload/AQO + device_id)
+  DM->>QD: Execute
+  QD->>BE: vendor execute
+  BE-->>QD: raw results/errors
+  QD-->>DM: raw provider response
+  DM-->>K: normalized ExecutionResult + canonical errors
+  K->>Q: write results/results.json OR results/error.json
+  K-->>API: "accepted + job_id, later status/results"
+  API-->>Client: GetJobStatus / GetJobResults
+```
+
+</details>
+
+---
+
+### A.4 Artifacts lineage flow (what persists where)
+
+![Artifacts lineage flow](https://i.imgur.com/qMymO7K.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  subgraph QFSRoot["qfs://jobs/<job_id>/"]
+    IN[input/job.yaml\nsource/*]
+    COMP[compiled/\ncompiled.aqo.json\nmetadata.json\ndiagnostics.json?]
+    OPT[optimizer/\nrequest.json\noptimized_aqo.json\nplacement.json?\nrouting.json?\ndecision.json]
+    RES[results/\nresults.json\nerror.json?]
+    TL[timeline/timeline.json?]
+    LOG[logs/run.log?]
+  end
+
+  IN --> COMP
+  COMP --> OPT
+  OPT --> RES
+  IN -. references .-> TL
+  COMP -. references .-> TL
+  OPT -. references .-> TL
+  RES -. references .-> TL
+```
+
+</details>
+
+---
+
+### A.5 “No contract drift” rule visualization (contracts live in docs/reference)
+
+![“No contract drift” rule visualization](https://i.imgur.com/vNvsPuj.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  Ref["docs/reference/\n(proto, schemas, error model,\nobservability contracts, JobSpec, AQO, QFS layout)"]
+  Arch["docs/architecture/\n(contract-map.md, data-flow.md,\narchitecture topology)"]
+  Comp["components/*.md\n(explanations)"]
+
+  Arch -->|MUST reference| Ref
+  Comp -->|MUST reference| Ref
+  Comp -. "MUST NOT redefine" .-> Ref
+```
+
+</details>
+
+---
+
+### A.6 Allowed call graph (enforced boundaries)
+
+![Allowed call graph](https://i.imgur.com/OtY9Jgy.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  Client[SDK/CLI] --> API[System API]
+  API --> K[Kernel/QRTX]
+
+  K --> C[CompilationService]
+  K --> O[OptimizerService]
+  K --> DM[Driver Manager]
+  K --> QFS[QFS]
+
+  DM --> QD[QDriver] --> BE[(Backend)]
+
+  %% hard prohibitions
+  API -. MUST NOT .-> BE
+  K -. MUST NOT .-> BE
+  C -. MUST NOT .-> BE
+  O -. MUST NOT .-> BE
+```
+
+</details>
