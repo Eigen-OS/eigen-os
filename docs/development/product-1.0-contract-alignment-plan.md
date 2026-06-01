@@ -51,7 +51,7 @@ The recommended delivery model is **thin vertical contract slices**: each commit
 |---|---|---|
 | Version mismatch across docs, README, pyproject packages, Rust workspace, proto README, and component contracts | Release identity is ambiguous and cannot be certified as `1.0.0` | Single release/version policy with generated contract manifest and component contract markers |
 | Proto contracts are smaller than the reference/API docs | Public and internal APIs cannot fully enforce documented semantics | Proto first-class coverage for all Product 1.0 public/internal methods, envelopes, structured errors, idempotency, auth context, trace context, pagination, and results |
-| Several docs reference target files/contract families that are not present yet (`security/authz.md`, REST docs, compiler contract directories, benchmark/observability subdirectories) | Implementation cannot start cleanly for those areas without clarifying canonical specs | Add missing reference docs or remove/redirect stale references before implementation |
+| Several docs reference target files/contract families that are not present yet (`docs/reference/security/authz.md`, REST docs, compiler contract directories, benchmark/observability subdirectories) | Implementation cannot start cleanly for those areas without clarifying canonical specs | Add missing reference docs or remove/redirect stale references before implementation |
 | Current implementation mixes MVP ownership shortcuts with target service boundaries | System API and other services still own state/facades that target architecture assigns to Kernel/QRTX, QFS, Resource Manager, or KB | Explicit migration sequence from MVP facades to target owners |
 | No unified contract drift matrix | Hard to know whether a commit moves toward or away from Product 1.0 | Machine-readable contract inventory and drift CI gate |
 
@@ -111,7 +111,7 @@ Product `1.0.0` is ready only when all of the following gates pass:
 3. Decide whether Product 1.0 corresponds to contract version `1.0.0` or the existing Eigen OS `1.3.0` architecture scope in docs; document the distinction between **product release version** and **contract package version**.
 4. Fix stale docs/index links before implementation:
    - missing REST reference docs if REST remains target,
-   - missing security/authz reference docs,
+   - missing `docs/reference/security/authz.md` reference docs,
    - missing compiler/benchmark/observability subdirectories referenced from architecture docs,
    - README/proto README version statements.
 5. Add CI check that fails if reference docs mention a missing canonical file.
@@ -146,7 +146,7 @@ Product `1.0.0` is ready only when all of the following gates pass:
    - same key + different normalized request returns canonical conflict/precondition error,
    - TTL and persistence policy are configurable.
 5. Implement payload limits before forwarding.
-6. Normalize all public errors through `docs/reference/error-model.md` and `error-mapping.md`.
+6. Normalize all public errors through `docs/reference/error-model.md` and `docs/reference/error-mapping.md`.
 7. Add structured `google.rpc.Status` details where supported.
 8. Add public contract marker metric.
 9. Add public API conformance tests:
