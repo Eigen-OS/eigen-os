@@ -16,7 +16,6 @@ Architecture Decision Records (ADRs) capture decisions that are already adopted 
 - [0004 — MVP-2 Eigen-Lang AST safety and deterministic AQO generation](0004-mvp2-eigen-lang-ast-safety.md)
 - [0005 — MVP-2 conformance fixtures and CI gating policy](0005-mvp2-conformance-and-ci-gates.md)
 - [0006 — MVP-2 release closure and baseline freeze](0006-mvp2-release-closure-and-baseline-freeze.md)
-
 - [0007 — MVP-3 release readiness, runtime contracts, and security closure](0007-mvp3-release-readiness-runtime-contracts-and-security-closure.md)
 - [0008 — Phase-3 benchmark run lifecycle core v1](0008-phase3-benchmark-run-lifecycle-core-v1.md)
 - [0009 — Phase-3 dataset ingestion contract v1](0009-phase3-dataset-ingestion-contract-v1.md)
@@ -45,6 +44,7 @@ Architecture Decision Records (ADRs) capture decisions that are already adopted 
 - [0032 — Phase-8D externalization surfaces contract v1](0032-phase8d-externalization-surfaces-contract-v1.md)
 - [0033 — Phase-9B intelligence closure contract v1](0033-phase9b-intelligence-closure-contract-v1.md)
 - [0034 — Phase-9C multi-tenant plugin boundary contract v1](0034-phase9c-multitenant-plugin-boundary-contract-v1.md)
+- [0035 — Product 1.0 public API, JobSpec, and error boundary](0035-product-1.0-public-api-jobspec-error-boundary.md)
 
 ## Phase-3 status
 
@@ -120,3 +120,10 @@ Architecture Decision Records (ADRs) capture decisions that are already adopted 
 - Required coverage check: [`../development/phase-9b/phase-9b-rfc-adr-gap-analysis.md`](../development/phase-9b/phase-9b-rfc-adr-gap-analysis.md).
 - Phase-9B release package: [`../development/phase-9b/phase-9b-release-readiness-checklist.md`](../development/phase-9b/phase-9b-release-readiness-checklist.md), [`../development/phase-9b/phase-9b-compatibility-report.md`](../development/phase-9b/phase-9b-compatibility-report.md), [`../development/phase-9b/phase-9b-exit-evidence-bundle.md`](../development/phase-9b/phase-9b-exit-evidence-bundle.md).
 - Policy reminder: CI must fail closed on undocumented contract drift and conformance regressions; deprecations retain support for 2 minors or 90 days, whichever is longer.
+
+## Product 1.0 Wave 1 status
+
+- As of 2026-06-01, Product 1.0 Wave 1 public-boundary planning is synchronized with RFC 0049 and ADR 0035.
+- Required coverage check: [`../development/product-1.0-wave-1-rfc-adr-gap-analysis.md`](../development/product-1.0-wave-1-rfc-adr-gap-analysis.md).
+- Wave 1 release package: [`../development/product-1.0-wave-1-release-readiness-checklist.md`](../development/product-1.0-wave-1-release-readiness-checklist.md), [`../development/product-1.0-wave-1-compatibility-report.md`](../development/product-1.0-wave-1-compatibility-report.md), [`../development/product-1.0-wave-1-exit-evidence-bundle.md`](../development/product-1.0-wave-1-exit-evidence-bundle.md).
+- Policy reminder: every Wave 1 issue must declare version impact, affected interfaces, compatibility, breaking marker, migration notes, and release-note draft text.
