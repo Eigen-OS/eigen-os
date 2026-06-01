@@ -530,7 +530,9 @@ fn validate_policy_plugin_manifest(manifest: &str) -> Result<(), String> {
         "manifest validation failed: missing required [policy].reason_codes".to_string()
     })?;
     if reason_codes.is_empty() {
-        return Err("manifest validation failed: [policy].reason_codes must be non-empty".to_string());
+        return Err(
+            "manifest validation failed: [policy].reason_codes must be non-empty".to_string(),
+        );
     }
     for code in reason_codes {
         if !code.starts_with("POLICY_")
@@ -887,6 +889,7 @@ fn print_grpc_like_error(cmd: &str, err: &jobspec::GrpcLikeError) -> i32 {
 
 fn run_submit(args: &[String]) -> Result<(), String> {
     let mut job_file: Option<PathBuf> = None;
+    let mut options = jobspec::PublicSubmitOptions::default();
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -897,18 +900,58 @@ fn run_submit(args: &[String]) -> Result<(), String> {
                 job_file = Some(PathBuf::from(next));
                 i += 2;
             }
+            "--request-id" => {
+                let Some(next) = args.get(i + 1) else {
+                    return Err("expected value after --request-id".to_string());
+                };
+                options.request_id = Some(next.clone());
+                i += 2;
+            }
+            "--idempotency-key" => {
+                let Some(next) = args.get(i + 1) else {
+                    return Err("expected value after --idempotency-key".to_string());
+                };
+                options.idempotency_key = Some(next.clone());
+                i += 2;
+            }
+            "--traceparent" => {
+                let Some(next) = args.get(i + 1) else {
+                    return Err("expected value after --traceparent".to_string());
+                };
+                options.traceparent = Some(next.clone());
+                i += 2;
+            }
+            "--tenant" | "--tenant-id" => {
+                let Some(next) = args.get(i + 1) else {
+                    return Err("expected value after --tenant/--tenant-id".to_string());
+                };
+                options.tenant_id = Some(next.clone());
+                i += 2;
+            }
+            "--project" | "--project-id" => {
+                let Some(next) = args.get(i + 1) else {
+                    return Err("expected value after --project/--project-id".to_string());
+                };
+                options.project_id = Some(next.clone());
+                i += 2;
+            }
             unknown => return Err(format!("unknown submit argument: {unknown}")),
         }
     }
 
     let Some(job_file) = job_file else {
-        return Err("usage: eigen submit -f job.yaml".to_string());
+        return Err(
+            "usage: eigen submit -f job.yaml [--idempotency-key key] [--traceparent value]"
+                .to_string(),
+        );
     };
 
     let req = jobspec::build_submit_request_from_job_file(&job_file).map_err(|e| e.to_string())?;
+    let public_payload = jobspec::build_public_submit_payload_json(&req, &options);
     let response = jobspec::submit_job_to_system_api(&req);
 
     println!("job_id: {}", response.job_id);
+    println!("request_payload: {public_payload}");
     println!("hint: run `eigen status {}` to view state", response.job_id);
     println!(
         "hint: run `eigen watch {}` to stream updates",
@@ -1293,7 +1336,7 @@ fn format_seed_timestamp(seed: u64) -> String {
 
 fn print_help() {
     println!(
-        "Eigen CLI\n\nUsage:\n  eigen <command> [args...]\n\nCommands:\n  help        Show this message\n  version     Print version\n  submit      Submit job: eigen submit -f job.yaml\n  status      Get job status: eigen status <job_id>\n  watch       Stream progress: eigen watch <job_id>\n  results     Fetch results: eigen results <job_id>\n  explain     Dispatch rationale: eigen explain <job_id>\n  compile     Compile locally: eigen compile -f job.yaml --out circuit.aqo.json\n  visualize   Visualize AQO: eigen visualize -f circuit.aqo.json\n  benchmark   Run/compare benchmark snapshots
+        "Eigen CLI\n\nUsage:\n  eigen <command> [args...]\n\nCommands:\n  help        Show this message\n  version     Print version\n  submit      Submit job: eigen submit -f job.yaml [--idempotency-key key] [--traceparent value]\n  status      Get job status: eigen status <job_id>\n  watch       Stream progress: eigen watch <job_id>\n  results     Fetch results: eigen results <job_id>\n  explain     Dispatch rationale: eigen explain <job_id>\n  compile     Compile locally: eigen compile -f job.yaml --out circuit.aqo.json\n  visualize   Visualize AQO: eigen visualize -f circuit.aqo.json\n  benchmark   Run/compare benchmark snapshots
   plugin      Scaffold/validate/package/activate plugin artifacts\n\nBenchmark examples (reproducible):\n  eigen benchmark run --config bench.json --output json --output-file baseline.json\n  eigen benchmark run --config bench-candidate.json --output json --output-file candidate.json\n  eigen benchmark compare --baseline baseline.json --candidate candidate.json --output human\n"
     );
 }
@@ -1388,7 +1431,7 @@ mod tests {
         assert!(err.contains("unsupported plugin_type 'analyzer'"));
     }
 
-     #[test]
+    #[test]
     fn policy_manifest_requires_policy_contract_fields() {
         let manifest = "manifest_schema_version = \"2.1.0\"\nplugin_id = \"io.eigen.x\"\nplugin_version = \"0.1.0\"\nplugin_type = \"policy\"\nplugin_api_version = \"2.1.0\"\neigen_os_compatibility = \">=0.6.0,<1.0.0\"\neigen_lang_version = \"0.1.0\"\nsignature_bundle_ref = \"oci://sig\"\n\n[policy]\ntimeout_ms = 9\nfallback_mode = \"best_effort\"\n";
         let err = validate_plugin_manifest(manifest).expect_err("should fail");

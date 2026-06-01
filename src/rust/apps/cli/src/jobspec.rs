@@ -10,6 +10,10 @@ pub const JOBSPEC_KIND: &str = "QuantumJob";
 pub const EIGEN_LANG_RUNTIME_HINTS_VERSION: &str = "1.1.0";
 pub const EIGEN_LANG_RUNTIME_DIAGNOSTICS_VERSION: &str = "1.0.0";
 pub const EIGEN_LANG_EXECUTION_ANNOTATIONS_VERSION: &str = "1.0.0";
+pub const PUBLIC_ENVELOPE_CONTRACT_VERSION: &str = "1.0.0";
+pub const DEFAULT_TENANT_ID: &str = "tenant-default";
+pub const DEFAULT_PROJECT_ID: &str = "project-default";
+pub const CLI_CLIENT_VERSION: &str = "eigen-cli/0.16.0";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FieldViolation {
@@ -93,6 +97,7 @@ pub struct JobRuntimeSpec {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SubmitJobRequest {
+    pub jobspec_api_version: String,
     pub name: String,
     pub program: ProgramSource,
     pub target: String,
@@ -114,6 +119,27 @@ pub enum ProgramSource {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SubmitJobResponse {
     pub job_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublicSubmitEnvelope {
+    pub contract_version: String,
+    pub request_id: String,
+    pub idempotency_key: String,
+    pub traceparent: String,
+    pub tenant_id: String,
+    pub project_id: String,
+    pub client_version: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PublicSubmitOptions {
+    pub request_id: Option<String>,
+    pub idempotency_key: Option<String>,
+    pub traceparent: Option<String>,
+    pub tenant_id: Option<String>,
+    pub project_id: Option<String>,
+    pub client_version: Option<String>,
 }
 
 pub fn build_submit_request_from_job_file(
@@ -225,7 +251,7 @@ pub fn parse_and_validate_jobspec(yaml: &str) -> Result<JobSpec, JobSpecValidati
                 }
                 continue;
             }
-            if trimmed == "compiler_options:" {
+            if trimmed == "compiler_options:" || trimmed == "compiler:" {
                 subsection = "compiler_options";
                 continue;
             }
@@ -357,44 +383,52 @@ pub fn map_to_submit_job_request_with_packaging(
 ) -> Result<SubmitJobRequest, JobSpecValidationError> {
     let mut violations = Vec::new();
 
-    if job
+    let inline_source = job
         .spec
         .program_inline
         .as_ref()
-        .is_some_and(|s| !s.is_empty())
+        .filter(|s| !s.trim().is_empty());
+    if inline_source.is_some() && job.spec.program_path.is_some() 
     {
         violations.push(FieldViolation {
             field: "spec.program".to_string(),
-            description: "inline source is not allowed; use job.yaml + program.eigen.py packaging"
-                .to_string(),
+            description: "must choose exactly one source mode: inline source or path".to_string(),
         });
     }
 
-    let path = job
-        .spec
-        .program_path
-        .clone()
-        .unwrap_or_else(|| "program.eigen.py".to_string());
-    validate_safe_relative_path(&path)?;
-    let program_path = resolve_program_path(basedir, &path);
+    let source = if let Some(source) = inline_source {
+        source.to_string()
+    } else {
+        let path = job
+            .spec
+            .program_path
+            .clone()
+            .unwrap_or_else(|| "program.eigen.py".to_string());
+        validate_safe_relative_path(&path)?;
+        let program_path = resolve_program_path(basedir, &path);
 
-    if !program_path.exists() {
-        violations.push(FieldViolation {
-            field: "spec.program_path".to_string(),
-            description: format!("file not found: {}", program_path.display()),
-        });
-    }
+        if !program_path.exists() {
+            violations.push(FieldViolation {
+                field: "spec.program_path".to_string(),
+                description: format!("file not found: {}", program_path.display()),
+            });
+        }
+
+   if !violations.is_empty() {
+            return Err(JobSpecValidationError::new(violations));
+        }
+
+        fs::read_to_string(&program_path).map_err(|e| {
+            JobSpecValidationError::new(vec![FieldViolation {
+                field: "spec.program_path".to_string(),
+                description: format!("failed reading {}: {e}", program_path.display()),
+            }])
+        })?
+    };
 
     if !violations.is_empty() {
         return Err(JobSpecValidationError::new(violations));
     }
-
-    let source = fs::read_to_string(&program_path).map_err(|e| {
-        JobSpecValidationError::new(vec![FieldViolation {
-            field: "spec.program_path".to_string(),
-            description: format!("failed reading {}: {e}", program_path.display()),
-        }])
-    })?;
 
     validate_entrypoint(&source, &job.spec.entrypoint)?;
 
@@ -404,6 +438,7 @@ pub fn map_to_submit_job_request_with_packaging(
     metadata.insert("source_sha256".to_string(), sha256.clone());
 
     Ok(SubmitJobRequest {
+        jobspec_api_version: job.api_version.clone(),
         name: job.metadata.name.clone(),
         program: ProgramSource::EigenLangSource {
             source,
@@ -418,8 +453,15 @@ pub fn map_to_submit_job_request_with_packaging(
     })
 }
 
-pub fn canonical_jobspec_json_from_request(req: &SubmitJobRequest, input_api_version: &str) -> String {
-    let ProgramSource::EigenLangSource { source, entrypoint, sha256 } = &req.program;
+pub fn canonical_jobspec_json_from_request(
+    req: &SubmitJobRequest,
+    input_api_version: &str,
+) -> String {
+    let ProgramSource::EigenLangSource {
+        source,
+        entrypoint,
+        sha256,
+    } = &req.program;
     let migration = if input_api_version == LEGACY_JOBSPEC_API_VERSION {
         "v0.1-inline-and-program_path"
     } else {
@@ -464,13 +506,13 @@ pub fn canonical_jobspec_json_from_request(req: &SubmitJobRequest, input_api_ver
         version = JOBSPEC_CONTRACT_VERSION,
     );
     let digest = sha256_hex(base.as_bytes());
-    format!(
-        "{{\"digest\":\"{}\",\"normalized\":{}}}",
-        digest, base
-    )
+    format!("{{\"digest\":\"{}\",\"normalized\":{}}}", digest, base)
 }
 
-pub fn canonical_jobspec_digest_from_request(req: &SubmitJobRequest, input_api_version: &str) -> String {
+pub fn canonical_jobspec_digest_from_request(
+    req: &SubmitJobRequest,
+    input_api_version: &str,
+) -> String {
     let canonical = canonical_jobspec_json_from_request(req, input_api_version);
     sha256_hex(canonical.as_bytes())
 }
@@ -484,7 +526,10 @@ fn string_map_json(map: &BTreeMap<String, String>) -> String {
 }
 
 fn string_vec_json(values: &[String]) -> String {
-    let parts: Vec<String> = values.iter().map(|v| format!("\"{}\"", json_escape(v))).collect();
+    let parts: Vec<String> = values
+        .iter()
+        .map(|v| format!("\"{}\"", json_escape(v)))
+        .collect();
     format!("[{}]", parts.join(","))
 }
 
@@ -545,7 +590,84 @@ pub fn validate_submit_request_against_system_api_schema(
     }
 }
 
+pub fn normalized_public_submit_envelope(
+    req: &SubmitJobRequest,
+    options: &PublicSubmitOptions,
+) -> PublicSubmitEnvelope {
+    let canonical_digest = canonical_jobspec_digest_from_request(req, &req.jobspec_api_version);
+    let request_id = options
+        .request_id
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("req_{}", &canonical_digest[0..16]));
+    let idempotency_key = options
+        .idempotency_key
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("idem_{}", &canonical_digest[0..32]));
+
+    PublicSubmitEnvelope {
+        contract_version: PUBLIC_ENVELOPE_CONTRACT_VERSION.to_string(),
+        request_id,
+        idempotency_key,
+        traceparent: options.traceparent.clone().unwrap_or_default(),
+        tenant_id: options
+            .tenant_id
+            .clone()
+            .unwrap_or_else(|| DEFAULT_TENANT_ID.to_string()),
+        project_id: options
+            .project_id
+            .clone()
+            .unwrap_or_else(|| DEFAULT_PROJECT_ID.to_string()),
+        client_version: options
+            .client_version
+            .clone()
+            .unwrap_or_else(|| CLI_CLIENT_VERSION.to_string()),
+    }
+}
+
+pub fn build_public_submit_payload_json(
+    req: &SubmitJobRequest,
+    options: &PublicSubmitOptions,
+) -> String {
+    let envelope = normalized_public_submit_envelope(req, options);
+    let canonical_jobspec = canonical_jobspec_json_from_request(req, &req.jobspec_api_version);
+    let legacy_request = legacy_submit_request_body_json(req);
+    format!(
+        concat!(
+            "{{",
+            "\"envelope\":{{",
+            "\"contract_version\":\"{contract_version}\",",
+            "\"request_id\":\"{request_id}\",",
+            "\"idempotency_key\":\"{idempotency_key}\",",
+            "\"traceparent\":\"{traceparent}\",",
+            "\"tenant_id\":\"{tenant_id}\",",
+            "\"project_id\":\"{project_id}\",",
+            "\"client_version\":\"{client_version}\"",
+            "}},",
+            "\"jobspec\":{canonical_jobspec},",
+            "\"submit_request\":{legacy_request}",
+            "}}"
+        ),
+        contract_version = json_escape(&envelope.contract_version),
+        request_id = json_escape(&envelope.request_id),
+        idempotency_key = json_escape(&envelope.idempotency_key),
+        traceparent = json_escape(&envelope.traceparent),
+        tenant_id = json_escape(&envelope.tenant_id),
+        project_id = json_escape(&envelope.project_id),
+        client_version = json_escape(&envelope.client_version),
+        canonical_jobspec = canonical_jobspec,
+        legacy_request = legacy_request,
+    )
+}
+
 pub fn build_submit_request_envelope_json(req: &SubmitJobRequest) -> String {
+    build_public_submit_payload_json(req, &PublicSubmitOptions::default())
+}
+
+fn legacy_submit_request_body_json(req: &SubmitJobRequest) -> String {
     let ProgramSource::EigenLangSource {
         source,
         entrypoint,
@@ -606,7 +728,10 @@ fn resolve_program_path(basedir: &Path, program_path: &str) -> PathBuf {
 
 fn validate_safe_relative_path(program_path: &str) -> Result<(), JobSpecValidationError> {
     let p = PathBuf::from(program_path);
-    if p.is_absolute() || p.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+    if p.is_absolute()
+        || p.components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
         return Err(JobSpecValidationError::new(vec![FieldViolation {
             field: "spec.program.path".to_string(),
             description: "path traversal is not allowed".to_string(),
@@ -945,17 +1070,15 @@ fn runtime_intelligence_hints_for_compile(
             &sha256_hex(req.name.as_bytes())[0..12]
         )),
 
-        traceability_key = json_escape(&format!(
-            "trace://compile/{}/{}",
-            req.name,
-            req.target
-        )),
+        traceability_key = json_escape(&format!("trace://compile/{}/{}", req.name, req.target)),
     );
 
     Ok((runtime_hints, execution_annotations))
 }
         
-fn recommendation_policy_for_compile(req: &SubmitJobRequest) -> Result<String, JobSpecValidationError> {
+fn recommendation_policy_for_compile(
+    req: &SubmitJobRequest,
+) -> Result<String, JobSpecValidationError> {
     let min_confidence = req
         .compiler_options
         .get("runtime.recommendation.min_confidence")
@@ -1090,7 +1213,12 @@ fn extract_json_bool_field(doc: &str, field: &str) -> Option<bool> {
         .trim_start()
         .strip_prefix("true")
         .map(|_| true)
-        .or_else(|| tail[colon + 1..].trim_start().strip_prefix("false").map(|_| false))?;
+        .or_else(|| {
+            tail[colon + 1..]
+                .trim_start()
+                .strip_prefix("false")
+                .map(|_| false)
+        })?;
     Some(value)
 }
 
@@ -1479,7 +1607,7 @@ spec:
     }
 
     #[test]
-    fn inline_program_is_rejected_by_canonical_packaging_rule() {
+    fn inline_program_is_accepted_for_public_submission_conformance() {
         let yaml = r#"
 apiVersion: eigen.os/v0.1
 kind: QuantumJob
@@ -1493,12 +1621,10 @@ spec:
   target: sim:local
 "#;
         let spec = parse_and_validate_jobspec(yaml).unwrap();
-        let err = map_to_submit_job_request_with_packaging(&spec, Path::new(".")).unwrap_err();
-        assert!(
-            err.violations
-                .iter()
-                .any(|v| v.field == "spec.program" && v.description.contains("not allowed"))
-        );
+        let req = map_to_submit_job_request_with_packaging(&spec, Path::new(".")).unwrap();
+        assert_eq!(req.jobspec_api_version, LEGACY_JOBSPEC_API_VERSION);
+        let ProgramSource::EigenLangSource { source, .. } = req.program;
+        assert!(source.contains("@hybrid_program"));
     }
 
     #[test]
@@ -1522,6 +1648,7 @@ spec:
     #[test]
     fn canonical_jobspec_digest_from_request_is_deterministic() {
         let req = SubmitJobRequest {
+            jobspec_api_version: JOBSPEC_API_VERSION.to_string(),
             name: "bell".to_string(),
             program: ProgramSource::EigenLangSource {
                 source: "@hybrid_program\ndef main():\n    return 1\n".to_string(),
@@ -1541,6 +1668,73 @@ spec:
         assert_eq!(first.len(), 64);
         assert!(canonical.contains("\"version\":\"1.0.0\""));
         assert!(canonical.contains("\"apiVersion\":\"eigen.os/v1\""));
+    }
+
+    #[test]
+    fn public_submit_payload_normalizes_minimal_inline_reference_fixture() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../..");
+        let yaml =
+            fs::read_to_string(repo.join("docs/reference/fixtures/jobspec/1.0/minimal/job.yaml"))
+                .expect("minimal fixture");
+        let spec = parse_and_validate_jobspec(&yaml).expect("valid fixture");
+        let req = map_to_submit_job_request_with_packaging(&spec, Path::new(".")).expect("request");
+        let payload = build_public_submit_payload_json(
+            &req,
+            &PublicSubmitOptions {
+                traceparent: Some(
+                    "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01".to_string(),
+                ),
+                ..PublicSubmitOptions::default()
+            },
+        );
+
+        assert!(payload.contains("\"envelope\""));
+        assert!(payload.contains("\"contract_version\":\"1.0.0\""));
+        assert!(payload.contains("\"idempotency_key\":\"idem_"));
+        assert!(payload.contains(
+            "\"traceparent\":\"00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01\""
+        ));
+        assert!(payload.contains("\"contract\":\"jobspec.normalized\""));
+        assert!(payload.contains("\"apiVersion\":\"eigen.os/v1\""));
+        assert!(payload.contains("\"name\":\"v1-minimal\""));
+    }
+
+    #[test]
+    fn public_submit_payload_normalizes_full_file_reference_fixture() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../..");
+        let dir = temp_dir();
+        fs::write(
+            dir.join("job.yaml"),
+            fs::read_to_string(repo.join("docs/reference/fixtures/jobspec/1.0/full/job.yaml"))
+                .expect("full fixture"),
+        )
+        .unwrap();
+        fs::write(
+            dir.join("program.eigen.py"),
+            "@hybrid_program\ndef run():\n    return 2\n",
+        )
+        .unwrap();
+
+        let req = build_submit_request_from_job_file(&dir.join("job.yaml")).expect("request");
+        let payload = build_public_submit_payload_json(
+            &req,
+            &PublicSubmitOptions {
+                request_id: Some("req-explicit".to_string()),
+                idempotency_key: Some("idem-explicit".to_string()),
+                tenant_id: Some("tenant-a".to_string()),
+                project_id: Some("project-a".to_string()),
+                ..PublicSubmitOptions::default()
+            },
+        );
+
+        assert!(payload.contains("\"request_id\":\"req-explicit\""));
+        assert!(payload.contains("\"idempotency_key\":\"idem-explicit\""));
+        assert!(payload.contains("\"tenant_id\":\"tenant-a\""));
+        assert!(payload.contains("\"project_id\":\"project-a\""));
+        assert!(payload.contains("\"name\":\"v1-full\""));
+        assert!(payload.contains("\"entrypoint\":\"run\""));
+        assert!(payload.contains("\"optimization_level\":\"2\""));
+        assert!(payload.contains("qfs://datasets/h2.json"));
     }
 
     #[test]
@@ -1673,7 +1867,11 @@ spec:
     fn compile_recommendation_policy_fallback_variants_are_deterministic() {
         let dir = temp_dir();
         let yaml_path = dir.join("job.yaml");
-        fs::write(dir.join("program.eigen.py"), "@hybrid_program\ndef main():\n    return 1\n").unwrap();
+        fs::write(
+            dir.join("program.eigen.py"),
+            "@hybrid_program\ndef main():\n    return 1\n",
+        )
+        .unwrap();
         fs::write(
             &yaml_path,
             "apiVersion: eigen.os/v0.1\nkind: QuantumJob\nmetadata:\n  name: rec-policy\nspec:\n  target: sim:local\n",
@@ -1703,7 +1901,11 @@ spec:
     fn compile_fails_closed_for_malformed_recommendation_context_payload() {
         let dir = temp_dir();
         let yaml_path = dir.join("job.yaml");
-        fs::write(dir.join("program.eigen.py"), "@hybrid_program\ndef main():\n    return 1\n").unwrap();
+        fs::write(
+            dir.join("program.eigen.py"),
+            "@hybrid_program\ndef main():\n    return 1\n",
+        )
+        .unwrap();
         fs::write(
             &yaml_path,
             "apiVersion: eigen.os/v0.1\nkind: QuantumJob\nmetadata:\n  name: malformed-rec\nspec:\n  target: sim:local\n  metadata:\n    runtime.recommendation.context: '{\"contract\":\"pattern_miner.recommendation\"}'\n",
@@ -1716,7 +1918,8 @@ spec:
                 assert_eq!(validation.code, "RUNTIME_INTELLIGENCE_DIAGNOSTIC");
                 assert!(validation.violations.iter().any(|v| {
                     v.field == "spec.metadata.runtime.recommendation.context"
-                        && v.description.contains("malformed recommendation context payload")
+                        && v.description
+                            .contains("malformed recommendation context payload")
                 }));
             }
             other => panic!("expected validation error, got {other:?}"),
@@ -1736,6 +1939,7 @@ spec:
     #[test]
     fn client_side_schema_validation_rejects_invalid_submit_request() {
         let req = SubmitJobRequest {
+            jobspec_api_version: JOBSPEC_API_VERSION.to_string(),
             name: "".to_string(),
             program: ProgramSource::EigenLangSource {
                 source: "".to_string(),
@@ -1762,6 +1966,7 @@ spec:
     #[test]
     fn request_envelope_json_matches_expected_contract_shape() {
         let req = SubmitJobRequest {
+            jobspec_api_version: JOBSPEC_API_VERSION.to_string(),
             name: "bell".to_string(),
             program: ProgramSource::EigenLangSource {
                 source: "@hybrid_program\ndef main():\n    pass\n".to_string(),
