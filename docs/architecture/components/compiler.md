@@ -427,3 +427,274 @@ This document is normative. If the repository currently emits AQO `0.1` or lacks
 ## 16. Summary
 
 The Eigen Compiler is a deterministic, sandboxed, stage-oriented compilation service that transforms Eigen-Lang v1.0 programs into AQO v1.0 artifacts. It is designed around the Eigen-DPDA neuro-symbolic architecture (DPDA + model scoring) with a strict deterministic safety boundary, produces canonical QFS artifacts, and exposes required observability for compilation timing and DPDA step visibility.
+
+---
+
+## Appendix A. Diagrams (normative)
+
+### A.1 C4 — Context (Compiler Service)
+
+![Context](https://i.imgur.com/nnLAemw.png)
+
+<details>
+<summary>code</summary>
+
+```text
+graph LR
+  Client[System API / Kernel-QRTX] -->|internal gRPC: eigen.internal.v1| Compiler["Eigen Compiler Service\n(deterministic, sandboxed)"]
+  Compiler -->|read/write artifacts| QFS["QFS\n(qfs://...)"]
+  Compiler -->|optional advisory lookups| KB["Knowledge Base\n(optional)"]
+  Compiler -->|optional model scoring| ModelReg["Model Registry\n(signed models)"]
+  Compiler -->|telemetry| Obs["Observability\n(OTel, metrics, logs)"]
+
+  subgraph Trust Boundaries
+    Sandbox["Compiler Sandbox Profile\n(no network by default,\nro-fs outside workspace,\nCPU/Mem/Time limits)"]
+  end
+  Compiler --- Sandbox
+```
+
+</details>
+
+**Normative notes:**
+
+- Only **Kernel/QRTX** (or internal orchestrator) calls the compiler; there is **no public compiler API**.
+- QFS is the **canonical persistence** for compilation artifacts and metadata.
+
+---
+
+### A.2 C4 — Container view (internal runtime slice)
+
+![Container view](https://i.imgur.com/7JsYTt6.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  subgraph Runtime["Eigen OS Runtime (internal)"]
+    K["Kernel/QRTX"]
+    C["Compiler Service"]
+    QFS["QFS Service"]
+    KB["Knowledge Base (optional)"]
+    MR["Model Registry (optional)"]
+    OTEL["OTel Collector / Metrics"]
+  end
+
+  K -->|"CompileJob / CompileCircuit\n(eigen.internal.v1)"| C
+  C -->|"PUT artifacts (atomic)\nGET sources (optional)"| QFS
+  C -->|"Query candidates (optional)"| KB
+  C -->|"Fetch signed model (optional)"| MR
+  C -->|"traces/metrics/logs"| OTEL
+```
+
+</details>
+
+**Normative notes:**
+
+- Compiler remains deterministic even if KB/model are unavailable: **DPDA-only fallback** MUST be used.
+
+---
+
+### 10.A.3 Component diagram — Compiler pipeline (stages are normative)
+
+![Compiler pipeline](https://i.imgur.com/ZyiSfNG.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  subgraph Compiler["Compiler Service (single request)"]
+    Ingest["ingest\nUTF-8 validate + line ending normalize"]
+    Parse["parse\nAST build"]
+    VAST["validate_ast\nallowlist enforcement"]
+    Annot["annotate\nsymbols + semantic tags"]
+    Lower["lower_to_ir\ndeterministic internal IR"]
+    DPDA["eigen_dpda\nallowed_actions + deterministic tie-break"]
+    Canon["canonicalize_aqo\nschema + invariants"]
+    Opt["optional_optimize\ndeterministic passes only"]
+    HW["optional_hardware_adapt\nadvisory only (post-AQO)"]
+    Emit["emit\natomic QFS writes + hashes"]
+  end
+
+  Ingest --> Parse --> VAST --> Annot --> Lower --> DPDA --> Canon --> Opt --> HW --> Emit
+```
+
+</details>
+
+**Normative notes:**
+
+- `optional_hardware_adapt` MUST NOT change canonical AQO; it outputs **separate advisory artifacts** only.
+
+---
+
+### A.4 Component diagram — Eigen-DPDA core (decision safety boundary)
+
+![Eigen-DPDA core](https://i.imgur.com/HR0AhZC.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  subgraph DPDA_Core["Eigen-DPDA core"]
+    State["DPDA state + stack"]
+    Allowed["allowed_actions(state)"]
+    Model["Neural scorer (optional)\nTransformer/GNN"]
+    Policy["Deterministic policy\n(DPDA-only mode)"]
+    Select["select_action\n(deterministic tie-break)"]
+    Apply["apply_action\n(update state/stack)\n+ emit AQO ops"]
+  end
+
+  State --> Allowed
+  Allowed --> Model
+  Allowed --> Policy
+  Model --> Select
+  Policy --> Select
+  Select --> Apply --> State
+```
+
+</details>
+
+**Normative notes:**
+
+- Model outputs are advisory;** DPDA invariants are authoritative**.
+- If model unavailable/invalid: **Policy path MUST be used**.
+
+---
+
+### A.5 Sequence — CompileJob happy path (QFS atomic artifact emission)
+
+![CompileJob happy path](https://i.imgur.com/GEY0BAN.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+    autonumber
+    participant K as Kernel/QRTX
+    participant C as Compiler Service
+    participant Q as QFS
+    participant O as Observability
+
+    K->>C: CompileJob(source_bytes|source_ref, entrypoint, target, options)<br/>+ trace context
+    C->>O: Start spans (compiler.ingest..emit)
+
+    alt source_ref provided
+        C->>Q: GET qfs://.../source
+        Q-->>C: source_bytes
+    end
+
+    Note over C: ingest → parse → validate_ast → annotate → lower_to_ir<br/>eigen_dpda (fallback)<br/>canonicalize_aqo (+ optimize)
+
+    C->>Q: PUT staged artifacts (temp prefix)
+    Q-->>C: ACK
+
+    C->>Q: COMMIT/RENAME (atomic publish)
+    Q-->>C: ACK
+
+    C-->>K: CompileJobResponse(artifact_refs, hashes, cache_hit?)
+    C->>O: End spans + metrics
+```
+
+</details>
+
+**Normative notes:**
+
+- `emit` MUST be **atomic**: either all required artifacts become visible, or none.
+
+---
+
+### A.6 Sequence — Deterministic caching (optional, but contract rules are normative if enabled)
+
+![Deterministic caching](https://i.imgur.com/rATQ5FD.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant K as Kernel/QRTX
+  participant C as Compiler Service
+  participant Q as QFS
+
+  K->>C: CompileJob(...)
+  C->>C: compute source_sha256 + options_hash + target
+  C->>C: cache_lookup(key)
+
+  alt cache hit
+    C->>Q: GET qfs://cache/<key>/compiled/metadata.json
+    Q-->>C: metadata (includes aqo_sha256)
+    C-->>K: CompileJobResponse(cache_hit=true, artifact_refs)
+  else cache miss
+    C->>C: run pipeline (deterministic)
+    C->>Q: PUT qfs://cache/<key>/compiled/* (atomic)
+    Q-->>C: ACK
+    C-->>K: CompileJobResponse(cache_hit=false, artifact_refs)
+  end
+```
+
+</details>
+
+#### Normative notes:
+
+- Cache hit MUST return **byte-identical** AQO artifacts for the same key.
+
+---
+
+### A.7 Sequence — Forbidden construct / validation failure (canonical error mapping)
+
+![Forbidden construct / validation failure](https://i.imgur.com/LwP1YG2.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant K as Kernel/QRTX
+  participant C as Compiler Service
+  participant O as Observability
+
+  K->>C: CompileJob(source_bytes,...)
+  C->>O: span compiler.validate_ast
+  C->>C: validate_ast detects forbidden node/call/import
+  C-->>K: gRPC INVALID_ARGUMENT\n+ google.rpc.BadRequest(field_violations)\n+ ErrorInfo(reason="EIGEN_COMPILER_FORBIDDEN_AST")
+  C->>O: log structured error\n(metrics: compilations_total{failed})
+```
+
+</details>
+
+#### Normative notes:
+
+- Validation failures MUST be deterministic and include structured `BadRequest` details.
+
+---
+
+### A.8 Deployment / isolation view — compiler sandbox profile (normative intent)
+
+![Deployment](https://i.imgur.com/BsVBTCJ.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  subgraph Pod["Kubernetes Pod: compiler-service"]
+    C["compiler-service container"]
+    SB["sandbox profile\n(no net by default)\nro-fs outside workspace\ncpu/mem/time limits"]
+  end
+
+  K["Kernel/QRTX"] -->|"internal gRPC"| C
+  C -->|"QFS writes/reads\n(allowlisted egress only if required)"| QFS["QFS endpoint"]
+  C --- SB
+```
+
+</details>
+
+#### Normative notes:
+
+- Network access is **disabled by default**; if QFS access requires network, the egress MUST be **allowlisted** and auditable.
+- Only allowlisted environment variables are visible to the compiler process.
