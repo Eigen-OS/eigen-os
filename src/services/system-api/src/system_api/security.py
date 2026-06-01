@@ -32,6 +32,10 @@ class SecurityConfig:
 
     max_program_source_bytes: int
     max_jobspec_yaml_bytes: int
+    max_submit_metadata_entries: int
+    max_submit_metadata_key_bytes: int
+    max_submit_metadata_value_bytes: int
+    max_submit_dependencies: int
 
 
 def _int_env(name: str, default: int) -> int:
@@ -60,6 +64,10 @@ def load_security_config() -> SecurityConfig:
         static_token_tenant=os.getenv("SYSTEM_API_AUTH_TENANT", ""),
         max_program_source_bytes=_int_env("SYSTEM_API_MAX_PROGRAM_SOURCE_BYTES", 262_144),
         max_jobspec_yaml_bytes=_int_env("SYSTEM_API_MAX_JOBSPEC_YAML_BYTES", 65_536),
+        max_submit_metadata_entries=_int_env("SYSTEM_API_MAX_SUBMIT_METADATA_ENTRIES", 64),
+        max_submit_metadata_key_bytes=_int_env("SYSTEM_API_MAX_SUBMIT_METADATA_KEY_BYTES", 128),
+        max_submit_metadata_value_bytes=_int_env("SYSTEM_API_MAX_SUBMIT_METADATA_VALUE_BYTES", 4096),
+        max_submit_dependencies=_int_env("SYSTEM_API_MAX_SUBMIT_DEPENDENCIES", 64),
     )
 
 

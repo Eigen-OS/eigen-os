@@ -64,6 +64,49 @@ def validate_submit_job(req) -> List[FieldViolation]:
         elif program == "aqo_ref":
             violations.extend(required_string(req.aqo_ref.qfs_ref, "aqo_ref.qfs_ref"))
 
+    if len(req.metadata) > cfg.max_submit_metadata_entries:
+        violations.append(
+            FieldViolation(
+                field="metadata",
+                description=(
+                    "metadata entry count exceeds max allowed size "
+                    f"({cfg.max_submit_metadata_entries} entries)"
+                ),
+            )
+        )
+    for key, value in req.metadata.items():
+        if len(key.encode("utf-8")) > cfg.max_submit_metadata_key_bytes:
+            violations.append(
+                FieldViolation(
+                    field=f"metadata[{key}]",
+                    description=(
+                        "metadata key exceeds max allowed size "
+                        f"({cfg.max_submit_metadata_key_bytes} bytes)"
+                    ),
+                )
+            )
+        if len(value.encode("utf-8")) > cfg.max_submit_metadata_value_bytes:
+            violations.append(
+                FieldViolation(
+                    field=f"metadata[{key}]",
+                    description=(
+                        "metadata value exceeds max allowed size "
+                        f"({cfg.max_submit_metadata_value_bytes} bytes)"
+                    ),
+                )
+            )
+
+    if len(req.dependencies) > cfg.max_submit_dependencies:
+        violations.append(
+            FieldViolation(
+                field="dependencies",
+                description=(
+                    "dependency count exceeds max allowed size "
+                    f"({cfg.max_submit_dependencies} entries)"
+                ),
+            )
+        )
+
     for key in _JOBSPEC_YAML_KEYS:
         yaml_payload = req.metadata.get(key, "")
         if len(yaml_payload.encode("utf-8")) > cfg.max_jobspec_yaml_bytes:

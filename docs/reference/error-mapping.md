@@ -425,7 +425,7 @@ Retryability:
 | Unknown shard | Distributed runtime | `NOT_FOUND` | RPC failure | No |
 | Unknown reservation | Reservation manager | `NOT_FOUND` | RPC failure | No |
 | Duplicate artifact upload | Artifact store | `ALREADY_EXISTS` | RPC failure | No |
-| Duplicate idempotency key | API gateway | `ALREADY_EXISTS` | RPC failure | No |
+| Duplicate idempotency key with different normalized payload | API gateway | `FAILED_PRECONDITION` | RPC failure | No |
 | Results requested before completion | Runtime lifecycle | `FAILED_PRECONDITION` | RPC failure | Yes |
 | Merge before quorum satisfied | Runtime merge layer | `FAILED_PRECONDITION` | RPC failure | Yes |
 | Reservation expired | Device runtime | `FAILED_PRECONDITION` | RPC failure | Conditional |

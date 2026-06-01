@@ -212,12 +212,13 @@ message SubmitJobRequest {
 
 Rules:
 
-- Retry identity is `(tenant_id, idempotency_key, sha256(canonical normalized SubmitJobRequest excluding volatile transport-only metadata))`
-- Same key + same normalized request body MUST return the same logical job and canonical `job_id`
-- Same key + different normalized payload MUST return `ALREADY_EXISTS`
-- Missing idempotency key on production `SubmitJob` MUST return `FAILED_PRECONDITION` unless a deployment explicitly enables non-idempotent development mode
-- Idempotency records MUST persist the normalized request digest, assigned `job_id`, first response state, request timestamp, and tenant/project scope
-- Idempotency retention window MUST be at least 24h
+- Retry identity is `(tenant_id, project_id, idempotency_key, sha256(canonical normalized SubmitJobRequest excluding volatile transport-only metadata))`.
+- Same key + same normalized request body MUST return the same logical job and canonical `job_id`, including after System API process restart while the idempotency record is inside its retention window.
+- Same key + different normalized payload MUST return `FAILED_PRECONDITION`.
+- Missing idempotency key on production `SubmitJob` MUST return `FAILED_PRECONDITION` unless a deployment explicitly enables non-idempotent development mode.
+- Idempotency records MUST persist the normalized request digest, assigned `job_id`, expiration timestamp, and tenant/project scope.
+- Idempotency retention window MUST be configurable and default to at least 24h.
+- Expired idempotency records MUST be purged before comparison; after expiry, a same-key request is treated as a new submission.
 
 #### Validation Rules
 
@@ -229,7 +230,7 @@ Rules:
 | Unknown target | `NOT_FOUND` |
 | Invalid reservation | `FAILED_PRECONDITION` |
 | Unsupported contract version | `FAILED_PRECONDITION` |
-| Payload exceeds public limit | `RESOURCE_EXHAUSTED` |
+| Payload exceeds public limit | `INVALID_ARGUMENT` with field violations at the System API boundary; deployments MAY map ingress byte-quota failures to `RESOURCE_EXHAUSTED` before deserialization |
 
 #### Response
 
@@ -570,7 +571,7 @@ Public APIs use canonical gRPC status codes.
 | `RESOURCE_EXHAUSTED` | Quota exceeded |
 | `UNAVAILABLE` | Backend unavailable |
 | `DEADLINE_EXCEEDED` | Timeout |
-| `ALREADY_EXISTS` | Idempotency conflict |
+| `FAILED_PRECONDITION` | Invalid state transition or idempotency conflict |
 | `OUT_OF_RANGE` | Stream replay cursor outside retention window |
 | `INTERNAL` | Unexpected failure |
 
@@ -629,6 +630,7 @@ Minimum metrics:
 | `grpc.requests_total` | Counter |
 | `grpc.request_duration_ms` | Histogram |
 | `jobs.submitted_total` | Counter |
+| `eigen_api_submit_job_outcomes_total{outcome}` | Counter with bounded `outcome in {accepted,replayed,conflict,limit}` |
 | `jobs.cancelled_total` | Counter |
 | `stream.replay_requests_total` | Counter |
 
@@ -823,7 +825,7 @@ flowchart LR
   H --> C{"Lookup (tenant,K)"}
   C -->|miss| D["Create job_id<br/>persist idempotency record<br/>(K,H)->job_id"]
   C -->|hit same H| E[Return existing job_id<br/>same logical job]
-  C -->|hit different H| F["ALREADY_EXISTS\n(or FAILED_PRECONDITION per policy)"]
+  C -->|hit different H| F["FAILED_PRECONDITION\nidempotency conflict"]
   D --> G[Response: job_id + initial status]
   E --> G
 ```
