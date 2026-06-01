@@ -113,7 +113,7 @@
       "compatibility_status": "needs-alignment"
     },
     {
-      "name": "QFS layout",
+      "name": "QFS layout (CircuitFS)",
       "contract_version": "1.0.0",
       "owner": "QFS; Kernel/QRTX; System API facades",
       "sources": [
@@ -327,7 +327,7 @@
       ],
       "conformance_tests": [
         "Product 1.0 authn/authz conformance suite",
-        "src/rust/crates/security-module/tests/"
+        "planned src/rust/crates/security-module/tests/"
       ],
       "implementation_status": "documented",
       "compatibility_status": "needs-alignment"
