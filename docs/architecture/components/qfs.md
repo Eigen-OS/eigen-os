@@ -568,3 +568,358 @@ Future governance work SHALL:
 - Metrics labels remain bounded and do not contain correlation identifiers.
 - QFS never weakens determinism, auditability, or security guarantees.
 - Baseline execution MUST remain possible even if advanced QFS Level-1/2 features are not present.
+
+---
+
+## Appendix A. Diagrams (normative)
+
+### A.1 C4 — QFS as authoritative job-scoped artifact store
+
+![QFS as authoritative job-scoped artifact store](https://i.imgur.com/vPVTHC3.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  subgraph Clients["Clients"]
+    SDK[SDK/CLI]
+    Ops[Ops / Audit Tools]
+  end
+
+  subgraph Runtime["Eigen OS Runtime"]
+    API[System API]
+    K[Kernel / QRTX]
+    C[Compiler]
+    DM[Driver Manager]
+    HWE[HWE]
+    OPT[GNN Optimizer]
+    NSC[NSC]
+    KB[Knowledge Base / OKB]
+  end
+
+  QFS[(QFS\nQuantum Data Fabric)]
+
+  SDK --> API
+  API --> K
+  K --> C
+  K --> DM
+  K --> QFS
+  C --> QFS
+  DM --> QFS
+  HWE --> QFS
+  OPT --> QFS
+  NSC --> QFS
+  KB --> QFS
+
+  Ops --> QFS
+  API -->|returns qfs:// refs| SDK
+```
+
+</details>
+
+---
+
+### A.2 QFS Level Decomposition
+
+![QFS Level Decomposition](https://i.imgur.com/jZGORG6.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  subgraph L1["Level 1 —LiveQubitManager"]
+    L1a[Live qubit handles]
+    L1b[Feed-forward state]
+    L1c[Low-latency sync]
+  end
+
+  subgraph L2["Level 2 — StateStore"]
+    L2a[Leases / locks]
+    L2b[Session & coordination state]
+    L2c[Replay correlation index]
+    L2d[Topology snapshot index]
+  end
+
+  subgraph L3["Level 3 — CircuitFS"]
+    L3a[Job-scoped artifact layout]
+    L3b[Atomic publish]
+    L3c[Integrity checks]
+    L3d[Refs: qfs://jobs/<job_id>/...]
+  end
+
+  L1 --> L2 --> L3
+```
+
+</details>
+
+---
+
+### A.3 Canonical `qfs://jobs/<job_id>/` layout (overview)
+
+![Canonical <job_id>](https://i.imgur.com/BiDDblt.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  Root["qfs://jobs/<job_id>/"] --> input["input/ (JobSpec)"]
+  Root --> source["source/ (program bundle)"]
+  Root --> compiled["compiled/ (AQO/QASM/diag)"]
+  Root --> results["results/ (results + error)"]
+  Root --> logs["logs/ (run.log optional)"]
+  Root --> meta["meta/ (manifests, hashes)"]
+  Root --> timeline["timeline/ (timeline.json recommended)"]
+
+  compiled --> aqo["compiled.aqo.json (required)"]
+  compiled --> qasm["compiled.qasm (optional)"]
+  compiled --> diag["diagnostics.json (optional)"]
+
+  results --> res["results.json (required when done)"]
+  results --> err["error.json (required when ERROR)"]
+```
+
+</details>
+
+---
+
+### A.4 Reference Resolution Pipeline
+
+![Reference Resolution Pipeline](https://i.imgur.com/uZD4YqK.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TD
+    Ref["qfs://jobs/<job_id>/compiled/compiled.aqo.json"] --> Parse["Parse & validate grammar\n(no .., url-safe)"]
+    Parse --> Auth["AuthZ / tenant boundary\n(if enabled)"]
+    Auth --> Map["Map to backend key/path"]
+    Map --> Load["Load bytes from backend"]
+    Load --> Verify["Verify digest (if present)"]
+    Verify --> Return["Return bytes + handle metadata"]
+
+    classDef step fill:#f0f0f0,stroke:#333
+    class Parse,Auth,Map,Load,Verify,Return step
+```
+
+</details>
+
+---
+
+### A.5 Artifact lifecycle (job-scoped)
+
+![Artifact lifecycle](https://i.imgur.com/nIUtVn8.png)
+
+<details>
+<summary>code</summary>
+
+```text
+stateDiagram-v2
+  [*] --> Draft: temp write
+  Draft --> Published: atomic publish (rename/finalize)
+  Published --> Pinned: PinArtifact (policy)
+  Published --> GCEligible: retention window expires
+  Pinned --> Published: unpin (policy)
+  GCEligible --> Deleted: GC (policy audited)
+
+  note right of Published
+    compiled/ and results/ SHOULD be immutable once published.
+    If regeneration needed: new versioned artifact (Phase-1) or new job scope (MVP).
+  end note
+```
+
+</details>
+
+---
+
+### A.6 Atomic write pattern (local FS / object store)
+
+![Atomic write pattern](https://i.imgur.com/pl8yx3t.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant W as Writer (service)
+  participant B as Backend (FS/S3)
+  participant R as Reader (service)
+
+  W->>B: write temp object/path (job/.../.tmp/<id>)
+  W->>B: fsync/multipart complete (backend-specific)
+  W->>B: atomic finalize (rename/commit) -> job/.../<final>
+  R->>B: read job/.../<final>
+  Note over R: Readers never observe partial bytes
+```
+
+</details>
+
+---
+
+### A.7 Sequence — Compiler emits artifacts to QFS
+
+![Compiler emits artifacts to QFS](https://i.imgur.com/4OzGQDT.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant K as Kernel/QRTX
+  participant C as Compiler
+  participant Q as QFS
+
+  K->>C: CompileJob(job_id, source_ref/bytes)
+  C->>Q: atomic_write compiled/compiled.aqo.json
+  C->>Q: atomic_write compiled/metadata.json (hashes)
+  C-->>K: compile ok (aqo_ref + aqo_digest)
+```
+
+</details>
+
+---
+
+### A.8 Sequence — Kernel persists results/error artifacts
+
+![Kernel persists results/error artifacts](https://i.imgur.com/fxiorgJ.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant K as Kernel/QRTX
+  participant DM as Driver Manager
+  participant Q as QFS
+
+  K->>DM: ExecuteCircuit(job_id, device_id, aqo_ref)
+  alt success
+    DM-->>K: ExecutionResult
+    K->>Q: atomic_write results/results.json
+  else error
+    DM-->>K: gRPC error + reason code
+    K->>Q: atomic_write results/error.json
+  end
+  K->>Q: atomic_write timeline/timeline.json (recommended)
+```
+
+</details>
+
+---
+
+### A.9 Lineage graph (parents → produced artifacts)
+
+![Lineage graph](https://i.imgur.com/7FqvLm6.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  src["source/<program>\ndigest A"] --> aqo["compiled/compiled.aqo.json\ndigest B\nstage=compile"]
+  jobspec["input/job.yaml\ndigest J"] --> aqo
+  aqo --> res["results/results.json\ndigest C\nstage=execute"]
+  aqo --> err["results/error.json\ndigest E\nstage=execute (on failure)"]
+  aqo --> replay["replay/replay_bundle.json\ndigest R\nstage=replay/audit (optional)"]
+```
+
+</details>
+
+---
+
+### A.10 Backend abstraction + Phase-1 replication (target)
+
+![Backend abstraction](https://i.imgur.com/8aXNltZ.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TD
+    QFS[QFS API / facade] --> Local[(Local FS\nCircuitFsLocal)]
+    QFS --> S3[(S3-compatible\nObject Store)]
+    QFS --> CAS[(Content-addressed store\nPhase-1)]
+
+    CAS --> R1[(Region A)]
+    CAS --> R2[(Region B)]
+    R1 <--> |replication| R2
+
+    Note["📝 Replication lag MUST be observable\n(eigen_qfs_replication_lag_seconds)"] 
+    Note -.-> CAS
+
+    classDef note fill:#fff3cd,stroke:#ffc107,color:#000
+    class Note note
+```
+
+</details>
+
+---
+
+### A.11 Retention decision flow
+
+![Retention decision flow](https://i.imgur.com/fhbHTEe.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+    A[Artifact published] --> B{"Is required audit evidence?\n(results/error/replay)"}
+    B -- yes --> Keep["Keep until policy permits deletion\n(operator policy required)"]
+    B -- no --> C{Pinned?}
+    C -- yes --> KeepPinned["Keep (pinned)"]
+    C -- no --> D{"Retention window expired?"}
+    D -- no --> KeepTTL["Keep (TTL active)"]
+    D -- yes --> GC["GC eligible -> delete (audited)"]
+```
+
+</details>
+
+---
+
+### A.12 Access boundary (multi-tenant mode)
+
+![Access boundary](https://i.imgur.com/vySzpad.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+    Caller[Service / Operator] --> AuthZ["AuthZ check\n(tenant/policy)"]
+    AuthZ -->|allow| Resolve["Resolve ref -> backend key"]
+    AuthZ -.->|deny| Deny[PERMISSION_DENIED]
+    Resolve --> ReadWrite["Read/Write (policy)"]
+    ReadWrite --> Audit["Audit marker\n(job-scoped artifacts)"]
+
+    classDef deny fill:#fee,stroke:#f66
+    class Deny deny
+```
+
+</details>
+
+---
+
+### A.13 QFS telemetry (metrics + traces + logs)
+
+![QFS telemetry](https://i.imgur.com/3FF6j60.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  Ops["QFS operations\n(store/load/resolve)"] --> Traces["Traces:\nqfs.store/qfs.load/qfs.resolve\n+ trace_id/job_id as fields"]
+  Ops --> Logs["Logs:\nartifact_ref (field)\nresult + reason code"]
+  Ops --> Metrics["Metrics (bounded labels only):\nbackend, kind, op"]
+
+  Metrics --> Example["eigen_qfs_operation_duration_seconds{op,backend}\n(no job_id/trace_id labels)"]
+```
+
+</details>
