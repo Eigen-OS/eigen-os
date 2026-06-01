@@ -30,7 +30,7 @@ Completed milestones:
 - ✅ Phase-4: Intelligent runtime contracts
 - ✅ Phase-5: Distributed execution contracts and closure package
 
-Current release line for Phase-5 closure: **`0.10.1`**.
+Current implementation baseline remains pre-`1.0.0`; Product `1.0.0` is tracked as a contract-alignment target in [`docs/development/product-1.0-contract-alignment-plan.md`](docs/development/product-1.0-contract-alignment-plan.md), with Wave 0 inventory and manifest artifacts under [`docs/development/product-1.0-contract-inventory.md`](docs/development/product-1.0-contract-inventory.md) and [`contracts/product-1.0/manifest.json`](contracts/product-1.0/manifest.json).
 
 ## Who this repository is for
 

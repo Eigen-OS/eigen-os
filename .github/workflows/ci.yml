@@ -215,7 +215,21 @@ jobs:
               );
             }
   
-  
+            
+  product-1-0-contract-baseline:
+    name: Product 1.0 contract baseline
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate architecture/reference links
+        run: python3 scripts/ci/check-docs-links.py
+
+      - name: Validate Product 1.0 manifest owner/test mappings
+        run: python3 scripts/ci/check-product-1-0-manifest.py
+
+
   contract-drift-gate:
     name: Contract drift gate
     runs-on: ubuntu-latest

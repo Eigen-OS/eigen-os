@@ -32,13 +32,11 @@ This document is normative for:
 Related references:
 
 - `docs/reference/error-model.md`
-- `docs/reference/error-codes.md`
-- `docs/reference/error-cases-by-rpc.md`
 - `docs/reference/api/grpc-public.md`
 - `docs/reference/api/grpc-internal.md`
 - `docs/reference/formats/aqo.md`
-- `docs/reference/runtime/qfs-layout.md`
-- `docs/reference/observability/cluster-runtime-observability-contract.md`
+- `docs/reference/formats/qfs-layout.md`
+- `docs/reference/cluster-runtime-observability-contract.md`
 
 ---
 

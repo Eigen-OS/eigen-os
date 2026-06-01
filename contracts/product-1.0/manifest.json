@@ -1,0 +1,374 @@
+{
+  "schema_version": "1.0.0",
+  "product_release_target": "1.0.0",
+  "created": "2026-06-01",
+  "version_policy": "docs/development/product-1.0-version-policy.md",
+  "inventory": "docs/development/product-1.0-contract-inventory.md",
+  "contracts": [
+    {
+      "name": "Public gRPC API",
+      "contract_version": "1.0.0-target",
+      "owner": "System API; client SDKs/CLI",
+      "sources": [
+        "docs/reference/api/grpc-public.md",
+        "docs/architecture/components/system-api.md"
+      ],
+      "proto_schema_files": [
+        "proto/eigen/api/v1/job_service.proto",
+        "proto/eigen/api/v1/device_service.proto",
+        "proto/eigen/api/v1/types.proto"
+      ],
+      "planned_proto_schema_files": [],
+      "conformance_tests": [
+        "src/services/system-api/tests/",
+        "src/rust/apps/cli/tests/",
+        "buf lint",
+        "buf breaking"
+      ],
+      "implementation_status": "partial",
+      "compatibility_status": "needs-alignment"
+    },
+    {
+      "name": "Internal gRPC API",
+      "contract_version": "1.0.0-target",
+      "owner": "Kernel/QRTX; compiler; driver-manager; optimizer",
+      "sources": [
+        "docs/reference/api/grpc-internal.md",
+        "docs/architecture/components/qrtx.md"
+      ],
+      "proto_schema_files": [
+        "proto/eigen/internal/v1/kernel_gateway.proto",
+        "proto/eigen/internal/v1/compilation_service.proto",
+        "proto/eigen/internal/v1/driver_manager_service.proto",
+        "proto/eigen/internal/v1/optimizer_service.proto",
+        "proto/eigen/internal/v1/types.proto"
+      ],
+      "planned_proto_schema_files": [],
+      "conformance_tests": [
+        "src/rust/crates/eigen-kernel/tests/",
+        "src/services/eigen-compiler/tests/",
+        "buf lint",
+        "buf breaking"
+      ],
+      "implementation_status": "partial",
+      "compatibility_status": "needs-alignment"
+    },
+    {
+      "name": "JobSpec",
+      "contract_version": "1.0.0",
+      "owner": "System API; CLI; Kernel/QRTX; packaging",
+      "sources": [
+        "docs/reference/jobspec.md"
+      ],
+      "proto_schema_files": [
+        "proto/eigen/api/v1/job_service.proto"
+      ],
+      "planned_proto_schema_files": [
+        "JobSpec JSON Schema under specs/ or contracts/product-1.0/"
+      ],
+      "conformance_tests": [
+        "src/services/system-api/tests/test_jobspec_parser.py",
+        "src/rust/apps/cli/tests/fixtures/jobspec-valid-minimal.yaml"
+      ],
+      "implementation_status": "partial",
+      "compatibility_status": "needs-alignment"
+    },
+    {
+      "name": "Eigen-Lang",
+      "contract_version": "1.0.0",
+      "owner": "Compiler / Eigen-DPDA",
+      "sources": [
+        "docs/reference/eigen-lang.md",
+        "docs/architecture/components/compiler.md"
+      ],
+      "proto_schema_files": [
+        "proto/eigen/internal/v1/compilation_service.proto"
+      ],
+      "planned_proto_schema_files": [
+        "Eigen-Lang grammar/schema artifacts"
+      ],
+      "conformance_tests": [
+        "src/services/eigen-compiler/tests/test_conformance_suite.py"
+      ],
+      "implementation_status": "partial",
+      "compatibility_status": "needs-alignment"
+    },
+    {
+      "name": "AQO format",
+      "contract_version": "1.0.0",
+      "owner": "Compiler; optimizer; QFS; Kernel/QRTX",
+      "sources": [
+        "docs/reference/formats/aqo.md"
+      ],
+      "proto_schema_files": [
+        "proto/eigen/internal/v1/types.proto"
+      ],
+      "planned_proto_schema_files": [
+        "AQO schema under specs/ or contracts/product-1.0/"
+      ],
+      "conformance_tests": [
+        "src/services/eigen-compiler/tests/test_conformance_suite.py"
+      ],
+      "implementation_status": "documented",
+      "compatibility_status": "needs-alignment"
+    },
+    {
+      "name": "QFS layout",
+      "contract_version": "1.0.0",
+      "owner": "QFS; Kernel/QRTX; System API facades",
+      "sources": [
+        "docs/reference/formats/qfs-layout.md",
+        "docs/architecture/components/qfs.md"
+      ],
+      "proto_schema_files": [],
+      "planned_proto_schema_files": [
+        "QFS storage manifest schema under contracts/product-1.0/"
+      ],
+      "conformance_tests": [
+        "src/rust/crates/qfs/tests/"
+      ],
+      "implementation_status": "partial",
+      "compatibility_status": "needs-alignment"
+    },
+    {
+      "name": "Canonical error model",
+      "contract_version": "1.0.0",
+      "owner": "All public/internal services",
+      "sources": [
+        "docs/reference/error-model.md"
+      ],
+      "proto_schema_files": [],
+      "planned_proto_schema_files": [
+        "Structured error detail schema",
+        "gRPC status details in public/internal protos"
+      ],
+      "conformance_tests": [
+        "src/services/system-api/tests/",
+        "src/services/eigen-compiler/tests/",
+        "src/services/driver-manager/tests/"
+      ],
+      "implementation_status": "documented",
+      "compatibility_status": "needs-alignment"
+    },
+    {
+      "name": "Error mapping matrix",
+      "contract_version": "1.0.0",
+      "owner": "All public/internal services",
+      "sources": [
+        "docs/reference/error-mapping.md"
+      ],
+      "proto_schema_files": [],
+      "planned_proto_schema_files": [
+        "Machine-readable error matrix under contracts/product-1.0/"
+      ],
+      "conformance_tests": [
+        "src/services/system-api/tests/",
+        "src/rust/crates/eigen-kernel/tests/"
+      ],
+      "implementation_status": "documented",
+      "compatibility_status": "needs-alignment"
+    },
+    {
+      "name": "Orchestration observability",
+      "contract_version": "3.1.0",
+      "owner": "Observability; Kernel/QRTX; Resource Manager; System API",
+      "sources": [
+        "docs/reference/orchestration-observability-contract.md",
+        "docs/architecture/components/observability.md"
+      ],
+      "proto_schema_files": [],
+      "planned_proto_schema_files": [
+        "Prometheus/OpenTelemetry metric contract fixtures"
+      ],
+      "conformance_tests": [
+        "src/services/system-api/tests/test_observability_smoke.py",
+        "src/rust/crates/eigen-kernel/tests/"
+      ],
+      "implementation_status": "partial",
+      "compatibility_status": "needs-alignment"
+    },
+    {
+      "name": "Intelligent runtime observability",
+      "contract_version": "2.1.0",
+      "owner": "Observability; scheduler; policy engine; driver-manager",
+      "sources": [
+        "docs/reference/intelligent-runtime-observability-contract.md"
+      ],
+      "proto_schema_files": [],
+      "planned_proto_schema_files": [
+        "Prometheus/OpenTelemetry metric contract fixtures"
+      ],
+      "conformance_tests": [
+        "scripts/ci/check-phase9a-gates.sh",
+        "Product 1.0 exporter conformance suite"
+      ],
+      "implementation_status": "documented",
+      "compatibility_status": "needs-alignment"
+    },
+    {
+      "name": "Cluster runtime observability",
+      "contract_version": "1.0.0",
+      "owner": "Distributed runtime; Kernel/QRTX; Resource Manager",
+      "sources": [
+        "docs/reference/cluster-runtime-observability-contract.md"
+      ],
+      "proto_schema_files": [],
+      "planned_proto_schema_files": [
+        "Prometheus/OpenTelemetry metric contract fixtures"
+      ],
+      "conformance_tests": [
+        "scripts/ci/check-phase8b-gates.sh",
+        "Product 1.0 exporter conformance suite"
+      ],
+      "implementation_status": "documented",
+      "compatibility_status": "needs-alignment"
+    },
+    {
+      "name": "Benchmark observability",
+      "contract_version": "1.0.0",
+      "owner": "Benchmark service; Observability",
+      "sources": [
+        "docs/reference/benchmark-observability-contract.md"
+      ],
+      "proto_schema_files": [],
+      "planned_proto_schema_files": [
+        "Prometheus/OpenTelemetry metric contract fixtures"
+      ],
+      "conformance_tests": [
+        "scripts/ci/check-phase8c-gates.sh",
+        "scripts/ci/check-benchmark-reproducibility.sh"
+      ],
+      "implementation_status": "partial",
+      "compatibility_status": "needs-alignment"
+    },
+    {
+      "name": "Multi-device execution",
+      "contract_version": "3.1.0",
+      "owner": "Kernel/QRTX; Resource Manager; Driver Manager; QFS",
+      "sources": [
+        "docs/reference/multi-device-execution-contract.md"
+      ],
+      "proto_schema_files": [
+        "proto/eigen/internal/v1/kernel_gateway.proto"
+      ],
+      "planned_proto_schema_files": [
+        "Split/merge lifecycle internal proto expansion"
+      ],
+      "conformance_tests": [
+        "src/rust/crates/resource-manager/tests/",
+        "Product 1.0 split/merge integration tests"
+      ],
+      "implementation_status": "documented",
+      "compatibility_status": "needs-alignment"
+    },
+    {
+      "name": "Benchmark Run REST API",
+      "contract_version": "1.0.0",
+      "owner": "Benchmark service; System API gateway",
+      "sources": [
+        "docs/reference/api/benchmark-run.md"
+      ],
+      "proto_schema_files": [],
+      "planned_proto_schema_files": [
+        "OpenAPI/JSON Schema under contracts/product-1.0/"
+      ],
+      "conformance_tests": [
+        "scripts/ci/check-phase8c-gates.sh",
+        "Product 1.0 REST conformance suite"
+      ],
+      "implementation_status": "documented",
+      "compatibility_status": "planned"
+    },
+    {
+      "name": "Explain Backend Selection REST API",
+      "contract_version": "1.0.0",
+      "owner": "System API; intelligent runtime; Resource Manager",
+      "sources": [
+        "docs/reference/api/explain-backend-selection.md"
+      ],
+      "proto_schema_files": [],
+      "planned_proto_schema_files": [
+        "OpenAPI/JSON Schema under contracts/product-1.0/"
+      ],
+      "conformance_tests": [
+        "Product 1.0 explainability API conformance suite"
+      ],
+      "implementation_status": "documented",
+      "compatibility_status": "planned"
+    },
+    {
+      "name": "Public REST API envelope",
+      "contract_version": "1.0.0",
+      "owner": "System API; API gateway",
+      "sources": [
+        "docs/reference/api/rest-public.md"
+      ],
+      "proto_schema_files": [],
+      "planned_proto_schema_files": [
+        "OpenAPI under contracts/product-1.0/"
+      ],
+      "conformance_tests": [
+        "Product 1.0 REST mirror conformance suite"
+      ],
+      "implementation_status": "planned",
+      "compatibility_status": "planned"
+    },
+    {
+      "name": "Authorization and security policy",
+      "contract_version": "1.0.0",
+      "owner": "Security & Isolation; System API; all services",
+      "sources": [
+        "docs/reference/security/authz.md",
+        "docs/architecture/components/security-isolation.md"
+      ],
+      "proto_schema_files": [],
+      "planned_proto_schema_files": [
+        "Policy schema under contracts/product-1.0/"
+      ],
+      "conformance_tests": [
+        "Product 1.0 authn/authz conformance suite",
+        "src/rust/crates/security-module/tests/"
+      ],
+      "implementation_status": "documented",
+      "compatibility_status": "needs-alignment"
+    },
+    {
+      "name": "Knowledge Base public API",
+      "contract_version": "1.0.0",
+      "owner": "Knowledge Base; System API",
+      "sources": [
+        "docs/architecture/components/knowledge-base.md"
+      ],
+      "proto_schema_files": [
+        "proto/eigen/api/v1/knowledge_base_service.proto"
+      ],
+      "planned_proto_schema_files": [],
+      "conformance_tests": [
+        "Product 1.0 KB API conformance suite"
+      ],
+      "implementation_status": "partial",
+      "compatibility_status": "planned"
+    },
+    {
+      "name": "Component architecture boundary map",
+      "contract_version": "1.0.0-product-target-with-1.3.0-architecture-scope",
+      "owner": "Architecture governance; all component owners",
+      "sources": [
+        "docs/architecture/contract-map.md",
+        "docs/architecture/overview.md",
+        "docs/architecture/components.md",
+        "docs/architecture/data-flow.md"
+      ],
+      "proto_schema_files": [],
+      "planned_proto_schema_files": [
+        "Not applicable; architecture boundary map uses markdown source contracts"
+      ],
+      "conformance_tests": [
+        "python3 scripts/ci/check-docs-links.py",
+        "python3 scripts/ci/check-product-1-0-manifest.py"
+      ],
+      "implementation_status": "documented",
+      "compatibility_status": "frozen-for-wave-0"
+    }
+  ]
+}

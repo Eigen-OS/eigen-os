@@ -123,7 +123,7 @@ The following repository artifacts are normative:
 - `monitoring/dashboards/intelligent_runtime_dashboard.json`
 - `monitoring/metrics/tests/test_intelligent_runtime_observability.py`
 - `docs/howto/intelligent-runtime-observability-runbook.md`
-- `docs/architecture/contracts/runtime-decisioning.md`
+- `docs/reference/intelligent-runtime-observability-contract.md`
 
 ---
 
