@@ -79,7 +79,8 @@ For Wave 1 public-boundary closure, the System API owns canonical envelope norma
 
 - normalize `ApiRequestEnvelope` from request payload, authenticated context, gRPC metadata, and transport deadline,
 - validate `contract_version` before dispatching to Kernel/QRTX or any other internal service,
-- reject malformed versions with `INVALID_ARGUMENT` and unsupported/incompatible versions with `FAILED_PRECONDITION`,
+- reject malformed versions with `INVALID_ARGUMENT` plus `PUBLIC_CONTRACT_VERSION_MALFORMED` details and unsupported/incompatible versions with `FAILED_PRECONDITION` plus `PUBLIC_CONTRACT_VERSION_UNSUPPORTED` details,
+- derive deterministic defaults for missing MVP-client envelope fields (`contract_version=1.0.0`, stable `req_<sha256-prefix>` request IDs, `tenant-default`, and `project-default`) before audit, idempotency, or internal forwarding,
 - compute the `SubmitJob` idempotency digest from the normalized request and persist it with tenant/project scope,
 - enforce public payload limits before forwarding requests to internal services,
 - emit public API contract marker metrics with bounded labels and request/trace correlation,
