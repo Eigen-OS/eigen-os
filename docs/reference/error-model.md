@@ -28,10 +28,7 @@ This document is normative for:
 - orchestration systems,
 - distributed runtime infrastructure.
 
-For detailed scenario-level mappings, see:
-
-- `docs/reference/error-mapping.md`
-- `docs/reference/error-cases-by-rpc.md`
+For detailed scenario-level mappings, see `docs/reference/error-mapping.md`.
 
 ---
 

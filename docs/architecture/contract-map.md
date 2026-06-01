@@ -51,7 +51,7 @@ It serves as:
 #### Public contract namespace
 
 - gRPC: `eigen.api.v1`
-- REST: `/v1/*` (REST mirrors public semantics; see `docs/reference/api/rest-*`)
+- REST: `/v1/*` (REST mirrors public semantics; see `docs/reference/api/rest-public.md`)
 
 ---
 

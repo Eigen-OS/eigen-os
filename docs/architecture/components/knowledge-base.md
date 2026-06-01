@@ -160,7 +160,7 @@ Normative repository artifacts (paths are contractual anchors):
 - Error model and mapping:
     - `docs/reference/error-model.md`
     - `docs/reference/error-mapping.md`
-- QFS contracts and layout: `docs/reference/qfs-layout.md` (or equivalent QFS contract doc)
+- QFS contracts and layout: `docs/reference/formats/qfs-layout.md` (or equivalent QFS contract doc)
 - Observability contracts (related):
     - `docs/reference/intelligent-runtime-observability-contract.md`
     - `docs/reference/orchestration-observability-contract.md`
