@@ -108,12 +108,51 @@ service KnowledgeBaseService {
   rpc QueryRecords(QueryRecordsRequest) returns (QueryRecordsResponse);
   rpc GetRecord(GetRecordRequest) returns (GetRecordResponse);
   rpc AppendDecisionLog(AppendDecisionLogRequest) returns (AppendDecisionLogResponse);
+  rpc QueryDecisionLogs(QueryDecisionLogsRequest) returns (QueryDecisionLogsResponse);
 }
 ```
 
 ---
 
-## 4. Versioning Policy
+## 4. Product 1.0 Envelope and Version Negotiation
+
+All public requests MUST carry, or allow the System API to derive from authenticated transport metadata, a canonical `ApiRequestEnvelope`. The normalized envelope is persisted with request audit records and idempotency records.
+
+```protobuf
+message ApiRequestEnvelope {
+  string contract_version = 1;
+  string request_id = 2;
+  string idempotency_key = 3;
+  string traceparent = 4;
+  google.protobuf.Duration deadline = 5;
+  string tenant_id = 6;
+  string project_id = 7;
+  string client_version = 8;
+}
+```
+
+| Field | Required | Source | Semantics |
+|---|---|---|---|
+| `contract_version` | YES | Request payload or negotiated default | SemVer public payload contract. Product 1.0 accepts `1.0.0` on `eigen.api.v1`. |
+| `request_id` | YES | `x-request-id` or payload | Client correlation ID used in audit, logs, metrics exemplars, and traces. |
+| `idempotency_key` | CONDITIONAL | `x-idempotency-key` or payload | Required for idempotent `SubmitJob`; optional for read-only calls. |
+| `traceparent` | RECOMMENDED | `traceparent` metadata or payload | W3C TraceContext parent propagated to internal services. |
+| `deadline` | OPTIONAL | gRPC deadline or payload | Client deadline hint normalized before internal dispatch. |
+| `tenant_id` | YES | JWT/auth context or payload | Canonical tenant scope. Auth context wins on conflict. |
+| `project_id` | YES | JWT/auth context or payload | Canonical project scope. Auth context wins on conflict. |
+| `client_version` | OPTIONAL | `x-client-version` or payload | SDK/CLI version for compatibility diagnostics. |
+
+Version negotiation rules:
+
+- Missing `contract_version` MAY default to `1.0.0` only for backward-compatible MVP clients on the `eigen.api.v1` namespace.
+- Malformed SemVer MUST return `INVALID_ARGUMENT`.
+- Unsupported but well-formed versions MUST return `FAILED_PRECONDITION` with canonical version details.
+- Incompatible MAJOR versions MUST be rejected; they MUST NOT be silently coerced.
+- Compatible MINOR/PATCH versions MAY be accepted only when documented in this file or the Product 1.0 manifest.
+
+---
+
+## 4.1 Versioning Policy
 
 | **Change Type**          | **Version Impact** |
 |--------------------------|----------------|
@@ -149,6 +188,7 @@ message SubmitJobRequest {
   repeated string dependencies = 9;
   TenantQuotaEnvelope tenant = 10;
   string reservation_id = 11;
+  ApiRequestEnvelope envelope = 12;
 }
 ```
 
@@ -156,6 +196,7 @@ message SubmitJobRequest {
 
 | **Field** | **Required** | **Notes** |
 |-------------|------------|-----------|
+| `envelope` | YES | Canonical Product 1.0 request envelope; transport metadata MAY be normalized into this field by the System API |
 | `name` | YES | Human-readable job name |
 | `program` | YES | Exactly one variant required |
 | `target` | YES | Backend/device identifier |
@@ -170,10 +211,11 @@ message SubmitJobRequest {
 
 Rules:
 
-- Same key + same request body MUST return same logical job
-- Same key + different payload MUST return:
-  - `ALREADY_EXISTS`
-  - or `INVALID_ARGUMENT`
+- Retry identity is `(tenant_id, idempotency_key, sha256(canonical normalized SubmitJobRequest excluding volatile transport-only metadata))`
+- Same key + same normalized request body MUST return the same logical job and canonical `job_id`
+- Same key + different normalized payload MUST return `ALREADY_EXISTS`
+- Missing idempotency key on production `SubmitJob` MUST return `FAILED_PRECONDITION` unless a deployment explicitly enables non-idempotent development mode
+- Idempotency records MUST persist the normalized request digest, assigned `job_id`, first response state, request timestamp, and tenant/project scope
 - Idempotency retention window MUST be at least 24h
 
 #### Validation Rules
@@ -185,7 +227,9 @@ Rules:
 | Priority outside range | `INVALID_ARGUMENT` |
 | Unknown target | `NOT_FOUND` |
 | Invalid reservation | `FAILED_PRECONDITION` |
-
+| Missing required envelope identity | `INVALID_ARGUMENT` |
+| Unsupported contract version | `FAILED_PRECONDITION` |
+| Payload exceeds public limit | `RESOURCE_EXHAUSTED` |
 
 #### Response
 
@@ -202,10 +246,11 @@ Submission lifecycle:
 
 ```text
 SubmitJob
-  -> PENDING
-  -> QUEUED
-  -> RUNNING
-  -> SUCCEEDED | FAILED | CANCELLED | TIMEOUT
+  -> JOB_STATE_PENDING
+  -> JOB_STATE_COMPILING
+  -> JOB_STATE_QUEUED
+  -> JOB_STATE_RUNNING
+  -> JOB_STATE_DONE | JOB_STATE_ERROR | JOB_STATE_CANCELLED | JOB_STATE_TIMEOUT
 ```
 
 The response MUST contain the canonical assigned `job_id`.
@@ -246,13 +291,14 @@ message CancelJobResponse {
 
 | **Current State** | **Allowed** |
 |----------|-----------|
-| `PENDING` | YES |
-| `QUEUED` | YES |
-| `RUNNING` | BEST-EFFORT |
-| `SUCCEEDED` | NO |
-| `FAILED` | NO |
-| `CANCELLED` | NO |
-| `TIMEOUT` | NO |
+| `JOB_STATE_PENDING` | YES |
+| `JOB_STATE_COMPILING` | YES |
+| `JOB_STATE_QUEUED` | YES |
+| `JOB_STATE_RUNNING` | BEST-EFFORT |
+| `JOB_STATE_DONE` | NO |
+| `JOB_STATE_ERROR` | NO |
+| `JOB_STATE_CANCELLED` | NO |
+| `JOB_STATE_TIMEOUT` | NO |
 
 #### Semantics
 
@@ -316,10 +362,10 @@ Returns immutable final outputs.
 
 Job MUST be in terminal state:
 
-- SUCCEEDED
-- FAILED
-- CANCELLED
-- TIMEOUT
+- `JOB_STATE_DONE`
+- `JOB_STATE_ERROR`
+- `JOB_STATE_CANCELLED`
+- `JOB_STATE_TIMEOUT`
 
 Otherwise:
 
@@ -474,6 +520,12 @@ Retention MUST follow audit policy.
 
 ---
 
+### 7.6 QueryDecisionLogs
+
+Returns paginated immutable decision logs filtered by trace ID and/or model version. Query results MUST be tenant-scoped and MUST preserve append order for entries with the same trace ID.
+
+---
+
 ## 8. Error Model
 
 Public APIs use canonical gRPC status codes.
@@ -491,6 +543,7 @@ Public APIs use canonical gRPC status codes.
 | `UNAVAILABLE` | Backend unavailable |
 | `DEADLINE_EXCEEDED` | Timeout |
 | `ALREADY_EXISTS` | Idempotency conflict |
+| `OUT_OF_RANGE` | Stream replay cursor outside retention window |
 | `INTERNAL` | Unexpected failure |
 
 #### Error Details
@@ -543,6 +596,8 @@ Minimum metrics:
 
 | **Metric** | **Type** |
 |----------|-----------|
+| `eigen_public_api_contract_requests_total` | Counter |
+| `eigen_public_api_contract_request_duration_ms` | Histogram |
 | `grpc.requests_total` | Counter |
 | `grpc.request_duration_ms` | Histogram |
 | `jobs.submitted_total` | Counter |
@@ -611,6 +666,8 @@ The following are frozen in v1:
 - Field numbers
 - Enum numeric values
 - Streaming ordering semantics
+- Canonical envelope field meanings
+- Version-negotiation rejection behavior
 - Idempotency behavior
 - Error status semantics
 

@@ -16,14 +16,16 @@
       "proto_schema_files": [
         "proto/eigen/api/v1/job_service.proto",
         "proto/eigen/api/v1/device_service.proto",
-        "proto/eigen/api/v1/types.proto"
+        "proto/eigen/api/v1/types.proto",
+        "proto/eigen/api/v1/knowledge_base_service.proto"
       ],
       "planned_proto_schema_files": [],
       "conformance_tests": [
         "src/services/system-api/tests/",
         "src/rust/apps/cli/tests/",
         "buf lint",
-        "buf breaking"
+        "buf breaking",
+        "docs/development/product-1.0-wave-1-compatibility-report.md"
       ],
       "implementation_status": "partial",
       "compatibility_status": "needs-alignment"
