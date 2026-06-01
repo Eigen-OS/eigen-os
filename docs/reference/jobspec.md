@@ -1579,3 +1579,75 @@ flowchart LR
 ```
 
 </details>
+
+---
+
+# 20. Product 1.0 Parser, Normalizer, Digest, and Fixtures
+
+## 20.1 Schema and fixture set
+
+The Product 1.0 JSON Schema is published at:
+
+- `docs/reference/schemas/jobspec-1.0.schema.json`
+
+Normative fixture classes are published under:
+
+- `docs/reference/fixtures/jobspec/1.0/minimal/job.yaml`
+- `docs/reference/fixtures/jobspec/1.0/full/job.yaml`
+- `docs/reference/fixtures/jobspec/1.0/invalid/job.yaml`
+- `docs/reference/fixtures/jobspec/1.0/future-compatible/job.yaml`
+- `docs/reference/fixtures/jobspec/1.0/migration/job.yaml`
+
+## 20.2 Accepted versions and migration
+
+The normalizer accepts:
+
+| Input `apiVersion` | Behavior |
+|---|---|
+| `eigen.os/v1` | Native JobSpec 1.0 input. |
+| `eigen.os/v0.1` | Compatibility input migrated into the JobSpec 1.0 normalized payload. Legacy `spec.program_path` maps to `spec.program.path`; legacy string `spec.program` maps to inline `spec.program.source`. |
+
+All normalized payloads emit `apiVersion: eigen.os/v1`, `version: 1.0.0`, and a `compatibility` report containing the original input version and migration mode.
+
+## 20.3 Canonical normalized payload
+
+CLI and System API MUST produce a deterministic normalized payload before submission. The normalized payload includes:
+
+- `contract: jobspec.normalized`,
+- `version: 1.0.0`,
+- canonical `apiVersion: eigen.os/v1`,
+- metadata name, labels, and annotations with deterministic map ordering,
+- normalized program entrypoint, package path or inline source, and source SHA-256,
+- compiler options, user metadata, dependencies, priority, and target,
+- scheduling, security, and observability sections,
+- a package metadata block containing `source_sha256`, `canonical_digest`, and `normalized_json_sha256`.
+
+The canonical digest is SHA-256 over the stable JSON serialization of the normalized public payload before package metadata attachment. Stable JSON uses sorted object keys and compact separators.
+
+## 20.4 Internal request-envelope mapping
+
+JobSpec scheduling, security, and observability fields are client-visible JobSpec inputs, but internal-only implementation details MUST NOT be leaked back into public protobuf fields. System API maps these sections into bounded internal metadata keys:
+
+- `jobspec_scheduling`,
+- `jobspec_security`,
+- `jobspec_observability`,
+- `jobspec_digest`,
+- `jobspec_version`,
+- `source_sha256`.
+
+These keys are the bridge into scheduling, security, and telemetry policy enforcement until typed Product 1.0 request-envelope fields are introduced.
+
+## 20.5 Canonical validation errors
+
+Invalid JobSpec inputs MUST raise field-level `INVALID_ARGUMENT` violations. Required canonical fields include:
+
+- `apiVersion`,
+- `kind`,
+- `metadata`,
+- `metadata.name`,
+- `spec`,
+- `spec.target`,
+- `spec.program`,
+- `spec.program.path` / `spec.program.source`.
+
+Path traversal and absolute program paths are rejected before source loading.

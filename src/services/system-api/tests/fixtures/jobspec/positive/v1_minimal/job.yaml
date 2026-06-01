@@ -1,0 +1,11 @@
+apiVersion: eigen.os/v1
+kind: QuantumJob
+metadata:
+  name: v1-minimal
+spec:
+  target: sim:local
+  program:
+    source: |
+      @hybrid_program
+      def main():
+          return 1

@@ -1,0 +1,27 @@
+apiVersion: eigen.os/v1
+kind: QuantumJob
+metadata:
+  name: v1-full
+  labels:
+    workload: research
+  annotations:
+    owner: runtime-team
+spec:
+  target: sim:local
+  priority: 75
+  entrypoint: run
+  program:
+    path: program.eigen.py
+  compiler:
+    optimization_level: "2"
+  metadata:
+    shots: "2048"
+  dependencies:
+    - qfs://datasets/h2.json
+scheduling:
+  queue: interactive
+security:
+  network: disabled
+observability:
+  trace: required
+  
