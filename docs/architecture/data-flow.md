@@ -644,3 +644,272 @@ Submit → Compile → Execute → Persist → Retrieve
 ```
 
 This document freezes the **data-flow contract** as the normative MVP baseline and the canonical integration reference for SDK/CLI and runtime development.
+
+---
+
+## Appendix A. Diagrams (normative)
+
+### A.1 Canonical MVP data-flow (domains + artifacts)
+
+![Canonical MVP data-flow](https://i.imgur.com/u48Kfkj.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  subgraph Client["Client side (CLI/SDK)"]
+    JS["JobSpec job.yaml"]
+    SRC["Program source\nprogram.eigen.py"]
+    PKG["Deterministic packaging\n(normalize + hash)"]
+  end
+
+  subgraph Public["Public ingress"]
+    API["System API\n(eigen.api.v1)"]
+  end
+
+  subgraph Kernel["Orchestration"]
+    K["Kernel / QRTX\n(eigen.internal.v1)"]
+  end
+
+  subgraph Compile["Compilation"]
+    C["Compiler Service\n(AST-only → AQO v1.0)"]
+    AQO["AQO v1.0\ncanonical bytes"]
+    QASM["QASM export\n(optional)"]
+  end
+
+  subgraph Exec["Execution"]
+    DM["Driver Manager\n(normalize payload/results)"]
+    QD[QDriver]
+    BE[(Backend/Simulator/Hardware)]
+    RES["ExecutionResult\n(counts + metadata)"]
+  end
+
+  subgraph Storage["Persistence (QFS L3)"]
+    QFS["QFS / CircuitFS\nqfs://jobs/<job_id>/..."]
+    IN["input/*"]
+    COMP["compiled/*"]
+    OUT["results/* + results.parquet"]
+  end
+
+  subgraph Obs["Telemetry"]
+    TR["Traces (W3C/OTel)"]
+    LG["Logs (JSON)"]
+    MT["Metrics (Prometheus)"]
+  end
+
+  JS --> PKG
+  SRC --> PKG
+  PKG --> API --> K
+
+  K --> QFS --> IN
+  K --> C --> AQO
+  AQO --> QFS --> COMP
+  C -. optional .-> QASM
+  QASM -. optional .-> QFS
+
+  K --> DM --> QD --> BE --> QD --> DM --> RES
+  RES --> K --> QFS --> OUT
+
+  API -. emits .-> TR
+  K -. emits .-> TR
+  C -. emits .-> TR
+  DM -. emits .-> TR
+  API -. logs .-> LG
+  K -. logs .-> LG
+  C -. logs .-> LG
+  DM -. logs .-> LG
+  API -. metrics .-> MT
+  K -. metrics .-> MT
+  C -. metrics .-> MT
+  DM -. metrics .-> MT
+
+  classDef client fill:#e1f5fe,stroke:#01579b
+  classDef public fill:#fff8e1,stroke:#f57f17
+  classDef kernel fill:#e8f5e9,stroke:#2e7d32
+  classDef compile fill:#fce4ec,stroke:#880e4f
+  classDef exec fill:#f3e5f5,stroke:#6a1b9a
+  classDef storage fill:#fff3e0,stroke:#e65100
+  classDef obs fill:#eceff1,stroke:#37474f
+
+  class JS,SRC,PKG client
+  class API public
+  class K kernel
+  class C,AQO,QASM compile
+  class DM,QD,BE,RES exec
+  class QFS,IN,COMP,OUT storage
+  class TR,LG,MT obs
+```
+
+</details>
+
+---
+
+### A.2 Sequence: Submit → Persist Inputs → Compile → Persist Compiled → Execute → Persist Results
+
+![Submit → Persist Inputs → Compile → Persist Compiled → Execute → Persist Results](https://i.imgur.com/u11xZ9p.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant Client as CLI/SDK
+  participant API as System API (public)
+  participant K as Kernel/QRTX
+  participant Q as QFS (CircuitFS L3)
+  participant C as Compiler Service
+  participant DM as Driver Manager
+  participant QD as QDriver
+  participant BE as Backend/Simulator
+
+  Client->>API: SubmitJob (job.yaml + source ref/bytes)\n+ traceparent + auth
+  API->>K: EnqueueJob (internal)\n(forward normalized request)
+  K->>Q: atomic_write input/job.yaml\natomic_write input/program.eigen.py\n(write metadata.json)
+  K-->>API: Accepted(job_id)\nstate=PENDING
+
+  K->>C: CompileJob/CompileCircuit(source)\n(deadline propagated)
+  C-->>K: AQO bytes + metadata + diagnostics? (bounded refs)
+  K->>Q: atomic_write compiled/circuit.aqo.json\natomic_write compiled/metadata.json\n(optional diagnostics ref)
+  K-->>API: Status update: COMPILING→QUEUED
+
+  K->>DM: ExecuteCircuit(payload=AQO/QFS ref, shots, options)
+  DM->>QD: Execute (provider normalized)
+  QD->>BE: provider execute
+  BE-->>QD: raw result / error
+  QD-->>DM: provider response
+  DM-->>K: ExecutionResult(counts, metadata)\nOR canonical error
+
+  alt success
+    K->>Q: atomic_write results/results.parquet\natomic_write results/result.json (optional)\natomic_write results/manifest.json (optional)
+    K-->>API: Status: RUNNING→DONE
+  else failure
+    K->>Q: atomic_write results/error.json (durable)
+    K-->>API: Status: RUNNING→ERROR\n(error_details_ref=results/error.json)
+  end
+```
+
+</details>
+
+---
+
+### A.3 Deterministic packaging pipeline (client-side)
+
+![Deterministic packaging pipeline](https://i.imgur.com/BSJ3gIB.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  A[Load job.yaml] --> B["Resolve program source\n(path|inline|uri)"]
+  B --> C[Normalize\nUTF-8 + line endings]
+  C --> D["Normalize paths\n(no .., no abs)"]
+  D --> E["Canonicalize inputs\n(stable ordering)"]
+  E --> F["Compute hashes\nsource_sha256\n(optional job_yaml_sha256)"]
+  F --> G["Build SubmitJobRequest\n+ bounded metadata\n+ traceparent"]
+```
+
+</details>
+
+---
+
+### A.4 QFS artifacts produced by phase (MVP)
+
+![QFS artifacts produced by phase](https://i.imgur.com/a3DEKb9.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  subgraph Root["qfs://jobs/<job_id>/"]
+    IN[input/]
+    SRC[source/]
+    COMP[compiled/]
+    RES[results/]
+    LOGS[logs/]
+    TL[timeline/]
+    META[meta/]
+  end
+
+  subgraph Phases["Runtime phases"]
+    P0[Enqueue/PENDING]
+    P1[Compile/COMPILING]
+    P2[Dispatch/QUEUED→RUNNING]
+    P3["Terminal/DONE|ERROR|CANCELLED"]
+  end
+
+  P0 -->|write| IN
+  P0 -->|write| SRC
+  P1 -->|write| COMP
+  P2 -->|read| COMP
+  P3 -->|write| RES
+  P3 -. optional .-> LOGS
+  P3 -. recommended .-> TL
+  P3 -. optional .-> META
+```
+
+</details>
+
+---
+
+### A.5 Failure data-flow (canonical: status-first + durable error artifact)
+
+![Failure data-flow](https://i.imgur.com/JYIJrmM.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  subgraph Sync["Synchronous surface (RPC)"]
+    S1[gRPC status code]
+    S2["google.rpc.Status details\n(ErrorInfo/BadRequest/RetryInfo/ResourceInfo)"]
+  end
+
+  subgraph Async["Asynchronous job visibility"]
+    A1[JobStatus: state=ERROR]
+    A2[error_code + error_summary]
+    A3[error_details_ref → qfs://jobs/<job_id>/results/error.json]
+  end
+
+  subgraph Store["Durable store"]
+    QFS[(QFS)]
+    ERR[results/error.json]
+  end
+
+  S1 --> S2
+  S2 --> A1
+  A1 --> A2 --> A3
+  A3 --> QFS --> ERR
+```
+
+</details>
+
+---
+
+### A.6 TraceContext propagation path (MVP core)
+
+![TraceContext propagation path](https://i.imgur.com/vJoGutA.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  Client["CLI/SDK\n(traceparent)"] --> API[System API]
+  API --> K[Kernel/QRTX]
+  K --> C[Compiler]
+  K --> DM[Driver Manager]
+  DM --> QD[QDriver]
+  QD -. backend boundary .-> BE[(Backend)]
+
+  note1["Rule: trace_id is allowed in traces/logs,\nFORBIDDEN as Prometheus label"]
+  API --- note1
+  classDef note fill:#fff,stroke:#999,stroke-dasharray: 3 3;
+  class note1 note
+```
+
+</details>
