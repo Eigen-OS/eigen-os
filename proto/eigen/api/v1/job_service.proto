@@ -31,6 +31,8 @@ message SubmitJobRequest {
     uint32 project_max_queued_jobs = 5;
   }
 
+  ApiRequestEnvelope envelope = 12;
+
   string name = 1;
 
   oneof program {
@@ -49,6 +51,7 @@ message SubmitJobRequest {
   map<string, string> metadata = 8;
   repeated string dependencies = 9;
   TenantQuotaEnvelope tenant = 10;
+  string reservation_id = 11;
 }
 
 message SubmitJobResponse {

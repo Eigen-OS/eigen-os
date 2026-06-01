@@ -73,6 +73,22 @@ eigen_system_api_contract_info{version="1.0.0"} 1
 
 ## 2. Responsibilities
 
+### 2.0 Product 1.0 public envelope responsibilities
+
+For Wave 1 public-boundary closure, the System API owns canonical envelope normalization for every public gRPC request. It MUST:
+
+- normalize `ApiRequestEnvelope` from request payload, authenticated context, gRPC metadata, and transport deadline,
+- validate `contract_version` before dispatching to Kernel/QRTX or any other internal service,
+- reject malformed versions with `INVALID_ARGUMENT` and unsupported/incompatible versions with `FAILED_PRECONDITION`,
+- compute the `SubmitJob` idempotency digest from the normalized request and persist it with tenant/project scope,
+- enforce public payload limits before forwarding requests to internal services,
+- emit public API contract marker metrics with bounded labels and request/trace correlation,
+- never leak raw internal exceptions, credentials, or provider details through public errors.
+
+The public wire contract for these requirements is defined in `docs/reference/api/grpc-public.md`; this component document describes ownership only.
+
+---
+
 ### 2.1 Implemented now (MVP truth)
 
 System API currently provides:

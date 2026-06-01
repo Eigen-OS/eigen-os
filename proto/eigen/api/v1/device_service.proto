@@ -16,6 +16,8 @@ service DeviceService {
 }
 
 message ListDevicesRequest {
+  ApiRequestEnvelope envelope = 10;
+
   // Optional filter, e.g. "simulator".
   string backend_type = 1;
 }
@@ -25,6 +27,8 @@ message ListDevicesResponse {
 }
 
 message GetDeviceDetailsRequest {
+  ApiRequestEnvelope envelope = 10;
+
   string device_id = 1;
 }
 
@@ -33,6 +37,8 @@ message GetDeviceDetailsResponse {
 }
 
 message GetDeviceStatusRequest {
+  ApiRequestEnvelope envelope = 10;
+
   string device_id = 1;
 }
 
@@ -45,6 +51,8 @@ message GetDeviceStatusResponse {
 }
 
 message ReserveDeviceRequest {
+  ApiRequestEnvelope envelope = 10;
+  
   string device_id = 1;
   int32 ttl_seconds = 2;
   string purpose = 3;
