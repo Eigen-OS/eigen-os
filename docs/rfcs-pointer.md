@@ -183,3 +183,18 @@
 - RFC directory: [`../rfcs/`](../rfcs/)
 - ADR index: [`adr/README.md`](adr/README.md)
 - MVP-2 execution plan: [`development/mvp-2-compilation-pipeline.md`](development/mvp-2-compilation-pipeline.md)
+
+## Product 1.0 Wave 2 RFC set (proposed)
+
+- Status on 2026-06-02: Product 1.0 Wave 2 kernel-lifecycle authority planning package is prepared and synchronized with ADR 0036.
+- Proposed RFC:
+  - [RFC 0050 — Product 1.0 Kernel/QRTX Lifecycle Authority](../rfcs/0050-product-1.0-kernel-qrtx-lifecycle-authority.md)
+- Synchronized ADR:
+  - [ADR 0036 — Product 1.0 Kernel/QRTX Lifecycle Authority](adr/0036-product-1.0-kernel-qrtx-lifecycle-authority.md)
+- Release planning package:
+  - [development/product-1.0-wave-2-execution-plan.md](development/product-1.0-wave-2-execution-plan.md)
+  - [development/product-1.0-wave-2-issue-pack.md](development/product-1.0-wave-2-issue-pack.md)
+  - [development/product-1.0-wave-2-rfc-adr-gap-analysis.md](development/product-1.0-wave-2-rfc-adr-gap-analysis.md)
+  - [development/product-1.0-wave-2-release-readiness-checklist.md](development/product-1.0-wave-2-release-readiness-checklist.md)
+  - [development/product-1.0-wave-2-compatibility-report.md](development/product-1.0-wave-2-compatibility-report.md)
+  - [development/product-1.0-wave-2-exit-evidence-bundle.md](development/product-1.0-wave-2-exit-evidence-bundle.md)

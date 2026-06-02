@@ -127,3 +127,10 @@ Architecture Decision Records (ADRs) capture decisions that are already adopted 
 - Required coverage check: [`../development/product-1.0-wave-1-rfc-adr-gap-analysis.md`](../development/product-1.0-wave-1-rfc-adr-gap-analysis.md).
 - Wave 1 release package: [`../development/product-1.0-wave-1-release-readiness-checklist.md`](../development/product-1.0-wave-1-release-readiness-checklist.md), [`../development/product-1.0-wave-1-compatibility-report.md`](../development/product-1.0-wave-1-compatibility-report.md), [`../development/product-1.0-wave-1-exit-evidence-bundle.md`](../development/product-1.0-wave-1-exit-evidence-bundle.md).
 - Policy reminder: every Wave 1 issue must declare version impact, affected interfaces, compatibility, breaking marker, migration notes, and release-note draft text.
+
+## Product 1.0 Wave 2 status
+
+- As of 2026-06-02, Product 1.0 Wave 2 kernel-lifecycle planning is synchronized with RFC 0050 and ADR 0036.
+- Required coverage check: [`../development/product-1.0-wave-2-rfc-adr-gap-analysis.md`](../development/product-1.0-wave-2-rfc-adr-gap-analysis.md).
+- Wave 2 planning and release package: [`../development/product-1.0-wave-2-execution-plan.md`](../development/product-1.0-wave-2-execution-plan.md), [`../development/product-1.0-wave-2-issue-pack.md`](../development/product-1.0-wave-2-issue-pack.md), [`../development/product-1.0-wave-2-release-readiness-checklist.md`](../development/product-1.0-wave-2-release-readiness-checklist.md), [`../development/product-1.0-wave-2-compatibility-report.md`](../development/product-1.0-wave-2-compatibility-report.md), [`../development/product-1.0-wave-2-exit-evidence-bundle.md`](../development/product-1.0-wave-2-exit-evidence-bundle.md).
+- Policy reminder: Wave 2 may contain MAJOR internal changes, but public Wave 1 behavior remains protected unless a separate public RFC/ADR approves a breaking change.
