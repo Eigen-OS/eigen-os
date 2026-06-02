@@ -127,9 +127,9 @@ def abort_validation(
         PublicErrorSpec(
             grpc_code=grpc.StatusCode.INVALID_ARGUMENT,
             message=message,
-            reason=reason,
+            reason="EIGEN_PUBLIC_VALIDATION_FAILED",
             retryable=False,
-            metadata=metadata,
+            metadata={"error_class": "validation"},
             violations=violations,
         ),
     )

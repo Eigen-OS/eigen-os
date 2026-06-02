@@ -37,6 +37,15 @@ def _extract_bad_request(err: grpc.RpcError) -> error_details_pb2.BadRequest:
     return bad
 
 
+def _extract_error_info(err: grpc.RpcError) -> error_details_pb2.ErrorInfo:
+    st = rpc_status.from_call(err)
+    assert st is not None
+    info = error_details_pb2.ErrorInfo()
+    assert len(st.details) >= 1
+    assert st.details[0].Unpack(info)
+    return info
+
+
 def test_auth_static_token_mode_requires_authorization(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SYSTEM_API_AUTH_MODE", "static_token")
     monkeypatch.setenv("SYSTEM_API_AUTH_TOKEN", "test-token")
@@ -183,7 +192,8 @@ def test_static_token_mode_fails_closed_on_missing_auth_context(monkeypatch: pyt
                 metadata=(("authorization", "Bearer ctx-token"),),
             )
         assert exc.value.code() == grpc.StatusCode.PERMISSION_DENIED
-        assert "POLICY_DENY_MISSING_AUTH_CONTEXT" in exc.value.details()
+        info = _extract_error_info(exc.value)
+        assert info.metadata["policy"] == "POLICY_DENY_MISSING_AUTH_CONTEXT"
     finally:
         server.stop(grace=None)
 
@@ -213,6 +223,7 @@ def test_cross_tenant_access_denied(monkeypatch: pytest.MonkeyPatch) -> None:
         with pytest.raises(grpc.RpcError) as exc:
             job_stub.GetJobStatus(job_pb.GetJobStatusRequest(job_id=submitted.job_id), metadata=md)
         assert exc.value.code() == grpc.StatusCode.PERMISSION_DENIED
-        assert "POLICY_DENY_TENANT_MISMATCH" in exc.value.details()
+        info = _extract_error_info(exc.value)
+        assert info.metadata["policy"] == "POLICY_DENY_TENANT_MISMATCH"
     finally:
         server.stop(grace=None)

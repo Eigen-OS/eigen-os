@@ -28,6 +28,6 @@
     "dispatch_latency_ms",
     "execution_time_ms"
   ],
-  "error_expected_invalid_reason": "EXPLAIN_INVALID_REQUEST",
-  "error_expected_missing_reason": "EXPLAIN_DECISION_NOT_FOUND"
+  "error_expected_invalid_reason": "EIGEN_PUBLIC_EXPLAIN_INVALID_REQUEST",
+  "error_expected_missing_reason": "EIGEN_PUBLIC_EXPLAIN_DECISION_NOT_FOUND"
 }
