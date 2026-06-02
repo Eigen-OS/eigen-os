@@ -3,45 +3,99 @@ syntax = "proto3";
 package eigen.internal.v1;
 
 import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
 
 option go_package = "github.com/eigen-os/eigen/api/internal/v1;internalv1";
 option java_multiple_files = true;
 option java_outer_classname = "KernelGatewayServiceProto";
 option java_package = "com.eigen.api.internal.v1";
 
-// Internal gateway between System API and Kernel.
-// Source of truth: RFC 0004 (Appendix A).
+// Product 1.0 Wave 2 internal gateway between System API and Kernel.
+// Kernel/QRTX is the canonical lifecycle authority.
+// Source of truth: RFC 0050, docs/reference/api/grpc-internal.md
 service KernelGatewayService {
+  // Enqueue a job for orchestration.
   rpc EnqueueJob(EnqueueJobRequest) returns (EnqueueJobResponse);
+  
+  // Get current job status.
   rpc GetJobStatus(GetJobStatusRequest) returns (GetJobStatusResponse);
+  
+  // Cancel a running or queued job.
   rpc CancelJob(CancelJobRequest) returns (CancelJobResponse);
+  
+  // Retrieve job results and references.
   rpc GetJobResults(GetJobResultsRequest) returns (GetJobResultsResponse);
+  
+  // Stream job updates with heartbeat and deterministic ordering.
+  rpc StreamJobUpdates(StreamJobUpdatesRequest) returns (stream StreamJobUpdatesResponse);
+  
+  // Get dispatch rationale and scheduling decision metadata.
+  rpc GetDispatchRationale(GetDispatchRationaleRequest) returns (GetDispatchRationaleResponse);
 }
 
+// Normalized internal metadata context for Kernel lifecycle operations.
+// Derived from public Wave 1 ApiRequestEnvelope without leaking public-only fields.
+message RequestMetadata {
+  // Contract version for internal API compatibility.
+  string contract_version = 1;
+  
+  // Request ID from public boundary for tracing.
+  string request_id = 2;
+  
+  // Idempotency key for deterministic deduplication.
+  string idempotency_key = 3;
+  
+  // W3C TraceContext traceparent for distributed tracing.
+  string traceparent = 4;
+  
+  // Deadline hint normalized from public request.
+  google.protobuf.Duration deadline = 5;
+  
+  // Canonical tenant scope (internal only).
+  string tenant_id = 6;
+  
+  // Canonical project scope inside tenant.
+  string project_id = 7;
+  
+  // Security context: subject/user identifier.
+  string subject = 8;
+  
+  // Security context: normalized role for RBAC.
+  string role = 9;
+  
+  // Audit metadata: which component made this request.
+  string source_service = 10;
+}
+
+// Canonical internal lifecycle states for Product 1.0.
 enum TaskState {
   TASK_STATE_UNSPECIFIED = 0;
-  TASK_STATE_PENDING = 1;
-  TASK_STATE_COMPILING = 2;
-  TASK_STATE_QUEUED = 3;
-  TASK_STATE_RUNNING = 4;
-  TASK_STATE_DONE = 5;
-  TASK_STATE_ERROR = 6;
-  TASK_STATE_CANCELLED = 7;
-  TASK_STATE_TIMEOUT = 8;
+  TASK_STATE_PENDING = 1;      // Accepted, awaiting compilation.
+  TASK_STATE_COMPILING = 2;    // Compile stage active.
+  TASK_STATE_OPTIMIZING = 3;   // Optimization stage active (Wave 2+).
+  TASK_STATE_QUEUED = 4;       // Compiled, queued for execution.
+  TASK_STATE_RUNNING = 5;      // Execution stage active.
+  TASK_STATE_DONE = 6;         // Successful completion.
+  TASK_STATE_ERROR = 7;        // Failed with error.
+  TASK_STATE_CANCELLED = 8;    // User-requested cancellation.
+  TASK_STATE_TIMEOUT = 9;      // Deadline exceeded.
 }
 
 message EnqueueJobRequest {
-  string name = 1;
-
-  // Program bytes (system-api may already normalize this into AQO).
-  bytes program = 2;
-  string program_format = 3; // e.g. "aqo_proto", "aqo_json"
-
-  string target = 4;
-  int32 priority = 5;
-
-  map<string, string> compiler_options = 6;
-  map<string, string> metadata = 7;
+  // Request metadata for tracing and audit.
+  RequestMetadata metadata = 1;
+  
+  string name = 2;
+  
+  // Program bytes (pre-normalized by System API into standard format).
+  bytes program = 3;
+  string program_format = 4; // e.g. "aqo_proto", "aqo_json", "eigen_lang_source"
+  
+  string target = 5;
+  int32 priority = 6;
+  
+  map<string, string> compiler_options = 7;
+  map<string, string> metadata_kvs = 8;
 }
 
 message EnqueueJobResponse {
@@ -51,46 +105,122 @@ message EnqueueJobResponse {
 }
 
 message GetJobStatusRequest {
-  string job_id = 1;
+  // Request metadata for tracing.
+  RequestMetadata metadata = 1;
+  
+  string job_id = 2;
 }
 
 message GetJobStatusResponse {
   string job_id = 1;
   TaskState state = 2;
+  
+  // Current stage label for observability.
   string stage = 3;
+  
+  // Progress hint in range [0..1].
   float progress = 4;
+  
+  // Human-readable status message.
   string message = 5;
-
-  // Optional error payload for ERROR state.
+  
+  // Error payload for terminal ERROR state (canonical error model).
   string error_code = 20;
   string error_summary = 21;
   string error_details_ref = 22;
-
+  
   google.protobuf.Timestamp updated_at = 30;
 }
 
 message CancelJobRequest {
-  string job_id = 1;
+  // Request metadata for tracing.
+  RequestMetadata metadata = 1;
+  
+  string job_id = 2;
 }
 
 message CancelJobResponse {
+  // true if a cancellation request was accepted.
   bool accepted = 1;
+  
+  // Reason code for audit: "ACCEPTED", "ALREADY_TERMINAL", "NOT_FOUND", etc.
+  string reason_code = 2;
+}
+
+message StreamJobUpdatesRequest {
+  // Request metadata for tracing.
+  RequestMetadata metadata = 1;
+  
+  string job_id = 2;
+  
+  // Best-effort resume cursor; server may start from next event if not found.
+  uint64 last_event_seq = 3;
+}
+
+message StreamJobUpdatesResponse {
+  // Update envelope with monotonic sequence for replay.
+  message JobUpdateEnvelope {
+    // Monotonic per-job sequence number, starts at 1.
+    uint64 event_seq = 1;
+    
+    TaskState state = 2;
+    string stage = 3;
+    float progress = 4;
+    string message = 5;
+    
+    google.protobuf.Timestamp timestamp = 6;
+  }
+  
+  JobUpdateEnvelope update = 1;
 }
 
 message GetJobResultsRequest {
-  string job_id = 1;
+  // Request metadata for tracing.
+  RequestMetadata metadata = 1;
+  
+  string job_id = 2;
 }
 
 message GetJobResultsResponse {
   string job_id = 1;
   TaskState state = 2;
-
+  
+  // Generic quantum result payload (canonical).
   map<string, int64> counts = 10;
   map<string, string> metadata = 11;
-
+  
+  // Error payload for terminal ERROR state.
   string error_code = 20;
   string error_summary = 21;
   string error_details_ref = 22;
+  
+  // Result references into QFS.
+  string qfs_result_ref = 30;
+  
+  google.protobuf.Timestamp completed_at = 31;
+}
 
-  google.protobuf.Timestamp completed_at = 30;
+message GetDispatchRationaleRequest {
+  // Request metadata for tracing.
+  RequestMetadata metadata = 1;
+  
+  string job_id = 2;
+}
+
+message DispatchRationale {
+  // Product 1.0 dispatch decision metadata for explainability.
+  string version = 1;
+  string policy_version = 2;
+  repeated string reason_codes = 3;
+  string selected_backend = 4;
+  string selected_queue = 5;
+  map<string, string> attributes = 6;
+  string timeline_ref = 7;
+  string logs_ref = 8;
+  string trace_id = 9;
+  string trace_ref = 10;
+}
+
+message GetDispatchRationaleResponse {
+  DispatchRationale rationale = 1;
 }
