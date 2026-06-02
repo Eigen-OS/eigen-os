@@ -1,113 +1,254 @@
-# Eigen OS
+# ⚛️ Eigen OS — Contract‑First Operating System for Hybrid Quantum‑Classical Computing
 
-Eigen OS is an open platform for deterministic hybrid quantum-classical execution: from JobSpec submission and compilation to distributed runtime execution and result retrieval.
+[![Project Status](https://img.shields.io/badge/status-Product%201.0%20Alignment-blue)](https://github.com/Eigen-OS/eigen-os)
+[![Target Version](https://img.shields.io/badge/target-1.0.0-purple)](https://github.com/Eigen-OS/eigen-os/milestone/1)
+[![License](https://img.shields.io/badge/License-Apache_2.0-green.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Rust](https://img.shields.io/badge/Rust-1.92+-orange)](https://www.rust-lang.org/)
+[![Python](https://img.shields.io/badge/Python-3.12+-blue)](https://www.python.org/)
 
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-![Status](https://img.shields.io/badge/Status-alpha-orange)
-![Python](https://img.shields.io/badge/Python-3.12%2B-blue)
-![Rust](https://img.shields.io/badge/Rust-1.92%2B-orange)
+**Eigen OS** is an open, modular operating system for deterministic hybrid quantum‑classical workloads.  
+It provides a single platform – from a declarative domain‑specific language down to real quantum hardware – while continuously learning and optimising itself based on accumulated operational data.
 
-## What this product is
+> 📄 **Specification version:** 1.3.0 (Target Standard)  
+> 🧠 **Core principle:** Data‑centric self‑learning – the system becomes smarter with every run.
 
-## TL;DR
+---
 
-- You submit workloads in a stable **JobSpec** format.
-- `system-api` validates lifecycle and contracts.
-- `eigen-compiler` produces deterministic execution artifacts.
-- `resource-manager` and runtime coordinate scheduling/queue/worker execution.
-- You get status, logs, topology metadata, and results via stable APIs.
+## 📌 Current Status (Product 1.0 alignment)
 
-## Project status (as of 2026-04-28)
+The project follows the **Product 1.0 Contract Alignment Plan** – a service‑by‑service, contract‑by‑contract implementation roadmap.
 
-Completed milestones:
+| Milestone | Status |
+|-----------|--------|
+| **Wave 0** – Baseline freeze & contract inventory | ✅ Completed |
+| **Wave 1** – Public API, JobSpec, error model closure | ✅ Completed |
+| **Wave 2** – Kernel/QRTX becomes lifecycle authority | 🔄 In progress |
+| **Waves 3–10** – Compiler, QFS, Resource Manager, Drivers, Optimizer, Knowledge Base, Security, Observability, Release | ⏳ Planned |
 
-- ✅ MVP-1: Core services and contracts
-- ✅ MVP-2: Compilation pipeline
-- ✅ MVP-3: Execution and results retrieval
-- ✅ Phase-1: Production runtime hardening
-- ✅ Phase-2: Orchestration layer
-- ✅ Phase-3: Benchmarking platform
-- ✅ Phase-4: Intelligent runtime contracts
-- ✅ Phase-5: Distributed execution contracts and closure package
+All normative contracts described in `docs/reference/` are being implemented as versioned wire representations with conformance tests, canonical errors, and observability markers. The **target release** is **Product `1.0.0`** – a mature, contract‑first platform.
 
-Current implementation baseline remains pre-`1.0.0`; Product `1.0.0` is tracked as a contract-alignment target in [`docs/development/product-1.0-contract-alignment-plan.md`](docs/development/product-1.0-contract-alignment-plan.md), with Wave 0 inventory and manifest artifacts under [`docs/development/product-1.0-contract-inventory.md`](docs/development/product-1.0-contract-inventory.md) and [`contracts/product-1.0/manifest.json`](contracts/product-1.0/manifest.json).
+---
 
-## Who this repository is for
+## 🎯 Vision & Mission
 
-- Platform teams building transparent orchestration for quantum workloads.
-- Engineers who need contract-driven APIs, conformance tests, and reproducible behavior.
-- Contributors evolving architecture through RFC/ADR governance.
+**Vision**  
+Eigen OS acts as a semantic bridge between a high‑level user problem (chemistry, finance, ML) and unstable, heterogeneous quantum hardware. It hides the physics of qubits, compilation, and optimisation behind a simple declarative interface.
 
-## What is guaranteed vs. not guaranteed
+**Mission**  
+Make quantum computing accessible to domain experts by automating compilation, mapping, and execution – while continuously improving through machine learning based on every submitted job.
 
-### Guaranteed in current baseline
+**Key principles**
+- **Hybrid‑first by design** – quantum and classical steps are interleaved seamlessly.
+- **Interface‑based abstraction** – stable, versioned gRPC/Protobuf contracts connect all components.
+- **Neuro‑symbolic adaptation** – hybrid AI models (Neuro‑DPDA, GNN) drive compilation and optimisation.
+- **Data‑centric self‑learning** – every run enriches the Knowledge Base, which retrains the intelligent components.
+- **Security by design** – Rust kernel, mTLS, JWT/OAuth2, audit, driver sandboxing.
 
-- Contract-first evolution (RFC + ADR + compatibility docs).
-- Deterministic behavior for core lifecycle/dispatch/benchmark/distributed execution contracts.
-- Explicit version markers in public and internal contract artifacts.
+---
 
-### Not guaranteed yet
+## 🧱 Architecture Overview
 
-- The project is still pre-`1.0.0`; breaking changes are possible between minor releases.
-- Production SLAs are not declared in this repository.
+![Architecture layers](docs/assets/arch-layers.png) *(conceptual diagram)*
 
-## Quick start
+| Layer | Components | Technologies |
+|-------|------------|--------------|
+| **User layer** | Eigen‑Lang DSL, System API (gRPC) | Python, JWT |
+| **Kernel** | QRTX (scheduler), QFS (L1/L2/L3), Security Module, Observability | Rust, SQLite, S3/MinIO, Prometheus |
+| **Runtime services** | Neuro‑DPDA, GNN Optimizer, Knowledge Base, Dataset Pipeline, Driver Manager | Python + PyTorch, FAISS |
+| **Hardware abstraction** | QDriver API, pluggable drivers (Qiskit, Cirq, Braket, …) | gRPC, isolated containers |
 
-### 1) Read core docs (recommended order)
+For a detailed component breakdown, see [`docs/architecture/components.md`](docs/architecture/components.md).
 
-1. [`docs/README.md`](docs/README.md)
-2. [`docs/architecture/overview.md`](docs/architecture/overview.md)
-3. [`docs/reference/README.md`](docs/reference/README.md)
-4. [`docs/development/README.md`](docs/development/README.md)
+### End‑to‑end flow (aligned with Product 1.0 contracts)
 
-### 2) Start local environment
+1. **User** writes a program in **Eigen‑Lang** and submits it via the **System API** (authenticated JWT, idempotency key, trace context).
+2. **QRTX** (Rust kernel) validates the JobSpec, builds a DAG, and enqueues the job.
+3. **Neuro‑DPDA** compiles Eigen‑Lang to **AQO** (platform‑independent IR), assisted by similar circuits from the Knowledge Base.
+4. **GNN Optimizer** maps logical qubits to the physical topology of the target device, inserts SWAP gates, and emits a QASM circuit.
+5. **Driver Manager** selects the appropriate QDriver and executes the circuit (simulator or real hardware).
+6. **Results** are stored in **QFS Level 3** (CircuitFS) and recorded in the **Knowledge Base**.
+7. **Continuous learning** – after a configurable number of new circuits, the Neuro‑DPDA and GNN are retrained on the fresh data.
+
+---
+
+## 🧠 Key Components (Product 1.0 focus)
+
+### 1. Eigen‑Lang DSL
+
+Declarative language embedded in Python. Allows expressing hybrid algorithms, parametrised circuits, and benchmarks without low‑level details.
+
+```python
+from eigen_lang import *
+
+@hybrid_program(target="simulator", shots=4096, optimization_level=3)
+def vqe_h2():
+    H = make_molecular_hamiltonian("H2", basis="sto-3g")
+    ansatz = create_hea_ansatz(n_qubits=H.n_qubits, depth=3)
+    
+    @cost_function
+    def energy(params):
+        return ExpectationValue(ansatz, H)
+    
+    from scipy.optimize import minimize
+    res = minimize(energy, [0.1]*ansatz.num_params, method="COBYLA")
+    return res.fun
+```
+
+#### Product 1.0 guarantees:
+
+- Deterministic parsing and validation (allowlist of imports, decorators, built‑ins).
+- Every compilation failure returns a canonical error code with structured details.
+- The same source + same JobSpec options produce exactly the same AQO.
+
+### 2. Eigen Kernel (Rust)
+
+- **QRTX** – central scheduler with priority queues, DAG dependencies, and durable job state. All lifecycle mutations are owned by the kernel; the System API is a thin public gateway.
+- **Quantum File System (QFS):**
+
+    - **Level 3 (CircuitFS)** – long‑term object storage (S3/MinIO) for sources, AQO, QASM, results (Parquet), datasets.
+    - **Level 2 (State Store)** – checkpoint storage for quantum states (statevector, MPS, shadows) in HDF5.
+    - **Level 1 (Live Qubit Manager)** – atomic reservation of physical qubits, feed‑forward, telemetry collection.
+
+- **Observability Stack** – Prometheus metrics, OpenTelemetry logs + traces, Grafana dashboards, structured audit events.
+- **Security Module** – JWT/OAuth2 validation, RBAC/ABAC policy enforcement, secret management (Vault), mTLS for internal services.
+
+### 3. Neuro‑Symbolic Compiler (Eigen‑DPDA)
+
+Hybrid: deterministic push‑down automaton (PDA) + neural network (Transformer/GNN).
+The PDA enumerates allowed compilation actions; the network selects the optimal action given the AST, device noise, and similar circuits from the Knowledge Base. Output is **AQO** (Abstract Quantum Operations).
+
+### 4. GNN Optimizer
+
+Takes an **AQO graph** (logical qubits + gates) and the **device topology** (physical qubits + error rates).
+Two Graph Attention Networks compute embeddings, then a soft‑assignment (Sinkhorn) maps logical → physical qubits. Additional heads insert SWAP routes and predict final circuit error.
+
+### 5. Knowledge Base (KB) – the system’s memory
+
+Stores every compiled circuit, its compilation trace, and aggregated patterns.
+
+- **Circuit Record** – hash, AST signature, compiler trace, fidelity, device ID, error.
+- **Pattern Record** – reusable optimisation templates.
+- **Indexes – vector** (FAISS) for semantic similarity, structural (DuckDB/SQLite) for filtering.
+- **API** – `SearchSimilar`, `GetPattern`, `Ingest`.
+- **Sources** – real jobs, synthetic datasets (QSBench), benchmarks, pattern miner.
+
+### 6. Driver Manager & QDriver API
+
+Unified gRPC interface for any quantum backend:
+
+- `Initialize`, `Execute`, `GetStatus`, `Calibrate`, `Cancel`.
+- Drivers are digitally signed, run in isolated containers, and access secrets only through the Security Module.
+- Supported reference backend: built‑in simulator. Optional drivers for Qiskit, Cirq, Braket, IBMQ.
+
+---
+
+## 🚀 Quick Start (local development)
+
+### Prerequisites
+
+- Rust 1.92+, Python 3.12+, Docker & Docker Compose, Git.
+
+### Setup
 
 ```bash
+git clone https://github.com/Eigen-OS/eigen-os.git
+cd eigen-os
+
+# Launch all services via Docker Compose
 ./deploy/local/dev_env.sh up
+
+# Generate Protobuf bindings
+bash scripts/dev/generate-protos.sh
+
+# Run Rust and Python tests
+cargo test --manifest-path src/rust/Cargo.toml --workspace
+pytest src/services/eigen-compiler/tests
+pytest src/services/system-api/tests
+
+# Start a public API skeleton server
+python examples/python/public_api_skeleton_server.py
 ```
 
-Stop:
+After startup:
 
-```bash
-./deploy/local/dev_env.sh down
+- System API gRPC `endpoint: localhost:50051`
+- Grafana: `http://localhost:3000` (admin/admin)
+- MinIO Console: `http://localhost:9001`
+
+### Submit your first job (using Eigen‑Lang)
+
+```python
+# my_first_job.py
+from eigen_lang import hybrid_program, rx, cx, measure_all
+
+@hybrid_program(target="simulator", shots=1024)
+def bell_state():
+    rx(0, 3.14159)
+    cx(0, 1)
+    return measure_all()
+
+if __name__ == "__main__":
+    result = bell_state()
+    print(result.get_counts())
 ```
 
-More details: [`deploy/local/README.md`](deploy/local/README.md)
+Run it – the CLI will automatically call the System API with idempotency and trace headers.
 
-### 3) Run CI-equivalent checks locally
+---
 
-See: [`docs/development/README.md`](docs/development/README.md)
+## 🔒 Security (built‑in, not bolted‑on)
 
-## Where to find Phase-5 closure artifacts
+- **Kernel in Rust** – memory safety, no buffer overflows or use‑after‑free.
+- **Mutual TLS** for all internal RPC; **JWT/OAuth2** for external clients.
+- **Driver sandboxing** – signed containers with minimal privileges.
+- **Encryption at rest** (S3 SSE) and **in transit** (TLS 1.3).
+- **Audit log** – immutable, tamper‑evident security events.
+- **CI/CD gates** – SAST, DAST, container scanning, software bill of materials (SBOM).
 
-- ADR index: [`docs/adr/README.md`](docs/adr/README.md)
-- Phase-5 RFC/ADR coverage: [`docs/development/phase-5-rfc-adr-gap-analysis.md`](docs/development/phase-5-rfc-adr-gap-analysis.md)
-- Phase-5 readiness checklist: [`docs/development/phase-5-release-readiness-checklist.md`](docs/development/phase-5-release-readiness-checklist.md)
-- Phase-5 compatibility report: [`docs/development/phase-5-compatibility-report.md`](docs/development/phase-5-compatibility-report.md)
+---
 
-## Repository layout
+## 📁 Repository Structure (Product 1.0 aligned)
 
 ```text
 eigen-os/
-├── docs/                # Architecture, reference, tutorials, development docs
-├── proto/               # gRPC/Protobuf contracts (source of truth)
-├── specs/               # Format specifications and examples
-├── src/                 # Rust workspace and Python services
-├── examples/            # Workload and integration examples
-├── deploy/              # Local and Docker deployment
-├── monitoring/          # Metrics, logs, tracing, dashboards
-├── rfcs/                # RFC proposals and decision history
-└── scripts/             # Build, test, and CI helpers
+├── docs/                      # Architecture, reference, ADRs, product plans
+│   ├── architecture/          # Includes components.md, contract-map.md
+│   ├── reference/             # API, JobSpec, error model, observability contracts
+│   └── development/           # Product 1.0 alignment plan, inventory
+├── proto/                     # gRPC/Protobuf contracts (public & internal)
+├── specs/                     # JobSpec, AQO, QFS layout, Eigen‑Lang grammar
+├── src/
+│   ├── rust/                  # Kernel, QFS, Security Module, proto bindings
+│   ├── services/              # Python services (compiler, optimizer, kb, driver‑manager, etc.)
+│   └── eigen-lang/            # Python DSL implementation
+├── examples/                  # Example programs and API usage
+├── deploy/                    # Docker Compose, Helm charts for Kubernetes
+├── monitoring/                # Grafana dashboards, Prometheus alerts
+├── rfcs/                      # Proposals and architecture decision records
+├── scripts/                   # Helper scripts (protos, tests, local dev)
+└── tests/                     # Integration and end‑to‑end conformance tests
 ```
 
-## Contributing
+---
 
-If you change public contracts or cross-service behavior, open an issue/RFC first.
+We follow a **contract‑first** process. Any change affecting a public or internal contract requires:
 
-- Contribution process: [`CONTRIBUTING.md`](CONTRIBUTING.md)
-- Security policy: [`SECURITY.md`](SECURITY.md)
-- Code of conduct: [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md)
+- An RFC (for significant changes) or an ADR (for architectural decisions).
+- Updates to the corresponding proto files, reference docs, and conformance tests.
+- A compatibility/migration note.
 
-## License
+Start by reading:
 
-Licensed under **Apache License 2.0** — see [`LICENSE`](LICENSE).
+- [`CONTRIBUTING.md`](https://github.com/Eigen-OS/eigen-os/blob/main/CONTRIBUTING.md)
+- [`CODE_OF_CONDUCT.md`](https://github.com/Eigen-OS/eigen-os/blob/main/SECURITY.md)
+- [`SECURITY.md`](https://github.com/Eigen-OS/eigen-os/blob/main/CODE_OF_CONDUCT.md)
+
+---
+
+## 📄 License
+
+Apache License 2.0. See [LICENSE](https://github.com/Eigen-OS/eigen-os/blob/main/LICENSE).
+
+---
+
+### Eigen OS – building the bridge between classical and quantum futures. Join us.
