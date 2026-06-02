@@ -11,7 +11,7 @@
     },
     {
       "path": "proto/eigen/api/v1/knowledge_base_service.proto",
-      "sha256": "b36e9937c72c8a327c3d7d8d719966974702c822998fae85786afe84e719738c"
+      "sha256": "1f1c1c9a3c13599c513dcb0ddd5b6196cdc1acb93b0a666fe3999cae1aaac529"
     },
     {
       "path": "proto/eigen/api/v1/types.proto",
