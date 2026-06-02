@@ -350,9 +350,9 @@ Kernel MUST ensure these fields are consistent with `error-model.md`.
 
 ---
 
-## 9. Storage / State
+## 9. Storage / State (Updated for Product 1.0)
 
-### 9.1 Implemented now
+### 9.1 MVP (in-memory, reference implementation)
 
 - In-memory `JobStore` containing:
     - job state,
@@ -367,15 +367,55 @@ Terminalization behavior:
 
 ---
 
-### 9.2 Required target state (Phase-1+)
+### 9.2 Product 1.0 (durable event-sourced, normative)
 
-Kernel SHALL add:
+Kernel SHALL implement:
 
-- durable state backend (DB/event log),
-- restart recovery,
-- replay-safe orchestration recovery,
-- scheduler coordination state (queue depth, reservations, fairness),
-- replay lineage indexes and checkpoints.
+**Durable Event Log (required):**
+- Immutable append-only event log per job: `qfs://jobs/<job_id>/state/events.jsonl`
+- Each event contains:
+  - sequence number (monotonic)
+  - from_state → to_state (transition)
+  - triggering event (e.g., `StartCompiling`)
+  - timestamp and trace correlation
+  - optional reason/metadata
+
+**Restart Recovery (required):**
+- Load all event logs from QFS on startup
+- Replay each job's event sequence
+- Reconstruct in-memory job state deterministically
+- Detect event log corruption (invalid sequences, bad transitions)
+
+**Deterministic Replay Function (required):**
+- Provided: `JobEventLog::replay_to_current_state()`
+- Validates all transitions are legal
+- Detects sequence gaps, state inconsistencies, determinism violations
+- Returns final state or structured error
+
+**Audit Trail (required):**
+- All state transitions recorded immutably
+- Timestamps enable causality ordering
+- Trace IDs enable correlation with distributed traces
+- No transition can be "undone" or "rewritten"
+
+**Implementation artifacts:**
+- `qrtx::event_log` — event types and replay logic
+- `eigen-kernel::durable_job_store` — QFS persistence layer
+- Tests in `src/rust/crates/{qrtx,eigen-kernel}/tests/`
+
+---
+
+### 9.3 Future phases (Phase-2+)
+
+Kernel MAY add:
+
+- Database backend (PostgreSQL/SQLite) for event log durability
+- Event stream subscriptions (for live job updates)
+- Archive/cleanup policies (old events)
+- Multi-region replication (distributed event log)
+- Scheduler coordination state (resource allocation, fairness)
+
+These do not change the current event log abstraction; they are alternative storage backends.
 
 ---
 
