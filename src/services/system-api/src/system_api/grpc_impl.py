@@ -410,7 +410,16 @@ class JobService:
         if request.WhichOneof("program") == "eigen_lang":
             digest = request.eigen_lang.sha256.strip()
             if digest:
-                return f"tenant:{tenant_id}:eigen_lang.sha256:{digest}:{request.eigen_lang.entrypoint}:{request.target}"
+                return ":".join(
+                    (
+                        "tenant",
+                        tenant_id,
+                        "eigen_lang.sha256",
+                        digest,
+                        request.eigen_lang.entrypoint,
+                        request.target,
+                    )
+                )
         return None
     
     def _msg_with_trace(self, message: str, trace_id: str | None) -> str:
