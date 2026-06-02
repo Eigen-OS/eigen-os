@@ -3,19 +3,19 @@
   "artifacts": [
     {
       "path": "proto/eigen/api/v1/device_service.proto",
-      "sha256": "920eb60915a1edb4117ca6bf98d25bd7193d664870e48d6b00cb0a88d10f27b3"
+      "sha256": "f4f5b84aba86a27afae33e1fd82959d8cc09bf94c855da789d0bdaf3c6cb912d"
     },
     {
       "path": "proto/eigen/api/v1/job_service.proto",
-      "sha256": "5349c394003f94e3fdac0b29998291278ba7aa0c5718a3023d6bbd5ed908dfcd"
+      "sha256": "b36e9937c72c8a327c3d7d8d719966974702c822998fae85786afe84e719738c"
     },
     {
       "path": "proto/eigen/api/v1/knowledge_base_service.proto",
-      "sha256": "6c7adcb61ee302a91dfc27464928b7f95eef5f77e565787931728a4812c8b55c"
+      "sha256": "b36e9937c72c8a327c3d7d8d719966974702c822998fae85786afe84e719738c"
     },
     {
       "path": "proto/eigen/api/v1/types.proto",
-      "sha256": "dba9f4a88037d8e079716e8352001ea41e2de28c55463d8be93128180673e9d8"
+      "sha256": "598a2180e2eca2279e200ac800d1c2b66fe85b7073dc64d9a1f57b2125b0efda"
     },
     {
       "path": "proto/eigen/internal/v1/compilation_service.proto",
