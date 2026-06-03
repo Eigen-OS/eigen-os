@@ -56,7 +56,7 @@ eigen_kernel_contract_info{version="1.0.0"} 1
 QRTX is the authoritative coordinator for a job’s runtime lifecycle. It:
 
 - validates/normalizes internal execution requests (after System API validation),
-- orchestrates compilation and execution calls,
+- orchestrates the Product 1.0 DAG and all downstream handoff points,
 - enforces lifecycle transitions,
 - persists artifacts and durable failure evidence to QFS,
 - propagates trace/auth correlation context across services,
@@ -169,7 +169,11 @@ CANCELLED
 
 ### 5.1 Runtime orchestration (implemented)
 
-QRTX orchestrates: `validate/enqueue → compile → optimize → schedule → execute → persist → record knowledge/observability → finalize`
+QRTX orchestrates Product 1.0 as a deterministic control-plane flow:
+
+`validate/enqueue → compile → optimize → schedule → execute → persist  record knowledge/observability → finalize`
+
+Stage boundaries are observable, replay-safe, and carry stable stage IDs so cancellation and deadline fan-out can be reconstructed deterministically.
 
 mplemented the Product 1.0 orchestration DAG control-plane skeleton in Kernel/QRTX with deterministic stage IDs, replay-safe stage records, explicit downstream adapters, and submit-to-results integration coverage.
 
@@ -338,7 +342,18 @@ If execution or orchestration exceeds the configured deadline:
 
 ---
 
-### 8.3 Async failure visibility (minimum)
+### 8.3 Cancellation fan-out and deadline normalization
+
+Kernel/QRTX MUST normalize deadline and cancellation intent before downstream dispatch and preserve that control decision across all remaining stages.
+
+- Cancellation MUST fan out to queued, compiling, optimizing, scheduled, executing, persisting, and finalizing work.
+- Deadline expiry MUST release or mark reservations as released and must not leave the job in an ambiguous in-flight state.
+- The first terminal control decision wins; later cancellation/deadline requests are idempotent no-ops.
+- Trace and metric labels MUST remain bounded and MUST NOT encode unbounded cancellation reasons or deadline payloads.
+
+---
+
+### 8.4 Async failure visibility (minimum)
 
 When lifecycle is `ERROR`, status/results surfaces MUST include:
 

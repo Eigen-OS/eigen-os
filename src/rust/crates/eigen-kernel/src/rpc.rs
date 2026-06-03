@@ -183,6 +183,7 @@ struct NormalizedSubmission {
     role: String,
     source_service: String,
     deadline_seconds: Option<u64>,
+    deadline_at: Option<Timestamp>,
     name: String,
     program_format: String,
     program: Vec<u8>,
@@ -223,7 +224,11 @@ impl NormalizedSubmission {
         let deadline_seconds = metadata
             .deadline
             .as_ref()
-            .and_then(|d| if d.seconds > 0 { Some(d.seconds as u64) } else { None });
+            .and_then(|d| if d.seconds > 0 || d.nanos > 0 { Some(d.seconds.max(0) as u64) } else { None });
+        let deadline_at = metadata
+            .deadline
+            .as_ref()
+            .and_then(|d| normalized_deadline_at(d));
         let compiler_options = canonical_string_map(&request.compiler_options);
         let metadata_kvs = canonical_string_map(&request.metadata_kvs);
         let program_hash = hash_bytes_hex(&program);
@@ -240,6 +245,7 @@ impl NormalizedSubmission {
             role.as_str(),
             source_service.as_str(),
             deadline_seconds,
+            deadline_at,
             name.as_str(),
             program_format.as_str(),
             &program_hash,
@@ -308,6 +314,13 @@ impl NormalizedSubmission {
                     .map(|v| v.to_string())
                     .unwrap_or_default(),
             ),
+            (
+                "deadline_at_unix_ms".to_string(),
+                self.deadline_at
+                    .as_ref()
+                    .map(|ts| timestamp_to_ms(ts).to_string())
+                    .unwrap_or_default(),
+            ),
         ])
     }
 
@@ -329,6 +342,7 @@ struct JobRuntimeRecord {
     current_stage: Option<DagStageKind>,
     created_at: Timestamp,
     updated_at: Timestamp,
+    deadline_at: Option<Timestamp>,
     completed_at: Option<Timestamp>,
     stage_records: Vec<StageRecord>,
     counts: BTreeMap<String, i64>,
@@ -338,6 +352,9 @@ struct JobRuntimeRecord {
     error_summary: Option<String>,
     error_details_ref: Option<String>,
     cancel_requested: bool,
+    cancel_reason: Option<String>,
+    cancellation_fanout_ref: Option<String>,
+    reservation_state: Option<String>,
 }
 
 impl JobRuntimeRecord {
@@ -450,6 +467,7 @@ impl KernelRuntimeStore {
             current_stage: Some(DagStageKind::ValidateEnqueue),
             created_at: now.clone(),
             updated_at: now,
+            deadline_at: submission.deadline_at.clone(),
             completed_at: None,
             stage_records: Vec::new(),
             counts: BTreeMap::new(),
@@ -459,6 +477,9 @@ impl KernelRuntimeStore {
             error_summary: None,
             error_details_ref: None,
             cancel_requested: false,
+            cancel_reason: None,
+            cancellation_fanout_ref: None,
+            reservation_state: Some("held".to_string()),
         };
         jobs.insert(submission.job_id.clone(), record.clone());
         self.request_index
@@ -476,6 +497,15 @@ impl KernelRuntimeStore {
             .read()
             .get(job_id)
             .map(|job| job.cancel_requested)
+            .unwrap_or(false)
+    }
+
+    fn deadline_expired(&self, job_id: &str) -> bool {
+        self.jobs
+            .read()
+            .get(job_id)
+            .and_then(|job| job.deadline_at.as_ref())
+            .map(|deadline| timestamp_to_ms(&ts_now()) >= timestamp_to_ms(deadline))
             .unwrap_or(false)
     }
 
@@ -614,6 +644,53 @@ impl KernelRuntimeStore {
         job.metadata = metadata;
         job.updated_at = ts_now();
         Ok(())
+    }
+
+    fn set_reservation_state(&self, job_id: &str, state: &str) -> Result<(), Status> {
+        let mut jobs = self.jobs.write();
+        let job = jobs
+            .get_mut(job_id)
+            .ok_or_else(|| Status::not_found("job not found"))?;
+        job.reservation_state = Some(state.to_string());
+        job.updated_at = ts_now();
+        Ok(())
+    }
+
+    fn request_cancel(&self, job_id: &str, reason: Option<String>) -> Result<JobRuntimeRecord, Status> {
+        let mut jobs = self.jobs.write();
+        let job = jobs
+            .get_mut(job_id)
+            .ok_or_else(|| Status::not_found("job not found"))?;
+        if job.is_terminal() {
+            return Err(Status::failed_precondition("job already terminal"));
+        }
+        job.cancel_requested = true;
+        job.cancel_reason = reason;
+        job.cancellation_fanout_ref = Some(format!("qfs://jobs/{job_id}/control/cancellation.json"));
+        job.reservation_state = Some("release_pending".to_string());
+        job.updated_at = ts_now();
+        Ok(job.clone())
+    }
+
+    fn request_deadline_terminalization(&self, job_id: &str) -> Result<JobRuntimeRecord, Status> {
+        let mut jobs = self.jobs.write();
+        let job = jobs
+            .get_mut(job_id)
+            .ok_or_else(|| Status::not_found("job not found"))?;
+        if job.is_terminal() {
+            return Ok(job.clone());
+        }
+        job.state = TaskState::Timeout;
+        job.cancel_requested = true;
+        job.cancel_reason = Some("deadline_exceeded".to_string());
+        job.cancellation_fanout_ref = Some(format!("qfs://jobs/{job_id}/control/deadline.json"));
+        job.reservation_state = Some("released".to_string());
+        job.error_code = Some("DEADLINE_EXCEEDED".to_string());
+        job.error_summary = Some("deadline exceeded while orchestrating the job".to_string());
+        job.error_details_ref = Some(format!("qfs://jobs/{job_id}/errors/deadline.json"));
+        job.completed_at = Some(ts_now());
+        job.updated_at = ts_now();
+        Ok(job.clone())
     }
 
     fn set_counts(
@@ -819,15 +896,25 @@ trait OrchestrationAdapters: Send + Sync {
 struct FixtureAdapters {
     qfs: CircuitFsLocal,
     failure_stage: Option<DagStageKind>,
+    hold_stage: Option<DagStageKind>,
+    hold_for: Duration,
 }
 
 impl FixtureAdapters {
     fn from_env() -> Self {
         let qfs_root = std::env::var("EIGEN_QFS_ROOT")
             .unwrap_or_else(|_| qfs::DEFAULT_CIRCUIT_FS_ROOT.to_string());
+        let hold_stage = std::env::var("EIGEN_KERNEL_TEST_HOLD_STAGE").ok().and_then(|raw| parse_stage_kind(&raw));
+        let hold_for = std::env::var("EIGEN_KERNEL_TEST_HOLD_MS")
+            .ok()
+            .and_then(|raw| raw.parse::<u64>().ok())
+            .map(Duration::from_millis)
+            .unwrap_or_default();
         Self {
             qfs: CircuitFsLocal::new(qfs_root),
             failure_stage: None,
+            hold_stage,
+            hold_for,
         }
     }
 
@@ -863,6 +950,12 @@ impl FixtureAdapters {
             Ok(())
         }
     }
+
+    async fn maybe_hold(&self, stage: DagStageKind) {
+        if self.hold_stage == Some(stage) && !self.hold_for.is_zero() {
+            tokio::time::sleep(self.hold_for).await;
+        }
+    }
 }
 
 #[tonic::async_trait]
@@ -871,6 +964,7 @@ impl OrchestrationAdapters for FixtureAdapters {
         &self,
         submission: &NormalizedSubmission,
     ) -> Result<BTreeMap<String, String>, KernelStageError> {
+        self.maybe_hold(DagStageKind::ValidateEnqueue).await;
         self.maybe_fail(DagStageKind::ValidateEnqueue)?;
         let mut output = BTreeMap::from([
             ("message".to_string(), "submission validated".to_string()),
@@ -889,6 +983,7 @@ impl OrchestrationAdapters for FixtureAdapters {
         submission: &NormalizedSubmission,
         _validation_output: &BTreeMap<String, String>,
     ) -> Result<BTreeMap<String, String>, KernelStageError> {
+        self.maybe_hold(DagStageKind::Compile).await;
         self.maybe_fail(DagStageKind::Compile)?;
         Ok(BTreeMap::from([
             ("message".to_string(), "compile stage completed".to_string()),
@@ -912,6 +1007,7 @@ impl OrchestrationAdapters for FixtureAdapters {
         submission: &NormalizedSubmission,
         _compile_output: &BTreeMap<String, String>,
     ) -> Result<BTreeMap<String, String>, KernelStageError> {
+        self.maybe_hold(DagStageKind::Optimize).await;
         self.maybe_fail(DagStageKind::Optimize)?;
         Ok(BTreeMap::from([
             ("message".to_string(), "optimization stage completed".to_string()),
@@ -932,6 +1028,7 @@ impl OrchestrationAdapters for FixtureAdapters {
         submission: &NormalizedSubmission,
         _optimize_output: &BTreeMap<String, String>,
     ) -> Result<BTreeMap<String, String>, KernelStageError> {
+        self.maybe_hold(DagStageKind::Schedule).await;
         self.maybe_fail(DagStageKind::Schedule)?;
         Ok(BTreeMap::from([
             ("message".to_string(), "resource schedule selected".to_string()),
@@ -949,6 +1046,7 @@ impl OrchestrationAdapters for FixtureAdapters {
         submission: &NormalizedSubmission,
         schedule_output: &BTreeMap<String, String>,
     ) -> Result<ExecutionOutcome, KernelStageError> {
+        self.maybe_hold(DagStageKind::Execute).await;
         self.maybe_fail(DagStageKind::Execute)?;
         let shots = submission
             .metadata_kvs
@@ -985,6 +1083,7 @@ impl OrchestrationAdapters for FixtureAdapters {
         execution_output: &ExecutionOutcome,
         stage_records: &[StageRecord],
     ) -> Result<BTreeMap<String, String>, KernelStageError> {
+        self.maybe_hold(DagStageKind::Persist).await;
         self.maybe_fail(DagStageKind::Persist)?;
         let artifact = serde_json::json!({
             "job_id": submission.job_id,
@@ -1030,6 +1129,7 @@ impl OrchestrationAdapters for FixtureAdapters {
         persist_output: &BTreeMap<String, String>,
         execution_output: &ExecutionOutcome,
     ) -> Result<BTreeMap<String, String>, KernelStageError> {
+        self.maybe_hold(DagStageKind::RecordKnowledgeObservability).await;
         self.maybe_fail(DagStageKind::RecordKnowledgeObservability)?;
         let payload = serde_json::json!({
             "job_id": submission.job_id,
@@ -1073,6 +1173,7 @@ impl OrchestrationAdapters for FixtureAdapters {
         submission: &NormalizedSubmission,
         observability_output: &BTreeMap<String, String>,
     ) -> Result<BTreeMap<String, String>, KernelStageError> {
+        self.maybe_hold(DagStageKind::Finalize).await;
         self.maybe_fail(DagStageKind::Finalize)?;
         Ok(BTreeMap::from([
             ("message".to_string(), "job finalized".to_string()),
@@ -1295,6 +1396,12 @@ async fn run_job_dag(
         .validate_enqueue(&submission)
         .await
         .map_err(|err| stage_error(validate_stage, err))?;
+
+    if runtime.is_cancel_requested(&job_id) || runtime.deadline_expired(&job_id) {
+        terminalize_control(&runtime, &job_id, DagStageKind::Compile, "validate")?;
+        return Ok(());
+    }
+
     runtime
         .finish_stage_success(
             &job_id,
@@ -1325,6 +1432,12 @@ async fn run_job_dag(
         .compile(&submission, &validation_output)
         .await
         .map_err(|err| stage_error(compile_stage, err))?;
+
+    if runtime.is_cancel_requested(&job_id) || runtime.deadline_expired(&job_id) {
+        terminalize_control(&runtime, &job_id, DagStageKind::Compile, "compile")?;
+        return Ok(());
+    }
+
     runtime
         .finish_stage_success(
             &job_id,
@@ -1354,7 +1467,12 @@ async fn run_job_dag(
     optimize_output = adapters
         .optimize(&submission, &compile_output)
         .await
-        .map_err(|err| stage_error(optimize_stage, err))?;
+        
+    if runtime.is_cancel_requested(&job_id) || runtime.deadline_expired(&job_id) {
+        terminalize_control(&runtime, &job_id, DagStageKind::Optimize, "optimize")?;
+        return Ok(());
+    }
+
     runtime
         .finish_stage_success(
             &job_id,
@@ -1385,6 +1503,26 @@ async fn run_job_dag(
         .schedule(&submission, &optimize_output)
         .await
         .map_err(|err| stage_error(schedule_stage, err))?;
+
+    if runtime.is_cancel_requested(&job_id) || runtime.deadline_expired(&job_id) {
+        terminalize_control(&runtime, &job_id, DagStageKind::Schedule, "schedule")?;
+        return Ok(());
+    }
+
+    let mut reservation_metadata = BTreeMap::from([
+        ("reservation_state".to_string(), "held".to_string()),
+        (
+            "resource_plan_ref".to_string(),
+            schedule_output
+                .get("resource_plan_ref")
+                .cloned()
+                .unwrap_or_else(|| format!("qfs://jobs/{job_id}/schedule/plan.json")),
+        ),
+    ]);
+    runtime
+        .set_metadata(&job_id, reservation_metadata.clone())
+        .map_err(status_to_stage_error(schedule_stage, "set_reservation_metadata"))?;
+
     runtime
         .finish_stage_success(
             &job_id,
@@ -1415,6 +1553,12 @@ async fn run_job_dag(
         .execute(&submission, &schedule_output)
         .await
         .map_err(|err| stage_error(execute_stage, err))?;
+
+    if runtime.is_cancel_requested(&job_id) || runtime.deadline_expired(&job_id) {
+        terminalize_control(&runtime, &job_id, DagStageKind::Execute, "execute")?;
+        return Ok(());
+    }
+
     runtime
         .set_counts(&job_id, execution_output.counts.clone())
         .map_err(status_to_stage_error(execute_stage, "set_counts"))?;
@@ -1445,6 +1589,12 @@ async fn run_job_dag(
         .persist(&submission, &execution_output, &runtime.get(&job_id).map(|job| job.stage_records.clone()).unwrap_or_default())
         .await
         .map_err(|err| stage_error(persist_stage, err))?;
+
+    if runtime.is_cancel_requested(&job_id) || runtime.deadline_expired(&job_id) {
+        terminalize_control(&runtime, &job_id, DagStageKind::Persist, "persist")?;
+        return Ok(());
+    }
+
     if let Some(result_ref) = persist_output.get("qfs_result_ref").cloned() {
         runtime
             .set_qfs_result_ref(&job_id, result_ref)
@@ -1482,6 +1632,12 @@ async fn run_job_dag(
         .record_knowledge_observability(&submission, &persist_output, &execution_output)
         .await
         .map_err(|err| stage_error(observability_stage, err))?;
+
+    if runtime.is_cancel_requested(&job_id) || runtime.deadline_expired(&job_id) {
+        terminalize_control(&runtime, &job_id, DagStageKind::RecordKnowledgeObservability, "observability")?;
+        return Ok(());
+    }
+
     runtime
         .set_metadata(&job_id, observability_output.clone())
         .map_err(status_to_stage_error(observability_stage, "set_observability_metadata"))?;
@@ -1507,6 +1663,12 @@ async fn run_job_dag(
         .finalize(&submission, &observability_output)
         .await
         .map_err(|err| stage_error(finalize_stage, err))?;
+
+    if runtime.is_cancel_requested(&job_id) || runtime.deadline_expired(&job_id) {
+        terminalize_control(&runtime, &job_id, DagStageKind::Finalize, "finalize")?;
+        return Ok(());
+    }
+
     runtime
         .finish_stage_success(
             &job_id,
@@ -1588,6 +1750,52 @@ fn cancel_after_stage(
     Ok(())
 }
 
+fn terminalize_control(
+    runtime: &Arc<KernelRuntimeStore>,
+    job_id: &str,
+    stage: DagStageKind,
+    stage_label: &str,
+) -> Result<(), KernelStageError> {
+    let is_cancel = runtime.is_cancel_requested(job_id);
+    let stage_id = stage_id(job_id, stage);
+    let reason = if is_cancel {
+        "cancelled by request"
+    } else {
+        "deadline exceeded"
+    };
+    let terminal_state = if is_cancel { TaskState::Cancelled } else { TaskState::Timeout };
+    let error_code = if is_cancel { "CANCELLED" } else { "DEADLINE_EXCEEDED" };
+    let error_details_ref = if is_cancel {
+        format!("qfs://jobs/{job_id}/errors/cancelled.json")
+    } else {
+        format!("qfs://jobs/{job_id}/errors/deadline.json")
+    };
+    runtime
+        .finish_stage_failure(
+            job_id,
+            &stage_id,
+            terminal_state,
+            error_code,
+            &format!("{stage_label} {reason}"),
+            &error_details_ref,
+        )
+        .map_err(|status| KernelStageError::new(
+            Code::Internal,
+            "RUNTIME_STAGE_FAILURE",
+            format!("{stage_label} terminalization failed"),
+            format!("status::{:?}", status.code()),
+        ))?;
+    runtime
+        .set_reservation_state(job_id, "released")
+        .map_err(|status| KernelStageError::new(
+            Code::Internal,
+            "RUNTIME_STAGE_FAILURE",
+            format!("{stage_label} reservation release failed"),
+            format!("status::{:?}", status.code()),
+        ))?;
+    Ok(())
+}
+
 fn nonempty(value: &str, field: &'static str) -> Result<String, Status> {
     if value.trim().is_empty() {
         Err(Status::invalid_argument(format!("{field} is required")))
@@ -1613,6 +1821,39 @@ fn canonical_string_map(input: &HashMap<String, String>) -> BTreeMap<String, Str
 
 fn stage_id(job_id: &str, stage: DagStageKind) -> String {
     format!("{job_id}:{:02}-{}", stage.index(), stage.key())
+}
+
+fn normalized_deadline_at(deadline: &prost_types::Duration) -> Option<Timestamp> {
+    if deadline.seconds <= 0 && deadline.nanos <= 0 {
+        return None;
+    }
+    let now = ts_now();
+    let now_ms = timestamp_to_ms(&now);
+    let deadline_ms = now_ms
+        .saturating_add((deadline.seconds.max(0) as i128) * 1000)
+        .saturating_add((deadline.nanos.max(0) as i128) / 1_000_000);
+    Some(Timestamp {
+        seconds: (deadline_ms / 1000) as i64,
+        nanos: ((deadline_ms % 1000) * 1_000_000) as i32,
+    })
+}
+
+fn timestamp_to_ms(ts: &Timestamp) -> i128 {
+    (ts.seconds as i128) * 1000 + (ts.nanos as i128 / 1_000_000)
+}
+
+fn parse_stage_kind(value: &str) -> Option<DagStageKind> {
+    match value {
+        "validate" | "validate_enq" | "validate-enqueue" => Some(DagStageKind::ValidateEnqueue),
+        "compile" => Some(DagStageKind::Compile),
+        "optimize" => Some(DagStageKind::Optimize),
+        "schedule" => Some(DagStageKind::Schedule),
+        "execute" => Some(DagStageKind::Execute),
+        "persist" => Some(DagStageKind::Persist),
+        "observability" | "record-knowledge-observability" => Some(DagStageKind::RecordKnowledgeObservability),
+        "finalize" => Some(DagStageKind::Finalize),
+        _ => None,
+    }
 }
 
 fn stage_snapshot_bytes(stage: &StageRecord) -> Vec<u8> {
@@ -1944,6 +2185,115 @@ mod tests {
         assert_eq!(results.state, TaskState::Error as i32);
         assert_eq!(results.error_code, "OPTIMIZER_STAGE_FAILED");
         assert!(!results.error_summary.is_empty());
+    }
+
+    fn make_cancel_request(job_id: &str) -> CancelJobRequest {
+        CancelJobRequest {
+            metadata: Some(RequestMetadata {
+                contract_version: "1.0.0".to_string(),
+                request_id: format!("cancel-{job_id}"),
+                idempotency_key: format!("cancel-{job_id}"),
+                traceparent: "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01".to_string(),
+                deadline: Some(ProtoDuration { seconds: 30, nanos: 0 }),
+                tenant_id: "tenant-a".to_string(),
+                project_id: "project-a".to_string(),
+                subject: "alice".to_string(),
+                role: "user".to_string(),
+                source_service: "system-api".to_string(),
+            }),
+            job_id: job_id.to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn cancellation_while_queued_releases_reservation() {
+        std::env::set_var("EIGEN_KERNEL_TEST_HOLD_STAGE", "schedule");
+        std::env::set_var("EIGEN_KERNEL_TEST_HOLD_MS", "80");
+        let (svc, runtime) = make_service(None);
+        let response = svc
+            .enqueue_job(Request::new(make_request("queued-cancel")))
+            .await
+            .expect("enqueue should succeed")
+            .into_inner();
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        let _ = svc.cancel_job(Request::new(make_cancel_request(&response.job_id))).await;
+        let job = wait_for_terminal(runtime, &response.job_id).await;
+        assert_eq!(job.state, TaskState::Cancelled);
+        assert_eq!(job.reservation_state.as_deref(), Some("released"));
+        std::env::remove_var("EIGEN_KERNEL_TEST_HOLD_STAGE");
+        std::env::remove_var("EIGEN_KERNEL_TEST_HOLD_MS");
+    }
+
+    #[tokio::test]
+    async fn cancellation_while_compiling_is_deterministic() {
+        std::env::set_var("EIGEN_KERNEL_TEST_HOLD_STAGE", "compile");
+        std::env::set_var("EIGEN_KERNEL_TEST_HOLD_MS", "80");
+        let (svc, runtime) = make_service(None);
+        let response = svc
+            .enqueue_job(Request::new(make_request("compile-cancel")))
+            .await
+            .expect("enqueue should succeed")
+            .into_inner();
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        let _ = svc.cancel_job(Request::new(make_cancel_request(&response.job_id))).await;
+        let job = wait_for_terminal(runtime, &response.job_id).await;
+        assert_eq!(job.state, TaskState::Cancelled);
+        std::env::remove_var("EIGEN_KERNEL_TEST_HOLD_STAGE");
+        std::env::remove_var("EIGEN_KERNEL_TEST_HOLD_MS");
+    }
+
+    #[tokio::test]
+    async fn cancellation_while_executing_is_deterministic() {
+        std::env::set_var("EIGEN_KERNEL_TEST_HOLD_STAGE", "execute");
+        std::env::set_var("EIGEN_KERNEL_TEST_HOLD_MS", "80");
+        let (svc, runtime) = make_service(None);
+        let response = svc
+            .enqueue_job(Request::new(make_request("execute-cancel")))
+            .await
+            .expect("enqueue should succeed")
+            .into_inner();
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        let _ = svc.cancel_job(Request::new(make_cancel_request(&response.job_id))).await;
+        let job = wait_for_terminal(runtime, &response.job_id).await;
+        assert_eq!(job.state, TaskState::Cancelled);
+        std::env::remove_var("EIGEN_KERNEL_TEST_HOLD_STAGE");
+        std::env::remove_var("EIGEN_KERNEL_TEST_HOLD_MS");
+    }
+
+    #[tokio::test]
+    async fn cancellation_while_finalizing_keeps_canonical_terminal_state() {
+        std::env::set_var("EIGEN_KERNEL_TEST_HOLD_STAGE", "finalize");
+        std::env::set_var("EIGEN_KERNEL_TEST_HOLD_MS", "80");
+        let (svc, runtime) = make_service(None);
+        let response = svc
+            .enqueue_job(Request::new(make_request("finalize-cancel")))
+            .await
+            .expect("enqueue should succeed")
+            .into_inner();
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        let _ = svc.cancel_job(Request::new(make_cancel_request(&response.job_id))).await;
+        let job = wait_for_terminal(runtime, &response.job_id).await;
+        assert!(matches!(job.state, TaskState::Cancelled | TaskState::Done));
+        std::env::remove_var("EIGEN_KERNEL_TEST_HOLD_STAGE");
+        std::env::remove_var("EIGEN_KERNEL_TEST_HOLD_MS");
+    }
+
+    #[tokio::test]
+    async fn deadline_expiry_maps_to_timeout_behavior() {
+        let mut req = make_request("deadline-timeout");
+        if let Some(md) = req.metadata.as_mut() {
+            md.deadline = Some(ProtoDuration { seconds: 0, nanos: 1 });
+        }
+        let (svc, runtime) = make_service(None);
+        let response = svc
+            .enqueue_job(Request::new(req))
+            .await
+            .expect("enqueue should succeed")
+            .into_inner();
+        let job = wait_for_terminal(runtime, &response.job_id).await;
+        assert_eq!(job.state, TaskState::Timeout);
+        assert_eq!(job.error_code.as_deref(), Some("DEADLINE_EXCEEDED"));
+        assert_eq!(job.reservation_state.as_deref(), Some("released"));
     }
 
     #[tokio::test]
