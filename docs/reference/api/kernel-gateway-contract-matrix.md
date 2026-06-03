@@ -89,6 +89,7 @@ service KernelGatewayService {
 - MUST persist JobSpec into QFS at `circuit_fs/<job_id>/job.yaml`.
 - MUST enqueue job into QRTX scheduler.
 - MUST initialize internal state machine to `PENDING`.
+- MUST normalize deadline and cancellation control state before dispatching downstream work.
 - Idempotency: if `request_id` matches prior successful request within retention window, return same `job_id`.
 - MUST return gRPC status `INVALID_ARGUMENT` if program format is unsupported.
 - MUST return gRPC status `PERMISSION_DENIED` if authorization fails.
@@ -161,16 +162,29 @@ service KernelGatewayService {
 - MUST be idempotent: multiple cancellations of same job are safe.
 - MUST propagate cancellation signal to:
   - Compiler (if in COMPILING state),
+  - Optimizer (if in OPTIMIZING state),
+  - Scheduler / resource manager (if in QUEUED state),
   - Driver Manager (if in RUNNING state),
+  - Persistence handoff (if in PERSISTING state),
   - QFS (mark artifacts for cleanup if cleanup_on_cancel policy set).
 - MUST transition job to `TASK_STATE_CANCELLED` unless already in terminal state.
 - If job already in terminal state, return `FAILED_PRECONDITION`.
 - MUST emit structured cancellation log with trace_id, job_id, reason.
 - MUST release reserved resources (qubits, quotas).
+- MUST treat cancellation during finalization as deterministic: the first terminal decision wins.
+
+### 3.4 Deadline normalization and expiry
+
+Deadline values from public and internal requests MUST be normalized into kernel control state at enqueue time.
+
+- A zero or absent deadline means the configured default deadline applies.
+- Deadline expiry MUST fan out to all remaining stages and release or mark resource reservations as released.
+- Deadline expiry MUST carry canonical timeout error metadata and a durable reference for replay and observability.
+- Deadline and cancellation control paths MUST remain replay-safe and must not introduce unbounded labels.
 
 ---
 
-### 3.4 GetJobResults
+### 3.5 GetJobResults
 
 **Purpose:** Retrieve final results after job completion.
 
@@ -207,7 +221,7 @@ service KernelGatewayService {
 
 ---
 
-### 3.5 PollJobUpdates (streaming)
+### 3.6 PollJobUpdates (streaming)
 
 **Purpose:** Subscribe to incremental job state updates via server streaming.
 
