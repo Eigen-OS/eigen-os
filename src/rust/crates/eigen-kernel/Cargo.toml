@@ -19,6 +19,7 @@ resource-manager = { path = "../resource-manager" }
 security-module = { path = "../security-module" }
 
 tokio = { version = "1.49.9", features = ["macros", "rt-multi-thread", "time", "signal"] }
+tokio-stream = "0.1"
 tonic = { version = "0.14.2", features = ["transport"] }
 tonic-prost = "0.14.5"
 prost = "0.14.3"

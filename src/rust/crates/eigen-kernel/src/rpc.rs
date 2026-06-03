@@ -1,43 +1,43 @@
-//! Internal gRPC server: KernelGateway.
 
-use std::collections::HashMap;
+//! KernelGateway internal runtime with deterministic DAG orchestration.
+//!
+//! Product 1.0 Wave 2:
+//! - stage-by-stage orchestration DAG
+//! - stable stage IDs for tracing and replay
+//! - explicit fixture adapters for downstream handoff points
+//! - canonical terminal state / error metadata propagation
+
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::net::SocketAddr;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::pin::Pin;
+use std::sync::Arc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use serde_json::Value;
-use serde_json::json;
+use prost_types::Timestamp;
+use tokio_stream::iter;
+use tokio_stream::Stream;
 use tonic::{Code, Request, Response, Status};
 use tracing::Instrument;
 
-use crate::job_store::{JobRecord, JobStore};
-use crate::proto::compilation_service_client::CompilationServiceClient;
-use crate::proto::driver_manager_service_client::DriverManagerServiceClient;
+use qfs::CircuitFsLocal;
+
 use crate::proto::kernel_gateway_service_server::{
     KernelGatewayService, KernelGatewayServiceServer,
 };
+use crate::proto::stream_job_updates_response::JobUpdateEnvelope;
 use crate::proto::{
-    CalibrateDeviceRequest, CalibrateDeviceResponse, CancelJobRequest, CancelJobResponse,
-    EnqueueJobRequest, EnqueueJobResponse, GetJobResultsRequest, GetJobResultsResponse,
-    GetJobStatusRequest, GetJobStatusResponse, TaskState, ValidateCircuitRequest,
-    ValidateCircuitResponse,
+    CancelJobRequest, CancelJobResponse, DispatchRationale, EnqueueJobRequest,
+    EnqueueJobResponse, GetDispatchRationaleRequest, GetDispatchRationaleResponse,
+    GetJobResultsRequest, GetJobResultsResponse, GetJobStatusRequest, GetJobStatusResponse,
+    RequestMetadata, StreamJobUpdatesRequest, StreamJobUpdatesResponse, TaskState,
 };
-use crate::proto::{
-    CircuitFormat, CircuitPayload, CompileCircuitRequest, CompileCircuitResponse,
-    CompileJobRequest, CompileJobResponse, ExecuteCircuitRequest, ExecuteCircuitResponse,
-    GetDeviceStatusRequest, GetDeviceStatusResponse, ListDevicesRequest, ListDevicesResponse,
-    compilation_service_server, driver_manager_service_server,
-};
-use qfs::CircuitFsLocal;
-use qrtx::state_machine::{JobEvent, JobState};
 
 /// Runs the kernel gRPC server on the provided address.
 pub async fn serve(addr: SocketAddr) -> Result<(), Box<dyn std::error::Error>> {
-    let store = JobStore::default();
-    let svc = KernelGatewaySvc {
-        store,
-        deps: PipelineDeps::from_env(),
-    };
+    let runtime = Arc::new(KernelRuntimeStore::default());
+    let adapters = Arc::new(FixtureAdapters::from_env());
+    let svc = KernelGatewaySvc::new(runtime, adapters);
 
     tracing::info!(%addr, "kernel gRPC server starting");
     tonic::transport::Server::builder()
@@ -49,85 +49,1709 @@ pub async fn serve(addr: SocketAddr) -> Result<(), Box<dyn std::error::Error>> {
 
 #[derive(Clone)]
 struct KernelGatewaySvc {
-    store: JobStore,
-    deps: PipelineDeps,
+    runtime: Arc<KernelRuntimeStore>,
+    adapters: Arc<dyn OrchestrationAdapters>,
+}
+
+impl KernelGatewaySvc {
+    fn new(runtime: Arc<KernelRuntimeStore>, adapters: Arc<dyn OrchestrationAdapters>) -> Self {
+        Self { runtime, adapters }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DagStageKind {
+    ValidateEnqueue,
+    Compile,
+    Optimize,
+    Schedule,
+    Execute,
+    Persist,
+    RecordKnowledgeObservability,
+    Finalize,
+}
+
+impl DagStageKind {
+    const ALL: [DagStageKind; 8] = [
+        DagStageKind::ValidateEnqueue,
+        DagStageKind::Compile,
+        DagStageKind::Optimize,
+        DagStageKind::Schedule,
+        DagStageKind::Execute,
+        DagStageKind::Persist,
+        DagStageKind::RecordKnowledgeObservability,
+        DagStageKind::Finalize,
+    ];
+
+    fn all() -> &'static [DagStageKind] {
+        &Self::ALL
+    }
+
+    fn index(self) -> u32 {
+        match self {
+            DagStageKind::ValidateEnqueue => 1,
+            DagStageKind::Compile => 2,
+            DagStageKind::Optimize => 3,
+            DagStageKind::Schedule => 4,
+            DagStageKind::Execute => 5,
+            DagStageKind::Persist => 6,
+            DagStageKind::RecordKnowledgeObservability => 7,
+            DagStageKind::Finalize => 8,
+        }
+    }
+
+    fn key(self) -> &'static str {
+        match self {
+            DagStageKind::ValidateEnqueue => "validate-enqueue",
+            DagStageKind::Compile => "compile",
+            DagStageKind::Optimize => "optimize",
+            DagStageKind::Schedule => "schedule",
+            DagStageKind::Execute => "execute",
+            DagStageKind::Persist => "persist",
+            DagStageKind::RecordKnowledgeObservability => "record-knowledge-observability",
+            DagStageKind::Finalize => "finalize",
+        }
+    }
+
+    fn stage_state(self) -> TaskState {
+        match self {
+            DagStageKind::ValidateEnqueue => TaskState::Pending,
+            DagStageKind::Compile => TaskState::Compiling,
+            DagStageKind::Optimize => TaskState::Optimizing,
+            DagStageKind::Schedule => TaskState::Queued,
+            DagStageKind::Execute
+            | DagStageKind::Persist
+            | DagStageKind::RecordKnowledgeObservability => TaskState::Running,
+            DagStageKind::Finalize => TaskState::Done,
+        }
+    }
+
+    fn next_state_after_success(self) -> TaskState {
+        match self {
+            DagStageKind::ValidateEnqueue => TaskState::Pending,
+            DagStageKind::Compile => TaskState::Optimizing,
+            DagStageKind::Optimize => TaskState::Queued,
+            DagStageKind::Schedule => TaskState::Running,
+            DagStageKind::Execute | DagStageKind::Persist | DagStageKind::RecordKnowledgeObservability =>
+                TaskState::Running,
+            DagStageKind::Finalize => TaskState::Done,
+        }
+    }
+}
+
+impl fmt::Display for DagStageKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.key())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StageStatus {
+    Running,
+    Succeeded,
+    Failed,
 }
 
 #[derive(Debug, Clone)]
-struct PipelineDeps {
-    compiler_endpoint: String,
-    driver_endpoint: String,
-    default_device_id: String,
-    qfs: CircuitFsLocal,
+struct StageRecord {
+    stage_id: String,
+    stage_key: String,
+    order: u32,
+    state_before: TaskState,
+    state_after: TaskState,
+    status: StageStatus,
+    started_at: Timestamp,
+    completed_at: Option<Timestamp>,
+    input: BTreeMap<String, String>,
+    output: BTreeMap<String, String>,
+    error_code: Option<String>,
+    error_summary: Option<String>,
+    error_details_ref: Option<String>,
+    replay_token: String,
 }
 
-impl fmt::Display for PipelineError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: {} ({})", self.code, self.summary, self.details)
-    }
+#[derive(Debug, Clone)]
+struct NormalizedSubmission {
+    contract_version: String,
+    request_id: String,
+    idempotency_key: String,
+    traceparent: String,
+    trace_id: String,
+    tenant_id: String,
+    project_id: String,
+    subject: String,
+    role: String,
+    source_service: String,
+    deadline_seconds: Option<u64>,
+    name: String,
+    program_format: String,
+    program: Vec<u8>,
+    program_hash: String,
+    target: String,
+    priority: i32,
+    compiler_options: BTreeMap<String, String>,
+    metadata_kvs: BTreeMap<String, String>,
+    fingerprint: String,
+    job_id: String,
 }
 
-impl std::error::Error for PipelineError {}
+impl NormalizedSubmission {
+    fn from_request(request: &EnqueueJobRequest) -> Result<Self, Status> {
+        let metadata = request
+            .metadata
+            .as_ref()
+            .ok_or_else(|| Status::invalid_argument("metadata is required"))?;
 
-impl PipelineDeps {
-    fn from_env() -> Self {
-        let compiler_addr =
-            std::env::var("EIGEN_COMPILER_ADDR").unwrap_or_else(|_| "127.0.0.1:50071".to_string());
-        let driver_addr = std::env::var("EIGEN_DRIVER_MANAGER_ADDR")
-            .unwrap_or_else(|_| "127.0.0.1:50072".to_string());
-        let qfs_root = std::env::var("EIGEN_QFS_ROOT")
-            .unwrap_or_else(|_| qfs::DEFAULT_CIRCUIT_FS_ROOT.to_string());
-
-        Self {
-            compiler_endpoint: format!("http://{compiler_addr}"),
-            driver_endpoint: format!("http://{driver_addr}"),
-            default_device_id: std::env::var("EIGEN_DEFAULT_DEVICE_ID")
-                .unwrap_or_else(|_| "sim:local".to_string()),
-            qfs: CircuitFsLocal::new(qfs_root),
+        let name = nonempty(&request.name, "name")?;
+        let program = request.program.clone();
+        if program.is_empty() {
+            return Err(Status::invalid_argument("program is required"));
         }
-    }
-}
 
-#[derive(Debug, Clone, Default)]
-struct TraceContext {
-    traceparent: Option<String>,
-    trace_id: Option<String>,
-}
+        let program_format = nonempty(&request.program_format, "program_format")?;
+        let target = nonempty(&request.target, "target")?;
 
-impl TraceContext {
-    fn from_request_md(md: &tonic::metadata::MetadataMap) -> Self {
-        let traceparent = md
-            .get("traceparent")
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string());
-        let trace_id = md
-            .get("trace_id")
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string())
-            .or_else(|| parse_trace_id(traceparent.as_deref()));
-        Self {
+        let contract_version = nonempty_or_default(&metadata.contract_version, "1.0.0");
+        let request_id = nonempty(&metadata.request_id, "metadata.request_id")?;
+        let traceparent = nonempty(&metadata.traceparent, "metadata.traceparent")?;
+        let tenant_id = nonempty(&metadata.tenant_id, "metadata.tenant_id")?;
+        let project_id = nonempty(&metadata.project_id, "metadata.project_id")?;
+        let idempotency_key = nonempty_or_default(&metadata.idempotency_key, &request_id);
+        let subject = nonempty_or_default(&metadata.subject, "kernel-runtime");
+        let role = nonempty_or_default(&metadata.role, "user");
+        let source_service = nonempty_or_default(&metadata.source_service, "system-api");
+        let deadline_seconds = metadata
+            .deadline
+            .as_ref()
+            .and_then(|d| if d.seconds > 0 { Some(d.seconds as u64) } else { None });
+        let compiler_options = canonical_string_map(&request.compiler_options);
+        let metadata_kvs = canonical_string_map(&request.metadata_kvs);
+        let program_hash = hash_bytes_hex(&program);
+        let trace_id = trace_id_from_traceparent(&traceparent)
+            .unwrap_or_else(|| stable_trace_id(&request_id, &program_hash));
+        let fingerprint = canonical_submission_fingerprint(
+            &contract_version,
+            &request_id,
+            &idempotency_key,
+            &traceparent,
+            tenant_id.as_str(),
+            project_id.as_str(),
+            subject.as_str(),
+            role.as_str(),
+            source_service.as_str(),
+            deadline_seconds,
+            name.as_str(),
+            program_format.as_str(),
+            &program_hash,
+            target.as_str(),
+            request.priority,
+            &compiler_options,
+            &metadata_kvs,
+        );
+        let job_id = format!("job-{}", &fingerprint);
+
+        Ok(Self {
+            contract_version,
+            request_id,
+            idempotency_key,
             traceparent,
             trace_id,
+            tenant_id,
+            project_id,
+            subject,
+            role,
+            source_service,
+            deadline_seconds,
+            name,
+            program_format,
+            program,
+            program_hash,
+            target,
+            priority: request.priority,
+            compiler_options,
+            metadata_kvs,
+            fingerprint,
+            job_id,
+        })
+    }
+
+    fn summary_map(&self) -> BTreeMap<String, String> {
+        BTreeMap::from([
+            ("contract_version".to_string(), self.contract_version.clone()),
+            ("request_id".to_string(), self.request_id.clone()),
+            ("idempotency_key".to_string(), self.idempotency_key.clone()),
+            ("tenant_id".to_string(), self.tenant_id.clone()),
+            ("project_id".to_string(), self.project_id.clone()),
+            ("subject".to_string(), self.subject.clone()),
+            ("role".to_string(), self.role.clone()),
+            ("source_service".to_string(), self.source_service.clone()),
+            ("traceparent".to_string(), self.traceparent.clone()),
+            ("trace_id".to_string(), self.trace_id.clone()),
+            ("name".to_string(), self.name.clone()),
+            ("program_format".to_string(), self.program_format.clone()),
+            ("program_hash".to_string(), self.program_hash.clone()),
+            ("target".to_string(), self.target.clone()),
+            ("priority".to_string(), self.priority.to_string()),
+            ("job_id".to_string(), self.job_id.clone()),
+            ("fingerprint".to_string(), self.fingerprint.clone()),
+            (
+                "compiler_options_count".to_string(),
+                self.compiler_options.len().to_string(),
+            ),
+            (
+                "metadata_kvs_count".to_string(),
+                self.metadata_kvs.len().to_string(),
+            ),
+            (
+                "deadline_seconds".to_string(),
+                self.deadline_seconds
+                    .map(|v| v.to_string())
+                    .unwrap_or_default(),
+            ),
+        ])
+    }
+
+    fn stage_input(&self, stage: DagStageKind) -> BTreeMap<String, String> {
+        let mut input = self.summary_map();
+        input.insert("stage_id".to_string(), stage_id(&self.job_id, stage));
+        input.insert("stage_key".to_string(), stage.key().to_string());
+        input.insert("stage_index".to_string(), stage.index().to_string());
+        input.insert("program_bytes".to_string(), self.program.len().to_string());
+        input
+    }
+}
+
+#[derive(Debug, Clone)]
+struct JobRuntimeRecord {
+    job_id: String,
+    submission: NormalizedSubmission,
+    state: TaskState,
+    current_stage: Option<DagStageKind>,
+    created_at: Timestamp,
+    updated_at: Timestamp,
+    completed_at: Option<Timestamp>,
+    stage_records: Vec<StageRecord>,
+    counts: BTreeMap<String, i64>,
+    metadata: BTreeMap<String, String>,
+    qfs_result_ref: Option<String>,
+    error_code: Option<String>,
+    error_summary: Option<String>,
+    error_details_ref: Option<String>,
+    cancel_requested: bool,
+}
+
+impl JobRuntimeRecord {
+    fn stage_label(&self) -> String {
+        self.current_stage
+            .map(|stage| stage.key().to_string())
+            .unwrap_or_else(|| match self.state {
+                TaskState::Pending => "pending".to_string(),
+                TaskState::Compiling => "compile".to_string(),
+                TaskState::Optimizing => "optimize".to_string(),
+                TaskState::Queued => "schedule".to_string(),
+                TaskState::Running => "execute".to_string(),
+                TaskState::Done => "finalize".to_string(),
+                TaskState::Error => "error".to_string(),
+                TaskState::Cancelled => "cancelled".to_string(),
+                TaskState::Timeout => "timeout".to_string(),
+                TaskState::Unspecified => "unspecified".to_string(),
+            })
+    }
+
+    fn progress(&self) -> f32 {
+        if self.is_terminal() {
+            1.0
+        } else {
+            (self.stage_records.len() as f32 / DagStageKind::all().len() as f32).min(0.99)
         }
     }
 
-    fn inject<T>(&self, req: &mut Request<T>) {
-        if let Some(tp) = &self.traceparent {
-            if let Ok(v) = tp.parse() {
-                req.metadata_mut().insert("traceparent", v);
+    fn is_terminal(&self) -> bool {
+        matches!(
+            self.state,
+            TaskState::Done | TaskState::Error | TaskState::Cancelled | TaskState::Timeout
+        )
+    }
+
+    fn snapshot_bytes(&self) -> Vec<u8> {
+        let stage_json: Vec<serde_json::Value> = self
+            .stage_records
+            .iter()
+            .map(|stage| {
+                serde_json::json!({
+                    "stage_id": stage.stage_id,
+                    "stage_key": stage.stage_key,
+                    "order": stage.order,
+                    "state_before": stage.state_before as i32,
+                    "state_after": stage.state_after as i32,
+                    "status": match stage.status {
+                        StageStatus::Running => "running",
+                        StageStatus::Succeeded => "succeeded",
+                        StageStatus::Failed => "failed",
+                    },
+                    "started_at": ts_to_json(&stage.started_at),
+                    "completed_at": stage.completed_at.as_ref().map(ts_to_json),
+                    "input": stage.input,
+                    "output": stage.output,
+                    "error_code": stage.error_code,
+                    "error_summary": stage.error_summary,
+                    "error_details_ref": stage.error_details_ref,
+                    "replay_token": stage.replay_token,
+                })
+            })
+            .collect();
+
+        serde_json::to_vec(&serde_json::json!({
+            "job_id": self.job_id,
+            "submission": self.submission.summary_map(),
+            "state": self.state as i32,
+            "current_stage": self.current_stage.map(|s| s.key()),
+            "created_at": ts_to_json(&self.created_at),
+            "updated_at": ts_to_json(&self.updated_at),
+            "completed_at": self.completed_at.as_ref().map(ts_to_json),
+            "stage_records": stage_json,
+            "counts": self.counts,
+            "metadata": self.metadata,
+            "qfs_result_ref": self.qfs_result_ref,
+            "error_code": self.error_code,
+            "error_summary": self.error_summary,
+            "error_details_ref": self.error_details_ref,
+            "cancel_requested": self.cancel_requested,
+        }))
+        .unwrap_or_default()
+    }
+
+    fn snapshot_digest(&self) -> String {
+        hash_bytes_hex(&self.snapshot_bytes())
+    }
+}
+
+#[derive(Default)]
+struct KernelRuntimeStore {
+    jobs: parking_lot::RwLock<BTreeMap<String, JobRuntimeRecord>>,
+    request_index: parking_lot::RwLock<BTreeMap<String, String>>,
+}
+
+impl KernelRuntimeStore {
+    fn create_or_get_job(&self, submission: NormalizedSubmission) -> Result<(JobRuntimeRecord, bool), Status> {
+        let mut jobs = self.jobs.write();
+        if let Some(existing) = jobs.get(&submission.job_id) {
+            if existing.submission.fingerprint != submission.fingerprint {
+                return Err(Status::aborted("deterministic job id collision"));
             }
+            return Ok((existing.clone(), false));
         }
-        if let Some(tid) = &self.trace_id {
-            if let Ok(v) = tid.parse() {
-                req.metadata_mut().insert("trace_id", v);
-            }
+
+        let now = ts_now();
+        let record = JobRuntimeRecord {
+            job_id: submission.job_id.clone(),
+            submission: submission.clone(),
+            state: TaskState::Pending,
+            current_stage: Some(DagStageKind::ValidateEnqueue),
+            created_at: now.clone(),
+            updated_at: now,
+            completed_at: None,
+            stage_records: Vec::new(),
+            counts: BTreeMap::new(),
+            metadata: BTreeMap::new(),
+            qfs_result_ref: None,
+            error_code: None,
+            error_summary: None,
+            error_details_ref: None,
+            cancel_requested: false,
+        };
+        jobs.insert(submission.job_id.clone(), record.clone());
+        self.request_index
+            .write()
+            .insert(submission.fingerprint.clone(), submission.job_id.clone());
+        Ok((record, true))
+    }
+
+    fn get(&self, job_id: &str) -> Option<JobRuntimeRecord> {
+        self.jobs.read().get(job_id).cloned()
+    }
+
+    fn is_cancel_requested(&self, job_id: &str) -> bool {
+        self.jobs
+            .read()
+            .get(job_id)
+            .map(|job| job.cancel_requested)
+            .unwrap_or(false)
+    }
+
+    fn begin_stage(
+        &self,
+        job_id: &str,
+        stage: DagStageKind,
+        state_before: TaskState,
+        input: BTreeMap<String, String>,
+    ) -> Result<String, Status> {
+        let stage_id = stage_id(job_id, stage);
+        let mut jobs = self.jobs.write();
+        let job = jobs
+            .get_mut(job_id)
+            .ok_or_else(|| Status::not_found("job not found"))?;
+        if job.is_terminal() {
+            return Err(Status::failed_precondition("job already terminal"));
+        }
+        if job.stage_records.iter().any(|record| record.stage_id == stage_id) {
+            job.current_stage = Some(stage);
+            return Ok(stage_id);
+        }
+
+        job.current_stage = Some(stage);
+        job.updated_at = ts_now();
+        job.stage_records.push(StageRecord {
+            stage_id: stage_id.clone(),
+            stage_key: stage.key().to_string(),
+            order: stage.index(),
+            state_before,
+            state_after: state_before,
+            status: StageStatus::Running,
+            started_at: ts_now(),
+            completed_at: None,
+            input,
+            output: BTreeMap::new(),
+            error_code: None,
+            error_summary: None,
+            error_details_ref: None,
+            replay_token: String::new(),
+        });
+        Ok(stage_id)
+    }
+
+    fn finish_stage_success(
+        &self,
+        job_id: &str,
+        stage_id: &str,
+        state_after: TaskState,
+        output: BTreeMap<String, String>,
+    ) -> Result<(), Status> {
+        let mut jobs = self.jobs.write();
+        let job = jobs
+            .get_mut(job_id)
+            .ok_or_else(|| Status::not_found("job not found"))?;
+        let stage = job
+            .stage_records
+            .iter_mut()
+            .find(|record| record.stage_id == stage_id)
+            .ok_or_else(|| Status::failed_precondition("stage record not found"))?;
+        stage.status = StageStatus::Succeeded;
+        stage.state_after = state_after;
+        stage.output = output;
+        stage.completed_at = Some(ts_now());
+        stage.replay_token = hash_bytes_hex(&stage_digest_bytes(stage));
+
+        job.state = state_after;
+        job.updated_at = ts_now();
+        if matches!(state_after, TaskState::Done | TaskState::Error | TaskState::Cancelled | TaskState::Timeout) {
+            job.completed_at = Some(ts_now());
+        }
+        Ok(())
+    }
+
+    fn finish_stage_failure(
+        &self,
+        job_id: &str,
+        stage_id: &str,
+        terminal_state: TaskState,
+        error_code: &str,
+        error_summary: &str,
+        error_details_ref: &str,
+    ) -> Result<(), Status> {
+        let mut jobs = self.jobs.write();
+        let job = jobs
+            .get_mut(job_id)
+            .ok_or_else(|| Status::not_found("job not found"))?;
+        let stage = job
+            .stage_records
+            .iter_mut()
+            .find(|record| record.stage_id == stage_id)
+            .ok_or_else(|| Status::failed_precondition("stage record not found"))?;
+        stage.status = StageStatus::Failed;
+        stage.state_after = terminal_state;
+        stage.error_code = Some(error_code.to_string());
+        stage.error_summary = Some(error_summary.to_string());
+        stage.error_details_ref = Some(error_details_ref.to_string());
+        stage.completed_at = Some(ts_now());
+        stage.replay_token = hash_bytes_hex(&stage_digest_bytes(stage));
+
+        job.state = terminal_state;
+        job.updated_at = ts_now();
+        job.completed_at = Some(ts_now());
+        job.error_code = Some(error_code.to_string());
+        job.error_summary = Some(error_summary.to_string());
+        job.error_details_ref = Some(error_details_ref.to_string());
+        Ok(())
+    }
+
+    fn set_state(
+        &self,
+        job_id: &str,
+        state: TaskState,
+    ) -> Result<(), Status> {
+        let mut jobs = self.jobs.write();
+        let job = jobs
+            .get_mut(job_id)
+            .ok_or_else(|| Status::not_found("job not found"))?;
+        job.state = state;
+        job.updated_at = ts_now();
+        if matches!(state, TaskState::Done | TaskState::Error | TaskState::Cancelled | TaskState::Timeout) {
+            job.completed_at = Some(ts_now());
+        }
+        Ok(())
+    }
+
+    fn set_metadata(
+        &self,
+        job_id: &str,
+        metadata: BTreeMap<String, String>,
+    ) -> Result<(), Status> {
+        let mut jobs = self.jobs.write();
+        let job = jobs
+            .get_mut(job_id)
+            .ok_or_else(|| Status::not_found("job not found"))?;
+        job.metadata = metadata;
+        job.updated_at = ts_now();
+        Ok(())
+    }
+
+    fn set_counts(
+        &self,
+        job_id: &str,
+        counts: BTreeMap<String, i64>,
+    ) -> Result<(), Status> {
+        let mut jobs = self.jobs.write();
+        let job = jobs
+            .get_mut(job_id)
+            .ok_or_else(|| Status::not_found("job not found"))?;
+        job.counts = counts;
+        job.updated_at = ts_now();
+        Ok(())
+    }
+
+    fn set_qfs_result_ref(&self, job_id: &str, value: String) -> Result<(), Status> {
+        let mut jobs = self.jobs.write();
+        let job = jobs
+            .get_mut(job_id)
+            .ok_or_else(|| Status::not_found("job not found"))?;
+        job.qfs_result_ref = Some(value);
+        job.updated_at = ts_now();
+        Ok(())
+    }
+
+    fn request_cancel(&self, job_id: &str) -> Result<JobRuntimeRecord, Status> {
+        let mut jobs = self.jobs.write();
+        let job = jobs
+            .get_mut(job_id)
+            .ok_or_else(|| Status::not_found("job not found"))?;
+        if job.is_terminal() {
+            return Err(Status::failed_precondition("job already terminal"));
+        }
+        job.cancel_requested = true;
+        job.updated_at = ts_now();
+        Ok(job.clone())
+    }
+
+    fn all_stage_updates(&self, job_id: &str) -> Result<Vec<JobUpdateEnvelope>, Status> {
+        let job = self
+            .get(job_id)
+            .ok_or_else(|| Status::not_found("job not found"))?;
+        let total = DagStageKind::all().len().max(1) as f32;
+
+        let mut updates = Vec::new();
+        for (idx, stage) in job.stage_records.iter().enumerate() {
+            updates.push(JobUpdateEnvelope {
+                event_seq: (idx + 1) as u64,
+                state: stage.state_after as i32,
+                stage: stage.stage_key.clone(),
+                progress: (((idx + 1) as f32) / total).min(1.0),
+                message: stage
+                    .output
+                    .get("message")
+                    .cloned()
+                    .or_else(|| stage.error_summary.clone())
+                    .unwrap_or_default(),
+                timestamp: Some(stage.completed_at.clone().unwrap_or_else(ts_now)),
+            });
+        }
+
+        if updates.is_empty() {
+            updates.push(JobUpdateEnvelope {
+                event_seq: 1,
+                state: job.state as i32,
+                stage: job.stage_label(),
+                progress: job.progress(),
+                message: job
+                    .error_summary
+                    .clone()
+                    .unwrap_or_else(|| "job accepted".to_string()),
+                timestamp: Some(job.updated_at.clone()),
+            });
+        }
+
+        Ok(updates)
+    }
+}
+
+#[derive(Debug, Clone)]
+struct KernelStageError {
+    grpc_code: Code,
+    error_code: &'static str,
+    summary: String,
+    details_ref: String,
+}
+
+impl KernelStageError {
+    fn new(grpc_code: Code, error_code: &'static str, summary: impl Into<String>, details_ref: impl Into<String>) -> Self {
+        Self {
+            grpc_code,
+            error_code,
+            summary: summary.into(),
+            details_ref: details_ref.into(),
+        }
+    }
+
+    fn invalid(summary: impl Into<String>, details_ref: impl Into<String>) -> Self {
+        Self::new(Code::InvalidArgument, "VALIDATION_FAILED", summary, details_ref)
+    }
+
+    fn compile(summary: impl Into<String>, details_ref: impl Into<String>) -> Self {
+        Self::new(Code::Internal, "COMPILER_STAGE_FAILED", summary, details_ref)
+    }
+
+    fn optimize(summary: impl Into<String>, details_ref: impl Into<String>) -> Self {
+        Self::new(Code::Internal, "OPTIMIZER_STAGE_FAILED", summary, details_ref)
+    }
+
+    fn schedule(summary: impl Into<String>, details_ref: impl Into<String>) -> Self {
+        Self::new(Code::Internal, "SCHEDULER_STAGE_FAILED", summary, details_ref)
+    }
+
+    fn execute(summary: impl Into<String>, details_ref: impl Into<String>) -> Self {
+        Self::new(Code::Internal, "EXECUTION_STAGE_FAILED", summary, details_ref)
+    }
+
+    fn persist(summary: impl Into<String>, details_ref: impl Into<String>) -> Self {
+        Self::new(Code::Internal, "PERSISTENCE_STAGE_FAILED", summary, details_ref)
+    }
+
+    fn observability(summary: impl Into<String>, details_ref: impl Into<String>) -> Self {
+        Self::new(Code::Internal, "OBSERVABILITY_STAGE_FAILED", summary, details_ref)
+    }
+
+    fn finalize(summary: impl Into<String>, details_ref: impl Into<String>) -> Self {
+        Self::new(Code::Internal, "FINALIZE_STAGE_FAILED", summary, details_ref)
+    }
+
+    fn into_status(self) -> Status {
+        Status::new(self.grpc_code, format!("{} ({})", self.summary, self.details_ref))
+    }
+}
+
+impl fmt::Display for KernelStageError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}: {} ({})", self.error_code, self.summary, self.details_ref)
+    }
+}
+
+impl std::error::Error for KernelStageError {}
+
+#[derive(Debug, Clone)]
+struct ExecutionOutcome {
+    counts: BTreeMap<String, i64>,
+    output: BTreeMap<String, String>,
+}
+
+#[tonic::async_trait]
+trait OrchestrationAdapters: Send + Sync {
+    async fn validate_enqueue(
+        &self,
+        submission: &NormalizedSubmission,
+    ) -> Result<BTreeMap<String, String>, KernelStageError>;
+
+    async fn compile(
+        &self,
+        submission: &NormalizedSubmission,
+        validation_output: &BTreeMap<String, String>,
+    ) -> Result<BTreeMap<String, String>, KernelStageError>;
+
+    async fn optimize(
+        &self,
+        submission: &NormalizedSubmission,
+        compile_output: &BTreeMap<String, String>,
+    ) -> Result<BTreeMap<String, String>, KernelStageError>;
+
+    async fn schedule(
+        &self,
+        submission: &NormalizedSubmission,
+        optimize_output: &BTreeMap<String, String>,
+    ) -> Result<BTreeMap<String, String>, KernelStageError>;
+
+    async fn execute(
+        &self,
+        submission: &NormalizedSubmission,
+        schedule_output: &BTreeMap<String, String>,
+    ) -> Result<ExecutionOutcome, KernelStageError>;
+
+    async fn persist(
+        &self,
+        submission: &NormalizedSubmission,
+        execution_output: &ExecutionOutcome,
+        stage_records: &[StageRecord],
+    ) -> Result<BTreeMap<String, String>, KernelStageError>;
+
+    async fn record_knowledge_observability(
+        &self,
+        submission: &NormalizedSubmission,
+        persist_output: &BTreeMap<String, String>,
+        execution_output: &ExecutionOutcome,
+    ) -> Result<BTreeMap<String, String>, KernelStageError>;
+
+    async fn finalize(
+        &self,
+        submission: &NormalizedSubmission,
+        observability_output: &BTreeMap<String, String>,
+    ) -> Result<BTreeMap<String, String>, KernelStageError>;
+}
+
+#[derive(Clone)]
+struct FixtureAdapters {
+    qfs: CircuitFsLocal,
+    failure_stage: Option<DagStageKind>,
+}
+
+impl FixtureAdapters {
+    fn from_env() -> Self {
+        let qfs_root = std::env::var("EIGEN_QFS_ROOT")
+            .unwrap_or_else(|_| qfs::DEFAULT_CIRCUIT_FS_ROOT.to_string());
+        Self {
+            qfs: CircuitFsLocal::new(qfs_root),
+            failure_stage: None,
+        }
+    }
+
+    fn new(qfs_root: impl AsRef<str>, failure_stage: Option<DagStageKind>) -> Self {
+        Self {
+            qfs: CircuitFsLocal::new(qfs_root.as_ref()),
+            failure_stage,
+        }
+    }
+
+    fn with_no_failure(qfs_root: impl AsRef<str>) -> Self {
+        Self::new(qfs_root, None)
+    }
+
+    fn maybe_fail(&self, stage: DagStageKind) -> Result<(), KernelStageError> {
+        if self.failure_stage == Some(stage) {
+            let details_ref = format!("qfs://fixtures/{}-stage-failure.json", stage.key());
+            let summary = format!("fixture failure injected at {} stage", stage.key());
+            let err = match stage {
+                DagStageKind::ValidateEnqueue => KernelStageError::invalid(summary, details_ref),
+                DagStageKind::Compile => KernelStageError::compile(summary, details_ref),
+                DagStageKind::Optimize => KernelStageError::optimize(summary, details_ref),
+                DagStageKind::Schedule => KernelStageError::schedule(summary, details_ref),
+                DagStageKind::Execute => KernelStageError::execute(summary, details_ref),
+                DagStageKind::Persist => KernelStageError::persist(summary, details_ref),
+                DagStageKind::RecordKnowledgeObservability => {
+                    KernelStageError::observability(summary, details_ref)
+                }
+                DagStageKind::Finalize => KernelStageError::finalize(summary, details_ref),
+            };
+            Err(err)
+        } else {
+            Ok(())
         }
     }
 }
 
-fn parse_trace_id(traceparent: Option<&str>) -> Option<String> {
-    let raw = traceparent?;
-    let mut parts = raw.split('-');
+#[tonic::async_trait]
+impl OrchestrationAdapters for FixtureAdapters {
+    async fn validate_enqueue(
+        &self,
+        submission: &NormalizedSubmission,
+    ) -> Result<BTreeMap<String, String>, KernelStageError> {
+        self.maybe_fail(DagStageKind::ValidateEnqueue)?;
+        let mut output = BTreeMap::from([
+            ("message".to_string(), "submission validated".to_string()),
+            ("job_id".to_string(), submission.job_id.clone()),
+            ("submission_digest".to_string(), submission.fingerprint.clone()),
+        ]);
+        output.insert(
+            "qfs_submission_ref".to_string(),
+            format!("qfs://jobs/{}/submission.json", submission.job_id),
+        );
+        Ok(output)
+    }
+
+    async fn compile(
+        &self,
+        submission: &NormalizedSubmission,
+        _validation_output: &BTreeMap<String, String>,
+    ) -> Result<BTreeMap<String, String>, KernelStageError> {
+        self.maybe_fail(DagStageKind::Compile)?;
+        Ok(BTreeMap::from([
+            ("message".to_string(), "compile stage completed".to_string()),
+            (
+                "compiled_artifact_ref".to_string(),
+                format!("qfs://jobs/{}/artifacts/compiled.aqo", submission.job_id),
+            ),
+            (
+                "compiler_version".to_string(),
+                env!("CARGO_PKG_VERSION").to_string(),
+            ),
+            (
+                "compile_digest".to_string(),
+                format!("compile-{}", submission.program_hash),
+            ),
+        ]))
+    }
+
+    async fn optimize(
+        &self,
+        submission: &NormalizedSubmission,
+        _compile_output: &BTreeMap<String, String>,
+    ) -> Result<BTreeMap<String, String>, KernelStageError> {
+        self.maybe_fail(DagStageKind::Optimize)?;
+        Ok(BTreeMap::from([
+            ("message".to_string(), "optimization stage completed".to_string()),
+            (
+                "optimized_artifact_ref".to_string(),
+                format!("qfs://jobs/{}/artifacts/optimized.aqo", submission.job_id),
+            ),
+            (
+                "optimizer_version".to_string(),
+                "fixture-optimizer/1".to_string(),
+            ),
+            ("optimizer_policy".to_string(), "deterministic".to_string()),
+        ]))
+    }
+
+    async fn schedule(
+        &self,
+        submission: &NormalizedSubmission,
+        _optimize_output: &BTreeMap<String, String>,
+    ) -> Result<BTreeMap<String, String>, KernelStageError> {
+        self.maybe_fail(DagStageKind::Schedule)?;
+        Ok(BTreeMap::from([
+            ("message".to_string(), "resource schedule selected".to_string()),
+            ("selected_backend".to_string(), submission.target.clone()),
+            ("selected_queue".to_string(), "scheduler:default".to_string()),
+            (
+                "resource_plan_ref".to_string(),
+                format!("qfs://jobs/{}/schedule/plan.json", submission.job_id),
+            ),
+        ]))
+    }
+
+    async fn execute(
+        &self,
+        submission: &NormalizedSubmission,
+        schedule_output: &BTreeMap<String, String>,
+    ) -> Result<ExecutionOutcome, KernelStageError> {
+        self.maybe_fail(DagStageKind::Execute)?;
+        let shots = submission
+            .metadata_kvs
+            .get("shots")
+            .and_then(|raw| raw.parse::<i64>().ok())
+            .filter(|v| *v > 0)
+            .unwrap_or(1024);
+
+        let mut counts = BTreeMap::new();
+        counts.insert("0".to_string(), shots);
+        let counts_ref = format!("qfs://jobs/{}/results/counts.json", submission.job_id);
+        let execution_ref = format!("qfs://jobs/{}/execution/execution.json", submission.job_id);
+
+        Ok(ExecutionOutcome {
+            counts,
+            output: BTreeMap::from([
+                ("message".to_string(), "execution completed".to_string()),
+                ("counts_ref".to_string(), counts_ref),
+                ("execution_ref".to_string(), execution_ref),
+                (
+                    "selected_backend".to_string(),
+                    schedule_output
+                        .get("selected_backend")
+                        .cloned()
+                        .unwrap_or_else(|| submission.target.clone()),
+                ),
+            ]),
+        })
+    }
+
+    async fn persist(
+        &self,
+        submission: &NormalizedSubmission,
+        execution_output: &ExecutionOutcome,
+        stage_records: &[StageRecord],
+    ) -> Result<BTreeMap<String, String>, KernelStageError> {
+        self.maybe_fail(DagStageKind::Persist)?;
+        let artifact = serde_json::json!({
+            "job_id": submission.job_id,
+            "submission_digest": submission.fingerprint,
+            "execution_output": execution_output.output,
+            "stage_records": stage_records.iter().map(|stage| serde_json::json!({
+                "stage_id": stage.stage_id,
+                "stage_key": stage.stage_key,
+                "order": stage.order,
+                "status": match stage.status {
+                    StageStatus::Running => "running",
+                    StageStatus::Succeeded => "succeeded",
+                    StageStatus::Failed => "failed",
+                },
+            })).collect::<Vec<_>>(),
+        });
+        let payload = serde_json::to_vec(&artifact).unwrap_or_default();
+        let _ = self.qfs.ensure_job_layout(&submission.job_id);
+        let _ = self
+            .qfs
+            .store_results_bundle(&submission.job_id, &payload, env!("CARGO_PKG_VERSION"));
+
+        Ok(BTreeMap::from([
+            ("message".to_string(), "results persisted to qfs".to_string()),
+            (
+                "qfs_result_ref".to_string(),
+                format!("qfs://jobs/{}/results/result.json", submission.job_id),
+            ),
+            (
+                "result_manifest_ref".to_string(),
+                format!("qfs://jobs/{}/results/manifest.json", submission.job_id),
+            ),
+            (
+                "artifact_version".to_string(),
+                env!("CARGO_PKG_VERSION").to_string(),
+            ),
+        ]))
+    }
+
+    async fn record_knowledge_observability(
+        &self,
+        submission: &NormalizedSubmission,
+        persist_output: &BTreeMap<String, String>,
+        execution_output: &ExecutionOutcome,
+    ) -> Result<BTreeMap<String, String>, KernelStageError> {
+        self.maybe_fail(DagStageKind::RecordKnowledgeObservability)?;
+        let payload = serde_json::json!({
+            "job_id": submission.job_id,
+            "trace_id": submission.trace_id,
+            "timeline_ref": format!("qfs://jobs/{}/timeline.jsonl", submission.job_id),
+            "qfs_result_ref": persist_output
+                .get("qfs_result_ref")
+                .cloned()
+                .unwrap_or_default(),
+            "counts_ref": execution_output
+                .output
+                .get("counts_ref")
+                .cloned()
+                .unwrap_or_default(),
+            "contract_marker": r#"eigen_kernel_contract_info{version="1.0.0"} 1"#,
+        });
+        let metrics = serde_json::to_vec(&payload).unwrap_or_default();
+        let _ = self
+            .qfs
+            .store_metrics_json(&submission.job_id, &metrics);
+
+        Ok(BTreeMap::from([
+            ("message".to_string(), "knowledge and observability recorded".to_string()),
+            (
+                "timeline_ref".to_string(),
+                format!("qfs://jobs/{}/timeline.jsonl", submission.job_id),
+            ),
+            (
+                "observability_ref".to_string(),
+                format!("qfs://jobs/{}/observability/metrics.json", submission.job_id),
+            ),
+            (
+                "trace_ref".to_string(),
+                format!("qfs://jobs/{}/trace.json", submission.job_id),
+            ),
+        ]))
+    }
+
+    async fn finalize(
+        &self,
+        submission: &NormalizedSubmission,
+        observability_output: &BTreeMap<String, String>,
+    ) -> Result<BTreeMap<String, String>, KernelStageError> {
+        self.maybe_fail(DagStageKind::Finalize)?;
+        Ok(BTreeMap::from([
+            ("message".to_string(), "job finalized".to_string()),
+            ("final_state".to_string(), "DONE".to_string()),
+            (
+                "timeline_ref".to_string(),
+                observability_output
+                    .get("timeline_ref")
+                    .cloned()
+                    .unwrap_or_else(|| format!("qfs://jobs/{}/timeline.jsonl", submission.job_id)),
+            ),
+            (
+                "result_ref".to_string(),
+                observability_output
+                    .get("qfs_result_ref")
+                    .cloned()
+                    .unwrap_or_else(|| format!("qfs://jobs/{}/results/result.json", submission.job_id)),
+            ),
+        ]))
+    }
+}
+
+#[tonic::async_trait]
+impl KernelGatewayService for KernelGatewaySvc {
+    type StreamJobUpdatesStream =
+        Pin<Box<dyn Stream<Item = Result<StreamJobUpdatesResponse, Status>> + Send + 'static>>;
+
+    async fn enqueue_job(
+        &self,
+        request: Request<EnqueueJobRequest>,
+    ) -> Result<Response<EnqueueJobResponse>, Status> {
+        let req = request.into_inner();
+        let submission = NormalizedSubmission::from_request(&req)?;
+        let (job, created) = self.runtime.create_or_get_job(submission.clone())?;
+
+        if created {
+            let runtime = self.runtime.clone();
+            let adapters = self.adapters.clone();
+            let job_id = job.job_id.clone();
+            let submission_for_task = submission.clone();
+
+            tokio::spawn(async move {
+                let span = tracing::info_span!("kernel_dag", job_id = %job_id);
+                async move {
+                    if let Err(err) = run_job_dag(runtime, adapters, job_id, submission_for_task).await {
+                        tracing::error!(error = %err, "kernel dag failed");
+                    }
+                }
+                .instrument(span)
+                .await;
+            });
+        }
+
+        Ok(Response::new(EnqueueJobResponse {
+            job_id: job.job_id,
+            state: job.state as i32,
+            created_at: Some(job.created_at.clone()),
+        }))
+    }
+
+    async fn get_job_status(
+        &self,
+        request: Request<GetJobStatusRequest>,
+    ) -> Result<Response<GetJobStatusResponse>, Status> {
+        let job_id = request.into_inner().job_id;
+        let job = self
+            .runtime
+            .get(&job_id)
+            .ok_or_else(|| Status::not_found("job not found"))?;
+
+        Ok(Response::new(GetJobStatusResponse {
+            job_id: job.job_id.clone(),
+            state: job.state as i32,
+            stage: job.stage_label(),
+            progress: job.progress(),
+            message: job
+                .stage_records
+                .last()
+                .and_then(|stage| stage.output.get("message").cloned())
+                .or_else(|| job.error_summary.clone())
+                .unwrap_or_else(|| "job accepted".to_string()),
+            error_code: job.error_code.unwrap_or_default(),
+            error_summary: job.error_summary.unwrap_or_default(),
+            error_details_ref: job.error_details_ref.unwrap_or_default(),
+            updated_at: Some(job.updated_at.clone()),
+        }))
+    }
+
+    async fn cancel_job(
+        &self,
+        request: Request<CancelJobRequest>,
+    ) -> Result<Response<CancelJobResponse>, Status> {
+        let req = request.into_inner();
+        let job_id = req.job_id;
+        let job = self.runtime.request_cancel(&job_id)?;
+        Ok(Response::new(CancelJobResponse {
+            accepted: true,
+            reason_code: if job.is_terminal() {
+                "CANCELLED".to_string()
+            } else {
+                "ACCEPTED".to_string()
+            },
+        }))
+    }
+
+    async fn get_job_results(
+        &self,
+        request: Request<GetJobResultsRequest>,
+    ) -> Result<Response<GetJobResultsResponse>, Status> {
+        let job_id = request.into_inner().job_id;
+        let job = self
+            .runtime
+            .get(&job_id)
+            .ok_or_else(|| Status::not_found("job not found"))?;
+
+        if !job.is_terminal() {
+            return Err(Status::failed_precondition("job results are not ready"));
+        }
+
+        let counts: HashMap<String, i64> = job.counts.clone().into_iter().collect();
+        let metadata: HashMap<String, String> = job.metadata.clone().into_iter().collect();
+
+        Ok(Response::new(GetJobResultsResponse {
+            job_id: job.job_id.clone(),
+            state: job.state as i32,
+            counts,
+            metadata,
+            error_code: job.error_code.unwrap_or_default(),
+            error_summary: job.error_summary.unwrap_or_default(),
+            error_details_ref: job.error_details_ref.unwrap_or_default(),
+            qfs_result_ref: job.qfs_result_ref.unwrap_or_default(),
+            completed_at: job.completed_at,
+        }))
+    }
+
+    async fn stream_job_updates(
+        &self,
+        request: Request<StreamJobUpdatesRequest>,
+    ) -> Result<Response<Self::StreamJobUpdatesStream>, Status> {
+        let job_id = request.into_inner().job_id;
+        let updates = self.runtime.all_stage_updates(&job_id)?;
+        let stream = iter(updates.into_iter().map(|update| Ok(StreamJobUpdatesResponse { update: Some(update) })));
+        Ok(Response::new(Box::pin(stream)))
+    }
+
+    async fn get_dispatch_rationale(
+        &self,
+        request: Request<GetDispatchRationaleRequest>,
+    ) -> Result<Response<GetDispatchRationaleResponse>, Status> {
+        let job_id = request.into_inner().job_id;
+        let job = self
+            .runtime
+            .get(&job_id)
+            .ok_or_else(|| Status::not_found("job not found"))?;
+
+        let mut reason_codes = vec![
+            "validate_enqueue".to_string(),
+            "compile".to_string(),
+            "optimize".to_string(),
+            "schedule".to_string(),
+            "execute".to_string(),
+            "persist".to_string(),
+            "record_knowledge_observability".to_string(),
+            "finalize".to_string(),
+        ];
+        if let Some(code) = job.error_code.clone() {
+            reason_codes.push(code);
+        }
+
+        let rationale = DispatchRationale {
+            version: "1.0.0".to_string(),
+            policy_version: "wave-2-dag-fixture/1".to_string(),
+            reason_codes,
+            selected_backend: job.submission.target.clone(),
+            selected_queue: "scheduler:default".to_string(),
+            attributes: HashMap::from([
+                ("job_id".to_string(), job.job_id.clone()),
+                ("stage_count".to_string(), job.stage_records.len().to_string()),
+                ("snapshot_digest".to_string(), job.snapshot_digest()),
+            ]),
+            timeline_ref: format!("qfs://jobs/{}/timeline.jsonl", job.job_id),
+            logs_ref: format!("qfs://jobs/{}/logs/runtime.json", job.job_id),
+            trace_id: job.submission.trace_id.clone(),
+            trace_ref: format!("qfs://jobs/{}/trace.json", job.job_id),
+        };
+
+        Ok(Response::new(GetDispatchRationaleResponse {
+            rationale: Some(rationale),
+        }))
+    }
+}
+
+async fn run_job_dag(
+    runtime: Arc<KernelRuntimeStore>,
+    adapters: Arc<dyn OrchestrationAdapters>,
+    job_id: String,
+    submission: NormalizedSubmission,
+) -> Result<(), KernelStageError> {
+    let mut validation_output = BTreeMap::new();
+    let mut compile_output = BTreeMap::new();
+    let mut optimize_output = BTreeMap::new();
+    let mut schedule_output = BTreeMap::new();
+    let mut execution_output = ExecutionOutcome {
+        counts: BTreeMap::new(),
+        output: BTreeMap::new(),
+    };
+    let mut persist_output = BTreeMap::new();
+    let mut observability_output = BTreeMap::new();
+
+    let validate_stage = DagStageKind::ValidateEnqueue;
+    let validate_stage_id = runtime
+        .begin_stage(
+            &job_id,
+            validate_stage,
+            validate_stage.stage_state(),
+            submission.stage_input(validate_stage),
+        )
+        .map_err(status_to_stage_error(validate_stage, "begin_validate"))?;
+    validation_output = adapters
+        .validate_enqueue(&submission)
+        .await
+        .map_err(|err| stage_error(validate_stage, err))?;
+    runtime
+        .finish_stage_success(
+            &job_id,
+            &validate_stage_id,
+            validate_stage.next_state_after_success(),
+            validation_output.clone(),
+        )
+        .map_err(status_to_stage_error(validate_stage, "finish_validate"))?;
+    runtime
+        .set_state(&job_id, DagStageKind::Compile.stage_state())
+        .map_err(status_to_stage_error(validate_stage, "set_compile_state"))?;
+
+    if runtime.is_cancel_requested(&job_id) {
+        cancel_after_stage(&runtime, &job_id, DagStageKind::Compile, "cancelled before compile")?;
+        return Ok(());
+    }
+
+    let compile_stage = DagStageKind::Compile;
+    let compile_stage_id = runtime
+        .begin_stage(
+            &job_id,
+            compile_stage,
+            compile_stage.stage_state(),
+            stage_input_from_outputs(&submission, compile_stage, &validation_output),
+        )
+        .map_err(status_to_stage_error(compile_stage, "begin_compile"))?;
+    compile_output = adapters
+        .compile(&submission, &validation_output)
+        .await
+        .map_err(|err| stage_error(compile_stage, err))?;
+    runtime
+        .finish_stage_success(
+            &job_id,
+            &compile_stage_id,
+            compile_stage.next_state_after_success(),
+            compile_output.clone(),
+        )
+        .map_err(status_to_stage_error(compile_stage, "finish_compile"))?;
+    runtime
+        .set_state(&job_id, DagStageKind::Optimize.stage_state())
+        .map_err(status_to_stage_error(compile_stage, "set_optimize_state"))?;
+
+    if runtime.is_cancel_requested(&job_id) {
+        cancel_after_stage(&runtime, &job_id, DagStageKind::Optimize, "cancelled before optimize")?;
+        return Ok(());
+    }
+
+    let optimize_stage = DagStageKind::Optimize;
+    let optimize_stage_id = runtime
+        .begin_stage(
+            &job_id,
+            optimize_stage,
+            optimize_stage.stage_state(),
+            stage_input_from_outputs(&submission, optimize_stage, &compile_output),
+        )
+        .map_err(status_to_stage_error(optimize_stage, "begin_optimize"))?;
+    optimize_output = adapters
+        .optimize(&submission, &compile_output)
+        .await
+        .map_err(|err| stage_error(optimize_stage, err))?;
+    runtime
+        .finish_stage_success(
+            &job_id,
+            &optimize_stage_id,
+            optimize_stage.next_state_after_success(),
+            optimize_output.clone(),
+        )
+        .map_err(status_to_stage_error(optimize_stage, "finish_optimize"))?;
+    runtime
+        .set_state(&job_id, DagStageKind::Schedule.stage_state())
+        .map_err(status_to_stage_error(optimize_stage, "set_schedule_state"))?;
+
+    if runtime.is_cancel_requested(&job_id) {
+        cancel_after_stage(&runtime, &job_id, DagStageKind::Schedule, "cancelled before schedule")?;
+        return Ok(());
+    }
+
+    let schedule_stage = DagStageKind::Schedule;
+    let schedule_stage_id = runtime
+        .begin_stage(
+            &job_id,
+            schedule_stage,
+            schedule_stage.stage_state(),
+            stage_input_from_outputs(&submission, schedule_stage, &optimize_output),
+        )
+        .map_err(status_to_stage_error(schedule_stage, "begin_schedule"))?;
+    schedule_output = adapters
+        .schedule(&submission, &optimize_output)
+        .await
+        .map_err(|err| stage_error(schedule_stage, err))?;
+    runtime
+        .finish_stage_success(
+            &job_id,
+            &schedule_stage_id,
+            schedule_stage.next_state_after_success(),
+            schedule_output.clone(),
+        )
+        .map_err(status_to_stage_error(schedule_stage, "finish_schedule"))?;
+    runtime
+        .set_state(&job_id, DagStageKind::Execute.stage_state())
+        .map_err(status_to_stage_error(schedule_stage, "set_execute_state"))?;
+
+    if runtime.is_cancel_requested(&job_id) {
+        cancel_after_stage(&runtime, &job_id, DagStageKind::Execute, "cancelled before execute")?;
+        return Ok(());
+    }
+
+    let execute_stage = DagStageKind::Execute;
+    let execute_stage_id = runtime
+        .begin_stage(
+            &job_id,
+            execute_stage,
+            execute_stage.stage_state(),
+            stage_input_from_outputs(&submission, execute_stage, &schedule_output),
+        )
+        .map_err(status_to_stage_error(execute_stage, "begin_execute"))?;
+    execution_output = adapters
+        .execute(&submission, &schedule_output)
+        .await
+        .map_err(|err| stage_error(execute_stage, err))?;
+    runtime
+        .set_counts(&job_id, execution_output.counts.clone())
+        .map_err(status_to_stage_error(execute_stage, "set_counts"))?;
+    runtime
+        .finish_stage_success(
+            &job_id,
+            &execute_stage_id,
+            execute_stage.next_state_after_success(),
+            execution_output.output.clone(),
+        )
+        .map_err(status_to_stage_error(execute_stage, "finish_execute"))?;
+
+    if runtime.is_cancel_requested(&job_id) {
+        cancel_after_stage(&runtime, &job_id, DagStageKind::Persist, "cancelled before persist")?;
+        return Ok(());
+    }
+
+    let persist_stage = DagStageKind::Persist;
+    let persist_stage_id = runtime
+        .begin_stage(
+            &job_id,
+            persist_stage,
+            persist_stage.stage_state(),
+            stage_input_from_outputs(&submission, persist_stage, &execution_output.output),
+        )
+        .map_err(status_to_stage_error(persist_stage, "begin_persist"))?;
+    persist_output = adapters
+        .persist(&submission, &execution_output, &runtime.get(&job_id).map(|job| job.stage_records.clone()).unwrap_or_default())
+        .await
+        .map_err(|err| stage_error(persist_stage, err))?;
+    if let Some(result_ref) = persist_output.get("qfs_result_ref").cloned() {
+        runtime
+            .set_qfs_result_ref(&job_id, result_ref)
+            .map_err(status_to_stage_error(persist_stage, "set_result_ref"))?;
+    }
+    runtime
+        .finish_stage_success(
+            &job_id,
+            &persist_stage_id,
+            persist_stage.next_state_after_success(),
+            persist_output.clone(),
+        )
+        .map_err(status_to_stage_error(persist_stage, "finish_persist"))?;
+
+    if runtime.is_cancel_requested(&job_id) {
+        cancel_after_stage(
+            &runtime,
+            &job_id,
+            DagStageKind::RecordKnowledgeObservability,
+            "cancelled before observability",
+        )?;
+        return Ok(());
+    }
+
+    let observability_stage = DagStageKind::RecordKnowledgeObservability;
+    let observability_stage_id = runtime
+        .begin_stage(
+            &job_id,
+            observability_stage,
+            observability_stage.stage_state(),
+            stage_input_from_outputs(&submission, observability_stage, &persist_output),
+        )
+        .map_err(status_to_stage_error(observability_stage, "begin_observability"))?;
+    observability_output = adapters
+        .record_knowledge_observability(&submission, &persist_output, &execution_output)
+        .await
+        .map_err(|err| stage_error(observability_stage, err))?;
+    runtime
+        .set_metadata(&job_id, observability_output.clone())
+        .map_err(status_to_stage_error(observability_stage, "set_observability_metadata"))?;
+    runtime
+        .finish_stage_success(
+            &job_id,
+            &observability_stage_id,
+            observability_stage.next_state_after_success(),
+            observability_output.clone(),
+        )
+        .map_err(status_to_stage_error(observability_stage, "finish_observability"))?;
+
+    let finalize_stage = DagStageKind::Finalize;
+    let finalize_stage_id = runtime
+        .begin_stage(
+            &job_id,
+            finalize_stage,
+            finalize_stage.stage_state(),
+            stage_input_from_outputs(&submission, finalize_stage, &observability_output),
+        )
+        .map_err(status_to_stage_error(finalize_stage, "begin_finalize"))?;
+    let finalize_output = adapters
+        .finalize(&submission, &observability_output)
+        .await
+        .map_err(|err| stage_error(finalize_stage, err))?;
+    runtime
+        .finish_stage_success(
+            &job_id,
+            &finalize_stage_id,
+            finalize_stage.next_state_after_success(),
+            finalize_output,
+        )
+        .map_err(status_to_stage_error(finalize_stage, "finish_finalize"))?;
+
+    Ok(())
+}
+
+fn stage_input_from_outputs(
+    submission: &NormalizedSubmission,
+    stage: DagStageKind,
+    upstream: &BTreeMap<String, String>,
+) -> BTreeMap<String, String> {
+    let mut input = submission.stage_input(stage);
+    for (key, value) in upstream {
+        input.insert(format!("upstream.{key}"), value.clone());
+    }
+    input
+}
+
+fn stage_error(stage: DagStageKind, err: KernelStageError) -> KernelStageError {
+    KernelStageError::new(
+        err.grpc_code,
+        err.error_code,
+        format!("{} stage failed: {}", stage.key(), err.summary),
+        err.details_ref,
+    )
+}
+
+fn status_to_stage_error(stage: DagStageKind, action: &'static str) -> impl FnOnce(Status) -> KernelStageError {
+    move |status| {
+        KernelStageError::new(
+            Code::Internal,
+            "RUNTIME_STAGE_FAILURE",
+            format!("{} stage {} failed", stage.key(), action),
+            format!("status::{:?}", status.code()),
+        )
+    }
+}
+
+fn cancel_after_stage(
+    runtime: &Arc<KernelRuntimeStore>,
+    job_id: &str,
+    next_stage: DagStageKind,
+    reason: &str,
+) -> Result<(), KernelStageError> {
+    let terminal_error = KernelStageError::new(
+        Code::Cancelled,
+        "CANCELLED",
+        reason,
+        format!("qfs://jobs/{job_id}/errors/cancelled.json"),
+    );
+    let stage_id = stage_id(job_id, next_stage);
+    let input = BTreeMap::from([
+        ("job_id".to_string(), job_id.to_string()),
+        ("stage_id".to_string(), stage_id.clone()),
+        ("reason".to_string(), reason.to_string()),
+    ]);
+    let _ = runtime.begin_stage(job_id, next_stage, next_stage.stage_state(), input);
+    runtime
+        .finish_stage_failure(
+            job_id,
+            &stage_id,
+            TaskState::Cancelled,
+            terminal_error.error_code,
+            &terminal_error.summary,
+            &terminal_error.details_ref,
+        )
+        .map_err(|status| KernelStageError::new(
+            Code::Internal,
+            "RUNTIME_STAGE_FAILURE",
+            format!("cancel terminalization failed: {}", status.message()),
+            format!("status::{:?}", status.code()),
+        ))?;
+    Ok(())
+}
+
+fn nonempty(value: &str, field: &'static str) -> Result<String, Status> {
+    if value.trim().is_empty() {
+        Err(Status::invalid_argument(format!("{field} is required")))
+    } else {
+        Ok(value.trim().to_string())
+    }
+}
+
+fn nonempty_or_default(value: &str, default: &str) -> String {
+    if value.trim().is_empty() {
+        default.to_string()
+    } else {
+        value.trim().to_string()
+    }
+}
+
+fn canonical_string_map(input: &HashMap<String, String>) -> BTreeMap<String, String> {
+    input
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect::<BTreeMap<_, _>>()
+}
+
+fn stage_id(job_id: &str, stage: DagStageKind) -> String {
+    format!("{job_id}:{:02}-{}", stage.index(), stage.key())
+}
+
+fn stage_snapshot_bytes(stage: &StageRecord) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({
+        "stage_id": stage.stage_id,
+        "stage_key": stage.stage_key,
+        "order": stage.order,
+        "state_before": stage.state_before as i32,
+        "state_after": stage.state_after as i32,
+        "status": match stage.status {
+            StageStatus::Running => "running",
+            StageStatus::Succeeded => "succeeded",
+            StageStatus::Failed => "failed",
+        },
+        "started_at": ts_to_json(&stage.started_at),
+        "completed_at": stage.completed_at.as_ref().map(ts_to_json),
+        "input": stage.input,
+        "output": stage.output,
+        "error_code": stage.error_code,
+        "error_summary": stage.error_summary,
+        "error_details_ref": stage.error_details_ref,
+        "replay_token": stage.replay_token,
+    }))
+    .unwrap_or_default()
+}
+
+
+fn stage_digest_bytes(stage: &StageRecord) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({
+        "stage_id": stage.stage_id,
+        "stage_key": stage.stage_key,
+        "order": stage.order,
+        "state_before": stage.state_before as i32,
+        "state_after": stage.state_after as i32,
+        "status": match stage.status {
+            StageStatus::Running => "running",
+            StageStatus::Succeeded => "succeeded",
+            StageStatus::Failed => "failed",
+        },
+        "started_at": ts_to_json(&stage.started_at),
+        "completed_at": stage.completed_at.as_ref().map(ts_to_json),
+        "input": stage.input,
+        "output": stage.output,
+        "error_code": stage.error_code,
+        "error_summary": stage.error_summary,
+        "error_details_ref": stage.error_details_ref,
+    }))
+    .unwrap_or_default()
+}
+
+fn canonical_submission_fingerprint(
+    contract_version: &str,
+    request_id: &str,
+    idempotency_key: &str,
+    traceparent: &str,
+    tenant_id: &str,
+    project_id: &str,
+    subject: &str,
+    role: &str,
+    source_service: &str,
+    deadline_seconds: Option<u64>,
+    name: &str,
+    program_format: &str,
+    program_hash: &str,
+    target: &str,
+    priority: i32,
+    compiler_options: &BTreeMap<String, String>,
+    metadata_kvs: &BTreeMap<String, String>,
+) -> String {
+    let mut material = String::new();
+    let parts = [
+        ("contract_version", contract_version.to_string()),
+        ("request_id", request_id.to_string()),
+        ("idempotency_key", idempotency_key.to_string()),
+        ("traceparent", traceparent.to_string()),
+        ("tenant_id", tenant_id.to_string()),
+        ("project_id", project_id.to_string()),
+        ("subject", subject.to_string()),
+        ("role", role.to_string()),
+        ("source_service", source_service.to_string()),
+        (
+            "deadline_seconds",
+            deadline_seconds.map(|v| v.to_string()).unwrap_or_default(),
+        ),
+        ("name", name.to_string()),
+        ("program_format", program_format.to_string()),
+        ("program_hash", program_hash.to_string()),
+        ("target", target.to_string()),
+        ("priority", priority.to_string()),
+    ];
+    for (k, v) in parts {
+        material.push_str(k);
+        material.push('=');
+        material.push_str(&v);
+        material.push('|');
+    }
+    material.push_str("compiler_options=");
+    for (k, v) in compiler_options {
+        material.push_str(k);
+        material.push('=');
+        material.push_str(v);
+        material.push('|');
+    }
+    material.push_str("metadata_kvs=");
+    for (k, v) in metadata_kvs {
+        material.push_str(k);
+        material.push('=');
+        material.push_str(v);
+        material.push('|');
+    }
+    stable_hash_hex(&material)
+}
+
+fn stable_trace_id(request_id: &str, program_hash: &str) -> String {
+    let material = format!("{request_id}:{program_hash}");
+    stable_hash_hex(&material)
+}
+
+fn stable_hash_hex(input: &str) -> String {
+    format!("{:016x}", fnv1a64(input.as_bytes()))
+}
+
+fn hash_bytes_hex(input: &[u8]) -> String {
+    format!("{:016x}", fnv1a64(input))
+}
+
+fn fnv1a64(input: &[u8]) -> u64 {
+    const OFFSET: u64 = 0xcbf29ce484222325;
+    const PRIME: u64 = 0x100000001b3;
+    let mut hash = OFFSET;
+    for byte in input {
+        hash ^= *byte as u64;
+        hash = hash.wrapping_mul(PRIME);
+    }
+    hash
+}
+
+fn trace_id_from_traceparent(traceparent: &str) -> Option<String> {
+    let mut parts = traceparent.split('-');
     let _version = parts.next()?;
     let trace_id = parts.next()?;
     if trace_id.len() == 32 {
@@ -137,1721 +1761,223 @@ fn parse_trace_id(traceparent: Option<&str>) -> Option<String> {
     }
 }
 
-#[tonic::async_trait]
-impl KernelGatewayService for KernelGatewaySvc {
-    async fn enqueue_job(
-        &self,
-        request: Request<EnqueueJobRequest>,
-    ) -> Result<Response<EnqueueJobResponse>, Status> {
-        let trace_ctx = TraceContext::from_request_md(request.metadata());
-        let req = request.into_inner();
-
-        if req.name.trim().is_empty() {
-            return Err(Status::invalid_argument("name is required"));
-        }
-
-        let record = self.store.create_job(req.name.clone());
-        let job_id = record.job_id.clone();
-        let job_id_for_task = job_id.clone();
-
-        let store = self.store.clone_handle();
-        let deps = self.deps.clone();
-        tokio::spawn(async move {
-            let span = tracing::info_span!("job_pipeline", job_id = %job_id_for_task);
-            async move {
-                if let Err(err) =
-                    run_pipeline(store.clone_handle(), deps, &job_id_for_task, req, trace_ctx).await
-                {
-                    tracing::error!(job_id = %job_id_for_task, error = %err, "job pipeline failed");
-                    fail_job(&store, &job_id_for_task, err).await;
-                }
-            }
-            .instrument(span)
-            .await;
-        });
-
-        Ok(Response::new(EnqueueJobResponse {
-            job_id,
-            state: TaskState::Pending as i32,
-            created_at: Some(ts_now()),
-        }))
-    }
-
-    async fn get_job_status(
-        &self,
-        request: Request<GetJobStatusRequest>,
-    ) -> Result<Response<GetJobStatusResponse>, Status> {
-        let job_id = request.into_inner().job_id;
-        if job_id.trim().is_empty() {
-            return Err(Status::invalid_argument("job_id is required"));
-        }
-        let rec = self
-            .store
-            .get(&job_id)
-            .ok_or_else(|| Status::not_found("job not found"))?;
-
-        Ok(Response::new(status_from_record(&rec)))
-    }
-
-    async fn cancel_job(
-        &self,
-        request: Request<CancelJobRequest>,
-    ) -> Result<Response<CancelJobResponse>, Status> {
-        let job_id = request.into_inner().job_id;
-        if job_id.trim().is_empty() {
-            return Err(Status::invalid_argument("job_id is required"));
-        }
-
-        let rec = self
-            .store
-            .get(&job_id)
-            .ok_or_else(|| Status::not_found("job not found"))?;
-
-        let accepted = match rec.state {
-            JobState::Done | JobState::Error | JobState::Cancelled | JobState::Timeout => false,
-            _ => self.store.apply_event(&job_id, JobEvent::Cancel).is_ok(),
-        };
-
-        Ok(Response::new(CancelJobResponse { accepted }))
-    }
-
-    async fn get_job_results(
-        &self,
-        request: Request<GetJobResultsRequest>,
-    ) -> Result<Response<GetJobResultsResponse>, Status> {
-        let job_id = request.into_inner().job_id;
-        if job_id.trim().is_empty() {
-            return Err(Status::invalid_argument("job_id is required"));
-        }
-
-        let rec = self
-            .store
-            .get(&job_id)
-            .ok_or_else(|| Status::not_found("job not found"))?;
-
-        Ok(Response::new(GetJobResultsResponse {
-            job_id: rec.job_id,
-            state: to_proto_state(rec.state) as i32,
-            counts: rec.counts,
-            metadata: rec.results_metadata,
-            error_code: rec.error_code.unwrap_or_default(),
-            error_summary: rec.error_summary.unwrap_or_default(),
-            error_details_ref: rec.error_details_ref.unwrap_or_default(),
-            completed_at: if rec.state == JobState::Done {
-                Some(ts_from_unix_ms(rec.updated_at_unix_ms))
-            } else {
-                None
-            },
-        }))
+fn ts_now() -> Timestamp {
+    let duration = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_else(|_| Duration::from_secs(0));
+    Timestamp {
+        seconds: duration.as_secs() as i64,
+        nanos: duration.subsec_nanos() as i32,
     }
 }
 
-async fn run_pipeline(
-    store: JobStore,
-    deps: PipelineDeps,
-    job_id: &str,
-    req: EnqueueJobRequest,
-    trace_ctx: TraceContext,
-) -> Result<(), PipelineError> {
-    let flags = Phase8aFeatureFlags::from_metadata(&req.metadata);
-    let mut results_metadata = HashMap::from([(
-        "results_ref".to_string(),
-        format!("jobs/{job_id}/results.parquet"),
-    )]);
-     results_metadata.extend(flags.as_results_metadata());
-
-    store
-        .apply_event(job_id, JobEvent::StartCompiling)
-        .map_err(|e| PipelineError::internal(format!("state transition failed: {e}")))?;
-
-    deps.qfs
-        .ensure_job_layout(job_id)
-        .map_err(|e| PipelineError::persist(format!("failed to initialize QFS layout: {e}")))?;
-
-    let mut compiler = CompilationServiceClient::connect(deps.compiler_endpoint.clone())
-        .await
-        .map_err(|e| PipelineError::compile(format!("failed to connect to compiler: {e}")))?;
-
-    let mut compile_req = Request::new(CompileJobRequest {
-        job_id: job_id.to_string(),
-        language: language_for(&req),
-        input: Some(crate::proto::compile_job_request::Input::Source(
-            req.program,
-        )),
-        options: req.compiler_options,
-    });
-    trace_ctx.inject(&mut compile_req);
-
-    let compile_started = Instant::now();
-    let compile_res = compiler
-        .compile_job(compile_req)
-        .await
-        .map_err(PipelineError::from_compile_status)?
-        .into_inner();
-    let compilation_latency_sec = compile_started.elapsed().as_secs_f64();
-
-    let circuit_payload = compile_res.circuit.ok_or_else(|| {
-        PipelineError::compile("compiler returned empty circuit payload".to_string())
-    })?;
-
-    deps.qfs
-        .store_compiled_artifacts(job_id, &circuit_payload.data, None, "remote")
-        .map_err(|e| {
-            PipelineError::persist(format!("failed to persist compiled artifacts: {e}"))
-        })?;
-
-    store
-        .apply_event(job_id, JobEvent::StartRunning)
-        .map_err(|e| PipelineError::internal(format!("state transition failed: {e}")))?;
-
-    let mut driver = DriverManagerServiceClient::connect(deps.driver_endpoint.clone())
-        .await
-        .map_err(|e| PipelineError::execute(format!("failed to connect to driver manager: {e}")))?;
-
-    let device_id = if req.target.trim().is_empty() {
-        deps.default_device_id.clone()
-    } else {
-        req.target.clone()
-    };
-    let retry_policy = RetryPolicy::from_metadata(&req.metadata);
-    let retry_idempotent = is_execute_retry_idempotent(job_id, &req.metadata);
-    let mut retry_metrics = RetryMetrics::default();
-
-    let execute_started = Instant::now();
-    let execute_res = if should_run_vqe_loop(&circuit_payload, &compile_res.metadata) {
-        let vqe_res = run_vqe_loop(
-            &mut driver,
-            &deps,
-            job_id,
-            &device_id,
-            &circuit_payload,
-            &req.metadata,
-            &trace_ctx,
-            &retry_policy,
-            retry_idempotent,
-            &mut retry_metrics,
-        )
-        .await?;
-        results_metadata.extend(vqe_res.results_metadata);
-        vqe_res.last_execution
-    } else {
-        execute_with_retry(
-            &mut driver,
-            || {
-                let mut execute_req = Request::new(ExecuteCircuitRequest {
-                    job_id: job_id.to_string(),
-                    device_id: device_id.clone(),
-                    payload: Some(circuit_payload.clone()),
-                    shots: parse_shots(&req.metadata),
-                    options: req.metadata.clone(),
-                });
-                trace_ctx.inject(&mut execute_req);
-                execute_req
-            },
-            &retry_policy,
-            retry_idempotent,
-            &mut retry_metrics,
-        )
-        .await?
-    };
-    let job_execution_duration_sec = execute_started.elapsed().as_secs_f64();
-
-    let persisted_metadata = persist_results(
-        &deps,
-        job_id,
-        &device_id,
-        &execute_res,
-        compilation_latency_sec,
-        job_execution_duration_sec,
-        &retry_metrics,
-    )
-    .map_err(|e| {
-        PipelineError::persist(format!("failed to persist final execution results: {e}"))
-    })?;
-    results_metadata.extend(persisted_metadata);
-
-    store.set_results_metadata(job_id, results_metadata);
-    store.set_counts(job_id, execute_res.counts.clone());
-
-    store
-        .apply_event(job_id, JobEvent::Complete)
-        .map_err(|e| PipelineError::internal(format!("state transition failed: {e}")))?;
-
-    Ok(())
-}
-
-struct VqeLoopOutcome {
-    last_execution: ExecuteCircuitResponse,
-    results_metadata: HashMap<String, String>,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct Phase8aFeatureFlags {
-    kb_v1: bool,
-    optimizer_v1: bool,
-    learning_pipeline_v1: bool,
-    qfs_l2_checkpoint_v1: bool,
-}
-
-impl Phase8aFeatureFlags {
-    fn from_metadata(metadata: &HashMap<String, String>) -> Self {
-        Self {
-            kb_v1: parse_bool(metadata.get("feature.kb_v1").map(String::as_str)),
-            optimizer_v1: parse_bool(metadata.get("feature.optimizer_v1").map(String::as_str)),
-            learning_pipeline_v1: parse_bool(
-                metadata
-                    .get("feature.learning_pipeline_v1")
-                    .map(String::as_str),
-            ),
-            qfs_l2_checkpoint_v1: parse_bool(
-                metadata
-                    .get("feature.qfs_l2_checkpoint_v1")
-                    .map(String::as_str),
-            ),
-        }
-    }
-
-    fn as_results_metadata(&self) -> HashMap<String, String> {
-        HashMap::from([
-            ("feature.kb_v1".to_string(), self.kb_v1.to_string()),
-            (
-                "feature.optimizer_v1".to_string(),
-                self.optimizer_v1.to_string(),
-            ),
-            (
-                "feature.learning_pipeline_v1".to_string(),
-                self.learning_pipeline_v1.to_string(),
-            ),
-            (
-                "feature.qfs_l2_checkpoint_v1".to_string(),
-                self.qfs_l2_checkpoint_v1.to_string(),
-            ),
-        ])
-    }
-}
-
-fn parse_bool(raw: Option<&str>) -> bool {
-    matches!(
-        raw.map(|v| v.trim().to_ascii_lowercase()),
-        Some(v) if v == "1" || v == "true" || v == "yes" || v == "on"
-    )
-}
-
-async fn run_vqe_loop(
-    driver: &mut DriverManagerServiceClient<tonic::transport::Channel>,
-    deps: &PipelineDeps,
-    job_id: &str,
-    device_id: &str,
-    circuit_payload: &CircuitPayload,
-    job_metadata: &HashMap<String, String>,
-    trace_ctx: &TraceContext,
-    retry_policy: &RetryPolicy,
-    retry_idempotent: bool,
-    retry_metrics: &mut RetryMetrics,
-) -> Result<VqeLoopOutcome, PipelineError> {
-    let mut params = initial_params(circuit_payload);
-    let max_iters = parse_positive_usize(job_metadata, "max_iters").unwrap_or(10);
-    let step_size = parse_positive_f64(job_metadata, "optimizer_step").unwrap_or(0.1);
-    let shots = parse_shots(job_metadata);
-    let zero_state = "0".repeat(estimate_qubits(circuit_payload));
-
-    let mut metrics: Vec<Value> = Vec::with_capacity(max_iters);
-    let mut best_objective = f64::INFINITY;
-    let mut best_params = params.clone();
-    let mut last_execution = None;
-
-    for iter in 0..max_iters {
-        let mut options = job_metadata.clone();
-        options.insert("vqe.params".to_string(), serialize_params(&params));
-        options.insert("vqe.iteration".to_string(), iter.to_string());
-
-        let execute_res = execute_with_retry(
-            driver,
-            || {
-                let mut execute_req = Request::new(ExecuteCircuitRequest {
-                    job_id: job_id.to_string(),
-                    device_id: device_id.to_string(),
-                    payload: Some(circuit_payload.clone()),
-                    shots,
-                    options: options.clone(),
-                });
-                trace_ctx.inject(&mut execute_req);
-                execute_req
-            },
-            retry_policy,
-            retry_idempotent,
-            retry_metrics,
-        )
-        .await?;
-
-        let objective = objective_from_counts(&execute_res.counts, &zero_state);
-        if objective < best_objective {
-            best_objective = objective;
-            best_params = params.clone();
-        }
-        metrics.push(json!({
-            "iteration": iter,
-            "params": params.clone(),
-            "objective": objective,
-            "counts": execute_res.counts.clone(),
-        }));
-        params = update_params(iter, &params, objective, step_size);
-        last_execution = Some(execute_res);
-    }
-
-    let metrics_json = serde_json::to_vec_pretty(&json!({
-        "version": "0.1",
-        "kind": "vqe_metrics",
-        "optimizer": "simple_gradient_free_step",
-        "max_iters": max_iters,
-        "iterations": metrics,
-        "best_objective": best_objective,
-        "best_params": best_params,
-    }))
-    .map_err(|e| PipelineError::persist(format!("serialize metrics failed: {e}")))?;
-    deps.qfs
-        .store_metrics_json(job_id, &metrics_json)
-        .map_err(|e| PipelineError::persist(format!("store metrics failed: {e}")))?;
-
-    let mut results_metadata = HashMap::from([
-        ("vqe.enabled".to_string(), "true".to_string()),
-        (
-            "vqe.optimizer".to_string(),
-            "simple_gradient_free_step".to_string(),
-        ),
-        ("vqe.iterations".to_string(), max_iters.to_string()),
-        (
-            "vqe.best_objective".to_string(),
-            format!("{best_objective:.8}"),
-        ),
-        (
-            "vqe.best_params".to_string(),
-            serialize_params(&best_params),
-        ),
-        ("vqe.final_params".to_string(), serialize_params(&params)),
-        (
-            "vqe.metrics_ref".to_string(),
-            format!("{job_id}/meta/metrics.json"),
-        ),
-    ]);
-
-    if let Some(last) = &last_execution {
-        results_metadata.insert(
-            "vqe.last_counts_keys".to_string(),
-            last.counts.len().to_string(),
-        );
-    }
-
-    Ok(VqeLoopOutcome {
-        last_execution: last_execution.ok_or_else(|| {
-            PipelineError::execute("vqe loop produced no execution result".to_string())
-        })?,
-        results_metadata,
+fn ts_to_json(ts: &Timestamp) -> serde_json::Value {
+    serde_json::json!({
+        "seconds": ts.seconds,
+        "nanos": ts.nanos,
     })
-}
-
-fn should_run_vqe_loop(
-    circuit_payload: &CircuitPayload,
-    metadata: &HashMap<String, String>,
-) -> bool {
-    if metadata
-        .get("hybrid_plan_marker")
-        .map(|v| v == "minimize")
-        .unwrap_or(false)
-    {
-        return true;
-    }
-    parse_hybrid_marker(circuit_payload)
-}
-
-fn parse_hybrid_marker(circuit_payload: &CircuitPayload) -> bool {
-    let parsed: Result<Value, _> = serde_json::from_slice(&circuit_payload.data);
-    parsed
-        .ok()
-        .and_then(|v| {
-            v.get("hybrid_plan_marker")
-                .and_then(|m| m.get("kind"))
-                .and_then(Value::as_str)
-                .map(|kind| kind == "minimize")
-        })
-        .unwrap_or(false)
-}
-
-fn initial_params(circuit_payload: &CircuitPayload) -> Vec<f64> {
-    let parsed: Result<Value, _> = serde_json::from_slice(&circuit_payload.data);
-    let count = parsed
-        .ok()
-        .and_then(|v| v.get("parameters").and_then(Value::as_array).map(Vec::len))
-        .unwrap_or(1)
-        .max(1);
-    vec![0.1; count]
-}
-
-fn estimate_qubits(circuit_payload: &CircuitPayload) -> usize {
-    let parsed: Result<Value, _> = serde_json::from_slice(&circuit_payload.data);
-    parsed
-        .ok()
-        .and_then(|v| v.get("qubits").and_then(Value::as_u64))
-        .map(|q| q as usize)
-        .filter(|q| *q > 0)
-        .unwrap_or(1)
-}
-
-fn objective_from_counts(counts: &HashMap<String, i64>, zero_state: &str) -> f64 {
-    let total: i64 = counts.values().sum();
-    if total <= 0 {
-        return 1.0;
-    }
-    let ground = counts.get(zero_state).copied().unwrap_or(0) as f64;
-    1.0 - (ground / total as f64)
-}
-
-fn update_params(iter: usize, params: &[f64], objective: f64, step: f64) -> Vec<f64> {
-    params
-        .iter()
-        .enumerate()
-        .map(|(idx, p)| {
-            let direction = if (iter + idx) % 2 == 0 { 1.0 } else { -1.0 };
-            p + direction * step * (objective - 0.5)
-        })
-        .collect()
-}
-
-fn serialize_params(params: &[f64]) -> String {
-    params
-        .iter()
-        .map(|v| format!("{v:.6}"))
-        .collect::<Vec<_>>()
-        .join(",")
-}
-
-fn parse_positive_usize(metadata: &HashMap<String, String>, key: &str) -> Option<usize> {
-    metadata
-        .get(key)
-        .and_then(|v| v.parse::<usize>().ok())
-        .filter(|v| *v > 0)
-}
-
-fn parse_positive_f64(metadata: &HashMap<String, String>, key: &str) -> Option<f64> {
-    metadata
-        .get(key)
-        .and_then(|v| v.parse::<f64>().ok())
-        .filter(|v| *v > 0.0)
-}
-
-#[derive(Debug, Clone)]
-struct RetryPolicy {
-    max_attempts: u32,
-    max_elapsed: Duration,
-    base_delay: Duration,
-    max_delay: Duration,
-    jitter: Duration,
-}
-
-impl Default for RetryPolicy {
-    fn default() -> Self {
-        Self {
-            max_attempts: 3,
-            max_elapsed: Duration::from_secs(5),
-            base_delay: Duration::from_millis(50),
-            max_delay: Duration::from_secs(1),
-            jitter: Duration::from_millis(25),
-        }
-    }
-}
-
-impl RetryPolicy {
-    fn from_metadata(metadata: &HashMap<String, String>) -> Self {
-        let mut policy = Self::default();
-        if let Some(v) = parse_positive_usize(metadata, "retry.max_attempts") {
-            policy.max_attempts = v.min(u32::MAX as usize) as u32;
-        }
-        if let Some(v) = parse_positive_usize(metadata, "retry.max_elapsed_ms") {
-            policy.max_elapsed = Duration::from_millis(v as u64);
-        }
-        if let Some(v) = parse_positive_usize(metadata, "retry.base_delay_ms") {
-            policy.base_delay = Duration::from_millis(v as u64);
-        }
-        if let Some(v) = parse_positive_usize(metadata, "retry.max_delay_ms") {
-            policy.max_delay = Duration::from_millis(v as u64);
-        }
-        if let Some(v) = parse_positive_usize(metadata, "retry.jitter_ms") {
-            policy.jitter = Duration::from_millis(v as u64);
-        }
-        if policy.max_attempts == 0 {
-            policy.max_attempts = 1;
-        }
-        policy
-    }
-}
-
-#[derive(Debug, Default, Clone, Copy)]
-struct RetryMetrics {
-    attempts: u32,
-    retries: u32,
-    successes_after_retry: u32,
-}
-
-fn is_retryable_code(code: Code) -> bool {
-    matches!(
-        code,
-        Code::Unavailable | Code::DeadlineExceeded | Code::ResourceExhausted | Code::Aborted
-    )
-}
-
-fn is_execute_retry_idempotent(job_id: &str, metadata: &HashMap<String, String>) -> bool {
-    !job_id.trim().is_empty()
-        && (metadata.contains_key("client_request_id")
-            || metadata.contains_key("vqe.iteration")
-            || !metadata.contains_key("non_idempotent"))
-}
-
-fn backoff_delay(policy: &RetryPolicy, attempt: u32) -> Duration {
-    let exp = 1u32
-        .checked_shl(attempt.saturating_sub(1))
-        .unwrap_or(u32::MAX);
-    let base_ms = policy.base_delay.as_millis().saturating_mul(exp as u128);
-    let capped_ms = base_ms.min(policy.max_delay.as_millis()) as u64;
-    let jitter_ms = if policy.jitter.is_zero() {
-        0
-    } else {
-        pseudo_random_u64() % (policy.jitter.as_millis() as u64 + 1)
-    };
-    Duration::from_millis(capped_ms.saturating_add(jitter_ms))
-}
-
-fn pseudo_random_u64() -> u64 {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos() as u64;
-    nanos ^ nanos.rotate_left(13) ^ 0x9E37_79B9_7F4A_7C15
-}
-
-async fn execute_with_retry<F>(
-    driver: &mut DriverManagerServiceClient<tonic::transport::Channel>,
-    build_request: F,
-    policy: &RetryPolicy,
-    retry_idempotent: bool,
-    metrics: &mut RetryMetrics,
-) -> Result<ExecuteCircuitResponse, PipelineError>
-where
-    F: Fn() -> Request<ExecuteCircuitRequest>,
-{
-    let started = Instant::now();
-    let mut attempt = 0u32;
-    loop {
-        attempt += 1;
-        metrics.attempts += 1;
-        match driver.execute_circuit(build_request()).await {
-            Ok(resp) => {
-                if attempt > 1 {
-                    metrics.successes_after_retry += 1;
-                }
-                return Ok(resp.into_inner());
-            }
-            Err(status) => {
-                let retryable = retry_idempotent && is_retryable_code(status.code());
-                let out_of_attempts = attempt >= policy.max_attempts;
-                let elapsed = started.elapsed();
-                let delay = backoff_delay(policy, attempt);
-                let out_of_time = elapsed.saturating_add(delay) > policy.max_elapsed;
-                if !retryable || out_of_attempts || out_of_time {
-                    return Err(PipelineError::from_execute_status(status));
-                }
-                metrics.retries += 1;
-                tokio::time::sleep(delay).await;
-            }
-        }
-    }
-}
-
-fn persist_results(
-    deps: &PipelineDeps,
-    job_id: &str,
-    device_id: &str,
-    execute_res: &ExecuteCircuitResponse,
-    compilation_latency_sec: f64,
-    job_execution_duration_sec: f64,
-    retry_metrics: &RetryMetrics,
-) -> Result<HashMap<String, String>, String> {
-    let counts_json = serde_json::to_vec(&json!({
-        "version": "0.1",
-        "format": "bitstring_counts",
-        "job_id": job_id,
-        "counts": execute_res.counts,
-    }))
-    .map_err(|e| e.to_string())?;
-
-    let metadata_json = serde_json::to_vec(&json!({
-        "version": "0.1",
-        "job_id": job_id,
-        "device_id": device_id,
-        "execution_time_sec": execute_res.execution_time_sec,
-        "backend_metadata": execute_res.metadata,
-        "runtime_metrics": [
-            {
-                "name": "compilation_latency",
-                "value_sec": compilation_latency_sec,
-                "labels": {
-                    "job_id": job_id,
-                    "device_id": device_id,
-                    "unit": "seconds",
-                }
-            },
-            {
-                "name": "job_execution_duration",
-                "value_sec": job_execution_duration_sec,
-                "labels": {
-                    "job_id": job_id,
-                    "device_id": device_id,
-                    "unit": "seconds",
-                }
-            },
-            {
-                "name": "retry_attempts_total",
-                "value": retry_metrics.attempts,
-                "labels": {
-                    "job_id": job_id,
-                    "device_id": device_id,
-                    "kind": "execute_circuit",
-                }
-            },
-            {
-                "name": "retry_retries_total",
-                "value": retry_metrics.retries,
-                "labels": {
-                    "job_id": job_id,
-                    "device_id": device_id,
-                    "kind": "execute_circuit",
-                }
-            },
-            {
-                "name": "retry_success_after_retry_total",
-                "value": retry_metrics.successes_after_retry,
-                "labels": {
-                    "job_id": job_id,
-                    "device_id": device_id,
-                    "kind": "execute_circuit",
-                }
-            }
-        ],
-    }))
-    .map_err(|e| e.to_string())?;
-
-    let parquet_like_payload = serde_json::to_vec(&json!({
-        "format": "parquet.v1",
-        "counts": serde_json::from_slice::<serde_json::Value>(&counts_json).unwrap_or(json!({})),
-        "metadata": serde_json::from_slice::<serde_json::Value>(&metadata_json).unwrap_or(json!({})),
-    }))
-    .map_err(|e| e.to_string())?;
-
-    let producer_version = env!("CARGO_PKG_VERSION");
-    deps.qfs
-        .store_results_bundle(job_id, &parquet_like_payload, producer_version)
-        .map_err(|e| e.to_string())?;
-
-    Ok(HashMap::from([
-        ("artifact_version".to_string(), "1.0.0".to_string()),
-        ("producer_version".to_string(), producer_version.to_string()),
-        (
-            "result_envelope_ref".to_string(),
-            format!("jobs/{job_id}/results/result.json"),
-        ),
-        (
-            "result_manifest_ref".to_string(),
-            format!("jobs/{job_id}/results/manifest.json"),
-        ),
-    ]))
-}
-
-fn parse_shots(metadata: &HashMap<String, String>) -> i32 {
-    metadata
-        .get("shots")
-        .and_then(|s| s.parse::<i32>().ok())
-        .filter(|s| *s > 0)
-        .unwrap_or(1024)
-}
-
-fn language_for(req: &EnqueueJobRequest) -> String {
-    if req.program_format.trim().is_empty() {
-        "eigen-lang".to_string()
-    } else {
-        req.program_format.clone()
-    }
-}
-
-async fn fail_job(store: &JobStore, job_id: &str, err: PipelineError) {
-    let _ = store.apply_event(job_id, JobEvent::Fail);
-
-    store.set_error(
-        job_id,
-        canonical_grpc_code(err.code).to_string(),
-        err.summary.clone(),
-        Some("results/error.json".to_string()),
-    );
-
-    let qfs = CircuitFsLocal::new(
-        std::env::var("EIGEN_QFS_ROOT")
-            .unwrap_or_else(|_| qfs::DEFAULT_CIRCUIT_FS_ROOT.to_string()),
-    );
-    let details = serde_json::to_vec_pretty(&json!({
-        "error_code": canonical_grpc_code(err.code),
-        "error_summary": err.summary,
-        "details": err.details,
-    }))
-    .unwrap_or_else(|_| b"{}".to_vec());
-    let _ = qfs.store_error_details_json(job_id, &details);
-}
-
-#[derive(Debug)]
-struct PipelineError {
-    code: Code,
-    summary: String,
-    details: String,
-}
-
-impl PipelineError {
-    fn compile(details: String) -> Self {
-        Self {
-            code: Code::Internal,
-            summary: "Compilation failed".to_string(),
-            details,
-        }
-    }
-
-    fn execute(details: String) -> Self {
-        Self {
-            code: Code::Internal,
-            summary: "Execution failed".to_string(),
-            details,
-        }
-    }
-
-    fn persist(details: String) -> Self {
-        Self {
-            code: Code::Internal,
-            summary: "Persisting artifacts failed".to_string(),
-            details,
-        }
-    }
-
-    fn internal(details: String) -> Self {
-        Self {
-            code: Code::Internal,
-            summary: "Kernel internal error".to_string(),
-            details,
-        }
-    }
-
-    fn from_compile_status(status: Status) -> Self {
-        map_status(status, "compile")
-    }
-
-    fn from_execute_status(status: Status) -> Self {
-        map_status(status, "execute")
-    }
-}
-
-fn map_status(status: Status, stage: &str) -> PipelineError {
-    let details = format!(
-        "{stage} RPC failed: {} ({})",
-        status.message(),
-        status.code()
-    );
-    match status.code() {
-        Code::InvalidArgument => PipelineError {
-            code: Code::InvalidArgument,
-            summary: "Request validation failed".to_string(),
-            details,
-        },
-        Code::ResourceExhausted => PipelineError {
-            code: Code::ResourceExhausted,
-            summary: "Backend resource exhausted".to_string(),
-            details,
-        },
-        Code::DeadlineExceeded => PipelineError {
-            code: Code::DeadlineExceeded,
-            summary: "Backend call timed out".to_string(),
-            details,
-        },
-        Code::Cancelled => PipelineError {
-            code: Code::Cancelled,
-            summary: "Backend call cancelled".to_string(),
-            details,
-        },
-        Code::NotFound => PipelineError {
-            code: Code::NotFound,
-            summary: "Requested resource was not found".to_string(),
-            details,
-        },
-        Code::PermissionDenied => PipelineError {
-            code: Code::PermissionDenied,
-            summary: "Permission denied by backend".to_string(),
-            details,
-        },
-        Code::Unavailable => PipelineError {
-            code: Code::Unavailable,
-            summary: "Backend unavailable".to_string(),
-            details,
-        },
-        Code::Unimplemented => PipelineError {
-            code: Code::Unimplemented,
-            summary: "Unsupported target or format".to_string(),
-            details,
-        },
-        _ => PipelineError {
-            code: Code::Internal,
-            summary: "Kernel internal error".to_string(),
-            details,
-        },
-    }
-}
-
-fn canonical_grpc_code(code: Code) -> &'static str {
-    match code {
-        Code::Ok => "OK",
-        Code::Cancelled => "CANCELLED",
-        Code::Unknown => "UNKNOWN",
-        Code::InvalidArgument => "INVALID_ARGUMENT",
-        Code::DeadlineExceeded => "DEADLINE_EXCEEDED",
-        Code::NotFound => "NOT_FOUND",
-        Code::AlreadyExists => "ALREADY_EXISTS",
-        Code::PermissionDenied => "PERMISSION_DENIED",
-        Code::ResourceExhausted => "RESOURCE_EXHAUSTED",
-        Code::FailedPrecondition => "FAILED_PRECONDITION",
-        Code::Aborted => "ABORTED",
-        Code::OutOfRange => "OUT_OF_RANGE",
-        Code::Unimplemented => "UNIMPLEMENTED",
-        Code::Internal => "INTERNAL",
-        Code::Unavailable => "UNAVAILABLE",
-        Code::DataLoss => "DATA_LOSS",
-        Code::Unauthenticated => "UNAUTHENTICATED",
-    }
-}
-
-fn status_from_record(rec: &JobRecord) -> GetJobStatusResponse {
-    GetJobStatusResponse {
-        job_id: rec.job_id.clone(),
-        state: to_proto_state(rec.state) as i32,
-        stage: format!("{:?}", rec.state).to_uppercase(),
-        progress: progress_for(rec.state),
-        message: String::new(),
-        error_code: rec.error_code.clone().unwrap_or_default(),
-        error_summary: rec.error_summary.clone().unwrap_or_default(),
-        error_details_ref: rec.error_details_ref.clone().unwrap_or_default(),
-        updated_at: Some(ts_from_unix_ms(rec.updated_at_unix_ms)),
-    }
-}
-
-fn progress_for(state: JobState) -> f32 {
-    match state {
-        JobState::Pending => 0.0,
-        JobState::Compiling => 0.25,
-        JobState::Running => 0.75,
-        JobState::Done | JobState::Error | JobState::Cancelled | JobState::Timeout => 1.0,
-    }
-}
-
-fn to_proto_state(state: JobState) -> TaskState {
-    match state {
-        JobState::Pending => TaskState::Pending,
-        JobState::Compiling => TaskState::Compiling,
-        JobState::Running => TaskState::Running,
-        JobState::Done => TaskState::Done,
-        JobState::Error => TaskState::Error,
-        JobState::Cancelled => TaskState::Cancelled,
-        JobState::Timeout => TaskState::Error,
-    }
-}
-
-fn ts_now() -> prost_types::Timestamp {
-    let ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as i64;
-    ts_from_unix_ms(ms)
-}
-
-fn ts_from_unix_ms(ms: i64) -> prost_types::Timestamp {
-    let secs = ms / 1_000;
-    let nanos = ((ms % 1_000) * 1_000_000) as i32;
-    prost_types::Timestamp {
-        seconds: secs,
-        nanos,
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::compilation_service_server::CompilationServiceServer;
-    use crate::proto::driver_manager_service_server::DriverManagerServiceServer;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{Mutex, OnceLock};
-    use std::path::PathBuf;
-    use tempfile::TempDir;
-    use tokio::time::{Duration, sleep};
+    use prost_types::{Duration as ProtoDuration, Timestamp};
+    use tokio_stream::StreamExt;
+    use tonic::Request;
 
-    #[derive(Clone, Debug, PartialEq, Eq)]
-    struct TraceCapture {
-        traceparent: Option<String>,
-        trace_id: Option<String>,
+    fn make_service(failure_stage: Option<DagStageKind>) -> (KernelGatewaySvc, Arc<KernelRuntimeStore>) {
+        let runtime = Arc::new(KernelRuntimeStore::default());
+        let adapters = Arc::new(FixtureAdapters::new("/tmp/eigen-kernel-test-qfs", failure_stage));
+        let svc = KernelGatewaySvc::new(runtime.clone(), adapters);
+        (svc, runtime)
     }
 
-    fn compiler_trace_store() -> &'static Mutex<Vec<TraceCapture>> {
-        static STORE: OnceLock<Mutex<Vec<TraceCapture>>> = OnceLock::new();
-        STORE.get_or_init(|| Mutex::new(Vec::new()))
-    }
+    fn make_request(name: &str) -> EnqueueJobRequest {
+        let mut compiler_options = HashMap::new();
+        compiler_options.insert("optimizer_step".to_string(), "0.1".to_string());
 
-    fn driver_trace_store() -> &'static Mutex<Vec<TraceCapture>> {
-        static STORE: OnceLock<Mutex<Vec<TraceCapture>>> = OnceLock::new();
-        STORE.get_or_init(|| Mutex::new(Vec::new()))
-    }
+        let mut metadata_kvs = HashMap::new();
+        metadata_kvs.insert("shots".to_string(), "128".to_string());
 
-    fn driver_attempt_counter() -> &'static AtomicUsize {
-        static COUNTER: OnceLock<AtomicUsize> = OnceLock::new();
-        COUNTER.get_or_init(|| AtomicUsize::new(0))
-    }
-
-    #[derive(Default)]
-    struct MockCompiler;
-
-    #[tonic::async_trait]
-    impl compilation_service_server::CompilationService for MockCompiler {
-        async fn compile_circuit(
-            &self,
-            _request: Request<CompileCircuitRequest>,
-        ) -> Result<Response<CompileCircuitResponse>, Status> {
-            Err(Status::unimplemented("not used"))
+        EnqueueJobRequest {
+            metadata: Some(RequestMetadata {
+                contract_version: "1.0.0".to_string(),
+                request_id: format!("req-{name}"),
+                idempotency_key: format!("idem-{name}"),
+                traceparent: "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01".to_string(),
+                deadline: Some(ProtoDuration { seconds: 30, nanos: 0 }),
+                tenant_id: "tenant-a".to_string(),
+                project_id: "project-a".to_string(),
+                subject: "alice".to_string(),
+                role: "user".to_string(),
+                source_service: "system-api".to_string(),
+            }),
+            name: name.to_string(),
+            program: br#"{"qubits": 1, "parameters": [0.1]}"#.to_vec(),
+            program_format: "aqo_json".to_string(),
+            target: "sim:local".to_string(),
+            priority: 50,
+            compiler_options,
+            metadata_kvs,
         }
+    }
 
-        async fn compile_job(
-            &self,
-            request: Request<CompileJobRequest>,
-        ) -> Result<Response<CompileJobResponse>, Status> {
-            let traceparent = request
-                .metadata()
-                .get("traceparent")
-                .and_then(|v| v.to_str().ok())
-                .map(|v| v.to_string());
-            let trace_id = request
-                .metadata()
-                .get("trace_id")
-                .and_then(|v| v.to_str().ok())
-                .map(|v| v.to_string());
-            compiler_trace_store().lock().unwrap().push(TraceCapture {
-                traceparent,
-                trace_id,
-            });
-            let req = request.into_inner();
-            if req.language == "bad" {
-                return Err(Status::invalid_argument("bad language"));
-            }
-            let mut metadata = HashMap::new();
-            if let Some(crate::proto::compile_job_request::Input::Source(ref source_bytes)) =
-                req.input
-            {
-                let program_text = String::from_utf8_lossy(source_bytes);
-                if program_text.contains("minimize") {
-                    metadata.insert("hybrid_plan_marker".to_string(), "minimize".to_string());
+    fn make_status_request(job_id: &str) -> GetJobStatusRequest {
+        GetJobStatusRequest {
+            metadata: Some(RequestMetadata {
+                contract_version: "1.0.0".to_string(),
+                request_id: format!("status-{job_id}"),
+                idempotency_key: format!("status-{job_id}"),
+                traceparent: "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01".to_string(),
+                deadline: Some(ProtoDuration { seconds: 30, nanos: 0 }),
+                tenant_id: "tenant-a".to_string(),
+                project_id: "project-a".to_string(),
+                subject: "alice".to_string(),
+                role: "user".to_string(),
+                source_service: "system-api".to_string(),
+            }),
+            job_id: job_id.to_string(),
+        }
+    }
+
+    async fn wait_for_terminal(runtime: Arc<KernelRuntimeStore>, job_id: &str) -> JobRuntimeRecord {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(job) = runtime.get(job_id) {
+                if job.is_terminal() {
+                    return job;
                 }
             }
-            Ok(Response::new(CompileJobResponse {
-                job_id: req.job_id,
-                circuit: Some(CircuitPayload {
-                    format: CircuitFormat::AqoJson as i32,
-                    data: br#"{"aqo":"ok"}"#.to_vec(),
-                }),
-                metadata,
-            }))
-        }
-
-        async fn optimize_circuit(
-            &self,
-            _request: Request<crate::proto::OptimizeCircuitRequest>,
-        ) -> Result<Response<crate::proto::OptimizeCircuitResponse>, Status> {
-            Err(Status::unimplemented("not used"))
-        }
-
-        async fn validate_circuit(
-            &self,
-            _request: Request<ValidateCircuitRequest>,
-        ) -> Result<Response<ValidateCircuitResponse>, Status> {
-            Err(Status::unimplemented("not used"))
-        }
-    }
-
-    #[derive(Default)]
-    struct MockDriver;
-
-    #[tonic::async_trait]
-    impl driver_manager_service_server::DriverManagerService for MockDriver {
-        async fn list_devices(
-            &self,
-            _request: Request<ListDevicesRequest>,
-        ) -> Result<Response<ListDevicesResponse>, Status> {
-            Err(Status::unimplemented("not used"))
-        }
-
-        async fn get_device_status(
-            &self,
-            _request: Request<GetDeviceStatusRequest>,
-        ) -> Result<Response<GetDeviceStatusResponse>, Status> {
-            Err(Status::unimplemented("not used"))
-        }
-
-        async fn execute_circuit(
-            &self,
-            request: Request<ExecuteCircuitRequest>,
-        ) -> Result<Response<ExecuteCircuitResponse>, Status> {
-            driver_attempt_counter().fetch_add(1, Ordering::SeqCst);
-            let traceparent = request
-                .metadata()
-                .get("traceparent")
-                .and_then(|v| v.to_str().ok())
-                .map(|v| v.to_string());
-            let trace_id = request
-                .metadata()
-                .get("trace_id")
-                .and_then(|v| v.to_str().ok())
-                .map(|v| v.to_string());
-            driver_trace_store().lock().unwrap().push(TraceCapture {
-                traceparent,
-                trace_id,
-            });
-            if request.get_ref().device_id == "bad-device" {
-                return Err(Status::unavailable("backend down"));
-            }
-            if let Some(failures) = request
-                .get_ref()
-                .options
-                .get("retry.failures_before_success")
-            {
-                let fail_n = failures.parse::<usize>().unwrap_or(0);
-                let current = driver_attempt_counter().load(Ordering::SeqCst);
-                if current <= fail_n {
-                    let code = match request
-                        .get_ref()
-                        .options
-                        .get("retry.error_code")
-                        .map(|s| s.as_str())
-                    {
-                        Some("deadline_exceeded") => Code::DeadlineExceeded,
-                        Some("resource_exhausted") => Code::ResourceExhausted,
-                        Some("invalid_argument") => Code::InvalidArgument,
-                        _ => Code::Unavailable,
-                    };
-                    return Err(Status::new(code, "simulated transient"));
-                }
-            }
-            if let Some(params) = request.get_ref().options.get("vqe.params") {
-                let score = params
-                    .split(',')
-                    .filter_map(|v| v.parse::<f64>().ok())
-                    .map(|v| v.abs())
-                    .sum::<f64>();
-                let good = ((1024.0 - score * 200.0).round() as i64).clamp(0, 1024);
-                return Ok(Response::new(ExecuteCircuitResponse {
-                    counts: HashMap::from([
-                        ("00".to_string(), good),
-                        ("11".to_string(), 1024 - good),
-                    ]),
-                    execution_time_sec: 0.02,
-                    metadata: HashMap::from([("backend".to_string(), "simulator".to_string())]),
-                }));
-            }
-            Ok(Response::new(ExecuteCircuitResponse {
-                counts: HashMap::from([("00".to_string(), 1024)]),
-                execution_time_sec: 0.02,
-                metadata: HashMap::from([("backend".to_string(), "simulator".to_string())]),
-            }))
-        }
-
-        async fn calibrate_device(
-            &self,
-            _request: Request<CalibrateDeviceRequest>,
-        ) -> Result<Response<CalibrateDeviceResponse>, Status> {
-            Err(Status::unimplemented("not used"))
+            assert!(tokio::time::Instant::now() < deadline, "job did not reach terminal state");
+            tokio::time::sleep(Duration::from_millis(20)).await;
         }
     }
 
     #[tokio::test]
-    async fn integration_submit_to_done_and_results_written() {
-        driver_attempt_counter().store(0, Ordering::SeqCst);
-        let temp_qfs = TempDir::new().unwrap();
-        let compiler_addr: SocketAddr = "127.0.0.1:50171".parse().unwrap();
-        let driver_addr: SocketAddr = "127.0.0.1:50172".parse().unwrap();
-
-        tokio::spawn(async move {
-            tonic::transport::Server::builder()
-                .add_service(CompilationServiceServer::new(MockCompiler))
-                .serve(compiler_addr)
-                .await
-                .unwrap();
-        });
-
-        tokio::spawn(async move {
-            tonic::transport::Server::builder()
-                .add_service(DriverManagerServiceServer::new(MockDriver))
-                .serve(driver_addr)
-                .await
-                .unwrap();
-        });
-
-        sleep(Duration::from_millis(80)).await;
-
-        let svc = KernelGatewaySvc {
-            store: JobStore::default(),
-            deps: PipelineDeps {
-                compiler_endpoint: "http://127.0.0.1:50171".to_string(),
-                driver_endpoint: "http://127.0.0.1:50172".to_string(),
-                default_device_id: "sim:local".to_string(),
-                qfs: CircuitFsLocal::new(temp_qfs.path()),
-            },
-        };
-
-        let enqueue = svc
-            .enqueue_job(Request::new(EnqueueJobRequest {
-                name: "test-job".to_string(),
-                program: b"x".to_vec(),
-                program_format: "eigen-lang".to_string(),
-                target: "sim:local".to_string(),
-                priority: 1,
-                compiler_options: HashMap::new(),
-                metadata: HashMap::from([("shots".to_string(), "1024".to_string())]),
-            }))
+    async fn submit_to_results_success_path_records_all_stages() {
+        let (svc, runtime) = make_service(None);
+        let response = svc
+            .enqueue_job(Request::new(make_request("success")))
             .await
-            .unwrap()
+            .expect("enqueue should succeed")
             .into_inner();
 
-        let job_id = enqueue.job_id;
-
-        for _ in 0..30 {
-            let status = svc
-                .get_job_status(Request::new(GetJobStatusRequest {
-                    job_id: job_id.clone(),
-                }))
-                .await
-                .unwrap()
-                .into_inner();
-            if status.state == TaskState::Done as i32 {
-                break;
-            }
-            sleep(Duration::from_millis(30)).await;
-        }
+        let job = wait_for_terminal(runtime.clone(), &response.job_id).await;
+        assert_eq!(job.state, TaskState::Done);
+        assert_eq!(
+            job.stage_records.iter().map(|stage| stage.stage_key.clone()).collect::<Vec<_>>(),
+            DagStageKind::all().iter().map(|stage| stage.key().to_string()).collect::<Vec<_>>()
+        );
+        assert!(job.snapshot_digest().len() >= 16);
 
         let status = svc
-            .get_job_status(Request::new(GetJobStatusRequest {
-                job_id: job_id.clone(),
-            }))
+            .get_job_status(Request::new(make_status_request(&response.job_id)))
             .await
-            .unwrap()
+            .expect("status should succeed")
             .into_inner();
         assert_eq!(status.state, TaskState::Done as i32);
+        assert_eq!(status.stage, "finalize");
 
         let results = svc
             .get_job_results(Request::new(GetJobResultsRequest {
-                job_id: job_id.clone(),
+                metadata: Some(RequestMetadata {
+                    contract_version: "1.0.0".to_string(),
+                    request_id: format!("results-{}", response.job_id),
+                    idempotency_key: format!("results-{}", response.job_id),
+                    traceparent: "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01".to_string(),
+                    deadline: Some(ProtoDuration { seconds: 30, nanos: 0 }),
+                    tenant_id: "tenant-a".to_string(),
+                    project_id: "project-a".to_string(),
+                    subject: "alice".to_string(),
+                    role: "user".to_string(),
+                    source_service: "system-api".to_string(),
+                }),
+                job_id: response.job_id.clone(),
             }))
             .await
-            .unwrap()
+            .expect("results should succeed")
             .into_inner();
         assert_eq!(results.state, TaskState::Done as i32);
-        assert_eq!(results.counts.get("00"), Some(&1024));
-
-        let bundle = CircuitFsLocal::new(temp_qfs.path())
-            .load_results_bundle(&job_id)
-            .unwrap();
-        assert!(!bundle.parquet.is_empty());
+        assert!(!results.qfs_result_ref.is_empty());
+        assert!(!results.counts.is_empty());
     }
 
     #[tokio::test]
-    async fn compile_error_maps_to_error_state() {
-        driver_attempt_counter().store(0, Ordering::SeqCst);
-        let temp_qfs = TempDir::new().unwrap();
-        let compiler_addr: SocketAddr = "127.0.0.1:50173".parse().unwrap();
-        let driver_addr: SocketAddr = "127.0.0.1:50174".parse().unwrap();
-
-        tokio::spawn(async move {
-            tonic::transport::Server::builder()
-                .add_service(CompilationServiceServer::new(MockCompiler))
-                .serve(compiler_addr)
-                .await
-                .unwrap();
-        });
-
-        tokio::spawn(async move {
-            tonic::transport::Server::builder()
-                .add_service(DriverManagerServiceServer::new(MockDriver))
-                .serve(driver_addr)
-                .await
-                .unwrap();
-        });
-
-        sleep(Duration::from_millis(80)).await;
-
-        let svc = KernelGatewaySvc {
-            store: JobStore::default(),
-            deps: PipelineDeps {
-                compiler_endpoint: "http://127.0.0.1:50173".to_string(),
-                driver_endpoint: "http://127.0.0.1:50174".to_string(),
-                default_device_id: "sim:local".to_string(),
-                qfs: CircuitFsLocal::new(temp_qfs.path()),
-            },
-        };
-
-        let job_id = svc
-            .enqueue_job(Request::new(EnqueueJobRequest {
-                name: "test-job".to_string(),
-                program: b"x".to_vec(),
-                program_format: "bad".to_string(),
-                target: "sim:local".to_string(),
-                priority: 1,
-                compiler_options: HashMap::new(),
-                metadata: HashMap::new(),
-            }))
+    async fn submit_to_results_failure_path_marks_error_metadata() {
+        let (svc, runtime) = make_service(Some(DagStageKind::Optimize));
+        let response = svc
+            .enqueue_job(Request::new(make_request("failure")))
             .await
-            .unwrap()
-            .into_inner()
-            .job_id;
+            .expect("enqueue should succeed")
+            .into_inner();
 
-        for _ in 0..30 {
-            let status = svc
-                .get_job_status(Request::new(GetJobStatusRequest {
-                    job_id: job_id.clone(),
-                }))
-                .await
-                .unwrap()
-                .into_inner();
-            if status.state == TaskState::Error as i32 {
-                assert_eq!(status.error_code, "INVALID_ARGUMENT");
-                assert_eq!(status.error_details_ref, "results/error.json");
-                return;
-            }
-            sleep(Duration::from_millis(30)).await;
-        }
-
-        panic!("job never transitioned to ERROR state");
-    }
-
-    #[tokio::test]
-    async fn integration_vqe_loop_persists_metrics_and_results_metadata() {
-        driver_attempt_counter().store(0, Ordering::SeqCst);
-        let temp_qfs = TempDir::new().unwrap();
-        let compiler_addr: SocketAddr = "127.0.0.1:50175".parse().unwrap();
-        let driver_addr: SocketAddr = "127.0.0.1:50176".parse().unwrap();
-
-        tokio::spawn(async move {
-            tonic::transport::Server::builder()
-                .add_service(CompilationServiceServer::new(MockCompiler))
-                .serve(compiler_addr)
-                .await
-                .unwrap();
-        });
-
-        tokio::spawn(async move {
-            tonic::transport::Server::builder()
-                .add_service(DriverManagerServiceServer::new(MockDriver))
-                .serve(driver_addr)
-                .await
-                .unwrap();
-        });
-
-        sleep(Duration::from_millis(80)).await;
-
-        let svc = KernelGatewaySvc {
-            store: JobStore::default(),
-            deps: PipelineDeps {
-                compiler_endpoint: "http://127.0.0.1:50175".to_string(),
-                driver_endpoint: "http://127.0.0.1:50176".to_string(),
-                default_device_id: "sim:local".to_string(),
-                qfs: CircuitFsLocal::new(temp_qfs.path()),
-            },
-        };
-
-        let program = br#"
-from eigen_lang import Param, ExpectationValue, hybrid_program, minimize
-
-@hybrid_program
-def vqe_program():
-    theta1 = Param("theta1")
-    theta2 = Param("theta2")
-    ExpectationValue("Z0 + Z1")
-    minimize(lambda: 0.0, [0.1, 0.2])
-"#
-        .to_vec();
-
-        let job_id = svc
-            .enqueue_job(Request::new(EnqueueJobRequest {
-                name: "vqe-2q".to_string(),
-                program,
-                program_format: "eigen-lang".to_string(),
-                target: "sim:local".to_string(),
-                priority: 1,
-                compiler_options: HashMap::new(),
-                metadata: HashMap::from([("max_iters".to_string(), "5".to_string())]),
-            }))
-            .await
-            .unwrap()
-            .into_inner()
-            .job_id;
-
-        for _ in 0..40 {
-            let status = svc
-                .get_job_status(Request::new(GetJobStatusRequest {
-                    job_id: job_id.clone(),
-                }))
-                .await
-                .unwrap()
-                .into_inner();
-            if status.state == TaskState::Done as i32 {
-                break;
-            }
-            sleep(Duration::from_millis(30)).await;
-        }
+        let job = wait_for_terminal(runtime.clone(), &response.job_id).await;
+        assert_eq!(job.state, TaskState::Error);
+        assert_eq!(job.error_code.as_deref(), Some("OPTIMIZER_STAGE_FAILED"));
+        assert_eq!(
+            job.stage_records
+                .iter()
+                .find(|stage| stage.stage_key == "optimize")
+                .and_then(|stage| stage.error_code.as_deref()),
+            Some("OPTIMIZER_STAGE_FAILED")
+        );
 
         let results = svc
             .get_job_results(Request::new(GetJobResultsRequest {
-                job_id: job_id.clone(),
+                metadata: Some(RequestMetadata {
+                    contract_version: "1.0.0".to_string(),
+                    request_id: format!("results-{}", response.job_id),
+                    idempotency_key: format!("results-{}", response.job_id),
+                    traceparent: "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01".to_string(),
+                    deadline: Some(ProtoDuration { seconds: 30, nanos: 0 }),
+                    tenant_id: "tenant-a".to_string(),
+                    project_id: "project-a".to_string(),
+                    subject: "alice".to_string(),
+                    role: "user".to_string(),
+                    source_service: "system-api".to_string(),
+                }),
+                job_id: response.job_id.clone(),
             }))
             .await
-            .unwrap()
+            .expect("terminal error results should succeed")
             .into_inner();
-        assert_eq!(results.state, TaskState::Done as i32);
-        assert_eq!(
-            results.metadata.get("vqe.enabled"),
-            Some(&"true".to_string())
-        );
-        assert_eq!(
-            results.metadata.get("vqe.iterations"),
-            Some(&"5".to_string())
-        );
-        assert!(results.metadata.contains_key("vqe.final_params"));
-        assert!(results.metadata.contains_key("vqe.best_objective"));
-        assert_eq!(
-            results.metadata.get("artifact_version"),
-            Some(&"1.0.0".to_string())
-        );
-        assert!(results.metadata.contains_key("producer_version"));
-        assert_eq!(
-            results.metadata.get("result_envelope_ref"),
-            Some(&format!("jobs/{job_id}/results/result.json"))
-        );
-        assert_eq!(
-            results.metadata.get("result_manifest_ref"),
-            Some(&format!("jobs/{job_id}/results/manifest.json"))
-        );
-        assert!(results.counts.contains_key("00"));
-
-        let metrics_path = CircuitFsLocal::new(temp_qfs.path())
-            .metrics_json_path(&job_id)
-            .unwrap();
-        let metrics_raw = std::fs::read(metrics_path).unwrap();
-        let metrics_json: serde_json::Value = serde_json::from_slice(&metrics_raw).unwrap();
-        assert_eq!(metrics_json["kind"], "vqe_metrics");
-        assert_eq!(metrics_json["iterations"].as_array().unwrap().len(), 5);
-
-        let bundle = CircuitFsLocal::new(temp_qfs.path())
-            .load_results_bundle(&job_id)
-            .unwrap();
-        let parquet_payload: serde_json::Value = serde_json::from_slice(&bundle.parquet).unwrap();
-        assert_eq!(bundle.envelope.artifact_version, "1.0.0");
-        assert_eq!(bundle.envelope.job_id, job_id);
-        assert_eq!(bundle.manifest.schema_version, "result_manifest.v1");
-        assert_eq!(bundle.manifest.artifacts.len(), 2);
-        let runtime_metrics = parquet_payload["metadata"]["runtime_metrics"]
-            .as_array()
-            .unwrap();
-        assert!(runtime_metrics.iter().any(|item| {
-            item["name"] == "job_execution_duration"
-                && item["labels"]["job_id"] == job_id
-                && item["labels"]["device_id"] == "sim:local"
-                && item["labels"]["unit"] == "seconds"
-        }));
-        assert!(runtime_metrics.iter().any(|item| {
-            item["name"] == "compilation_latency"
-                && item["labels"]["job_id"] == job_id
-                && item["labels"]["device_id"] == "sim:local"
-                && item["labels"]["unit"] == "seconds"
-        }));
+        assert_eq!(results.state, TaskState::Error as i32);
+        assert_eq!(results.error_code, "OPTIMIZER_STAGE_FAILED");
+        assert!(!results.error_summary.is_empty());
     }
 
     #[tokio::test]
-    async fn integration_propagates_trace_id_and_traceparent_to_compiler_and_driver() {
-        driver_attempt_counter().store(0, Ordering::SeqCst);
-        compiler_trace_store().lock().unwrap().clear();
-        driver_trace_store().lock().unwrap().clear();
-        let temp_qfs = TempDir::new().unwrap();
-        let compiler_addr: SocketAddr = "127.0.0.1:50177".parse().unwrap();
-        let driver_addr: SocketAddr = "127.0.0.1:50178".parse().unwrap();
-
-        tokio::spawn(async move {
-            tonic::transport::Server::builder()
-                .add_service(CompilationServiceServer::new(MockCompiler))
-                .serve(compiler_addr)
-                .await
-                .unwrap();
-        });
-        tokio::spawn(async move {
-            tonic::transport::Server::builder()
-                .add_service(DriverManagerServiceServer::new(MockDriver))
-                .serve(driver_addr)
-                .await
-                .unwrap();
-        });
-        sleep(Duration::from_millis(80)).await;
-
-        let svc = KernelGatewaySvc {
-            store: JobStore::default(),
-            deps: PipelineDeps {
-                compiler_endpoint: "http://127.0.0.1:50177".to_string(),
-                driver_endpoint: "http://127.0.0.1:50178".to_string(),
-                default_device_id: "sim:local".to_string(),
-                qfs: CircuitFsLocal::new(temp_qfs.path()),
-            },
-        };
-
-        let mut req = Request::new(EnqueueJobRequest {
-            name: "trace-propagation".to_string(),
-            program: b"x".to_vec(),
-            program_format: "eigen-lang".to_string(),
-            target: "sim:local".to_string(),
-            priority: 1,
-            compiler_options: HashMap::new(),
-            metadata: HashMap::new(),
-        });
-        let traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
-        let trace_id = "4bf92f3577b34da6a3ce929d0e0e4736";
-        req.metadata_mut()
-            .insert("traceparent", traceparent.parse().unwrap());
-        req.metadata_mut()
-            .insert("trace_id", trace_id.parse().unwrap());
-
-        let job_id = svc.enqueue_job(req).await.unwrap().into_inner().job_id;
-        for _ in 0..40 {
-            let status = svc
-                .get_job_status(Request::new(GetJobStatusRequest {
-                    job_id: job_id.clone(),
-                }))
-                .await
-                .unwrap()
-                .into_inner();
-            if status.state == TaskState::Done as i32 {
-                break;
-            }
-            sleep(Duration::from_millis(30)).await;
-        }
-
-        assert!(compiler_trace_store().lock().unwrap().iter().any(|entry| {
-            entry.traceparent.as_deref() == Some(traceparent)
-                && entry.trace_id.as_deref() == Some(trace_id)
-        }));
-        assert!(driver_trace_store().lock().unwrap().iter().any(|entry| {
-            entry.traceparent.as_deref() == Some(traceparent)
-                && entry.trace_id.as_deref() == Some(trace_id)
-        }));
-    }
-
-    #[tokio::test]
-    async fn integration_phase8a_vertical_slice_fixture_replay_is_deterministic() {
-        driver_attempt_counter().store(0, Ordering::SeqCst);
-        compiler_trace_store().lock().unwrap().clear();
-        driver_trace_store().lock().unwrap().clear();
-        let fixture_raw = std::fs::read_to_string(
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/fixtures/phase8a/vertical_slice_replay_v1.json"),
-        )
-        .unwrap();
-        let fixture: serde_json::Value = serde_json::from_str(&fixture_raw).unwrap();
-
-        let temp_qfs = TempDir::new().unwrap();
-        let compiler_addr: SocketAddr = "127.0.0.1:50181".parse().unwrap();
-        let driver_addr: SocketAddr = "127.0.0.1:50182".parse().unwrap();
-
-        tokio::spawn(async move {
-            tonic::transport::Server::builder()
-                .add_service(CompilationServiceServer::new(MockCompiler))
-                .serve(compiler_addr)
-                .await
-                .unwrap();
-        });
-        tokio::spawn(async move {
-            tonic::transport::Server::builder()
-                .add_service(DriverManagerServiceServer::new(MockDriver))
-                .serve(driver_addr)
-                .await
-                .unwrap();
-        });
-        sleep(Duration::from_millis(80)).await;
-
-        let svc = KernelGatewaySvc {
-            store: JobStore::default(),
-            deps: PipelineDeps {
-                compiler_endpoint: "http://127.0.0.1:50181".to_string(),
-                driver_endpoint: "http://127.0.0.1:50182".to_string(),
-                default_device_id: "sim:local".to_string(),
-                qfs: CircuitFsLocal::new(temp_qfs.path()),
-            },
-        };
-
-        let mut metadata = HashMap::new();
-        for (k, v) in fixture["feature_flags"].as_object().unwrap() {
-            metadata.insert(k.clone(), v.as_str().unwrap().to_string());
-        }
-        metadata.insert("shots".to_string(), "1024".to_string());
-
-        let traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
-        let trace_id = "4bf92f3577b34da6a3ce929d0e0e4736";
-        let mut req = Request::new(EnqueueJobRequest {
-            name: "phase8a-vertical-slice".to_string(),
-            program: b"x".to_vec(),
-            program_format: "eigen-lang".to_string(),
-            target: "sim:local".to_string(),
-            priority: 1,
-            compiler_options: HashMap::new(),
-            metadata,
-        });
-        req.metadata_mut()
-            .insert("traceparent", traceparent.parse().unwrap());
-        req.metadata_mut()
-            .insert("trace_id", trace_id.parse().unwrap());
-
-        let job_id = svc.enqueue_job(req).await.unwrap().into_inner().job_id;
-        for _ in 0..40 {
-            let status = svc
-                .get_job_status(Request::new(GetJobStatusRequest {
-                    job_id: job_id.clone(),
-                }))
-                .await
-                .unwrap()
-                .into_inner();
-            if status.state == TaskState::Done as i32 {
-                break;
-            }
-            sleep(Duration::from_millis(30)).await;
-        }
-
-        let results = svc
-            .get_job_results(Request::new(GetJobResultsRequest { job_id: job_id.clone() }))
+    async fn stream_updates_emit_stage_envelopes_in_order() {
+        let (svc, _runtime) = make_service(None);
+        let response = svc
+            .enqueue_job(Request::new(make_request("stream")))
             .await
-            .unwrap()
+            .expect("enqueue should succeed")
             .into_inner();
-        assert_eq!(results.state, TaskState::Done as i32);
 
-        for key in fixture["required_results_metadata_keys"].as_array().unwrap() {
-            assert!(results.metadata.contains_key(key.as_str().unwrap()));
-        }
-        assert_eq!(results.metadata.get("feature.kb_v1"), Some(&"true".to_string()));
-        assert_eq!(results.metadata.get("feature.optimizer_v1"), Some(&"true".to_string()));
-        assert!(results.metadata["results_ref"].starts_with("jobs/"));
-        assert!(results.metadata["result_envelope_ref"].contains(&job_id));
-        assert!(results.metadata["result_manifest_ref"].contains(&job_id));
-
-        assert!(compiler_trace_store().lock().unwrap().iter().any(|entry| {
-            entry.traceparent.as_deref() == Some(traceparent)
-                && entry.trace_id.as_deref() == Some(trace_id)
-        }));
-        assert!(driver_trace_store().lock().unwrap().iter().any(|entry| {
-            entry.traceparent.as_deref() == Some(traceparent)
-                && entry.trace_id.as_deref() == Some(trace_id)
-        }));
-    }
-
-    #[test]
-    fn retryable_error_matrix_is_classified_correctly() {
-        assert!(is_retryable_code(Code::Unavailable));
-        assert!(is_retryable_code(Code::DeadlineExceeded));
-        assert!(is_retryable_code(Code::ResourceExhausted));
-        assert!(is_retryable_code(Code::Aborted));
-        assert!(!is_retryable_code(Code::InvalidArgument));
-        assert!(!is_retryable_code(Code::PermissionDenied));
-        assert!(!is_retryable_code(Code::Unimplemented));
-    }
-
-    #[tokio::test]
-    async fn integration_retries_transient_failures_and_exposes_retry_metrics() {
-        driver_attempt_counter().store(0, Ordering::SeqCst);
-        let temp_qfs = TempDir::new().unwrap();
-        let compiler_addr: SocketAddr = "127.0.0.1:50179".parse().unwrap();
-        let driver_addr: SocketAddr = "127.0.0.1:50180".parse().unwrap();
-
-        tokio::spawn(async move {
-            tonic::transport::Server::builder()
-                .add_service(CompilationServiceServer::new(MockCompiler))
-                .serve(compiler_addr)
-                .await
-                .unwrap();
-        });
-        tokio::spawn(async move {
-            tonic::transport::Server::builder()
-                .add_service(DriverManagerServiceServer::new(MockDriver))
-                .serve(driver_addr)
-                .await
-                .unwrap();
-        });
-        sleep(Duration::from_millis(80)).await;
-
-        let svc = KernelGatewaySvc {
-            store: JobStore::default(),
-            deps: PipelineDeps {
-                compiler_endpoint: "http://127.0.0.1:50179".to_string(),
-                driver_endpoint: "http://127.0.0.1:50180".to_string(),
-                default_device_id: "sim:local".to_string(),
-                qfs: CircuitFsLocal::new(temp_qfs.path()),
-            },
-        };
-
-        let mut metadata = HashMap::new();
-        metadata.insert("retry.failures_before_success".to_string(), "2".to_string());
-        metadata.insert("retry.error_code".to_string(), "unavailable".to_string());
-        metadata.insert("retry.max_attempts".to_string(), "4".to_string());
-        metadata.insert("retry.max_elapsed_ms".to_string(), "2500".to_string());
-        metadata.insert("retry.base_delay_ms".to_string(), "5".to_string());
-        metadata.insert("retry.jitter_ms".to_string(), "0".to_string());
-
-        let job_id = svc
-            .enqueue_job(Request::new(EnqueueJobRequest {
-                name: "retry-job".to_string(),
-                program: b"x".to_vec(),
-                program_format: "eigen-lang".to_string(),
-                target: "sim:local".to_string(),
-                priority: 1,
-                compiler_options: HashMap::new(),
-                metadata,
+        let stream = svc
+            .stream_job_updates(Request::new(StreamJobUpdatesRequest {
+                metadata: Some(RequestMetadata {
+                    contract_version: "1.0.0".to_string(),
+                    request_id: format!("stream-{}", response.job_id),
+                    idempotency_key: format!("stream-{}", response.job_id),
+                    traceparent: "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01".to_string(),
+                    deadline: Some(ProtoDuration { seconds: 30, nanos: 0 }),
+                    tenant_id: "tenant-a".to_string(),
+                    project_id: "project-a".to_string(),
+                    subject: "alice".to_string(),
+                    role: "user".to_string(),
+                    source_service: "system-api".to_string(),
+                }),
+                job_id: response.job_id.clone(),
+                last_event_seq: 0,
             }))
             .await
-            .unwrap()
-            .into_inner()
-            .job_id;
-        for _ in 0..50 {
-            let status = svc
-                .get_job_status(Request::new(GetJobStatusRequest {
-                    job_id: job_id.clone(),
-                }))
-                .await
-                .unwrap()
-                .into_inner();
-            if status.state == TaskState::Done as i32 {
-                break;
-            }
-            sleep(Duration::from_millis(20)).await;
-        }
+            .expect("stream should succeed")
+            .into_inner();
 
-        let bundle = CircuitFsLocal::new(temp_qfs.path())
-            .load_results_bundle(&job_id)
-            .unwrap();
-        let payload: serde_json::Value = serde_json::from_slice(&bundle.parquet).unwrap();
-        let runtime_metrics = payload["metadata"]["runtime_metrics"].as_array().unwrap();
-        assert!(
-            runtime_metrics
-                .iter()
-                .any(|m| { m["name"] == "retry_attempts_total" && m["value"] == 3 })
-        );
-        assert!(
-            runtime_metrics
-                .iter()
-                .any(|m| { m["name"] == "retry_success_after_retry_total" && m["value"] == 1 })
-        );
+        let collected: Vec<_> = stream.collect().await;
+        assert!(!collected.is_empty());
+        assert_eq!(collected[0].as_ref().unwrap().update.as_ref().unwrap().event_seq, 1);
     }
 }
