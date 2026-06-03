@@ -169,7 +169,9 @@ CANCELLED
 
 ### 5.1 Runtime orchestration (implemented)
 
-QRTX orchestrates: `compile → execute → persist artifacts/results`
+QRTX orchestrates: `validate/enqueue → compile → optimize → schedule → execute → persist → record knowledge/observability → finalize`
+
+mplemented the Product 1.0 orchestration DAG control-plane skeleton in Kernel/QRTX with deterministic stage IDs, replay-safe stage records, explicit downstream adapters, and submit-to-results integration coverage.
 
 Coordinates with:
 

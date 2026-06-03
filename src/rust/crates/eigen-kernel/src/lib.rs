@@ -5,6 +5,7 @@
 //! - Deterministic state replay on restart
 //! - Single-authority state machine
 //! - Audit trail for all transitions
+//! - Audit trail for all transitions
 
 pub mod durable_job_store;
 pub mod job_store;
