@@ -1,12 +1,12 @@
 # Product 1.0 Wave 2 Compatibility Report
 
-**Status:** W2-03 complete, other issues pending
+**Status:** W2-08 closure draft; Wave 2 issue ledger complete for documented implementation slices
 **Scope:** Kernel/QRTX lifecycle authority, internal API alignment, System API delegation, orchestration DAG, cancellation/deadline/retry semantics, and observability evidence
 **Version policy:** `docs/development/product-1.0-version-policy.md`
 **Issue pack:** `docs/development/product-1.0-wave-2-issue-pack.md`
 **Evidence bundle:** `docs/development/product-1.0-wave-2-exit-evidence-bundle.md`
 **Created:** 2026-06-02
-**Updated:** 2026-06-02 (W2-03 completion)
+**Updated:** 2026-06-04 (W2-08 closure evidence drafted)
 
 ---
 
@@ -31,11 +31,11 @@ Wave 2 changes follow these rules:
 | W2-01 Internal KernelGateway contract matrix and canonical state machine | TBD | Internal API; Kernel state; Compatibility matrix | TBD | TBD | TBD | TBD | W2-E01 |
 | W2-02 Durable/replayable kernel job state store and transition validator | TBD | Kernel state; Migration docs | TBD | TBD | TBD | TBD | W2-E02 |
 | **W2-03 System API lifecycle delegation cutover to Kernel/QRTX** | **PATCH** | **Internal API (eigen.internal.v1 RequestMetadata); System API implementation; Kernel state** | **Backward-compatible** | **false** | **MVP System API state store deprecated; all state managed by Kernel; no public API changes** | **Added: KernelGatewayClient adapter; Changed: SubmitJob, GetStatus, Cancel delegate to Kernel; Fixed: lifecycle consistency** | **W2-E03** |
-| W2-04 Product 1.0 orchestration DAG control-plane skeleton | TBD | Kernel state; Internal API; Trace context | TBD | TBD | TBD | TBD | W2-E04 |
-| W2-05 Deadline propagation and cancellation fan-out | TBD | Internal API; Kernel state; Metrics; Trace context | TBD | TBD | TBD | TBD | W2-E05 |
-| W2-06 Retry governance tied to canonical retryability | TBD | Kernel state; Internal API; Metrics; Error mapping | TBD | TBD | TBD | TBD | W2-E06 |
-| W2-07 Orchestration observability and trace continuity gate | TBD | Metrics; Trace context; Compatibility matrix | TBD | TBD | TBD | TBD | W2-E07 |
-| W2-08 Wave 2 compatibility report, migration notes, and exit evidence bundle | TBD | Compatibility matrix; Migration docs | TBD | TBD | TBD | TBD | W2-E08 |
+| W2-04 Product 1.0 orchestration DAG control-plane skeleton | **MINOR** | **Kernel state; Internal API; Trace context** | **Backward-compatible** | **false** | **None** | **Added: stable DAG stage IDs, replay-safe stage records, explicit downstream adapters; Changed: deterministic stage boundary capture** | **W2-E04** |
+| W2-05 Deadline propagation and cancellation fan-out | **MINOR** | **Internal API; Kernel state; Metrics; Trace context** | **Backward-compatible** | **false** | **None** | **Added: deadline normalization, cancellation fan-out, reservation release/marking; Changed: canonical timeout and cancel terminalization** | **W2-E05** |
+| W2-06 Retry governance tied to canonical retryability | **MINOR** | **Kernel state; Internal API; Metrics; Error mapping** | **Backward-compatible** | **false** | **None** | **Added: bounded retry policy, retry-attempt records, final retry reason metadata; Changed: execution retries now follow canonical retryability taxonomy** | **W2-E06** |
+| W2-07 Orchestration observability and trace continuity gate | **MINOR** | **Metrics; Trace context; Compatibility matrix** | **Backward-compatible** | **false** | **None** | **Added: orchestration contract marker, bounded-label smoke coverage, trace continuity audit records; Changed: observability now carries kernel trace/request continuity requirements** | **W2-E07** |
+| W2-08 Wave 2 compatibility report, migration notes, and exit evidence bundle | **PATCH** | **Compatibility matrix; Migration docs** | **Backward-compatible** | **false** | **None** | **Added: closure evidence bundle, release-readiness checklist completion, manifest/inventory concrete mappings; Changed: Wave 2 closure records now point to implemented kernel/orchestration slices** | **W2-E08** |
 
 ---
 
@@ -113,4 +113,13 @@ W2-03 closure requirements:
 - ✓ Wave 1 regression test evidence included
 - ✓ Public API compatibility proven
 - ✓ Metadata normalization verified
-- ✓ Trace context propagation confirmed
+
+## 6. Wave 2 closure statement
+
+Wave 2 closure documentation is now aligned to the implemented Product 1.0 slices:
+
+- Kernel/QRTX control-plane orchestration is documented as a deterministic DAG.
+- Deadline and cancellation fan-out are documented as kernel-owned terminalization behavior.
+- Retry governance is documented as canonical retryability with bounded policy.
+- Observability is documented as bounded-label orchestration telemetry with trace continuity.
+- The manifest and inventory carry the concrete proto/schema/conformance mappings for the implemented slices.

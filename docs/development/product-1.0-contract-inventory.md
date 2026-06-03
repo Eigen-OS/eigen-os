@@ -1,6 +1,6 @@
 # Product 1.0 Contract Inventory
 
-**Status:** Wave 0 baseline inventory
+**Status:** Wave 2-aligned inventory with concrete Kernel/QRTX slice mappings
 **Parent plan:** `docs/development/product-1.0-contract-alignment-plan.md`
 **Version policy:** `docs/development/product-1.0-version-policy.md`
 **Machine-readable manifest:** `contracts/product-1.0/manifest.json`
@@ -46,3 +46,28 @@ Implementation status values are `documented`, `partial`, `planned`, and `implem
 - Contract package versions are intentionally mixed because Product `1.0.0` integrates already-versioned contract families rather than renumbering every contract to `1.0.0`.
 - `planned` proto/schema entries are acceptable in Wave 0 only when the manifest also records an owner and a conformance-test plan.
 - Wave 1+ implementation commits must convert planned mappings into concrete files as contract slices are implemented.
+
+## 4. Wave 2 concrete implementation slices
+
+### 4.1 Kernel/QRTX orchestration slice
+
+- **Proto/schema anchor:** `proto/eigen/internal/v1/kernel_gateway.proto`
+- **Runtime implementation:** `src/rust/crates/eigen-kernel/src/rpc.rs`
+- **Coverage:** deterministic orchestration DAG, stable stage IDs, cancellation/deadline propagation, bounded retry governance, and trace-aware terminalization
+- **Conformance evidence:** embedded KernelGateway unit tests in `src/rust/crates/eigen-kernel/src/rpc.rs`
+
+### 4.2 Orchestration observability slice
+
+- **Proto/schema anchor:** orchestration contract marker and bounded metric families in `docs/reference/orchestration-observability-contract.md`
+- **Runtime implementation:** `monitoring/metrics/prometheus/exporter.py`
+- **Conformance evidence:** `monitoring/metrics/tests/test_stage_observability.py`
+- **Coverage:** contract marker emission, bounded-label Prometheus output, and trace/request continuity audit requirements
+
+### 4.3 Wave 2 governance artifacts
+
+- **Compatibility report:** `docs/development/wave-2/product-1.0-wave-2-compatibility-report.md`
+- **Release readiness:** `docs/development/wave-2/product-1.0-wave-2-release-readiness-checklist.md`
+- **Exit evidence:** `docs/development/wave-2/product-1.0-wave-2-exit-evidence-bundle.md`
+- **Gap analysis:** `docs/development/wave-2/product-1.0-wave-2-rfc-adr-gap-analysis.md`
+
+These slices are the concrete mappings the Wave 2 closure record refers to. They do not rename the broader contract families; they document the implemented Kernel/QRTX enforcement points and conformance locations.
