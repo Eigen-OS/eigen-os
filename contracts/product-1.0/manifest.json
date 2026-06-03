@@ -55,6 +55,10 @@
         "buf lint",
         "buf breaking"
       ],
+      "implementation_notes": [
+        "KernelGateway control-plane slice implemented in src/rust/crates/eigen-kernel/src/rpc.rs",
+        "Wave 2 DAG stage, deadline/cancellation, retry, and observability enforcement are kernel-owned"
+      ],
       "implementation_status": "partial",
       "compatibility_status": "needs-alignment"
     },
@@ -199,7 +203,12 @@
       ],
       "conformance_tests": [
         "src/services/system-api/tests/test_observability_smoke.py",
-        "src/rust/crates/eigen-kernel/tests/"
+        "src/rust/crates/eigen-kernel/tests/",
+        "monitoring/metrics/tests/test_stage_observability.py"
+       ],
+      "implementation_notes": [
+        "Kernel/QRTX emits the approved orchestration contract marker family",
+        "Prometheus labels remain bounded; trace continuity is preserved in logs/traces rather than labels"
       ],
       "implementation_status": "partial",
       "compatibility_status": "compatible",
