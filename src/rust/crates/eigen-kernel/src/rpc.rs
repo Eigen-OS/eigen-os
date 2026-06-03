@@ -7,14 +7,15 @@
 //! - explicit fixture adapters for downstream handoff points
 //! - canonical terminal state / error metadata propagation
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fmt;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Instant;
 
-use prost_types::Timestamp;
+use parking_lot::Mutex;
 use tokio_stream::iter;
 use tokio_stream::Stream;
 use tonic::{Code, Request, Response, Status};
@@ -355,6 +356,20 @@ struct JobRuntimeRecord {
     cancel_reason: Option<String>,
     cancellation_fanout_ref: Option<String>,
     reservation_state: Option<String>,
+    retry_attempts: Vec<RetryAttemptRecord>,
+    retry_final_reason: Option<String>,
+    retry_success_after_retry_total: u32,
+}
+
+#[derive(Debug, Clone)]
+struct RetryAttemptRecord {
+    attempt: u32,
+    grpc_code: Code,
+    reason_code: String,
+    retryable: bool,
+    delay_ms: u64,
+    elapsed_ms: u64,
+    recorded_at: Timestamp,
 }
 
 impl JobRuntimeRecord {
@@ -480,6 +495,9 @@ impl KernelRuntimeStore {
             cancel_reason: None,
             cancellation_fanout_ref: None,
             reservation_state: Some("held".to_string()),
+            retry_attempts: Vec::new(),
+            retry_final_reason: None,
+            retry_success_after_retry_total: 0,
         };
         jobs.insert(submission.job_id.clone(), record.clone());
         self.request_index
@@ -656,6 +674,58 @@ impl KernelRuntimeStore {
         Ok(())
     }
 
+    fn record_retry_attempt(&self, job_id: &str, record: RetryAttemptRecord) -> Result<(), Status> {
+        let mut jobs = self.jobs.write();
+        let job = jobs
+            .get_mut(job_id)
+            .ok_or_else(|| Status::not_found("job not found"))?;
+        job.retry_attempts.push(record);
+        job.updated_at = ts_now();
+        self.refresh_retry_metadata(job);
+        Ok(())
+    }
+
+    fn set_retry_final_reason(&self, job_id: &str, reason: &str) -> Result<(), Status> {
+        let mut jobs = self.jobs.write();
+        let job = jobs
+            .get_mut(job_id)
+            .ok_or_else(|| Status::not_found("job not found"))?;
+        job.retry_final_reason = Some(reason.to_string());
+        job.updated_at = ts_now();
+        self.refresh_retry_metadata(job);
+        Ok(())
+    }
+
+    fn set_retry_success_after_retry_total(&self, job_id: &str, total: u32) -> Result<(), Status> {
+        let mut jobs = self.jobs.write();
+        let job = jobs
+            .get_mut(job_id)
+            .ok_or_else(|| Status::not_found("job not found"))?;
+        job.retry_success_after_retry_total = total;
+        job.updated_at = ts_now();
+        self.refresh_retry_metadata(job);
+        Ok(())
+    }
+
+    fn refresh_retry_metadata(&self, job: &mut JobRuntimeRecord) {
+        job.metadata.insert(
+            "retry.attempts_total".to_string(),
+            job.retry_attempts.len().to_string(),
+        );
+        job.metadata.insert(
+            "retry.retries_total".to_string(),
+            job.retry_attempts.len().saturating_sub(1).to_string(),
+        );
+        job.metadata.insert(
+            "retry.success_after_retry_total".to_string(),
+            job.retry_success_after_retry_total.to_string(),
+        );
+        job.metadata.insert(
+            "retry.final_reason".to_string(),
+            job.retry_final_reason.clone().unwrap_or_default(),
+        );
+    }
+
     fn request_cancel(&self, job_id: &str, reason: Option<String>) -> Result<JobRuntimeRecord, Status> {
         let mut jobs = self.jobs.write();
         let job = jobs
@@ -809,6 +879,49 @@ impl KernelStageError {
         Self::new(Code::Internal, "EXECUTION_STAGE_FAILED", summary, details_ref)
     }
 
+    fn unavailable(summary: impl Into<String>, details_ref: impl Into<String>) -> Self {
+        Self::new(Code::Unavailable, "EIGEN_EXECUTION_UNAVAILABLE", summary, details_ref)
+    }
+
+    fn resource_exhausted(summary: impl Into<String>, details_ref: impl Into<String>) -> Self {
+        Self::new(
+            Code::ResourceExhausted,
+            "EIGEN_EXECUTION_RESOURCE_EXHAUSTED",
+            summary,
+            details_ref,
+        )
+    }
+
+    fn aborted(summary: impl Into<String>, details_ref: impl Into<String>) -> Self {
+        Self::new(Code::Aborted, "EIGEN_EXECUTION_ABORTED", summary, details_ref)
+    }
+
+    fn deadline_exceeded(summary: impl Into<String>, details_ref: impl Into<String>) -> Self {
+        Self::new(
+            Code::DeadlineExceeded,
+            "EIGEN_EXECUTION_DEADLINE_EXCEEDED",
+            summary,
+            details_ref,
+        )
+    }
+
+    fn invalid_argument(summary: impl Into<String>, details_ref: impl Into<String>) -> Self {
+        Self::new(Code::InvalidArgument, "EIGEN_EXECUTION_INVALID_ARGUMENT", summary, details_ref)
+    }
+
+    fn failed_precondition(summary: impl Into<String>, details_ref: impl Into<String>) -> Self {
+        Self::new(
+            Code::FailedPrecondition,
+            "EIGEN_EXECUTION_FAILED_PRECONDITION",
+            summary,
+            details_ref,
+        )
+    }
+
+    fn internal(summary: impl Into<String>, details_ref: impl Into<String>) -> Self {
+        Self::new(Code::Internal, "EIGEN_EXECUTION_INTERNAL", summary, details_ref)
+    }
+
     fn persist(summary: impl Into<String>, details_ref: impl Into<String>) -> Self {
         Self::new(Code::Internal, "PERSISTENCE_STAGE_FAILED", summary, details_ref)
     }
@@ -838,6 +951,92 @@ impl std::error::Error for KernelStageError {}
 struct ExecutionOutcome {
     counts: BTreeMap<String, i64>,
     output: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone)]
+struct RetryPolicy {
+    max_attempts: u32,
+    base_delay: Duration,
+    max_delay: Duration,
+    max_elapsed: Duration,
+    retryable_reasons: Vec<&'static str>,
+    non_retryable_reasons: Vec<&'static str>,
+}
+
+impl Default for RetryPolicy {
+    fn default() -> Self {
+        Self {
+            max_attempts: 3,
+            base_delay: Duration::from_millis(50),
+            max_delay: Duration::from_secs(1),
+            max_elapsed: Duration::from_secs(5),
+            retryable_reasons: vec![
+                "EIGEN_EXECUTION_UNAVAILABLE",
+                "EIGEN_EXECUTION_RESOURCE_EXHAUSTED",
+                "EIGEN_EXECUTION_ABORTED",
+                "EIGEN_EXECUTION_DEADLINE_EXCEEDED",
+            ],
+            non_retryable_reasons: vec![
+                "EIGEN_EXECUTION_INVALID_ARGUMENT",
+                "EIGEN_EXECUTION_FAILED_PRECONDITION",
+                "EIGEN_EXECUTION_INTERNAL",
+                "EIGEN_EXECUTION_UNAUTHENTICATED",
+                "EIGEN_EXECUTION_PERMISSION_DENIED",
+                "EIGEN_EXECUTION_UNIMPLEMENTED",
+            ],
+        }
+    }
+}
+
+impl RetryPolicy {
+    fn from_metadata(metadata: &BTreeMap<String, String>) -> Self {
+        let mut policy = Self::default();
+        if let Some(v) = parse_positive_usize(metadata, "retry.max_attempts") {
+            policy.max_attempts = v.clamp(1, 16) as u32;
+        }
+        if let Some(v) = parse_positive_usize(metadata, "retry.base_delay_ms") {
+            policy.base_delay = Duration::from_millis(v as u64);
+        }
+        if let Some(v) = parse_positive_usize(metadata, "retry.max_delay_ms") {
+            policy.max_delay = Duration::from_millis(v as u64);
+        }
+        if let Some(v) = parse_positive_usize(metadata, "retry.max_elapsed_ms") {
+            policy.max_elapsed = Duration::from_millis(v as u64);
+        }
+        if let Some(v) = metadata.get("retry.retryable_reasons") {
+            let parsed = parse_reason_csv(v);
+            if !parsed.is_empty() {
+                policy.retryable_reasons = parsed;
+            }
+        }
+        if let Some(v) = metadata.get("retry.non_retryable_reasons") {
+            let parsed = parse_reason_csv(v);
+            if !parsed.is_empty() {
+                policy.non_retryable_reasons = parsed;
+            }
+        }
+        policy
+    }
+
+    fn is_retryable(&self, err: &KernelStageError) -> bool {
+        if self.non_retryable_reasons.iter().any(|reason| *reason == err.error_code) {
+            return false;
+        }
+        if self.retryable_reasons.iter().any(|reason| *reason == err.error_code) {
+            return true;
+        }
+        matches!(
+            err.grpc_code,
+            Code::Unavailable | Code::ResourceExhausted | Code::Aborted | Code::DeadlineExceeded
+        )
+    }
+
+    fn backoff_for_attempt(&self, attempt: u32) -> Duration {
+        let exp = 1u32.checked_shl(attempt.saturating_sub(1)).unwrap_or(u32::MAX);
+        let base_ms = self.base_delay.as_millis().saturating_mul(exp as u128);
+        let capped_ms = base_ms.min(self.max_delay.as_millis()) as u64;
+        Duration::from_millis(capped_ms)
+    }
 }
 
 #[tonic::async_trait]
@@ -898,6 +1097,19 @@ struct FixtureAdapters {
     failure_stage: Option<DagStageKind>,
     hold_stage: Option<DagStageKind>,
     hold_for: Duration,
+    execute_script: Arc<Mutex<VecDeque<ExecuteScriptStep>>>,
+}
+
+#[derive(Debug, Clone)]
+enum ExecuteScriptStep {
+    Success,
+    Unavailable,
+    ResourceExhausted,
+    Aborted,
+    DeadlineExceeded,
+    InvalidArgument,
+    FailedPrecondition,
+    Internal,
 }
 
 impl FixtureAdapters {
@@ -915,6 +1127,7 @@ impl FixtureAdapters {
             failure_stage: None,
             hold_stage,
             hold_for,
+            execute_script: Arc::new(Mutex::new(VecDeque::new())),
         }
     }
 
@@ -922,6 +1135,23 @@ impl FixtureAdapters {
         Self {
             qfs: CircuitFsLocal::new(qfs_root.as_ref()),
             failure_stage,
+            hold_stage: None,
+            hold_for: Duration::from_millis(0),
+            execute_script: Arc::new(Mutex::new(VecDeque::new())),
+        }
+    }
+
+    fn with_execute_script(
+        qfs_root: impl AsRef<str>,
+        failure_stage: Option<DagStageKind>,
+        execute_script: Vec<ExecuteScriptStep>,
+    ) -> Self {
+        Self {
+            qfs: CircuitFsLocal::new(qfs_root.as_ref()),
+            failure_stage,
+            hold_stage: None,
+            hold_for: Duration::from_millis(0),
+            execute_script: Arc::new(Mutex::new(execute_script.into_iter().collect())),
         }
     }
 
@@ -949,6 +1179,13 @@ impl FixtureAdapters {
         } else {
             Ok(())
         }
+    }
+
+    fn next_execute_step(&self) -> ExecuteScriptStep {
+        self.execute_script
+            .lock()
+            .pop_front()
+            .unwrap_or(ExecuteScriptStep::Success)
     }
 
     async fn maybe_hold(&self, stage: DagStageKind) {
@@ -1047,7 +1284,51 @@ impl OrchestrationAdapters for FixtureAdapters {
         schedule_output: &BTreeMap<String, String>,
     ) -> Result<ExecutionOutcome, KernelStageError> {
         self.maybe_hold(DagStageKind::Execute).await;
-        self.maybe_fail(DagStageKind::Execute)?;
+        match self.next_execute_step() {
+            ExecuteScriptStep::Success => self.maybe_fail(DagStageKind::Execute)?,
+            ExecuteScriptStep::Unavailable => {
+                return Err(KernelStageError::unavailable(
+                    "execution backend unavailable",
+                    format!("qfs://fixtures/execute/unavailable-{}.json", submission.job_id),
+                ));
+            }
+            ExecuteScriptStep::ResourceExhausted => {
+                return Err(KernelStageError::resource_exhausted(
+                    "execution capacity exhausted",
+                    format!("qfs://fixtures/execute/resource-exhausted-{}.json", submission.job_id),
+                ));
+            }
+            ExecuteScriptStep::Aborted => {
+                return Err(KernelStageError::aborted(
+                    "execution aborted by runtime coordination conflict",
+                    format!("qfs://fixtures/execute/aborted-{}.json", submission.job_id),
+                ));
+            }
+            ExecuteScriptStep::DeadlineExceeded => {
+                return Err(KernelStageError::deadline_exceeded(
+                    "execution exceeded deadline",
+                    format!("qfs://fixtures/execute/deadline-{}.json", submission.job_id),
+                ));
+            }
+            ExecuteScriptStep::InvalidArgument => {
+                return Err(KernelStageError::invalid_argument(
+                    "execution request invalid",
+                    format!("qfs://fixtures/execute/invalid-{}.json", submission.job_id),
+                ));
+            }
+            ExecuteScriptStep::FailedPrecondition => {
+                return Err(KernelStageError::failed_precondition(
+                    "execution precondition not met",
+                    format!("qfs://fixtures/execute/precondition-{}.json", submission.job_id),
+                ));
+            }
+            ExecuteScriptStep::Internal => {
+                return Err(KernelStageError::internal(
+                    "execution internal invariant failure",
+                    format!("qfs://fixtures/execute/internal-{}.json", submission.job_id),
+                ));
+            }
+        }
         let shots = submission
             .metadata_kvs
             .get("shots")
@@ -1467,7 +1748,8 @@ async fn run_job_dag(
     optimize_output = adapters
         .optimize(&submission, &compile_output)
         .await
-        
+        .map_err(|err| stage_error(optimize_stage, err))?;    
+
     if runtime.is_cancel_requested(&job_id) || runtime.deadline_expired(&job_id) {
         terminalize_control(&runtime, &job_id, DagStageKind::Optimize, "optimize")?;
         return Ok(());
@@ -1549,10 +1831,16 @@ async fn run_job_dag(
             stage_input_from_outputs(&submission, execute_stage, &schedule_output),
         )
         .map_err(status_to_stage_error(execute_stage, "begin_execute"))?;
-    execution_output = adapters
-        .execute(&submission, &schedule_output)
-        .await
-        .map_err(|err| stage_error(execute_stage, err))?;
+    execution_output = execute_with_retry(
+        &runtime,
+        &job_id,
+        &execute_stage_id,
+        &submission,
+        &schedule_output,
+        adapters.clone(),
+    )
+    .await
+    .map_err(|err| stage_error(execute_stage, err))?;
 
     if runtime.is_cancel_requested(&job_id) || runtime.deadline_expired(&job_id) {
         terminalize_control(&runtime, &job_id, DagStageKind::Execute, "execute")?;
@@ -1794,6 +2082,231 @@ fn terminalize_control(
             format!("status::{:?}", status.code()),
         ))?;
     Ok(())
+}
+
+async fn execute_with_retry(
+    runtime: &Arc<KernelRuntimeStore>,
+    job_id: &str,
+    execute_stage_id: &str,
+    submission: &NormalizedSubmission,
+    schedule_output: &BTreeMap<String, String>,
+    adapters: Arc<dyn OrchestrationAdapters>,
+) -> Result<ExecutionOutcome, KernelStageError> {
+    let policy = RetryPolicy::from_metadata(&submission.metadata_kvs);
+    let started = Instant::now();
+    let mut attempt: u32 = 0;
+
+    loop {
+        attempt = attempt.saturating_add(1);
+        let attempt_started = Instant::now();
+        let span = tracing::info_span!(
+            "execute_attempt",
+            job_id = %job_id,
+            attempt = attempt,
+            stage = "execute"
+        );
+
+        let result = async {
+            adapters
+                .as_ref()
+                .execute(submission, schedule_output)
+                .await
+        }
+        .instrument(span)
+        .await;
+
+        match result {
+            Ok(outcome) => {
+                if attempt > 1 {
+                    runtime
+                        .set_retry_success_after_retry_total(job_id, 1)
+                        .map_err(|status| KernelStageError::new(
+                            Code::Internal,
+                            "RUNTIME_STAGE_FAILURE",
+                            "retry success metadata update failed",
+                            format!("status::{:?}", status.code()),
+                        ))?;
+                }
+                return Ok(outcome);
+            }
+            Err(err) => {
+                let retryable = RetryPolicy::default().is_retryable(&err);
+                let delay = if retryable { policy.backoff_for_attempt(attempt) } else { Duration::from_millis(0) };
+                let elapsed_ms = started.elapsed().as_millis() as u64;
+                runtime
+                    .record_retry_attempt(
+                        job_id,
+                        RetryAttemptRecord {
+                            attempt,
+                            grpc_code: err.grpc_code,
+                            reason_code: err.error_code.to_string(),
+                            retryable,
+                            delay_ms: delay.as_millis() as u64,
+                            elapsed_ms,
+                            recorded_at: ts_now(),
+                        },
+                    )
+                    .map_err(|status| KernelStageError::new(
+                        Code::Internal,
+                        "RUNTIME_STAGE_FAILURE",
+                        "retry attempt record failed",
+                        format!("status::{:?}", status.code()),
+                    ))?;
+
+                if runtime.deadline_expired(job_id) {
+                    runtime
+                        .set_retry_final_reason(job_id, "DEADLINE_EXCEEDED")
+                        .map_err(|status| KernelStageError::new(
+                            Code::Internal,
+                            "RUNTIME_STAGE_FAILURE",
+                            "retry final reason update failed",
+                            format!("status::{:?}", status.code()),
+                        ))?;
+                    runtime
+                        .finish_stage_failure(
+                            job_id,
+                            execute_stage_id,
+                            TaskState::Timeout,
+                            "DEADLINE_EXCEEDED",
+                            "execution retry interrupted by deadline",
+                            &format!("qfs://jobs/{job_id}/errors/deadline.json"),
+                        )
+                        .map_err(|status| KernelStageError::new(
+                            Code::Internal,
+                            "RUNTIME_STAGE_FAILURE",
+                            "deadline terminalization failed",
+                            format!("status::{:?}", status.code()),
+                        ))?;
+                    runtime
+                        .set_reservation_state(job_id, "released")
+                        .map_err(|status| KernelStageError::new(
+                            Code::Internal,
+                            "RUNTIME_STAGE_FAILURE",
+                            "reservation release after deadline failed",
+                            format!("status::{:?}", status.code()),
+                        ))?;
+                    return Err(KernelStageError::deadline_exceeded(
+                        "execution retry interrupted by deadline",
+                        format!("qfs://jobs/{job_id}/errors/deadline.json"),
+                    ));
+                }
+
+                if !retryable || attempt >= policy.max_attempts {
+                    let final_reason = if retryable { "RETRY_EXHAUSTED" } else { "NON_RETRYABLE" };
+                    runtime
+                        .set_retry_final_reason(job_id, final_reason)
+                        .map_err(|status| KernelStageError::new(
+                            Code::Internal,
+                            "RUNTIME_STAGE_FAILURE",
+                            "retry final reason update failed",
+                            format!("status::{:?}", status.code()),
+                        ))?;
+                    runtime
+                        .finish_stage_failure(
+                            job_id,
+                            execute_stage_id,
+                            TaskState::Error,
+                            &err.error_code,
+                            &err.summary,
+                            &err.details_ref,
+                        )
+                        .map_err(|status| KernelStageError::new(
+                            Code::Internal,
+                            "RUNTIME_STAGE_FAILURE",
+                            "retry terminalization failed",
+                            format!("status::{:?}", status.code()),
+                        ))?;
+                    runtime
+                        .set_reservation_state(job_id, "released")
+                        .map_err(|status| KernelStageError::new(
+                            Code::Internal,
+                            "RUNTIME_STAGE_FAILURE",
+                            "reservation release after retry terminalization failed",
+                            format!("status::{:?}", status.code()),
+                        ))?;
+                    return Err(err);
+                }
+
+                if started.elapsed().saturating_add(delay) > policy.max_elapsed {
+                    runtime
+                        .set_retry_final_reason(job_id, "DEADLINE_EXCEEDED")
+                        .map_err(|status| KernelStageError::new(
+                            Code::Internal,
+                            "RUNTIME_STAGE_FAILURE",
+                            "retry final reason update failed",
+                            format!("status::{:?}", status.code()),
+                        ))?;
+                    runtime
+                        .finish_stage_failure(
+                            job_id,
+                            execute_stage_id,
+                            TaskState::Timeout,
+                            "DEADLINE_EXCEEDED",
+                            "execution retry budget exceeded by elapsed deadline budget",
+                            &format!("qfs://jobs/{job_id}/errors/deadline.json"),
+                        )
+                        .map_err(|status| KernelStageError::new(
+                            Code::Internal,
+                            "RUNTIME_STAGE_FAILURE",
+                            "retry budget terminalization failed",
+                            format!("status::{:?}", status.code()),
+                        ))?;
+                    runtime
+                        .set_reservation_state(job_id, "released")
+                        .map_err(|status| KernelStageError::new(
+                            Code::Internal,
+                            "RUNTIME_STAGE_FAILURE",
+                            "reservation release after retry budget exhaustion failed",
+                            format!("status::{:?}", status.code()),
+                        ))?;
+                    return Err(KernelStageError::deadline_exceeded(
+                        "execution retry budget exceeded by elapsed deadline budget",
+                        format!("qfs://jobs/{job_id}/errors/deadline.json"),
+                    ));
+                }
+
+                tokio::time::sleep(delay).await;
+                let elapsed_after_sleep = attempt_started.elapsed().as_millis() as u64;
+                tracing::info!(
+                    job_id = %job_id,
+                    attempt,
+                    retryable,
+                    grpc_code = ?err.grpc_code,
+                    reason_code = %err.error_code,
+                    delay_ms = delay.as_millis() as u64,
+                    elapsed_ms = elapsed_after_sleep,
+                    "retrying execution attempt"
+                );
+            }
+        }
+    }
+}
+
+fn parse_positive_usize(metadata: &BTreeMap<String, String>, key: &str) -> Option<usize> {
+    metadata
+        .get(key)
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|v| *v > 0)
+}
+
+fn parse_reason_csv(raw: &str) -> Vec<&'static str> {
+    raw.split(',')
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty())
+        .filter_map(|v| match v {
+            "EIGEN_EXECUTION_UNAVAILABLE" => Some("EIGEN_EXECUTION_UNAVAILABLE"),
+            "EIGEN_EXECUTION_RESOURCE_EXHAUSTED" => Some("EIGEN_EXECUTION_RESOURCE_EXHAUSTED"),
+            "EIGEN_EXECUTION_ABORTED" => Some("EIGEN_EXECUTION_ABORTED"),
+            "EIGEN_EXECUTION_DEADLINE_EXCEEDED" => Some("EIGEN_EXECUTION_DEADLINE_EXCEEDED"),
+            "EIGEN_EXECUTION_INVALID_ARGUMENT" => Some("EIGEN_EXECUTION_INVALID_ARGUMENT"),
+            "EIGEN_EXECUTION_FAILED_PRECONDITION" => Some("EIGEN_EXECUTION_FAILED_PRECONDITION"),
+            "EIGEN_EXECUTION_INTERNAL" => Some("EIGEN_EXECUTION_INTERNAL"),
+            "EIGEN_EXECUTION_UNAUTHENTICATED" => Some("EIGEN_EXECUTION_UNAUTHENTICATED"),
+            "EIGEN_EXECUTION_PERMISSION_DENIED" => Some("EIGEN_EXECUTION_PERMISSION_DENIED"),
+            "EIGEN_EXECUTION_UNIMPLEMENTED" => Some("EIGEN_EXECUTION_UNIMPLEMENTED"),
+            _ => None,
+        })
+        .collect()
 }
 
 fn nonempty(value: &str, field: &'static str) -> Result<String, Status> {
@@ -2186,6 +2699,98 @@ mod tests {
         assert_eq!(results.error_code, "OPTIMIZER_STAGE_FAILED");
         assert!(!results.error_summary.is_empty());
     }
+
+    fn make_retry_service(script: Vec<ExecuteScriptStep>) -> (KernelGatewaySvc, Arc<KernelRuntimeStore>) {
+        let runtime = Arc::new(KernelRuntimeStore::default());
+        let adapters = Arc::new(FixtureAdapters::with_execute_script(
+            "/tmp/eigen-kernel-test-qfs",
+            None,
+            script,
+        ));
+        let svc = KernelGatewaySvc::new(runtime.clone(), adapters);
+        (svc, runtime)
+    }
+
+    #[tokio::test]
+    async fn retryable_failure_succeeds_after_one_retry() {
+        let (svc, runtime) = make_retry_service(vec![
+            ExecuteScriptStep::Unavailable,
+            ExecuteScriptStep::Success,
+        ]);
+        let mut req = make_request("retryable-success");
+        req.metadata_kvs.insert("retry.max_attempts".to_string(), "3".to_string());
+        let response = svc
+            .enqueue_job(Request::new(req))
+            .await
+            .expect("enqueue should succeed")
+            .into_inner();
+        let job = wait_for_terminal(runtime, &response.job_id).await;
+        assert_eq!(job.state, TaskState::Done);
+        assert_eq!(job.retry_attempts.len(), 1);
+        assert_eq!(job.retry_success_after_retry_total, 1);
+        assert_eq!(
+            job.retry_attempts[0].reason_code,
+            "EIGEN_EXECUTION_UNAVAILABLE"
+        );
+    }
+
+    #[tokio::test]
+    async fn non_retryable_failure_does_not_retry() {
+        let (svc, runtime) = make_retry_service(vec![ExecuteScriptStep::InvalidArgument]);
+        let response = svc
+            .enqueue_job(Request::new(make_request("non-retryable")))
+            .await
+            .expect("enqueue should succeed")
+            .into_inner();
+        let job = wait_for_terminal(runtime, &response.job_id).await;
+        assert_eq!(job.state, TaskState::Error);
+        assert_eq!(job.retry_attempts.len(), 1);
+        assert_eq!(job.retry_final_reason.as_deref(), Some("NON_RETRYABLE"));
+    }
+
+    #[tokio::test]
+    async fn exhausted_retries_produce_terminal_error_state() {
+        let (svc, runtime) = make_retry_service(vec![
+            ExecuteScriptStep::Unavailable,
+            ExecuteScriptStep::Unavailable,
+            ExecuteScriptStep::Unavailable,
+        ]);
+        let mut req = make_request("exhausted");
+        req.metadata_kvs.insert("retry.max_attempts".to_string(), "2".to_string());
+        let response = svc
+            .enqueue_job(Request::new(req))
+            .await
+            .expect("enqueue should succeed")
+            .into_inner();
+        let job = wait_for_terminal(runtime, &response.job_id).await;
+        assert_eq!(job.state, TaskState::Error);
+        assert_eq!(job.retry_attempts.len(), 2);
+        assert_eq!(job.retry_final_reason.as_deref(), Some("RETRY_EXHAUSTED"));
+        assert_eq!(job.error_code.as_deref(), Some("EIGEN_EXECUTION_UNAVAILABLE"));
+    }
+
+    #[tokio::test]
+    async fn deadline_interrupted_retry_becomes_timeout() {
+        let (svc, runtime) = make_retry_service(vec![
+            ExecuteScriptStep::Unavailable,
+            ExecuteScriptStep::Success,
+        ]);
+        let mut req = make_request("deadline-interrupted");
+        if let Some(metadata) = req.metadata.as_mut() {
+            metadata.deadline = Some(ProtoDuration { seconds: 0, nanos: 10_000_000 });
+        }
+        req.metadata_kvs.insert("retry.base_delay_ms".to_string(), "100".to_string());
+        let response = svc
+            .enqueue_job(Request::new(req))
+            .await
+            .expect("enqueue should succeed")
+            .into_inner();
+        let job = wait_for_terminal(runtime, &response.job_id).await;
+        assert_eq!(job.state, TaskState::Timeout);
+        assert_eq!(job.retry_attempts.len(), 1);
+        assert_eq!(job.retry_final_reason.as_deref(), Some("DEADLINE_EXCEEDED"));
+    }
+ }
 
     fn make_cancel_request(job_id: &str) -> CancelJobRequest {
         CancelJobRequest {
