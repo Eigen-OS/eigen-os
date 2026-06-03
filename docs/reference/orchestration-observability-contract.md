@@ -68,6 +68,12 @@ Those are defined in separate contracts.
 eigen_orch_contract_info{version="3.1.0"} 1
 ```
 
+Kernel/QRTX implementations MAY use the same contract marker family with the Product 1.0 runtime version pin:
+
+```text
+eigen_orch_contract_info{version="1.0.0"} 1
+```
+
 ### 3.2 SemVer Policy
 
 #### MAJOR
@@ -142,6 +148,13 @@ The same orchestration condition MUST produce the same metric semantics.
 ### 5.2 Bounded Cardinality
 
 All labels MUST remain bounded and operator-safe.
+
+For Kernel/QRTX conformance:
+
+- stage labels MUST be enumerated,
+- retry labels MUST be bounded to retry outcome families,
+- cancellation/deadline labels MUST remain reason-family bounded,
+- trace/request identifiers MUST NOT appear in metric labels.
 
 ---
 
@@ -229,7 +242,20 @@ Meaning:
 
 ---
 
-### 7.5 Queue Dequeue Throughput
+### 7.5 Deferred to later scheduler/resource waves
+
+The following are intentionally deferred until the scheduler/resource waves complete and MUST be documented there rather than introduced as ad-hoc labels here:
+
+- per-reservation cardinality metrics,
+- per-backend allocation cardinality metrics,
+- per-tenant live resource reservation gauges,
+- per-worker allocation churn metrics.
+
+These are out of scope for W2-07 and MUST NOT be substituted for the bounded orchestration contract marker or stage metrics.
+
+---
+
+### 7.6 Queue Dequeue Throughput
 
 ```text
 eigen_orch_queue_dequeue_total{queue}
@@ -243,7 +269,7 @@ Meaning:
 
 ---
 
-### 7.6 Queue Dispatch Latency
+### 7.7 Queue Dispatch Latency
 
 ```text
 eigen_orch_dispatch_latency_ms_bucket{queue}

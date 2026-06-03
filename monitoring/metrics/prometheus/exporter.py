@@ -12,7 +12,7 @@ from monitoring.metrics.aggregation.alerts import StageSLOAlertEvaluator, defaul
 
 @dataclass(frozen=True)
 class OrchestrationMetricsSnapshot:
-    """Stable orchestration metrics contract (version 2.3.0)."""
+    """Stable orchestration metrics contract (version 2.3.0, bounded-label baseline)."""
 
     contract_version: str
     queue_depth: int

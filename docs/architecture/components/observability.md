@@ -105,6 +105,15 @@ Every user-facing job lifecycle and execution MUST be traceable via stable corre
 - `job_id` (runtime identity)
 - `device_id` / `backend_id` (where applicable)
 
+For Kernel/QRTX orchestration, the stable ingress correlation set MUST include:
+
+- `traceparent` preserved from System API,
+- derived `trace_id`,
+- `request_id`,
+- `job_id`.
+
+These fields MUST be emitted in logs and traces, while Prometheus metrics remain bounded and MUST NOT add unbounded correlation labels.
+
 ---
 
 ### 4.2 gRPC status-first error visibility
@@ -186,6 +195,15 @@ Target environments SHOULD additionally expose:
   - cluster/distributed runtime (split/merge): `eigen_cluster_*` (where defined by contract)
 - Global contract markers:
   - `eigen_observability_contract_info{version=...} 1`
+
+Kernel/QRTX MAY expose the approved orchestration contract marker:
+
+```text
+eigen_orch_contract_info{version="1.0.0"} 1
+```
+
+The orchestration exporter MUST keep metric labels bounded and MUST NOT encode `job_id`, `trace_id`, or `request_id` in metric labels.
+
 - Public API ingress contract markers (System API):
   - `eigen_api_public_contract_requests_total{contract_version,outcome}`
   - `eigen_public_api_contract_requests_total{contract_version,outcome}` (catalog-compatible alias)
@@ -269,6 +287,14 @@ Spans SHOULD include bounded attributes:
 - `grpc.status_code`
 - `eigen.error_reason` (stable `EIGEN_*` code when failure)
 
+For Kernel/QRTX control-plane spans, the following are especially important:
+
+- `trace_id`
+- `request_id`
+- `job_id`
+- `stage`
+- `attempt` (for retry spans only)
+
 ---
 
 ### 7.3 Required span coverage (target)
@@ -286,7 +312,19 @@ When components exist/enabled, tracing MUST include spans for:
 
 ## 8. Structured Logging Contract (Global Rules)
 
-### 8.1 Required log fields (baseline)
+### ### 8.1 Global audit requirements
+
+- enqueue,
+ - state transition,
+ - cancel,
+ - retry,
+ - dispatch rationale,
+ - result reference,
+ - terminal state.
+
+Audit events for Kernel/QRTX MUST preserve trace continuity across retry and cancellation paths. Deferred scheduler/resource-wave metrics may be documented in the subsystem contract, but they MUST NOT block the presence of the orchestration contract marker or bounded stage labels.
+
+### 8.2 Required log fields (baseline)
 
 All services MUST emit structured JSON logs with (at minimum):
 
@@ -307,7 +345,7 @@ All services MUST emit structured JSON logs with (at minimum):
 
 ---
 
-### 8.2 Redaction rules (MUST)
+### 8.3 Redaction rules (MUST)
 
 Logs MUST NOT include:
 
