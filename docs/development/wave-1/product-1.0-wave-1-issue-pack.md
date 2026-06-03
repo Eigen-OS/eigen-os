@@ -4,7 +4,7 @@ This document is a ready-to-use set of GitHub issues for **Product 1.0 Wave 1 â€
 
 **Context sources:**
 - `docs/development/product-1.0-contract-alignment-plan.md`
-- `docs/development/product-1.0-wave-1-execution-plan.md`
+- `docs/development/wave-1/product-1.0-wave-1-execution-plan.md`
 - `docs/development/product-1.0-contract-inventory.md`
 - `docs/development/product-1.0-version-policy.md`
 - `docs/reference/api/grpc-public.md`
@@ -405,8 +405,8 @@ This document is a ready-to-use set of GitHub issues for **Product 1.0 Wave 1 â€
 **Problem:** Wave 1 cannot close until every public-boundary change has compatibility, migration, and release-note evidence.
 
 **Scope**
-- Complete `docs/development/product-1.0-wave-1-compatibility-report.md`.
-- Complete `docs/development/product-1.0-wave-1-exit-evidence-bundle.md`.
+- Complete `docs/development/wave-1/product-1.0-wave-1-compatibility-report.md`.
+- Complete `docs/development/wave-1/product-1.0-wave-1-exit-evidence-bundle.md`.
 - Update manifest/inventory status for implemented slices.
 - Attach release notes and migration notes for every MAJOR or behavior-changing issue.
 

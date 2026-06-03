@@ -4,7 +4,7 @@ This document is a ready-to-use set of GitHub issues for **Product 1.0 Wave 2 â€
 
 **Context sources:**
 - `docs/development/product-1.0-contract-alignment-plan.md`
-- `docs/development/product-1.0-wave-2-execution-plan.md`
+- `docs/development/wave-2/product-1.0-wave-2-execution-plan.md`
 - `docs/development/product-1.0-contract-inventory.md`
 - `docs/development/product-1.0-version-policy.md`
 - `docs/reference/api/grpc-internal.md`
@@ -400,9 +400,9 @@ This document is a ready-to-use set of GitHub issues for **Product 1.0 Wave 2 â€
 **Problem:** Wave 2 can include major internal changes. Closure requires explicit compatibility, migration, and evidence records before Wave 3 begins.
 
 **Scope**
-- Complete `docs/development/product-1.0-wave-2-compatibility-report.md`.
-- Complete `docs/development/product-1.0-wave-2-release-readiness-checklist.md`.
-- Complete `docs/development/product-1.0-wave-2-exit-evidence-bundle.md`.
+- `docs/development/wave-2/product-1.0-wave-2-compatibility-report.md`
+- `docs/development/wave-2/product-1.0-wave-2-release-readiness-checklist.md`
+- `docs/development/wave-2/product-1.0-wave-2-exit-evidence-bundle.md`.
 - Update RFC/ADR gap analysis if implementation discovers ungoverned contract decisions.
 - Update Product 1.0 manifest/inventory for concrete proto/schema/conformance mappings.
 

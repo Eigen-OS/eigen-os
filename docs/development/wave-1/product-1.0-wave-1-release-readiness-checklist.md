@@ -7,11 +7,11 @@
 
 This checklist closes Product 1.0 Wave 1 and must be completed together with:
 
-- `docs/development/product-1.0-wave-1-execution-plan.md`
-- `docs/development/product-1.0-wave-1-issue-pack.md`
-- `docs/development/product-1.0-wave-1-compatibility-report.md`
-- `docs/development/product-1.0-wave-1-exit-evidence-bundle.md`
-- `docs/development/product-1.0-wave-1-rfc-adr-gap-analysis.md`
+- `docs/development/wave-1/product-1.0-wave-1-execution-plan.md`
+- `docs/development/wave-1/product-1.0-wave-1-issue-pack.md`
+- `docs/development/wave-1/product-1.0-wave-1-compatibility-report.md`
+- `docs/development/wave-1/product-1.0-wave-1-exit-evidence-bundle.md`
+- `docs/development/wave-1/product-1.0-wave-1-rfc-adr-gap-analysis.md`
 - `rfcs/0049-product-1.0-public-api-jobspec-error-boundary.md`
 - `docs/adr/0035-product-1.0-public-api-jobspec-error-boundary.md`
 
