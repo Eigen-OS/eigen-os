@@ -787,19 +787,6 @@ impl KernelRuntimeStore {
         Ok(())
     }
 
-    fn request_cancel(&self, job_id: &str) -> Result<JobRuntimeRecord, Status> {
-        let mut jobs = self.jobs.write();
-        let job = jobs
-            .get_mut(job_id)
-            .ok_or_else(|| Status::not_found("job not found"))?;
-        if job.is_terminal() {
-            return Err(Status::failed_precondition("job already terminal"));
-        }
-        job.cancel_requested = true;
-        job.updated_at = ts_now();
-        Ok(job.clone())
-    }
-
     fn all_stage_updates(&self, job_id: &str) -> Result<Vec<JobUpdateEnvelope>, Status> {
         let job = self
             .get(job_id)
@@ -1549,7 +1536,7 @@ impl KernelGatewayService for KernelGatewaySvc {
     ) -> Result<Response<CancelJobResponse>, Status> {
         let req = request.into_inner();
         let job_id = req.job_id;
-        let job = self.runtime.request_cancel(&job_id)?;
+        let job = self.runtime.request_cancel(&job_id, Some("deadline exceeded".to_string()))?;
         Ok(Response::new(CancelJobResponse {
             accepted: true,
             reason_code: if job.is_terminal() {
