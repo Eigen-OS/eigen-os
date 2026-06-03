@@ -1199,6 +1199,15 @@ impl OrchestrationAdapters for FixtureAdapters {
             "qfs_submission_ref".to_string(),
             format!("qfs://jobs/{}/submission.json", submission.job_id),
         );
+        tracing::info!(
+            event = "enqueue",
+            trace_id = %submission.trace_id,
+            request_id = %submission.request_id,
+            job_id = %submission.job_id,
+            source_service = %submission.source_service,
+            stage = "validate-enqueue",
+            "submission accepted into orchestration DAG"
+        );
         Ok(output)
     }
 
@@ -1401,7 +1410,9 @@ impl OrchestrationAdapters for FixtureAdapters {
         self.maybe_fail(DagStageKind::RecordKnowledgeObservability)?;
         let payload = serde_json::json!({
             "job_id": submission.job_id,
+            "request_id": submission.request_id,
             "trace_id": submission.trace_id,
+            "traceparent": submission.traceparent,
             "timeline_ref": format!("qfs://jobs/{}/timeline.jsonl", submission.job_id),
             "qfs_result_ref": persist_output
                 .get("qfs_result_ref")
@@ -1412,12 +1423,20 @@ impl OrchestrationAdapters for FixtureAdapters {
                 .get("counts_ref")
                 .cloned()
                 .unwrap_or_default(),
-            "contract_marker": r#"eigen_kernel_contract_info{version="1.0.0"} 1"#,
+            "contract_marker": r#"eigen_orch_contract_info{version="1.0.0"} 1"#,
         });
         let metrics = serde_json::to_vec(&payload).unwrap_or_default();
         let _ = self
             .qfs
             .store_metrics_json(&submission.job_id, &metrics);
+        tracing::info!(
+            event = "result_reference",
+            trace_id = %submission.trace_id,
+            request_id = %submission.request_id,
+            job_id = %submission.job_id,
+            qfs_result_ref = %persist_output.get("qfs_result_ref").cloned().unwrap_or_default(),
+            "result reference recorded"
+        );
 
         Ok(BTreeMap::from([
             ("message".to_string(), "knowledge and observability recorded".to_string()),
@@ -1536,7 +1555,16 @@ impl KernelGatewayService for KernelGatewaySvc {
     ) -> Result<Response<CancelJobResponse>, Status> {
         let req = request.into_inner();
         let job_id = req.job_id;
-        let job = self.runtime.request_cancel(&job_id, Some("deadline exceeded".to_string()))?;
+        let job = self.runtime.request_cancel(&job_id, req.reason.clone())?;
+        tracing::info!(
+            event = "cancel",
+            trace_id = %job.submission.trace_id,
+            request_id = %job.submission.request_id,
+            job_id = %job.job_id,
+            reason = %req.reason.unwrap_or_else(|| "user-request".to_string()),
+            stage = job.stage_label(),
+            "cancellation requested"
+        );
         Ok(Response::new(CancelJobResponse {
             accepted: true,
             reason_code: if job.is_terminal() {
@@ -1627,6 +1655,14 @@ impl KernelGatewayService for KernelGatewaySvc {
             trace_id: job.submission.trace_id.clone(),
             trace_ref: format!("qfs://jobs/{}/trace.json", job.job_id),
         };
+        tracing::info!(
+            event = "dispatch_rationale",
+            trace_id = %job.submission.trace_id,
+            request_id = %job.submission.request_id,
+            job_id = %job.job_id,
+            stage_count = job.stage_records.len(),
+            "dispatch rationale emitted"
+        );
 
         Ok(Response::new(GetDispatchRationaleResponse {
             rationale: Some(rationale),
@@ -1953,6 +1989,15 @@ async fn run_job_dag(
         )
         .map_err(status_to_stage_error(finalize_stage, "finish_finalize"))?;
 
+    tracing::info!(
+        event = "terminal_state",
+        trace_id = %submission.trace_id,
+        request_id = %submission.request_id,
+        job_id = %job_id,
+        final_state = "DONE",
+        "job reached terminal state"
+    );
+
     Ok(())
 }
 
@@ -2089,6 +2134,8 @@ async fn execute_with_retry(
         let span = tracing::info_span!(
             "execute_attempt",
             job_id = %job_id,
+            trace_id = %submission.trace_id,
+            request_id = %submission.request_id,
             attempt = attempt,
             stage = "execute"
         );
@@ -2256,6 +2303,8 @@ async fn execute_with_retry(
                 let elapsed_after_sleep = attempt_started.elapsed().as_millis() as u64;
                 tracing::info!(
                     job_id = %job_id,
+                    trace_id = %submission.trace_id,
+                    request_id = %submission.request_id,
                     attempt,
                     retryable,
                     grpc_code = ?err.grpc_code,

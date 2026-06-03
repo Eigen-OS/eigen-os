@@ -69,6 +69,19 @@ def test_orchestration_metrics_exporter_renders_stable_contract_metrics():
     assert "eigen_orch_quota_denied_project_total 5" in text
     assert "eigen_orch_rebalance_trigger_total 7" in text
     assert "eigen_orch_starvation_prevention_total 2" in text
+    assert "job_id=" not in text
+    assert "trace_id=" not in text
+    assert "request_id=" not in text
+
+
+def test_orchestration_metrics_exporter_contract_marker_and_labels_are_bounded():
+    exporter = OrchestrationTelemetryExporter()
+    text = exporter.render_prometheus_text()
+
+    assert 'eigen_orch_contract_info{version="2.3.0"} 1' in text
+    assert 'eigen_orch_queue_depth{job_id=' not in text
+    assert 'eigen_orch_queue_depth{trace_id=' not in text
+    assert 'eigen_orch_queue_depth{request_id=' not in text
 
 
 def test_benchmark_metrics_exporter_renders_stable_contract_metrics():
