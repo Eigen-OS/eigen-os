@@ -342,7 +342,20 @@ If execution or orchestration exceeds the configured deadline:
 
 ---
 
-### 8.3 Cancellation fan-out and deadline normalization
+### 8.3 Retry governance (Wave 2)
+
+Retry behavior MUST be bounded, deterministic, and replay-visible.
+
+- Kernel/QRTX MUST govern retries using canonical retryability axonomy from `docs/reference/error-model.md` and `docs/reference/error-mapping.md`.
+- Retry policy input MUST include max attempts, backoff bounds, retryable reasons, non-retryable reasons, and deadline interaction.
+- Retry attempt records MUST be persisted in kernel state alongside the final retry termination reason.
+- Retry traces/metrics MUST remain bounded and MUST include attempt counts, retry outcome, and final retry reason.
+- Non-retryable failures MUST not retry.
+- Deadline expiration MUST interrupt any further retries and produce canonical timeout behavior.
+
+---
+
+### 8.4 Cancellation fan-out and deadline normalization
 
 Kernel/QRTX MUST normalize deadline and cancellation intent before downstream dispatch and preserve that control decision across all remaining stages.
 
@@ -353,7 +366,7 @@ Kernel/QRTX MUST normalize deadline and cancellation intent before downstream di
 
 ---
 
-### 8.4 Async failure visibility (minimum)
+### 8.5 Async failure visibility (minimum)
 
 When lifecycle is `ERROR`, status/results surfaces MUST include:
 
