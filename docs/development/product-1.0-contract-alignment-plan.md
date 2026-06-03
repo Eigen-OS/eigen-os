@@ -183,7 +183,7 @@ Product `1.0.0` is ready only when all of the following gates pass:
 
 **Goal:** remove MVP lifecycle ownership from System API and make Kernel/QRTX the canonical runtime control plane.
 
-**Planning package:** `docs/development/product-1.0-wave-2-execution-plan.md`, `docs/development/product-1.0-wave-2-issue-pack.md`, `docs/development/product-1.0-wave-2-rfc-adr-gap-analysis.md`, `docs/development/product-1.0-wave-2-compatibility-report.md`, `docs/development/product-1.0-wave-2-release-readiness-checklist.md`, and `docs/development/product-1.0-wave-2-exit-evidence-bundle.md`.
+**Planning package:** `docs/development/wave-2/product-1.0-wave-2-execution-plan.md`, `docs/development/wave-2/product-1.0-wave-2-issue-pack.md`, `docs/development/wave-2/product-1.0-wave-2-rfc-adr-gap-analysis.md`, `docs/development/wave-2/product-1.0-wave-2-compatibility-report.md`, `docs/development/wave-2/product-1.0-wave-2-release-readiness-checklist.md`, and `docs/development/wave-2/product-1.0-wave-2-exit-evidence-bundle.md`.
 
 **Governance baseline:** `rfcs/0050-product-1.0-kernel-qrtx-lifecycle-authority.md` and `docs/adr/0036-product-1.0-kernel-qrtx-lifecycle-authority.md`.
 

@@ -5,7 +5,7 @@
 **Wave 0 baseline:** `docs/development/product-1.0-wave-0-execution-plan.md`  
 **Inventory:** `docs/development/product-1.0-contract-inventory.md`  
 **Version policy:** `docs/development/product-1.0-version-policy.md`  
-**Issue pack:** `docs/development/product-1.0-wave-1-issue-pack.md`  
+**Issue pack:** `docs/development/wave-1/product-1.0-wave-1-issue-pack.md`  
 **Created:** 2026-06-01
 
 ---
@@ -36,13 +36,13 @@ Wave 1 intentionally permits MAJOR contract updates when the Wave 0 inventory pr
 
 | Deliverable | Path | Acceptance criteria |
 |---|---|---|
-| Wave 1 issue pack | `docs/development/product-1.0-wave-1-issue-pack.md` | Every implementation issue contains Summary, Validation, required Versioning & Compatibility block, and Release Notes Draft. |
-| Wave 1 RFC/ADR gap analysis | `docs/development/product-1.0-wave-1-rfc-adr-gap-analysis.md` | Declares whether existing RFCs/ADRs are sufficient and links required Product 1.0 public-boundary RFC/ADR updates. |
+| Wave 1 issue pack | `docs/development/wave-1/product-1.0-wave-1-issue-pack.md` | Every implementation issue contains Summary, Validation, required Versioning & Compatibility block, and Release Notes Draft. |
+| Wave 1 RFC/ADR gap analysis | `docs/development/wave-1/product-1.0-wave-1-rfc-adr-gap-analysis.md` | Declares whether existing RFCs/ADRs are sufficient and links required Product 1.0 public-boundary RFC/ADR updates. |
 | Public boundary RFC | `rfcs/0049-product-1.0-public-api-jobspec-error-boundary.md` | Normative requirements for public envelopes, JobSpec canonicalization, idempotency, errors, and compatibility. |
 | Public boundary ADR | `docs/adr/0035-product-1.0-public-api-jobspec-error-boundary.md` | Accepted governance decision for Wave 1 implementation. |
-| Compatibility report template | `docs/development/product-1.0-wave-1-compatibility-report.md` | Captures version impact, affected interfaces, breaking markers, migrations, fixture evidence, and release notes for every issue. |
-| Release readiness checklist | `docs/development/product-1.0-wave-1-release-readiness-checklist.md` | Checklist maps Wave 1 exit criteria to objective gates. |
-| Exit evidence bundle template | `docs/development/product-1.0-wave-1-exit-evidence-bundle.md` | Defines evidence records for tests, schema/proto diffs, conformance fixtures, release notes, and migration notes. |
+| Compatibility report template | `docs/development/wave-1/product-1.0-wave-1-compatibility-report.md` | Captures version impact, affected interfaces, breaking markers, migrations, fixture evidence, and release notes for every issue. |
+| Release readiness checklist | `docs/development/wave-1/product-1.0-wave-1-release-readiness-checklist.md` | Checklist maps Wave 1 exit criteria to objective gates. |
+| Exit evidence bundle template | `docs/development/wave-1/product-1.0-wave-1-exit-evidence-bundle.md` | Defines evidence records for tests, schema/proto diffs, conformance fixtures, release notes, and migration notes. |
 | Development index updates | `docs/development/README.md`; `docs/adr/README.md` | Product 1.0 Wave 1 planning package and ADR are discoverable. |
 
 ---

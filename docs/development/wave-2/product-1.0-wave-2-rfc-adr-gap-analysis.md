@@ -9,7 +9,7 @@ Identify whether the current RFC/ADR set is sufficient for **Wave 2 — Kernel/Q
 - `docs/development/product-1.0-contract-alignment-plan.md`
 - `docs/development/product-1.0-contract-inventory.md`
 - `docs/development/product-1.0-version-policy.md`
-- `docs/development/product-1.0-wave-2-execution-plan.md`
+- `docs/development/wave-2/product-1.0-wave-2-execution-plan.md`
 - `docs/reference/api/grpc-internal.md`
 - `docs/architecture/components/qrtx.md`
 - `docs/architecture/contract-map.md`

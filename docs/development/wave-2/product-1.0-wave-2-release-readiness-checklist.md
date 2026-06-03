@@ -7,11 +7,11 @@
 
 This checklist closes Product 1.0 Wave 2 and must be completed together with:
 
-- `docs/development/product-1.0-wave-2-execution-plan.md`
-- `docs/development/product-1.0-wave-2-issue-pack.md`
-- `docs/development/product-1.0-wave-2-compatibility-report.md`
-- `docs/development/product-1.0-wave-2-exit-evidence-bundle.md`
-- `docs/development/product-1.0-wave-2-rfc-adr-gap-analysis.md`
+- `docs/development/wave-2/product-1.0-wave-2-execution-plan.md`
+- `docs/development/wave-2/product-1.0-wave-2-issue-pack.md`
+- `docs/development/wave-2/product-1.0-wave-2-compatibility-report.md`
+- `docs/development/wave-2/product-1.0-wave-2-exit-evidence-bundle.md`
+- `docs/development/wave-2/product-1.0-wave-2-rfc-adr-gap-analysis.md`
 - `rfcs/0050-product-1.0-kernel-qrtx-lifecycle-authority.md`
 - `docs/adr/0036-product-1.0-kernel-qrtx-lifecycle-authority.md`
 

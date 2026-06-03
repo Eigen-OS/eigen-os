@@ -3,8 +3,8 @@
 **Status:** W2-08 closure draft; Wave 2 issue ledger complete for documented implementation slices
 **Scope:** Kernel/QRTX lifecycle authority, internal API alignment, System API delegation, orchestration DAG, cancellation/deadline/retry semantics, and observability evidence
 **Version policy:** `docs/development/product-1.0-version-policy.md`
-**Issue pack:** `docs/development/product-1.0-wave-2-issue-pack.md`
-**Evidence bundle:** `docs/development/product-1.0-wave-2-exit-evidence-bundle.md`
+**Issue pack:** `docs/development/wave-2/product-1.0-wave-2-issue-pack.md`
+**Evidence bundle:** `docs/development/wave-2/product-1.0-wave-2-exit-evidence-bundle.md`
 **Created:** 2026-06-02
 **Updated:** 2026-06-04 (W2-08 closure evidence drafted)
 
