@@ -99,6 +99,7 @@ Invalid `job_id` values MUST be rejected before filesystem access.
 │   ├── circuit.aqo.pb
 │   ├── circuit.qasm
 │   ├── compile_report.json
+│   ├── compile_report.json
 │   └── metadata.json
 ├── execution/
 │   ├── execution_plan.json
@@ -167,8 +168,25 @@ Contains compiler outputs.
 | `circuit.aqo.json` | yes | Canonical AQO |
 | `circuit.aqo.pb` | optional | Binary AQO |
 | `circuit.qasm` | optional | OpenQASM export |
-| `compile_report.json` | optional | Compiler diagnostics |
-| `metadata.json` | optional | Compiler metadata |
+| `compile_report.json` | optional | Compiler diagnostics / sidecar report |
+| `metadata.json` | yes | Canonical compiler metadata |
+
+#### Metadata requirements
+
+`compiled/metadata.json` MUST include:
+
+- `version` = `1.0.0`
+- `schema_version`
+- `compiler_version`
+- `producer_identity`
+- `contract_version`
+- `created_at`
+- `aqo_hash`
+- `qasm_hash` when `circuit.qasm` exists
+- `diagnostics_hash` when `compile_report.json` exists
+- `lineage` with request/source provenance
+
+The compiler output directory is immutable within a job scope: duplicate writes to the same artifact path MUST be rejected by the persistence layer.
 
 ---
 

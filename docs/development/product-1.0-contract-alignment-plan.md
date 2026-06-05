@@ -265,6 +265,7 @@ Product `1.0.0` is ready only when all of the following gates pass:
 - Compiler is pure/deterministic and never executes user code.
 - AQO output is schema-validated and reproducible.
 - All compiler failures map to canonical errors.
+- Compiler outputs are persisted through QFS with immutable artifact names and lineage metadata.
 - Identical inputs yield identical AQO bytes and hashes.
 - AQO validation occurs before persistence.
 - Canonical errors are returned for structural and semantic AQO violations.

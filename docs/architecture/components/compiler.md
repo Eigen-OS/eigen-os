@@ -40,11 +40,24 @@ The compiler MUST:
 2. Validate the allowed subset and enforce safety restrictions.
 3. Produce **canonical, deterministic AQO v1.0** (JSON) as the primary IR artifact.
 4. Optionally produce additional artifacts (AQO protobuf, QASM export) **without changing AQO**.
-5. Validate AQO structure and invariants against the reference contract before persistence or downstream execution.
-6. Emit structured diagnostics and deterministic error semantics.
-7. Persist compilation artifacts and metadata into QFS in the canonical layout (see `qfs-layout.md`).
+5. Emit structured diagnostics and deterministic error semantics.
+6. Persist compilation artifacts and metadata into QFS in the canonical layout (see `qfs-layout.md`).
+7. Preserve lineage and integrity metadata for compiled artifacts:
+   - content digests,
+   - producer identity,
+   - contract version,
+   - timestamps,
+   - request/source lineage,
+   - optional sidecar artifacts.
 
 The compiler MUST NEVER:
+
+- compile source into AQO
+- persist AQO and compiler metadata
+- emit deterministic diagnostics
+- hand off persisted artifacts to QFS
+- hand off persisted artifacts to QFS with immutable compiled artifact names
+- validate that sidecar artifacts are advisory and never authoritative over AQO
 
 - execute user Python code,
 - import arbitrary modules,
