@@ -51,6 +51,16 @@ The compiler MUST NEVER:
 - access the network (unless explicitly enabled for **trusted** internal sources; disabled by default),
 - spawn subprocesses.
 
+The compiler safety model is AST-only and closed for v1.0:
+
+- allowed imports are restricted to approved Eigen-Lang namespaces,
+- only the entrypoint decorator `@hybrid_program(...)` is permitted,
+- no arbitrary Python execution is allowed,
+- no runtime code generation is allowed,
+- no dynamic imports are allowed,
+- no dynamic control flow is allowed,
+- no forbidden builtins or reflective access are allowed.
+
 ---
 
 ## 2. Contract and versioning
@@ -155,6 +165,7 @@ Any nondeterministic input (e.g. random seed) MUST be explicitly provided as an 
 - Traverse AST with a strict allowlist.
 - Extract only declarative constructs.
 - Build an internal IR without executing any user code.
+- Keep the accepted surface closed and deterministic.
 
 ### 5.2 Forbidden constructs (must fail with `INVALID_ARGUMENT`)
 
@@ -164,7 +175,15 @@ Any nondeterministic input (e.g. random seed) MUST be explicitly provided as an 
 - dynamic control flow (`if`, `for`, `while`, `match`) in v1.0
 - reflection / metaprogramming (`getattr` with non-literal names, `globals`, `locals`, etc.)
 
-### 5.3 Isolation requirements (per ТЗ)
+### 5.3 Canonical validation outcomes
+
+- Syntax and parse failures map to `INVALID_ARGUMENT`.
+- Unsupported but documented-future features map to `UNIMPLEMENTED`.
+- Missing source references map to `NOT_FOUND`.
+- Resource limits map to `RESOURCE_EXHAUSTED`.
+- Compiler-internal invariants map to `INTERNAL`.
+
+### 5.4 Isolation requirements (per ТЗ)
 
 The compiler MUST run in an isolated container / sandbox profile:
 
