@@ -16,6 +16,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::time::Instant;
 
 use parking_lot::Mutex;
+use prost_types::Timestamp;
 use tokio_stream::iter;
 use tokio_stream::Stream;
 use tonic::{Code, Request, Response, Status};
@@ -246,7 +247,6 @@ impl NormalizedSubmission {
             role.as_str(),
             source_service.as_str(),
             deadline_seconds,
-            deadline_at,
             name.as_str(),
             program_format.as_str(),
             &program_hash,
@@ -269,6 +269,7 @@ impl NormalizedSubmission {
             role,
             source_service,
             deadline_seconds,
+            deadline_at,
             name,
             program_format,
             program,
@@ -1128,6 +1129,21 @@ impl FixtureAdapters {
         }
     }
 
+    fn with_hold(
+        qfs_root: impl AsRef<str>,
+        failure_stage: Option<DagStageKind>,
+        hold_stage: Option<DagStageKind>,
+        hold_for: Duration,
+    ) -> Self {
+        Self {
+            qfs: CircuitFsLocal::new(qfs_root.as_ref()),
+            failure_stage,
+            hold_stage,
+            hold_for,
+            execute_script: Arc::new(Mutex::new(VecDeque::new())),
+        }
+    }
+
     fn with_execute_script(
         qfs_root: impl AsRef<str>,
         failure_stage: Option<DagStageKind>,
@@ -1555,13 +1571,13 @@ impl KernelGatewayService for KernelGatewaySvc {
     ) -> Result<Response<CancelJobResponse>, Status> {
         let req = request.into_inner();
         let job_id = req.job_id;
-        let job = self.runtime.request_cancel(&job_id, req.reason.clone())?;
+        let job = self.runtime.request_cancel(&job_id, None)?;
         tracing::info!(
             event = "cancel",
             trace_id = %job.submission.trace_id,
             request_id = %job.submission.request_id,
             job_id = %job.job_id,
-            reason = %req.reason.unwrap_or_else(|| "user-request".to_string()),
+            reason = "user-request",
             stage = job.stage_label(),
             "cancellation requested"
         );
@@ -2582,6 +2598,22 @@ mod tests {
         (svc, runtime)
     }
 
+    fn make_service_with_hold(
+         failure_stage: Option<DagStageKind>,
+         hold_stage: Option<DagStageKind>,
+         hold_for: Duration,
+     ) -> (KernelGatewaySvc, Arc<KernelRuntimeStore>) {
+         let runtime = Arc::new(KernelRuntimeStore::default());
+         let adapters = Arc::new(FixtureAdapters::with_hold(
+             "/tmp/eigen-kernel-test-qfs",
+             failure_stage,
+             hold_stage,
+             hold_for,
+         ));
+         let svc = KernelGatewaySvc::new(runtime.clone(), adapters);
+         (svc, runtime)
+     }
+
     fn make_request(name: &str) -> EnqueueJobRequest {
         let mut compiler_options = HashMap::new();
         compiler_options.insert("optimizer_step".to_string(), "0.1".to_string());
@@ -2847,9 +2879,7 @@ mod tests {
 
     #[tokio::test]
     async fn cancellation_while_queued_releases_reservation() {
-        std::env::set_var("EIGEN_KERNEL_TEST_HOLD_STAGE", "schedule");
-        std::env::set_var("EIGEN_KERNEL_TEST_HOLD_MS", "80");
-        let (svc, runtime) = make_service(None);
+        let (svc, runtime) = make_service_with_hold(None, Some(DagStageKind::Schedule), Duration::from_millis(80));
         let response = svc
             .enqueue_job(Request::new(make_request("queued-cancel")))
             .await
@@ -2860,15 +2890,11 @@ mod tests {
         let job = wait_for_terminal(runtime, &response.job_id).await;
         assert_eq!(job.state, TaskState::Cancelled);
         assert_eq!(job.reservation_state.as_deref(), Some("released"));
-        std::env::remove_var("EIGEN_KERNEL_TEST_HOLD_STAGE");
-        std::env::remove_var("EIGEN_KERNEL_TEST_HOLD_MS");
     }
 
     #[tokio::test]
     async fn cancellation_while_compiling_is_deterministic() {
-        std::env::set_var("EIGEN_KERNEL_TEST_HOLD_STAGE", "compile");
-        std::env::set_var("EIGEN_KERNEL_TEST_HOLD_MS", "80");
-        let (svc, runtime) = make_service(None);
+        let (svc, runtime) = make_service_with_hold(None, Some(DagStageKind::Compile), Duration::from_millis(80));
         let response = svc
             .enqueue_job(Request::new(make_request("compile-cancel")))
             .await
@@ -2878,15 +2904,11 @@ mod tests {
         let _ = svc.cancel_job(Request::new(make_cancel_request(&response.job_id))).await;
         let job = wait_for_terminal(runtime, &response.job_id).await;
         assert_eq!(job.state, TaskState::Cancelled);
-        std::env::remove_var("EIGEN_KERNEL_TEST_HOLD_STAGE");
-        std::env::remove_var("EIGEN_KERNEL_TEST_HOLD_MS");
     }
 
     #[tokio::test]
     async fn cancellation_while_executing_is_deterministic() {
-        std::env::set_var("EIGEN_KERNEL_TEST_HOLD_STAGE", "execute");
-        std::env::set_var("EIGEN_KERNEL_TEST_HOLD_MS", "80");
-        let (svc, runtime) = make_service(None);
+        let (svc, runtime) = make_service_with_hold(None, Some(DagStageKind::Execute), Duration::from_millis(80));
         let response = svc
             .enqueue_job(Request::new(make_request("execute-cancel")))
             .await
@@ -2896,15 +2918,12 @@ mod tests {
         let _ = svc.cancel_job(Request::new(make_cancel_request(&response.job_id))).await;
         let job = wait_for_terminal(runtime, &response.job_id).await;
         assert_eq!(job.state, TaskState::Cancelled);
-        std::env::remove_var("EIGEN_KERNEL_TEST_HOLD_STAGE");
-        std::env::remove_var("EIGEN_KERNEL_TEST_HOLD_MS");
     }
 
     #[tokio::test]
     async fn cancellation_while_finalizing_keeps_canonical_terminal_state() {
-        std::env::set_var("EIGEN_KERNEL_TEST_HOLD_STAGE", "finalize");
-        std::env::set_var("EIGEN_KERNEL_TEST_HOLD_MS", "80");
-        let (svc, runtime) = make_service(None);
+        let (svc, runtime) = make_service_with_hold(None, Some(DagStageKind::Finalize), Duration::from_millis(80));
+         let response = svc
         let response = svc
             .enqueue_job(Request::new(make_request("finalize-cancel")))
             .await
