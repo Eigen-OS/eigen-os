@@ -57,7 +57,7 @@ class DistributedCompileConfig:
     topology_hint: str | None
 
 
-@dataclass(frozen=True)
+@dataclass
 class CompilerValidationError(Exception):
     violations: tuple[FieldViolation, ...]
 
@@ -496,7 +496,7 @@ def compile_eigen_lang(
     normalized_request_context = _normalize_request_context(request_context)
     resolved_source, source_precedence = _resolve_source_bytes(source, source_ref)
     source_digest = hashlib.sha256(resolved_source).hexdigest()
-    tree = _run_stage("parse", observer, lambda: _parse_python_source(source))
+    tree = _run_stage("parse", observer, lambda: _parse_python_source(resolved_source))
 
     def _validate_tree() -> None:
         violations = (
@@ -511,8 +511,10 @@ def compile_eigen_lang(
 
     _run_stage("validate_ast", observer, _validate_tree)
 
-    def _annotate_tree() -> dict[str, str]:
-        params = _collect_params(tree)
+    def _annotate_tree() -> dict[str, dict[str, object]]:
+        params, param_violations = _collect_params(tree)
+        if param_violations:
+            raise CompilerValidationError(violations=param_violations)
         return params
 
     params = _run_stage("annotate", observer, _annotate_tree)
@@ -583,7 +585,6 @@ def compile_eigen_lang(
         "compiler": "eigen-compiler",
         "compiler_contract_version": "1.0.0",
         "eigen_lang_version": "1.0",
-        "compiler_contract_version": "1.0.0",
         "aqo_version": AQO_VERSION,
         "input_bytes": str(len(source)),
         "source_sha256": source_digest,

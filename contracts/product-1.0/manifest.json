@@ -143,6 +143,47 @@
       "compatibility_status": "needs-alignment"
     },
     {
+      "name": "Compiler contract (`eigen.internal.v1` compiler slice)",
+      "contract_version": "1.0.0",
+      "owner": "Compiler; System API; Kernel/QRTX",
+      "sources": [
+        "docs/architecture/components/compiler.md",
+        "docs/reference/eigen-lang.md",
+        "docs/reference/formats/aqo.md"
+      ],
+      "proto_schema_files": [
+        "proto/eigen/internal/v1/compilation_service.proto"
+      ],
+      "planned_proto_schema_files": [],
+      "conformance_tests": [
+        "src/services/eigen-compiler/tests/test_conformance_suite.py",
+        "src/services/eigen-compiler/tests/test_compilation_rpc.py",
+        "buf lint",
+        "buf breaking"
+      ],
+      "implementation_status": "partial",
+      "compatibility_status": "needs-alignment"
+    },
+    {
+      "name": "Compiler artifact persistence handoff",
+      "contract_version": "1.0.0",
+      "owner": "Compiler; QFS; Kernel/QRTX",
+      "sources": [
+        "docs/reference/formats/qfs-layout.md",
+        "docs/architecture/components/qfs.md"
+      ],
+      "proto_schema_files": [],
+      "planned_proto_schema_files": [
+        "QFS storage manifest schema under contracts/product-1.0/"
+      ],
+      "conformance_tests": [
+        "src/rust/crates/qfs/src/local_circuit_fs.rs",
+        "src/rust/crates/qfs/tests/"
+      ],
+      "implementation_status": "partial",
+      "compatibility_status": "needs-alignment"
+    },
+    {
       "name": "Canonical error model",
       "contract_version": "1.0.0",
       "owner": "All public/internal services",
