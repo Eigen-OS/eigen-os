@@ -38,6 +38,8 @@ Implementation status values are `documented`, `partial`, `planned`, and `implem
 | Authorization and security policy | `1.0.0` | Security & Isolation; System API; all services | `docs/reference/security/authz.md`; `docs/architecture/components/security-isolation.md` | Planned policy schema under `contracts/product-1.0/` | Planned authn/authz conformance in System API/security-module tests | documented | needs-alignment |
 | Knowledge Base public API | `1.0.0` | Knowledge Base; System API | `docs/architecture/components/knowledge-base.md` | `proto/eigen/api/v1/knowledge_base_service.proto` | Planned KB API conformance tests | partial | planned |
 | Component architecture boundary map | `1.0.0` Product target; architecture scope includes `1.3.0` phase contracts | Architecture governance; all component owners | `docs/architecture/contract-map.md`; `docs/architecture/overview.md`; `docs/architecture/components.md`; `docs/architecture/data-flow.md` | Not applicable | `python3 scripts/ci/check-docs-links.py`; `python3 scripts/ci/check-product-1-0-manifest.py` | documented | frozen-for-wave-0 |
+| Compiler contract (`eigen.internal.v1` compiler slice) | `1.0.0` target | Compiler; System API; Kernel/QRTX | `docs/architecture/components/compiler.md`; `docs/reference/eigen-lang.md`; `docs/reference/formats/aqo.md` | `proto/eigen/internal/v1/compilation_service.proto`; compiler request/response types | `src/services/eigen-compiler/tests/test_conformance_suite.py`; language allowlist fixtures; AQO golden suite | partial | needs-alignment |
+| Compiler artifact persistence handoff | `1.0.0` target | Compiler; QFS; Kernel/QRTX | `docs/reference/formats/qfs-layout.md`; `docs/architecture/components/qfs.md` | QFS artifact paths and metadata records | `src/rust/crates/qfs/tests/`; compiler persistence tests | partial | needs-alignment |
 
 ---
 
@@ -71,3 +73,11 @@ Implementation status values are `documented`, `partial`, `planned`, and `implem
 - **Gap analysis:** `docs/development/wave-2/product-1.0-wave-2-rfc-adr-gap-analysis.md`
 
 These slices are the concrete mappings the Wave 2 closure record refers to. They do not rename the broader contract families; they document the implemented Kernel/QRTX enforcement points and conformance locations.
+
+### 4.4 Wave 3 concrete implementation slices
+
+- **Compiler safety slice:** Eigen-Lang allowlist, forbidden constructs, deterministic diagnostics
+- **Compiler request slice:** JobSpec-to-compiler mapping, request metadata, canonical digests
+- **AQO slice:** canonical emission, schema validation, reproducible hashes
+- **QFS handoff slice:** compiler artifact persistence through QFS L3 with lineage and integrity metadata
+- **Observability slice:** compiler contract marker metrics, bounded labels, trace continuity
