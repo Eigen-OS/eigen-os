@@ -181,7 +181,7 @@ def test_compile_job_request_metadata_is_propagated(grpc_addr: str) -> None:
         source=source,
         source_ref="qfs://jobs/job-123/input/program.eigen.py",
         options={"beta": "2", "alpha": "1"},
-        request_metadata=comp_pb.RequestMetadata(
+        request_metadata=comp_pb.CompilerRequestMetadata(
             request_id="req-123",
             trace_id="trace-456",
             traceparent="00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01",
