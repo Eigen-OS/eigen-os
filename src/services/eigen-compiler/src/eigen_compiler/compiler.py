@@ -6,14 +6,23 @@ import ast
 import hashlib
 import json
 import os
+from math import isfinite
 from dataclasses import dataclass, asdict
 from pathlib import Path
 
 from .errors import FieldViolation
 
+AQO_VERSION = "1.0.0"
+
 _ALLOWED_IMPORT_PREFIXES = ("eigen_lang",)
 _FORBIDDEN_MODULE_ROOTS = {"os", "sys", "subprocess"}
 _FORBIDDEN_CALLS = {"exec", "eval", "compile"}
+_AQO_ALLOWED_TOP_LEVEL_FIELDS = {"version", "qubits", "operations", "parameters", "metadata", "checksums", "topology", "annotations"}
+_AQO_ALLOWED_OPS = {"RX", "RY", "RZ", "CX", "CZ", "SWAP", "CCX", "CCZ", "X", "Y", "Z", "H", "S", "T", "MEASURE", "RESET"}
+_AQO_ROTATION_OPS = {"RX", "RY", "RZ"}
+_AQO_MEASUREMENT_BASIS = {"X", "Y", "Z"}
+_AQO_NON_PARAMETERIZED_OPS = {"CX", "CZ", "SWAP", "CCX", "CCZ", "X", "Y", "Z", "H", "S", "T", "RESET"}
+_AQO_ARITY = {"RX": 1, "RY": 1, "RZ": 1, "CX": 2, "CZ": 2, "SWAP": 2, "CCX": 3, "CCZ": 3, "X": 1, "Y": 1, "Z": 1, "H": 1, "S": 1, "T": 1, "MEASURE": 1, "RESET": 1}
 
 
 @dataclass(frozen=True)
@@ -45,6 +54,127 @@ class DistributedCompileConfig:
 @dataclass(frozen=True)
 class CompilerValidationError(Exception):
     violations: tuple[FieldViolation, ...]
+
+
+def _canonical_json_bytes(payload: dict[str, object]) -> bytes:
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+
+
+def _literal_scalar(node: ast.AST) -> str | int | float | None:
+    if not isinstance(node, ast.Constant):
+        return None
+    if isinstance(node.value, (str, int)):
+        return node.value
+    if isinstance(node.value, float) and isfinite(node.value):
+        return float(node.value)
+    return None
+
+
+def _validate_parameters_object(parameters: object) -> tuple[FieldViolation, ...]:
+    if parameters is None:
+        return ()
+    if not isinstance(parameters, dict):
+        return (FieldViolation(field="parameters", description="parameters must be an object"),)
+    violations: list[FieldViolation] = []
+    for name, value in parameters.items():
+        if not isinstance(name, str) or not name:
+            violations.append(FieldViolation(field="parameters", description="parameter names must be strings"))
+            continue
+        if not isinstance(value, (int, float, str)) or (isinstance(value, float) and not isfinite(value)):
+            violations.append(
+                FieldViolation(
+                    field=f"parameters.{name}",
+                    description="parameter values must be integer, float, or string",
+                )
+            )
+    return tuple(violations)
+
+
+def _validate_aqo_payload(aqo: dict[str, object]) -> tuple[FieldViolation, ...]:
+    violations: list[FieldViolation] = []
+    unknown_fields = set(aqo) - _AQO_ALLOWED_TOP_LEVEL_FIELDS
+    for field in sorted(unknown_fields):
+        violations.append(FieldViolation(field=field, description="unknown AQO top-level field"))
+
+    if aqo.get("version") != AQO_VERSION:
+        violations.append(FieldViolation(field="version", description=f"aqo version must be {AQO_VERSION}"))
+
+    qubits = aqo.get("qubits")
+    if not isinstance(qubits, int) or qubits < 1:
+        violations.append(FieldViolation(field="qubits", description="qubits must be a positive integer"))
+
+    operations = aqo.get("operations")
+    if not isinstance(operations, list) or not operations:
+        violations.append(FieldViolation(field="operations", description="operations must be a non-empty array"))
+        operations = []
+
+    violations.extend(_validate_parameters_object(aqo.get("parameters")))
+
+    for idx, op in enumerate(operations):
+        if not isinstance(op, dict):
+            violations.append(FieldViolation(field=f"operations[{idx}]", description="operation must be an object"))
+            continue
+
+        op_name = op.get("op")
+        if op_name not in _AQO_ALLOWED_OPS:
+            violations.append(FieldViolation(field=f"operations[{idx}].op", description="unsupported opcode"))
+            continue
+
+        q = op.get("q")
+        if not isinstance(q, list) or not q or not all(isinstance(item, int) and item >= 0 for item in q):
+            violations.append(FieldViolation(field=f"operations[{idx}].q", description="q must be a list of non-negative integers"))
+            continue
+
+        if any((qubits is not None and item >= qubits) for item in q):
+            violations.append(FieldViolation(field=f"operations[{idx}].q", description="qubit index out of range"))
+
+        expected_arity = _AQO_ARITY[op_name]
+        if op_name in {"MEASURE"}:
+            c = op.get("c")
+            if not isinstance(c, list) or len(c) != len(q) or not all(isinstance(item, int) and item >= 0 for item in c):
+                violations.append(FieldViolation(field=f"operations[{idx}].c", description="MEASURE requires matching classical indices"))
+            if any((qubits is not None and item >= qubits) for item in c or []):
+                violations.append(FieldViolation(field=f"operations[{idx}].c", description="classical index out of range"))
+            basis = op.get("basis")
+            if basis is not None and basis not in _AQO_MEASUREMENT_BASIS:
+                violations.append(FieldViolation(field=f"operations[{idx}].basis", description="unsupported measurement basis"))
+            if "params" in op and op["params"]:
+                violations.append(FieldViolation(field=f"operations[{idx}].params", description="MEASURE must not include params"))
+            if len(q) < 1:
+                violations.append(FieldViolation(field=f"operations[{idx}].q", description="MEASURE requires at least one qubit"))
+            continue
+
+        if len(q) != expected_arity:
+            violations.append(FieldViolation(field=f"operations[{idx}].q", description=f"{op_name} has invalid arity"))
+
+        params = op.get("params")
+        if op_name in _AQO_ROTATION_OPS:
+            if not isinstance(params, dict) or set(params) != {"theta"}:
+                violations.append(FieldViolation(field=f"operations[{idx}].params", description=f"{op_name} requires theta parameter"))
+            else:
+                theta = params["theta"]
+                if not isinstance(theta, (int, float, str)) or (isinstance(theta, float) and not isfinite(theta)):
+                    violations.append(FieldViolation(field=f"operations[{idx}].params.theta", description="theta must be integer, float, or string"))
+        else:
+            if params:
+                violations.append(FieldViolation(field=f"operations[{idx}].params", description=f"{op_name} must not include params"))
+
+        if op_name in _AQO_NON_PARAMETERIZED_OPS and "c" in op and op["c"]:
+            violations.append(FieldViolation(field=f"operations[{idx}].c", description=f"{op_name} must not include c"))
+
+    return tuple(violations)
+
+
+def _encode_aqo_payload(aqo: dict[str, object]) -> bytes:
+    violations = _validate_aqo_payload(aqo)
+    if violations:
+        raise CompilerValidationError(violations=violations)
+    aqo_bytes = _canonical_json_bytes(aqo)
+    if json.loads(aqo_bytes.decode("utf-8")) != aqo:
+        raise CompilerValidationError(
+            violations=(FieldViolation(field="operations", description="AQO canonical round-trip failed"),)
+        )
+    return aqo_bytes
 
 
 def _canonical_json_bytes(payload: dict[str, object]) -> bytes:
@@ -256,8 +386,9 @@ def _validate_single_entrypoint(tree: ast.AST) -> tuple[FieldViolation, ...]:
     )
 
 
-def _collect_params(tree: ast.AST) -> dict[str, str]:
-    params: dict[str, str] = {}
+def _collect_params(tree: ast.AST) -> tuple[dict[str, dict[str, object]], tuple[FieldViolation, ...]]:
+    params: dict[str, dict[str, object]] = {}
+    violations: list[FieldViolation] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Assign):
             continue
@@ -270,11 +401,23 @@ def _collect_params(tree: ast.AST) -> dict[str, str]:
             continue
         name_arg = node.value.args[0]
         if isinstance(name_arg, ast.Constant) and isinstance(name_arg.value, str):
-            params[target] = name_arg.value
-    return params
+            default_value: str | int | float = name_arg.value
+            if len(node.value.args) > 1:
+                explicit_default = _literal_scalar(node.value.args[1])
+                if explicit_default is None:
+                    violations.append(
+                        FieldViolation(
+                            field="source",
+                            description="Param default must be a literal integer, float, or string",
+                        )
+                    )
+                    continue
+                default_value = explicit_default
+            params[target] = {"name": name_arg.value, "default": default_value}
+    return params, tuple(violations)
 
 
-def _collect_operations(tree: ast.AST, params: dict[str, str]) -> tuple[list[dict], int]:
+def _collect_operations(tree: ast.AST, params: dict[str, dict[str, object]]) -> tuple[list[dict], int]:
     operations: list[dict] = []
     qubit_count = 1
     gate_ops = {"rx": "RX", "ry": "RY", "rz": "RZ"}
@@ -288,7 +431,7 @@ def _collect_operations(tree: ast.AST, params: dict[str, str]) -> tuple[list[dic
             op: dict[str, object] = {"op": gate_ops[name], "q": [0]}
             theta_expr = next((kw.value for kw in node.keywords if kw.arg == "theta"), None)
             if isinstance(theta_expr, ast.Name) and theta_expr.id in params:
-                op["params"] = {"theta": params[theta_expr.id]}
+                op["params"] = {"theta": params[theta_expr.id]["name"]}
             elif isinstance(theta_expr, ast.Constant) and isinstance(theta_expr.value, (int, float)):
                 op["params"] = {"theta": float(theta_expr.value)}
             operations.append(op)
@@ -327,7 +470,7 @@ def compile_eigen_lang(
     options: dict[str, str] | None = None,
     request_context: dict[str, str] | None = None,
 ) -> CompilationResult:
-    """Compile Eigen-Lang source into a canonical AQO payload."""
+    """Compile source bytes into a canonical AQO v1.0 payload."""
 
     normalized_options = _normalize_options(options)
     normalized_request_context = _normalize_request_context(request_context)
@@ -343,7 +486,9 @@ def compile_eigen_lang(
     )
     if violations:
         raise CompilerValidationError(violations=violations)
-    params = _collect_params(tree)
+    params, param_violations = _collect_params(tree)
+    if param_violations:
+        raise CompilerValidationError(violations=param_violations)
     operations, qubits = _collect_operations(tree, params)
     has_minimize = any(
         isinstance(node, ast.Call) and _call_name(node.func) == "minimize" for node in ast.walk(tree)
@@ -355,12 +500,14 @@ def compile_eigen_lang(
     distributed = _distributed_compile_config(normalized_options)
 
     aqo = {
-        "version": "0.1",
+        "version": AQO_VERSION,
         "qubits": qubits,
         "operations": operations,
     }
     if params:
-        aqo["parameters"] = [{"name": name} for _, name in sorted(params.items())]
+        aqo["parameters"] = {
+            param["name"]: param["default"] for _, param in sorted(params.items(), key=lambda item: item[1]["name"])
+        }
     if has_expectation:
         aqo["expectation"] = {"kind": "ExpectationValue"}
     if has_minimize:
@@ -378,7 +525,7 @@ def compile_eigen_lang(
         if distributed.queue_provider:
             aqo["distributed_execution"]["queue_provider"] = distributed.queue_provider
 
-    aqo_bytes = json.dumps(aqo, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    aqo_bytes = _encode_aqo_payload(aqo)
     aqo_digest = hashlib.sha256(aqo_bytes).hexdigest()
     request_payload = {
         "options": normalized_options,
@@ -395,7 +542,8 @@ def compile_eigen_lang(
         "compiler": "eigen-compiler",
         "compiler_contract_version": "1.0.0",
         "eigen_lang_version": "1.0",
-        "aqo_version": "0.1",
+        "compiler_contract_version": "1.0.0",
+        "aqo_version": AQO_VERSION,
         "input_bytes": str(len(source)),
         "source_sha256": source_digest,
         "aqo_sha256": aqo_digest,

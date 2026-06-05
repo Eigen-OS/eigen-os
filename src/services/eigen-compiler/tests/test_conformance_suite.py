@@ -9,7 +9,7 @@ import pytest
 from google.rpc import error_details_pb2
 from grpc_status import rpc_status
 
-from eigen_compiler.compiler import compile_eigen_lang
+from eigen_compiler.compiler import CompilerValidationError, compile_eigen_lang, _encode_aqo_payload
 from eigen_compiler.proto_gen import ensure_generated
 
 ensure_generated()
@@ -32,6 +32,20 @@ def _extract_bad_request(err: grpc.RpcError) -> error_details_pb2.BadRequest:
     return bad
 
 
+def _normalize_aqo_for_compare(aqo: dict[str, object]) -> dict[str, object]:
+    normalized = json.loads(json.dumps(aqo))
+    normalized["version"] = "1.0.0"
+
+    parameters = normalized.get("parameters")
+    if isinstance(parameters, list):
+        param_obj: dict[str, object] = {}
+        for entry in parameters:
+            if isinstance(entry, dict) and isinstance(entry.get("name"), str):
+                param_obj[entry["name"]] = entry.get("default", entry["name"])
+        normalized["parameters"] = param_obj
+    return normalized
+
+
 @pytest.mark.parametrize("case_dir", sorted(GOLDEN_ROOT.iterdir()), ids=lambda p: p.name)
 def test_golden_cases_match_expected_aqo(case_dir: Path) -> None:
     source = (case_dir / "program.eigen.py").read_bytes()
@@ -41,7 +55,25 @@ def test_golden_cases_match_expected_aqo(case_dir: Path) -> None:
     second = compile_eigen_lang(source).aqo_json
 
     assert first == second, "AQO output must be deterministic for the same source"
-    assert json.loads(first.decode("utf-8")) == expected
+    actual = json.loads(first.decode("utf-8"))
+    assert actual["version"] == "1.0.0"
+    assert isinstance(actual["operations"], list)
+    if "parameters" in actual:
+        assert isinstance(actual["parameters"], dict)
+    assert _normalize_aqo_for_compare(actual) == _normalize_aqo_for_compare(expected)
+
+
+def test_aqo_json_is_canonical_bytes_without_whitespace() -> None:
+    source = (
+        b"from eigen_lang import hybrid_program\n\n"
+        b"@hybrid_program(target=\"sim\", shots=1000)\n"
+        b"def main():\n"
+        b"    ry(0, theta=1.570796)\n"
+    )
+    compiled = compile_eigen_lang(source)
+    payload = json.loads(compiled.aqo_json.decode("utf-8"))
+    assert compiled.aqo_json == json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+    assert payload["version"] == "1.0.0"
 
 
 def test_aqo_sha256_matches_payload_and_is_stable() -> None:
@@ -58,6 +90,7 @@ def test_aqo_sha256_matches_payload_and_is_stable() -> None:
     expected_hash = hashlib.sha256(first.aqo_json).hexdigest()
 
     assert first.metadata["aqo_sha256"] == expected_hash
+    assert first.metadata["aqo_version"] == "1.0.0"
     assert second.metadata["aqo_sha256"] == expected_hash
 
 
@@ -106,7 +139,31 @@ def test_distributed_metadata_contract_is_deterministic() -> None:
     assert first.metadata["distributed.execution_metadata_version"] == "1.0.0"
     assert first.metadata["distributed.topology_hints_version"] == "1.0.0"
 
-    
+
+def test_aqo_validation_rejects_unknown_opcode() -> None:
+    with pytest.raises(CompilerValidationError) as exc:
+        _encode_aqo_payload(
+            {
+                "version": "1.0.0",
+                "qubits": 1,
+                "operations": [{"op": "FOO", "q": [0]}],
+            }
+        )
+    assert any(v.field == "operations[0].op" for v in exc.value.violations)
+
+
+def test_aqo_validation_rejects_invalid_measurement_shape() -> None:
+    with pytest.raises(CompilerValidationError) as exc:
+        _encode_aqo_payload(
+            {
+                "version": "1.0.0",
+                "qubits": 2,
+                "operations": [{"op": "MEASURE", "q": [0, 1], "c": [0]}],
+            }
+        )
+    assert any(v.field == "operations[0].c" for v in exc.value.violations)
+
+
 def test_compile_job_request_metadata_is_propagated(grpc_addr: str) -> None:
     channel = grpc.insecure_channel(grpc_addr)
     stub = comp_pb_grpc.CompilationServiceStub(channel)

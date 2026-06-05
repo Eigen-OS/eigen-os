@@ -238,43 +238,36 @@ Product `1.0.0` is ready only when all of the following gates pass:
 1. Complete Eigen-Lang 1.0 grammar/AST allowlist implementation.
 2. Remove ambiguous or undocumented compiler behavior.
 3. Add import/function/decorator allowlist enforcement with structured errors.
-4. Implement JobSpec-to-compiler request mapping with canonical request metadata:
-   - request ID,
-   - trace context,
-   - deadline,
-   - retry policy,
-   - security context,
-   - tenant/project scope,
-   - source precedence,
-   - deterministic request digest.
-5. Normalize internal compiler request inputs and option canonicalization.
-6. Validate compiler options, target metadata, and referenced artifacts.
-7. Produce AQO with deterministic ordering, metadata, digests, and provenance.
-8. Validate AQO against the reference format before returning/persisting.
-9. Persist compiler artifacts to QFS-L3 through the target QFS boundary, not ad-hoc local paths.
-10. Emit compile traces and metrics:
-    - compile duration,
-    - validation failures,
-    - deterministic digest,
-    - compiler contract version.
-11. Expand golden suite:
-    - minimal circuit,
-    - parameterized VQE,
-    - invalid syntax,
-    - forbidden AST,
-    - unsupported target,
-    - referenced artifact missing,
-    - deterministic repeated compile.
-12. Update the Wave 3 inventory/manifest mappings when compiler RPC or JobSpec mapping paths become concrete.
+4. Implement JobSpec-to-compiler request mapping.
+5. Validate compiler options, target metadata, and referenced artifacts.canonicalization.
+6. Canonicalize AQO JSON with stable ordering and no insignificant whitespace.
+7. Validate AQO required fields and opcode/arity/parameter invariants against `docs/reference/formats/aqo.md`.
+8. Reject unknown opcodes, invalid measurement shapes, invalid qubit indices, and unsupported transport assumptions.
+9. Produce stable AQO digests and compiler metadata.
+10. Persist compiler artifacts to QFS-L3 through the target QFS boundary, not ad-hoc local paths.
+11. Emit compile traces and metrics:
+     - compile duration,
+     - validation failures,
+     - deterministic digest,
+     - compiler contract version.
+12. Expand golden suite:
+     - minimal circuit,
+     - parameterized VQE,
+     - invalid syntax,
+     - forbidden AST,
+     - unsupported target,
+     - referenced artifact missing,
+     - deterministic repeated compile.
+13. Add AQO schema-validation and round-trip checks for compiler output.
 
 #### Exit criteria
 
 - Compiler is pure/deterministic and never executes user code.
 - AQO output is schema-validated and reproducible.
 - All compiler failures map to canonical errors.
-- Internal compiler request mapping is deterministic and documented.
-- Canonical metadata is present for compile requests.
-- Any breaking internal change carries migration notes.
+- Identical inputs yield identical AQO bytes and hashes.
+- AQO validation occurs before persistence.
+- Canonical errors are returned for structural and semantic AQO violations.
 
 ---
 

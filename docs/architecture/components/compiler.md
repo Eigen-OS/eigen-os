@@ -40,8 +40,9 @@ The compiler MUST:
 2. Validate the allowed subset and enforce safety restrictions.
 3. Produce **canonical, deterministic AQO v1.0** (JSON) as the primary IR artifact.
 4. Optionally produce additional artifacts (AQO protobuf, QASM export) **without changing AQO**.
-5. Emit structured diagnostics and deterministic error semantics.
-6. Persist compilation artifacts and metadata into QFS in the canonical layout (see `qfs-layout.md`).
+5. Validate AQO structure and invariants against the reference contract before persistence or downstream execution.
+6. Emit structured diagnostics and deterministic error semantics.
+7. Persist compilation artifacts and metadata into QFS in the canonical layout (see `qfs-layout.md`).
 
 The compiler MUST NEVER:
 
