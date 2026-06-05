@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import List
 
 from .errors import FieldViolation
@@ -21,19 +22,35 @@ def _max_source_bytes() -> int:
     return max(1, value)
 
 
-def _validate_input_oneof(req, *, source_field: str, source_ref_field: str) -> list[FieldViolation]:
+def _validate_source_inputs(req) -> list[FieldViolation]:
     violations: list[FieldViolation] = []
-    oneof = req.WhichOneof("input")
-    if oneof is None:
-        violations.append(FieldViolation(field="input", description="oneof input is required"))
+    source_present = bool(req.source)
+    source_ref_present = bool(req.source_ref)
+
+    if not source_present and not source_ref_present:
+        violations.append(
+            FieldViolation(field="source", description="source or source_ref is required")
+        )
         return violations
 
-    if oneof == source_field and not getattr(req, source_field):
-        violations.append(FieldViolation(field=source_field, description="source must be non-empty"))
+    if source_ref_present:
+        normalized = req.source_ref
+        for prefix in ("qfs://", "circuitfs://"):
+            if normalized.startswith(prefix):
+                normalized = normalized[len(prefix) :]
+                break
+        ref_path = Path(normalized)
+        if any(part == ".." for part in ref_path.parts):
+            violations.append(
+                FieldViolation(
+                    field="source_ref",
+                    description="source_ref must not contain path traversal segments",
+                )
+            )
 
-    if oneof == source_ref_field and not getattr(req, source_ref_field):
+    if source_ref_present and not req.source_ref:
         violations.append(
-            FieldViolation(field=source_ref_field, description="source_ref must be non-empty")
+            FieldViolation(field="source_ref", description="source_ref must be non-empty")
         )
     return violations
 
@@ -49,14 +66,32 @@ def validate_compile_circuit(req) -> List[FieldViolation]:
             FieldViolation(field="language", description="unsupported language, expected eigen-lang")
         )
 
-    violations.extend(_validate_input_oneof(req, source_field="source", source_ref_field="source_ref"))
-    if req.WhichOneof("input") == "source" and len(req.source) > source_limit:
+    violations.extend(_validate_source_inputs(req))
+
+    if req.source and len(req.source) > source_limit:
         violations.append(
             FieldViolation(
                 field="source",
                 description=f"source exceeds max allowed size ({source_limit} bytes)",
             )
         )
+
+    if req.HasField("request_metadata"):
+        md = req.request_metadata
+        required = {
+            "request_metadata.request_id": md.request_id,
+            "request_metadata.trace_id": md.trace_id,
+            "request_metadata.traceparent": md.traceparent,
+            "request_metadata.deadline": md.deadline,
+            "request_metadata.retry_policy": md.retry_policy,
+            "request_metadata.security_context": md.security_context,
+            "request_metadata.tenant_id": md.tenant_id,
+            "request_metadata.project_id": md.project_id,
+        }
+        for field, value in required.items():
+            if not value:
+                violations.append(FieldViolation(field=field, description="field is required"))
+
     violations.extend(_validate_distributed_options(req.options))
     return violations
 
@@ -66,6 +101,9 @@ def validate_compile_job(req) -> List[FieldViolation]:
 
     if not req.job_id:
         violations.append(FieldViolation(field="job_id", description="field is required"))
+
+    if req.HasField("request_metadata"):
+        violations.extend(validate_compile_circuit(req))
 
     violations.extend(validate_compile_circuit(req))
     return violations

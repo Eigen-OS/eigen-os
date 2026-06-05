@@ -230,6 +230,22 @@ service CompilationService {
 
 Compiles a standalone circuit.
 
+#### Request metadata
+
+All internal compile requests MUST carry canonical metadata either in the request envelope or in the propagated gRPC metadata boundary.
+
+Required canonical request metadata:
+
+- request ID,
+- trace context,
+- deadline,
+- retry policy,
+- security context,
+- tenant/project scope.
+
+When both `source` and `source_ref` are present, `source` MUST take precedence.
+When `source_ref` is used, it MUST resolve deterministically against the QFS root.
+
 Outputs:
 
 - AQO,
@@ -240,6 +256,8 @@ Outputs:
 #### CompileJob
 
 Compiles a full hybrid workflow.
+
+The request follows the same canonical metadata and source-precedence rules as `CompileCircuit`.
 
 MUST support:
 

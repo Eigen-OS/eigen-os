@@ -1,4 +1,4 @@
-"""Minimal Eigen-Lang -> AQO JSON compiler for MVP."""
+"""Deterministic Eigen-Lang -> AQO compiler core."""
 
 from __future__ import annotations
 
@@ -6,13 +6,26 @@ import ast
 import hashlib
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
+from pathlib import Path
 
 from .errors import FieldViolation
 
 _ALLOWED_IMPORT_PREFIXES = ("eigen_lang",)
 _FORBIDDEN_MODULE_ROOTS = {"os", "sys", "subprocess"}
 _FORBIDDEN_CALLS = {"exec", "eval", "compile"}
+
+
+@dataclass(frozen=True)
+class CompileRequestContext:
+    request_id: str = ""
+    trace_id: str = ""
+    traceparent: str = ""
+    deadline: str = ""
+    retry_policy: str = ""
+    security_context: str = ""
+    tenant_id: str = ""
+    project_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -32,6 +45,64 @@ class DistributedCompileConfig:
 @dataclass(frozen=True)
 class CompilerValidationError(Exception):
     violations: tuple[FieldViolation, ...]
+
+
+def _canonical_json_bytes(payload: dict[str, object]) -> bytes:
+    return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _normalize_options(options: dict[str, str] | None) -> dict[str, str]:
+    normalized: dict[str, str] = {}
+    for key, value in sorted((options or {}).items()):
+        normalized[str(key)] = str(value)
+    return normalized
+
+
+def _normalize_request_context(request_context: dict[str, str] | None) -> CompileRequestContext:
+    context = request_context or {}
+    return CompileRequestContext(
+        request_id=str(context.get("request_id", "")),
+        trace_id=str(context.get("trace_id", "")),
+        traceparent=str(context.get("traceparent", "")),
+        deadline=str(context.get("deadline", "")),
+        retry_policy=str(context.get("retry_policy", "")),
+        security_context=str(context.get("security_context", "")),
+        tenant_id=str(context.get("tenant_id", "")),
+        project_id=str(context.get("project_id", "")),
+    )
+
+
+def _resolve_source_bytes(source: bytes, source_ref: str | None) -> tuple[bytes, str]:
+    if source:
+        return source, "source"
+    if not source_ref:
+        raise CompilerValidationError(
+            violations=(
+                FieldViolation(field="source", description="source or source_ref is required"),
+            )
+        )
+
+    normalized_ref = source_ref
+    for prefix in ("qfs://", "circuitfs://"):
+        if normalized_ref.startswith(prefix):
+            normalized_ref = normalized_ref[len(prefix) :]
+            break
+    qfs_root = Path(os.getenv("EIGEN_QFS_ROOT", "/var/lib/eigen/circuit_fs")).resolve()
+    ref_path = (qfs_root / normalized_ref.lstrip("/")).resolve()
+    if qfs_root != ref_path and qfs_root not in ref_path.parents:
+        raise CompilerValidationError(
+            violations=(
+                FieldViolation(field="source_ref", description="source_ref escapes QFS root"),
+            )
+        )
+    try:
+        return ref_path.read_bytes(), "source_ref"
+    except FileNotFoundError:
+        raise CompilerValidationError(
+            violations=(
+                FieldViolation(field="source_ref", description=f"source_ref not found: {source_ref}"),
+            )
+        )
 
 
 def _compiler_limit(name: str, default: int) -> int:
@@ -230,7 +301,7 @@ def _collect_operations(tree: ast.AST, params: dict[str, str]) -> tuple[list[dic
 
 
 def _distributed_compile_config(options: dict[str, str] | None) -> DistributedCompileConfig:
-    options = options or {}
+    options = _normalize_options(options)
     enabled = options.get("distributed.enabled", "false").lower() == "true"
     target = options.get("distributed.target") or None
 
@@ -254,11 +325,15 @@ def compile_eigen_lang(
     *,
     source_ref: str | None = None,
     options: dict[str, str] | None = None,
+    request_context: dict[str, str] | None = None,
 ) -> CompilationResult:
-    """Compile source bytes into a tiny AQO v0.1 payload."""
+    """Compile Eigen-Lang source into a canonical AQO payload."""
 
-    source_digest = hashlib.sha256(source).hexdigest() if source else ""
-    tree = _parse_python_source(source)
+    normalized_options = _normalize_options(options)
+    normalized_request_context = _normalize_request_context(request_context)
+    resolved_source, source_precedence = _resolve_source_bytes(source, source_ref)
+    source_digest = hashlib.sha256(resolved_source).hexdigest()
+    tree = _parse_python_source(resolved_source)
     violations = (
         _enforce_resource_limits(tree)
         + _reject_forbidden_imports(tree)
@@ -277,7 +352,7 @@ def compile_eigen_lang(
         isinstance(node, ast.Call) and _call_name(node.func) == "ExpectationValue"
         for node in ast.walk(tree)
     )
-    distributed = _distributed_compile_config(options)
+    distributed = _distributed_compile_config(normalized_options)
 
     aqo = {
         "version": "0.1",
@@ -304,15 +379,39 @@ def compile_eigen_lang(
             aqo["distributed_execution"]["queue_provider"] = distributed.queue_provider
 
     aqo_bytes = json.dumps(aqo, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    
     aqo_digest = hashlib.sha256(aqo_bytes).hexdigest()
+    request_payload = {
+        "options": normalized_options,
+        "request_context": asdict(normalized_request_context),
+        "source_precedence": source_precedence,
+        "source_ref": source_ref or "",
+        "source_sha256": source_digest,
+    }
+    request_digest = hashlib.sha256(_canonical_json_bytes(request_payload)).hexdigest()
+    options_json = _canonical_json_bytes(normalized_options).decode("utf-8")
+    request_context_json = _canonical_json_bytes(asdict(normalized_request_context)).decode("utf-8")
 
     metadata = {
         "compiler": "eigen-compiler",
+        "compiler_contract_version": "1.0.0",
+        "eigen_lang_version": "1.0",
         "aqo_version": "0.1",
         "input_bytes": str(len(source)),
         "source_sha256": source_digest,
         "aqo_sha256": aqo_digest,
+        "request_sha256": request_digest,
+        "source_precedence": source_precedence,
+        "options_json": options_json,
+        "options_sha256": hashlib.sha256(options_json.encode("utf-8")).hexdigest(),
+        "request_context_json": request_context_json,
+        "request_id": normalized_request_context.request_id,
+        "trace_id": normalized_request_context.trace_id,
+        "traceparent": normalized_request_context.traceparent,
+        "deadline": normalized_request_context.deadline,
+        "retry_policy": normalized_request_context.retry_policy,
+        "security_context": normalized_request_context.security_context,
+        "tenant_id": normalized_request_context.tenant_id,
+        "project_id": normalized_request_context.project_id,
     }
     if has_minimize:
         metadata["hybrid_plan_marker"] = "minimize"

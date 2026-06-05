@@ -107,6 +107,94 @@ def test_distributed_metadata_contract_is_deterministic() -> None:
     assert first.metadata["distributed.topology_hints_version"] == "1.0.0"
 
     
+def test_compile_job_request_metadata_is_propagated(grpc_addr: str) -> None:
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = comp_pb_grpc.CompilationServiceStub(channel)
+    source = (
+        b"from eigen_lang import hybrid_program\n\n"
+        b"@hybrid_program(target=\"sim\", shots=1000)\n"
+        b"def main():\n"
+        b"    ry(0, theta=1.0)\n"
+    )
+    request = comp_pb.CompileJobRequest(
+        job_id="job-123",
+        language="eigen-lang",
+        source=source,
+        source_ref="qfs://jobs/job-123/input/program.eigen.py",
+        options={"beta": "2", "alpha": "1"},
+        request_metadata=comp_pb.RequestMetadata(
+            request_id="req-123",
+            trace_id="trace-456",
+            traceparent="00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01",
+            deadline="2026-06-06T12:00:00Z",
+            retry_policy="idempotent",
+            security_context="mTLS",
+            tenant_id="tenant-a",
+            project_id="project-x",
+        ),
+    )
+
+    response = stub.CompileJob(request)
+
+    assert response.metadata["request_id"] == "req-123"
+    assert response.metadata["trace_id"] == "trace-456"
+    assert response.metadata["tenant_id"] == "tenant-a"
+    assert response.metadata["project_id"] == "project-x"
+    assert response.metadata["source_precedence"] == "source"
+    assert response.metadata["options_json"] == '{"alpha":"1","beta":"2"}'
+
+    expected_request_digest = hashlib.sha256(
+        json.dumps(
+            {
+                "options": {"alpha": "1", "beta": "2"},
+                "request_context": {
+                    "deadline": "2026-06-06T12:00:00Z",
+                    "project_id": "project-x",
+                    "request_id": "req-123",
+                    "retry_policy": "idempotent",
+                    "security_context": "mTLS",
+                    "tenant_id": "tenant-a",
+                    "trace_id": "trace-456",
+                    "traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01",
+                },
+                "source_precedence": "source",
+                "source_ref": "qfs://jobs/job-123/input/program.eigen.py",
+                "source_sha256": hashlib.sha256(source).hexdigest(),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+    assert response.metadata["request_sha256"] == expected_request_digest
+
+
+def test_source_ref_is_resolved_from_qfs_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source = (
+        b"from eigen_lang import hybrid_program\n\n"
+        b"@hybrid_program(target=\"sim\", shots=1000)\n"
+        b"def main():\n"
+        b"    ry(0, theta=1.0)\n"
+    )
+    qfs_root = tmp_path / "circuit_fs"
+    program_path = qfs_root / "jobs" / "job-1" / "input" / "program.eigen.py"
+    program_path.parent.mkdir(parents=True)
+    program_path.write_bytes(source)
+    monkeypatch.setenv("EIGEN_QFS_ROOT", str(qfs_root))
+
+    from_ref = compile_eigen_lang(b"", source_ref="jobs/job-1/input/program.eigen.py")
+    direct = compile_eigen_lang(source)
+    with_source_and_ref = compile_eigen_lang(
+        source,
+        source_ref="jobs/job-1/input/program.eigen.py",
+    )
+
+    assert from_ref.aqo_json == direct.aqo_json
+    assert from_ref.metadata["source_precedence"] == "source_ref"
+    assert with_source_and_ref.aqo_json == direct.aqo_json
+    assert with_source_and_ref.metadata["source_precedence"] == "source"
+
+
 @pytest.mark.parametrize("case_file", sorted(NEGATIVE_ROOT.glob("*/request.json")), ids=lambda p: p.parent.name)
 def test_negative_cases_return_expected_validation_errors(grpc_addr: str, case_file: Path) -> None:
     case = json.loads(case_file.read_text(encoding="utf-8"))
