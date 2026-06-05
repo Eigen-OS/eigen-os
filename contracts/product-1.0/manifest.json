@@ -28,7 +28,7 @@
         "src/rust/apps/cli/tests/",
         "buf lint",
         "buf breaking",
-        "docs/development/product-1.0-wave-1-compatibility-report.md"
+        "docs/development/wave-1/product-1.0-wave-1-compatibility-report.md"
       ],
       "implementation_status": "implemented",
       "compatibility_status": "compatible"
