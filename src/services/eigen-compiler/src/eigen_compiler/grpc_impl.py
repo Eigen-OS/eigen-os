@@ -185,6 +185,7 @@ class CompilationService:
             source,
             source_ref=source_ref,
             options=options,
+            request_context=request_context,
             observer=self._stage_observer(
                 rpc=rpc,
                 request_context=request_context or {},
