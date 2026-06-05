@@ -48,7 +48,7 @@ def test_compile_circuit_happy_path(grpc_addr: str) -> None:
     )
 
     assert resp.circuit.format == _enum_value(types_pb, "CIRCUIT_FORMAT_AQO_JSON", "AQO_JSON")
-    assert resp.metadata["aqo_version"] == "0.1"
+    assert resp.metadata["aqo_version"] == "1.0.0"
     assert len(resp.circuit.data) > 0
     assert resp.metadata["distributed.execution_metadata_version"] == "1.0.0"
     assert resp.metadata["distributed.enabled"] == "false"

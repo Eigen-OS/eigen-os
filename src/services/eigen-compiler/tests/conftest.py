@@ -31,6 +31,12 @@ def compiler_server() -> Iterator[tuple[str, str, object]]:
         metrics_server.server_close()
     server.stop(grace=None)
 
+@pytest.fixture(autouse=True)
+def _reset_compiler_metrics_between_tests() -> Iterator[None]:
+    reset_metrics()
+    yield
+    reset_metrics()
+
 @pytest.fixture(scope="module")
 def grpc_addr(compiler_server: tuple[str, str, object]) -> Iterator[str]:
     yield compiler_server[0]
