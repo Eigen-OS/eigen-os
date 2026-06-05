@@ -18,6 +18,7 @@ ensure_generated()
 
 from eigen.internal.v1 import compilation_service_pb2 as comp_pb  # noqa: E402
 from eigen.internal.v1 import compilation_service_pb2_grpc as comp_pb_grpc  # noqa: E402
+from eigen.internal.v1 import kernel_gateway_pb2 as kernel_pb  # noqa: E402
 
 TESTS_ROOT = Path(__file__).parent
 GOLDEN_ROOT = TESTS_ROOT / "golden"
@@ -181,7 +182,7 @@ def test_compile_job_request_metadata_is_propagated(grpc_addr: str) -> None:
         source=source,
         source_ref="qfs://jobs/job-123/input/program.eigen.py",
         options={"beta": "2", "alpha": "1"},
-        request_metadata=comp_pb.CompilerRequestMetadata(
+        request_metadata=kernel_pb.RequestMetadata(
             request_id="req-123",
             trace_id="trace-456",
             traceparent="00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01",

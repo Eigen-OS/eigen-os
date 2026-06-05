@@ -31,6 +31,7 @@ def _default_proto_files(proto_root: Path) -> list[Path]:
     return sorted(
         [
             proto_root / "eigen" / "internal" / "v1" / "types.proto",
+            proto_root / "eigen" / "internal" / "v1" / "kernel_gateway.proto",
             proto_root / "eigen" / "internal" / "v1" / "compilation_service.proto",
         ]
     )
@@ -49,8 +50,11 @@ def ensure_generated(files: Iterable[Path] | None = None) -> None:
     if files is None:
         files = _default_proto_files(paths.proto_root)
 
-    sentinel = paths.out_dir / "eigen" / "internal" / "v1" / "compilation_service_pb2.py"
-    if sentinel.exists():
+    sentinels = [
+        paths.out_dir / "eigen" / "internal" / "v1" / "compilation_service_pb2.py",
+        paths.out_dir / "eigen" / "internal" / "v1" / "kernel_gateway_pb2.py",
+    ]
+    if all(path.exists() for path in sentinels):
         return
 
     try:
