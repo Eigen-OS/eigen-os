@@ -8,6 +8,7 @@ from typing import Iterator
 import pytest
 
 from eigen_compiler.grpc_server import serve
+from eigen_compiler.grpc_impl import reset_metrics
 
 
 def _free_port() -> int:
@@ -18,6 +19,7 @@ def _free_port() -> int:
 
 @pytest.fixture(scope="module")
 def compiler_server() -> Iterator[tuple[str, str, object]]:
+    reset_metrics()
     grpc = f"127.0.0.1:{_free_port()}"
     metrics = f"127.0.0.1:{_free_port()}"
     server = serve(bind=grpc, metrics_bind=metrics)

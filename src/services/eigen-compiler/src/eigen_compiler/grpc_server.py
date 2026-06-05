@@ -10,8 +10,7 @@ import threading
 
 import grpc
 
-from .grpc_impl import CompilationService
-from .grpc_impl import CompilationService, render_metrics_text
+from .grpc_impl import CompilationService, render_metrics_text, reset_metrics
 from .proto_gen import ensure_generated
 
 _LOG = logging.getLogger("eigen_compiler")
@@ -41,6 +40,7 @@ def _start_metrics_server(bind: str) -> ThreadingHTTPServer:
 
 
 def serve(bind: str | None = None, metrics_bind: str | None = None) -> grpc.Server:
+    reset_metrics()
     ensure_generated()
 
     from eigen.internal.v1 import compilation_service_pb2 as comp_pb

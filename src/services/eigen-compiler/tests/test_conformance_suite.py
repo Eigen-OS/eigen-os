@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 from pathlib import Path
+from datetime import timedelta
 from urllib.request import urlopen
 
 import grpc
@@ -186,7 +187,7 @@ def test_compile_job_request_metadata_is_propagated(grpc_addr: str) -> None:
             request_id="req-123",
             trace_id="trace-456",
             traceparent="00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01",
-            deadline="2026-06-06T12:00:00Z",
+            deadline=timedelta(seconds=30),
             retry_policy="idempotent",
             security_context="mTLS",
             tenant_id="tenant-a",
