@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from datetime import timedelta
 import logging
 import re
 import threading
@@ -139,8 +140,16 @@ def _request_context_from_rpc(request, context: grpc.ServicerContext) -> dict[st
             if value:
                 return value
         return rpc_md.get(header_key, "")
+    
+    def stringify_deadline(value) -> str:
+        if not value:
+            return ""
+        if hasattr(value, "seconds") and hasattr(value, "nanos"):
+            microseconds = int(getattr(value, "nanos", 0)) // 1000
+            return str(timedelta(seconds=int(getattr(value, "seconds", 0)), microseconds=microseconds))
+        return str(value)
 
-    deadline = pick("deadline", "x-eigen-deadline")
+    deadline = stringify_deadline(pick("deadline", "x-eigen-deadline"))
     if not deadline:
         remaining = context.time_remaining()
         if remaining is not None:
