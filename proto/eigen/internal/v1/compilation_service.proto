@@ -26,7 +26,7 @@ message CompileCircuitRequest {
   bytes source = 2;
   map<string, string> options = 3;
   string source_ref = 4; // QFS ref
-  RequestMetadata request_metadata = 5;
+  CompilerRequestMetadata request_metadata = 5;
 }
 
 message CompileCircuitResponse {
@@ -40,7 +40,7 @@ message CompileJobRequest {
   bytes source = 3;
   string source_ref = 4; // QFS ref
   map<string, string> options = 5;
-  RequestMetadata request_metadata = 6;
+  CompilerRequestMetadata request_metadata = 6;
 }
 
 message CompileJobResponse {
@@ -63,7 +63,7 @@ message ValidateCircuitRequest {
   string language = 1;
   bytes source = 2;
   map<string, string> options = 3;
-  RequestMetadata request_metadata = 4;
+  CompilerRequestMetadata request_metadata = 4;
 }
 
 message ValidateCircuitResponse {
