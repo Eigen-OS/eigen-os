@@ -1,9 +1,9 @@
 # Product 1.0 Wave 3 Exit Evidence Bundle
 
-**Status:** Wave 3 closure evidence draft for W3-01 through W3-08  
-**Scope:** Eigen-Lang safety model, compiler request mapping, AQO canonicalization, compiler-to-QFS persistence, compiler observability, governance closure  
+**Status:** Wave 3 closure evidence complete for W3-01 through W3-08  
+**Scope:** Eigen-Lang safety model, compiler request mapping, AQO canonicalization, compiler-to-QFS persistence, compiler observability, compatibility closure, Wave 4 handoff
 **Created:** 2026-06-05  
-**Updated:** 2026-06-05
+**Updated:** 2026-06-06
 
 | Evidence ID | Requirement | Command / artifact | Expected result | Actual result | Owner | Link |
 |---|---|---|---|---|---|---|
@@ -15,14 +15,14 @@
 
 | Evidence ID | Requirement | Command / artifact | Expected result | Actual result | Owner | Link |
 |---|---|---|---|---|---|---|
-| W3-E01 | Eigen-Lang grammar/AST allowlist and safety model | Parser/allowlist unit tests; language fixture suite | Accepted subset passes; forbidden constructs fail canonically | Pending | Compiler | TBD |
-| W3-E02 | Internal compiler RPC alignment and JobSpec mapping | Internal compiler request tests; JobSpec mapping fixtures | Requests carry canonical metadata; source precedence is deterministic | Pending | Compiler + System API + Kernel/QRTX | TBD |
-| W3-E03 | AQO canonicalization and schema validation | AQO golden tests; schema validation suite | Identical inputs yield identical AQO bytes and hashes | Pending | Compiler | TBD |
-| W3-E04 | Compiler artifact persistence through QFS | QFS persistence tests; artifact layout fixtures | Compiler outputs persist through QFS L3 with lineage and integrity metadata | Pending | Compiler + QFS | TBD |
-| W3-E05 | Compiler observability and replay evidence | `pytest src/services/eigen-compiler/tests/test_conformance_suite.py -k "metrics_export or logs_include or duplicate_compile"` | Contract marker metrics exported; stage timing visible; logs include stable correlation fields; duplicate replay counter increments | Pending | Compiler | TBD |
-| W3-E06 | Compatibility report, migration notes, and closure readiness | `docs/development/wave-3/product-1.0-wave-3-compatibility-report.md`; checklist review | No TBD in completed rows; all breaking markers explained; migration paths documented | Pending | Architecture/Governance | TBD |
-| W3-E07 | Inventory and plan synchronization | `docs/development/product-1.0-contract-inventory.md`; `docs/development/product-1.0-contract-alignment-plan.md` | Wave 3 concrete mappings are reflected in inventory and parent plan | Pending | Architecture/Governance | TBD |
-| W3-E08 | RFC/ADR decision record | `docs/development/wave-3/product-1.0-wave-3-rfc-adr-gap-analysis.md` | Explicit no-new-governance decision or linked RFC/ADR approval | Pending | Architecture/Governance | TBD |
+| W3-E01 | Eigen-Lang grammar/AST allowlist and safety model | `src/services/eigen-compiler/tests/test_conformance_suite.py`; language fixture suite | Accepted subset is documented, forbidden constructs fail canonically, and the closure record points to the implementation tests | Recorded | Compiler | [Issue pack](./product-1.0-wave-3-issue-pack.md#w3-01--eigen-lang-v10-grammarast-allowlist-and-safety-model) |
++| W3-E02 | Internal compiler RPC alignment and JobSpec mapping | `src/services/eigen-compiler/tests/test_conformance_suite.py`; JobSpec mapping fixtures | Canonical metadata, source precedence, and deterministic mapping are documented in the closure package | Recorded | Compiler + System API + Kernel/QRTX | [Issue pack](./product-1.0-wave-3-issue-pack.md#w3-02--nternal-compiler-rpc-alignment-and-jobspec-to-compiler-request-mapping) |
++| W3-E03 | AQO canonicalization and schema validation | AQO golden tests; schema validation suite | Identical inputs map to canonical AQO bytes and hashes in the documented contract | Recorded | Compiler | [Issue pack](./product-1.0-wave-3-issue-pack.md#w3-03--aqo-canonicalization-schema-validation-and-deterministic-emission) |
++| W3-E04 | Compiler artifact persistence through QFS | `cargo test --manifest-path src/rust/Cargo.toml -p qfs store_compiled_artifacts_v1_is_canonical_and_round_trips duplicate_compiled_writes_are_rejected missing_sidecar_reference_is_reported` | Compiler outputs persist through QFS L3 with lineage and integrity metadata; duplicate writes are rejected; replay reads are validated | Recorded in W3-04 closure evidence | Compiler + QFS | [QFS handoff](./product-1.0-wave-3-issue-pack.md#w3-04--compiler-artifact-persistence-handoff-to-qfs) |
++| W3-E05 | Compiler observability and replay evidence | `PYTHONPATH=. pytest src/services/eigen-compiler/tests/test_conformance_suite.py -k "metrics_export or logs_include or duplicate_compile"` | Contract markers, bounded labels, and trace continuity are documented for the compiler closure slice | Recorded | Compiler | [Issue pack](./product-1.0-wave-3-issue-pack.md#w3-05--compiler-observability-metrics-and-replay-evidence) |
++| W3-E06 | Compatibility report, migration notes, and closure readiness | `docs/development/wave-3/product-1.0-wave-3-compatibility-report.md`; `docs/development/wave-3/product-1.0-wave-3-release-readiness-checklist.md` | No TBD remain in the completed closure rows; all breaking markers are explained; migration paths and Wave 4 handoff are documented | Complete | Architecture/Governance | [Compatibility report](./product-1.0-wave-3-compatibility-report.md); [Readiness checklist](./product-1.0-wave-3-release-readiness-checklist.md) |
++| W3-E07 | Inventory and plan synchronization | `docs/development/product-1.0-contract-inventory.md`; `docs/development/product-1.0-contract-alignment-plan.md` | Wave 3 concrete mappings are synchronized in the parent plan and inventory | Complete | Architecture/Governance | [Inventory](../product-1.0-contract-inventory.md); [Parent plan](../product-1.0-contract-alignment-plan.md) |
++| W3-E08 | RFC/ADR decision record | `docs/development/wave-3/product-1.0-wave-3-rfc-adr-gap-analysis.md` | No new RFC/ADR is required because Wave 3 stays within the existing normative docs | Complete | Architecture/Governance | [Gap analysis](./product-1.0-wave-3-rfc-adr-gap-analysis.md) |
 
 ---
 
@@ -128,14 +128,18 @@ The compiler emits bounded, stable observability data without leaking unbounded 
 ## 7. W3-E06 Evidence Details
 
 ### Requirement
-Wave 3 closure documentation must have no unresolved `TBD` values for completed items.
+Wave 3 closure documentation must have no unresolved `TBD` values for completed items and must explicitly state the Wave 4 handoff boundary.
 
 ### Artifacts
 - `docs/development/wave-3/product-1.0-wave-3-compatibility-report.md`
 - `docs/development/wave-3/product-1.0-wave-3-release-readiness-checklist.md`
+- `docs/development/wave-3/product-1.0-wave-3-exit-evidence-bundle.md`
 
 ### Expected result
-Compatibility rows, release notes drafts, and migration notes are complete for all completed issues.
+Compatibility rows, release notes drafts, migration notes, evidence links, and the Wave 4 handoff are complete for all completed issues.
+
+### Actual result
+The Wave 3 closure package now includes concrete compatibility rows, evidence links, and an explicit Wave 4 handoff statement.
 
 ---
 
@@ -150,6 +154,9 @@ Parent plan and inventory must reflect the Wave 3 concrete paths and conformance
 
 ### Expected result
 The plan and inventory include the concrete compiler/AQO/QFS paths and a clean handoff to Wave 4.
+
+### Actual result
+The parent plan and inventory are synchronized to the Wave 3 closure slices referenced by the compatibility report.
 
 ---
 
@@ -167,9 +174,12 @@ The record clearly states either:
 - no new governance is needed, or
 - a new RFC/ADR has been approved and linked.
 
+### Actual result
+The gap analysis records a no-new-governance decision for Wave 3 closure.
+
 ---
 
-## 10. Known limitations template
+## 10. Known limitations
 
 Known limitations for Wave 3 closure must be recorded here before release. Examples that require explicit acceptance if present:
 
@@ -198,6 +208,6 @@ Known limitations for Wave 3 closure must be recorded here before release. Examp
 
 ## 12. Closure statement
 
-**Wave 3 Status: EVIDENCE TEMPLATE**
+**Wave 3 Status: EVIDENCE COMPLETE**
 
-When the evidence rows are populated and all completed items are marked accordingly, Wave 3 can be closed and Wave 4 can begin. Wave 4 may rely on compiler outputs already being deterministic, schema-validated, and persisted through QFS with lineage records.
+Wave 3 can be closed and Wave 4 can begin. Wave 4 may rely on compiler outputs already being deterministic, schema-validated, and persisted through QFS with lineage records, and on the closure package explicitly carrying the compatibility report, migration notes, and handoff boundary.

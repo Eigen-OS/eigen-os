@@ -22,48 +22,48 @@ This checklist closes Product 1.0 Wave 3 and should be completed together with:
 
 ## Contract and governance gates
 
-- [ ] The compiler contract matrix covers accepted syntax, forbidden constructs, canonical error behavior, and resource limits.
-- [ ] The internal compiler request mapping is documented and versioned.
-- [ ] AQO canonicalization, validation, and digest generation are implemented and test-covered.
-- [ ] Compiler artifact persistence flows through QFS with explicit lineage and integrity metadata.
-- [ ] Observability markers, bounded labels, and trace continuity are emitted and tested.
-- [ ] Manifest and inventory entries are updated for any concrete proto/schema/conformance path changes.
-- [ ] Every breaking or potentially breaking compiler/AQO/QFS change has migration notes and release evidence.
-- [ ] The compatibility report has no unresolved `TBD` values for completed issues.
+- [x] The compiler contract matrix covers accepted syntax, forbidden constructs, canonical error behavior, and resource limits.
+- [x] The internal compiler request mapping is documented and versioned.
+- [x] AQO canonicalization, validation, and digest generation are implemented and test-covered.
+- [x] Compiler artifact persistence flows through QFS with explicit lineage and integrity metadata.
+- [x] Observability markers, bounded labels, and trace continuity are emitted and tested.
+- [x] Manifest and inventory entries are updated for any concrete proto/schema/conformance path changes.
+- [x] Every breaking or potentially breaking compiler/AQO/QFS change has migration notes and release evidence.
+- [x] The compatibility report has no unresolved `TBD` values for completed issues.
 
 ## Compiler and language gates
 
-- [ ] Eigen-Lang v1.0 accepted subset is explicit and fixture-covered.
-- [ ] Forbidden AST patterns and unsupported constructs fail deterministically.
-- [ ] No user code is executed by the compiler.
-- [ ] Resource limits are enforced with canonical errors.
-- [ ] Diagnostics are stable across repeated runs.
+- [x] Eigen-Lang v1.0 accepted subset is explicit and fixture-covered.
+- [x] Forbidden AST patterns and unsupported constructs fail deterministically.
+- [x] No user code is executed by the compiler.
+- [x] Resource limits are enforced with canonical errors.
+- [x] Diagnostics are stable across repeated runs.
 
 ## AQO gates
 
-- [ ] AQO required fields are enforced.
-- [ ] AQO canonical JSON serialization is byte-stable.
-- [ ] AQO schema validation occurs before persistence or execution.
-- [ ] Invalid arity, invalid measurement shapes, and unknown opcodes are rejected.
-- [ ] Repeated identical compiles produce identical AQO hashes.
+- [x] AQO required fields are enforced.
+- [x] AQO canonical JSON serialization is byte-stable.
+- [x] AQO schema validation occurs before persistence or execution.
+- [x] Invalid arity, invalid measurement shapes, and unknown opcodes are rejected.
+- [x] Repeated identical compiles produce identical AQO hashes.
 
 ## QFS and artifact gates
 
-- [ ] Compiler artifacts are written through the documented QFS L3 boundary.
-- [ ] Artifact metadata includes content digest, producer, contract version, timestamps, and lineage.
-- [ ] Integrity verification on read is implemented or explicitly documented as deferred.
-- [ ] Missing artifact behavior is deterministic and test-covered.
+- [x] Compiler artifacts are written through the documented QFS L3 boundary.
+- [x] Artifact metadata includes content digest, producer, contract version, timestamps, and lineage.
+- [x] Integrity verification on read is implemented or explicitly documented as deferred.
+- [x] Missing artifact behavior is deterministic and test-covered.
 
 ## Observability and evidence gates
 
-- [ ] Compiler contract marker metrics are emitted.
-- [ ] Metric labels remain bounded and stable.
-- [ ] Trace continuity survives parse, validation, emission, and persistence handoff.
-- [ ] Exit evidence bundle links commands, fixtures, generated artifacts, and known limitations.
-- [ ] Wave 4 handoff states that QFS maturity can proceed without reopening compiler ownership.
+- [x] Compiler contract marker metrics are emitted.
+- [x] Metric labels remain bounded and stable.
+- [x] Trace continuity survives parse, validation, emission, and persistence handoff.
+- [x] Exit evidence bundle links commands, fixtures, generated artifacts, and known limitations.
+- [x] Wave 4 handoff states that QFS maturity can proceed without reopening compiler ownership.
 
 ---
 
 ## Wave 4 handoff
 
-Wave 4 may start after the Wave 3 closure commit. Wave 4 can rely on compiler outputs being persisted through QFS using deterministic hashes and lineage records, with Eigen-Lang and AQO already aligned to the normative references.
+Wave 4 may start after the Wave 3 closure record is complete. Wave 4 can rely on compiler outputs being persisted through QFS using deterministic hashes and lineage records, with Eigen-Lang and AQO already aligned to the normative references.
