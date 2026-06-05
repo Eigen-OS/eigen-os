@@ -872,7 +872,7 @@ mod layout_tests {
 
         assert_eq!(compiled.aqo_json, aqo);
         assert_eq!(compiled.qasm, Some(qasm.to_vec()));
-        assert_eq!(compiled.metadata.version, "0.1");
+        assert_eq!(compiled.metadata.version, "1.0.0");
         assert_eq!(compiled.metadata.version, "1.0.0");
         assert_eq!(compiled.metadata.schema_version, "compiled_artifacts.v1");
         assert_eq!(compiled.metadata.compiler_version, "eigen-lang@0.1.0");

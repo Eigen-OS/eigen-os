@@ -538,7 +538,7 @@ def compile_eigen_lang(
         "eigen_dpda",
         observer,
         lambda: {
-            "version": "AQO_VERSION",
+            "version": AQO_VERSION,
             "qubits": qubits,
             "operations": operations,
         },

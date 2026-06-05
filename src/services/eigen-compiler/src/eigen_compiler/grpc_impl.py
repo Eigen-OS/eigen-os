@@ -79,6 +79,17 @@ def _record_replay(kind: str = "duplicate") -> None:
     _bump(_REPLAY_TOTALS, kind=kind)
 
 
+def reset_metrics() -> None:
+    with _METRIC_LOCK:
+        _RPC_TOTALS.clear()
+        _STAGE_COUNT_TOTALS.clear()
+        _STAGE_SECONDS_TOTALS.clear()
+        _VALIDATION_FAILURE_TOTALS.clear()
+        _AQO_DIGEST_TOTALS.clear()
+        _REPLAY_TOTALS.clear()
+        _SEEN_AQO_DIGESTS.clear()
+
+
 def _validation_reason(violations) -> str:
     text = " ".join(v.description for v in violations).lower()
     if "not found" in text:
