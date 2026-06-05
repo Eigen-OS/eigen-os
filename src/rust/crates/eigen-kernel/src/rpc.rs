@@ -2923,7 +2923,6 @@ mod tests {
     #[tokio::test]
     async fn cancellation_while_finalizing_keeps_canonical_terminal_state() {
         let (svc, runtime) = make_service_with_hold(None, Some(DagStageKind::Finalize), Duration::from_millis(80));
-         let response = svc
         let response = svc
             .enqueue_job(Request::new(make_request("finalize-cancel")))
             .await
@@ -2933,8 +2932,6 @@ mod tests {
         let _ = svc.cancel_job(Request::new(make_cancel_request(&response.job_id))).await;
         let job = wait_for_terminal(runtime, &response.job_id).await;
         assert!(matches!(job.state, TaskState::Cancelled | TaskState::Done));
-        std::env::remove_var("EIGEN_KERNEL_TEST_HOLD_STAGE");
-        std::env::remove_var("EIGEN_KERNEL_TEST_HOLD_MS");
     }
 
     #[tokio::test]
