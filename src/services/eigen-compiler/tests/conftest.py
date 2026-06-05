@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import socket
 import time
 from typing import Iterator
@@ -16,9 +17,23 @@ def _free_port() -> int:
 
 
 @pytest.fixture(scope="module")
-def grpc_addr() -> Iterator[str]:
-    addr = f"127.0.0.1:{_free_port()}"
-    server = serve(bind=addr)
+def compiler_server() -> Iterator[tuple[str, str, object]]:
+    grpc = f"127.0.0.1:{_free_port()}"
+    metrics = f"127.0.0.1:{_free_port()}"
+    server = serve(bind=grpc, metrics_bind=metrics)
     time.sleep(0.05)
-    yield addr
+    yield grpc, metrics, server
+    metrics_server = getattr(server, "_metrics_http_server", None)
+    if metrics_server is not None:
+        metrics_server.shutdown()
+        metrics_server.server_close()
     server.stop(grace=None)
+
+@pytest.fixture(scope="module")
+def grpc_addr(compiler_server: tuple[str, str, object]) -> Iterator[str]:
+    yield compiler_server[0]
+
+
+@pytest.fixture(scope="module")
+def metrics_addr(compiler_server: tuple[str, str, object]) -> Iterator[str]:
+    yield compiler_server[1]

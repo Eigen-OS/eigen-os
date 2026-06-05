@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from pathlib import Path
+from urllib.request import urlopen
 
 import grpc
 import pytest
@@ -277,3 +279,101 @@ def test_negative_cases_return_expected_validation_errors(grpc_addr: str, case_f
     assert exc.value.code().name == expected["code"]
     bad_request = _extract_bad_request(exc.value)
     assert sorted(v.field for v in bad_request.field_violations) == sorted(expected["fields"])
+
+
+def test_compiler_metrics_export_contains_contract_marker_and_stage_samples(
+    grpc_addr: str,
+    metrics_addr: str,
+) -> None:
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = comp_pb_grpc.CompilationServiceStub(channel)
+    source = (
+        b"from eigen_lang import hybrid_program\n\n"
+        b"@hybrid_program(target=\"sim\", shots=1000)\n"
+        b"def main():\n"
+        b"    ry(0, theta=1.0)\n"
+    )
+    metadata = [
+        ("x-eigen-request-id", "req-obs-1"),
+        ("x-eigen-trace-id", "trace-obs-1"),
+        ("traceparent", "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"),
+    ]
+    stub.CompileJob(
+        comp_pb.CompileJobRequest(
+            job_id="job-obs-1",
+            language="eigen-lang",
+            source=source,
+            options={},
+        ),
+        metadata=metadata,
+    )
+
+    metrics = urlopen(f"http://{metrics_addr}/metrics", timeout=3).read().decode("utf-8")
+    assert 'eigen_compiler_contract_info{version="1.0.0"} 1' in metrics
+    assert 'eigen_compiler_rpc_total{outcome="success",rpc="CompileJob"} 1' in metrics
+    assert 'eigen_compiler_stage_duration_seconds_count{outcome="success",stage="parse"}' in metrics
+    assert "x-eigen-request-id" not in metrics
+    assert "trace-obs-1" not in metrics
+
+
+def test_compiler_logs_include_stable_correlation_fields(
+    grpc_addr: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger="eigen_compiler")
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = comp_pb_grpc.CompilationServiceStub(channel)
+    source = (
+        b"from eigen_lang import hybrid_program\n\n"
+        b"@hybrid_program(target=\"sim\", shots=1000)\n"
+        b"def main():\n"
+        b"    ry(0, theta=1.0)\n"
+    )
+    metadata = [
+        ("x-eigen-request-id", "req-log-1"),
+        ("x-eigen-trace-id", "trace-log-1"),
+        ("traceparent", "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"),
+    ]
+    stub.CompileJob(
+        comp_pb.CompileJobRequest(
+            job_id="job-log-1",
+            language="eigen-lang",
+            source=source,
+            options={},
+        ),
+        metadata=metadata,
+    )
+
+    rpc_start = [r for r in caplog.records if r.message == "rpc_start"]
+    rpc_end = [r for r in caplog.records if r.message == "rpc_end"]
+    stage_logs = [r for r in caplog.records if r.message == "compiler_stage"]
+
+    assert rpc_start
+    assert rpc_end
+    assert stage_logs
+    assert any(r.request_id == "req-log-1" and r.trace_id == "trace-log-1" for r in rpc_start)
+    assert any(r.request_id == "req-log-1" and r.trace_id == "trace-log-1" for r in stage_logs)
+
+
+def test_duplicate_compile_is_counted_as_replay(grpc_addr: str, metrics_addr: str) -> None:
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = comp_pb_grpc.CompilationServiceStub(channel)
+    source = (
+        b"from eigen_lang import hybrid_program\n\n"
+        b"@hybrid_program(target=\"sim\", shots=1000)\n"
+        b"def main():\n"
+        b"    ry(0, theta=1.0)\n"
+    )
+
+    request = comp_pb.CompileCircuitRequest(
+        language="eigen-lang",
+        source=source,
+        options={},
+    )
+    first = stub.CompileCircuit(request)
+    second = stub.CompileCircuit(request)
+    assert first.metadata["aqo_sha256"] == second.metadata["aqo_sha256"]
+
+    metrics = urlopen(f"http://{metrics_addr}/metrics", timeout=3).read().decode("utf-8")
+    assert 'eigen_compiler_replay_compiles_total{kind="duplicate"} 1' in metrics
+    

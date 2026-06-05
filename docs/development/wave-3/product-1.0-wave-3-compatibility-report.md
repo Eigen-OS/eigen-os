@@ -6,6 +6,7 @@
 | Issue | Version Impact | Affected Interfaces | Compatibility | Breaking Marker | Migration Notes | Release Notes Draft | Evidence |
 |---|---|---|---|---|---|---|---|
 | W3-04 Compiler artifact persistence handoff to QFS | MINOR | Compiler contract; QFS; compiler metadata; compiled artifact layout | Backward-compatible | false | None | Added: QFS v1 compiled artifact metadata, lineage, and immutable sidecar write behavior; Changed: compiler persistence now uses canonical compiled artifact names; Fixed: duplicate-write and missing-sidecar handling | W3-E04 |
+| W3-05 Compiler observability, metrics, and replay evidence | MINOR | Metrics, tracing, compiler logs, compatibility matrix, migration docs | Backward-compatible | false | None | Added: compiler contract marker metrics, bounded stage timing, replay counter, stage correlation logs; Changed: compiler observability contract now has a dedicated reference; Fixed: replay/duplicate compile evidence is fixture-backed | W3-E05 |
 
 ## W3-04 closure requirements
 
@@ -14,6 +15,10 @@
 - Duplicate writes are rejected.
 - Replay reads are validated.
 - Sidecars are explicitly marked authoritative or advisory.
+- Contract marker metrics are present.
+- Trace continuity survives compilation.
+- Labels are bounded and stable.
+- Replay evidence is fixture-backed and test-covered.
 
 ---
 

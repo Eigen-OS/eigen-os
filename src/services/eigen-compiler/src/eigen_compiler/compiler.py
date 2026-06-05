@@ -8,6 +8,9 @@ import json
 import os
 from math import isfinite
 from dataclasses import dataclass, asdict
+from contextlib import contextmanager
+from time import perf_counter
+from typing import Callable, Iterator, TypeVar
 from pathlib import Path
 
 from .errors import FieldViolation
@@ -17,6 +20,9 @@ AQO_VERSION = "1.0.0"
 _ALLOWED_IMPORT_PREFIXES = ("eigen_lang",)
 _FORBIDDEN_MODULE_ROOTS = {"os", "sys", "subprocess"}
 _FORBIDDEN_CALLS = {"exec", "eval", "compile"}
+T = TypeVar("T")
+
+StageObserver = Callable[[str, float, str], None]
 _AQO_ALLOWED_TOP_LEVEL_FIELDS = {"version", "qubits", "operations", "parameters", "metadata", "checksums", "topology", "annotations"}
 _AQO_ALLOWED_OPS = {"RX", "RY", "RZ", "CX", "CZ", "SWAP", "CCX", "CCZ", "X", "Y", "Z", "H", "S", "T", "MEASURE", "RESET"}
 _AQO_ROTATION_OPS = {"RX", "RY", "RZ"}
@@ -54,6 +60,19 @@ class DistributedCompileConfig:
 @dataclass(frozen=True)
 class CompilerValidationError(Exception):
     violations: tuple[FieldViolation, ...]
+
+
+def _run_stage(stage: str, observer: StageObserver | None, fn: Callable[[], T]) -> T:
+    start = perf_counter()
+    try:
+        result = fn()
+    except Exception:
+        if observer is not None:
+            observer(stage, perf_counter() - start, "failure")
+        raise
+    if observer is not None:
+        observer(stage, perf_counter() - start, "success")
+    return result
 
 
 def _canonical_json_bytes(payload: dict[str, object]) -> bytes:
@@ -468,6 +487,7 @@ def compile_eigen_lang(
     *,
     source_ref: str | None = None,
     options: dict[str, str] | None = None,
+    observer: StageObserver | None = None,
     request_context: dict[str, str] | None = None,
 ) -> CompilationResult:
     """Compile source bytes into a canonical AQO v1.0 payload."""
@@ -476,34 +496,51 @@ def compile_eigen_lang(
     normalized_request_context = _normalize_request_context(request_context)
     resolved_source, source_precedence = _resolve_source_bytes(source, source_ref)
     source_digest = hashlib.sha256(resolved_source).hexdigest()
-    tree = _parse_python_source(resolved_source)
-    violations = (
-        _enforce_resource_limits(tree)
-        + _reject_forbidden_imports(tree)
-        + _reject_forbidden_calls(tree)
-        + _reject_dynamic_control_flow(tree)
-        + _validate_single_entrypoint(tree)
-    )
-    if violations:
-        raise CompilerValidationError(violations=violations)
-    params, param_violations = _collect_params(tree)
-    if param_violations:
-        raise CompilerValidationError(violations=param_violations)
-    operations, qubits = _collect_operations(tree, params)
-    has_minimize = any(
-        isinstance(node, ast.Call) and _call_name(node.func) == "minimize" for node in ast.walk(tree)
-    )
-    has_expectation = any(
-        isinstance(node, ast.Call) and _call_name(node.func) == "ExpectationValue"
-        for node in ast.walk(tree)
-    )
-    distributed = _distributed_compile_config(normalized_options)
+    tree = _run_stage("parse", observer, lambda: _parse_python_source(source))
 
-    aqo = {
-        "version": AQO_VERSION,
-        "qubits": qubits,
-        "operations": operations,
-    }
+    def _validate_tree() -> None:
+        violations = (
+            _enforce_resource_limits(tree)
+            + _reject_forbidden_imports(tree)
+            + _reject_forbidden_calls(tree)
+            + _reject_dynamic_control_flow(tree)
+            + _validate_single_entrypoint(tree)
+        )
+        if violations:
+            raise CompilerValidationError(violations=violations)
+
+    _run_stage("validate_ast", observer, _validate_tree)
+
+    def _annotate_tree() -> dict[str, str]:
+        params = _collect_params(tree)
+        return params
+
+    params = _run_stage("annotate", observer, _annotate_tree)
+    operations, qubits = _run_stage("lower_to_ir", observer, lambda: _collect_operations(tree, params))
+    has_minimize = _run_stage(
+        "eigen_dpda",
+        observer,
+        lambda: any(isinstance(node, ast.Call) and _call_name(node.func) == "minimize" for node in ast.walk(tree)),
+    )
+    has_expectation = _run_stage(
+        "eigen_dpda",
+        observer,
+        lambda: any(
+            isinstance(node, ast.Call) and _call_name(node.func) == "ExpectationValue"
+            for node in ast.walk(tree)
+        ),
+    )
+    distributed = _distributed_compile_config(options)
+
+    aqo = _run_stage(
+        "eigen_dpda",
+        observer,
+        lambda: {
+            "version": "AQO_VERSION",
+            "qubits": qubits,
+            "operations": operations,
+        },
+    )
     if params:
         aqo["parameters"] = {
             param["name"]: param["default"] for _, param in sorted(params.items(), key=lambda item: item[1]["name"])
@@ -525,7 +562,11 @@ def compile_eigen_lang(
         if distributed.queue_provider:
             aqo["distributed_execution"]["queue_provider"] = distributed.queue_provider
 
-    aqo_bytes = _encode_aqo_payload(aqo)
+    aqo_bytes = _run_stage(
+        "canonicalize_aqo",
+        observer,
+        lambda: json.dumps(aqo, sort_keys=True, separators=(",", ":")).encode("utf-8"),
+    )
     aqo_digest = hashlib.sha256(aqo_bytes).hexdigest()
     request_payload = {
         "options": normalized_options,

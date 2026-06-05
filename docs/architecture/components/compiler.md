@@ -42,13 +42,12 @@ The compiler MUST:
 4. Optionally produce additional artifacts (AQO protobuf, QASM export) **without changing AQO**.
 5. Emit structured diagnostics and deterministic error semantics.
 6. Persist compilation artifacts and metadata into QFS in the canonical layout (see `qfs-layout.md`).
-7. Preserve lineage and integrity metadata for compiled artifacts:
-   - content digests,
-   - producer identity,
-   - contract version,
-   - timestamps,
-   - request/source lineage,
-   - optional sidecar artifacts.
+7. Emit bounded observability markers and stage timing for:
+   - request validation,
+   - parsing,
+   - AST validation,
+   - AQO emission,
+   - replay/duplicate compile detection.
 
 The compiler MUST NEVER:
 
@@ -223,6 +222,14 @@ The compiler is stage-oriented. The pipeline MUST include the following stages, 
 8. **optional_optimize**: deterministic rewrite passes (if enabled; must be replay-safe).
 9. **optional_hardware_adapt**: hardware hints / placement (post-AQO, advisory).
 10. **emit**: write artifacts to QFS atomically; emit hashes.
+
+### Observability requirements
+
+- Stage labels MUST be bounded and stable.
+- Trace/request context MUST be preserved through compile stages.
+- Metric labels MUST NOT include request IDs, trace IDs, tenant IDs, or project IDs.
+- Duplicate/replay compiles MUST be observable via a bounded replay counter.
+- Compiler observability MUST conform to `docs/reference/compiler-observability-contract.md`.
 
 The compiler MUST surface stage timing and failures in structured logs and traces (see section 11).
 
