@@ -189,6 +189,47 @@ Violation MUST fail compilation with: `INVALID_ARGUMENT`
 
 ---
 
+### 6.1 Allowed decorators
+
+Only the Eigen-Lang entrypoint decorator is allowed in v1.0:
+
+```python
+@hybrid_program(...)
+```
+
+Any other decorator, including decorator factories, runtime-generated decorators, or decorator expressions that require evaluation, MUST fail compilation with `INVALID_ARGUMENT`.
+
+### 6.2 Allowed builtins
+
+Eigen-Lang v1.0 does not permit direct use of Python builtins as a runtime programming surface. The compiler may allow literal constructors and constant folding only when they are part of the statically analyzable AST subset.
+
+Forbidden builtin-style behaviors include:
+
+- `exec`
+- `eval`
+- `compile`
+- `globals`
+- `locals`
+- `getattr` with non-literal names
+
+### 6.3 Allowed expressions
+
+The allowed expression surface is limited to the closed AST subset documented below and the approved Eigen-Lang library calls used by that subset. In practice, this means:
+
+- literals,
+- identifiers,
+- restricted function calls into approved Eigen-Lang namespaces,
+- fixed-size list / tuple / dict construction,
+- limited arithmetic expressions,
+- no runtime control flow,
+- no dynamic attribute resolution,
+- no subscript-based metaprogramming,
+- no comprehension-based execution flow.
+
+Any expression outside this closed subset MUST fail compilation with `INVALID_ARGUMENT`.
+
+---
+
 ## 7. Allowed AST Subset
 
 ### 7.1 Allowed Nodes
@@ -216,6 +257,8 @@ The following AST nodes are allowed:
 
 ---
 
+The allowed AST set is closed for v1.0. Any AST node not explicitly listed above MUST be rejected.
+
 ### 7.2 Forbidden Nodes
 
 The following constructs are forbidden:
@@ -238,6 +281,22 @@ The following constructs are forbidden:
 Dynamic imports are forbidden.
 
 Undeclared identifiers are forbidden.
+
+---
+
+### 7.3 Canonical error mapping
+
+The compiler MUST use the following canonical mapping for Eigen-Lang v1.0 validation failures:
+
+| **Failure class** | **Canonical error** |
+|---|---|
+| Syntax error | `INVALID_ARGUMENT` |
+| Forbidden AST node | `INVALID_ARGUMENT` |
+| Forbidden import | `INVALID_ARGUMENT` |
+| Forbidden decorator | `INVALID_ARGUMENT` |
+| Unsupported feature | `UNIMPLEMENTED` |
+| Missing source artifact | `NOT_FOUND` |
+| Resource limit exceeded | `RESOURCE_EXHAUSTED` |
 
 ---
 

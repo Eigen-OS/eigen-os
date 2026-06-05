@@ -243,10 +243,10 @@ Product `1.0.0` is ready only when all of the following gates pass:
 7. Validate AQO against the reference format before returning/persisting.
 8. Persist compiler artifacts to QFS-L3 through the target QFS boundary, not ad-hoc local paths.
 9. Emit compile traces and metrics:
-   - compile duration,
-   - validation failures,
-   - deterministic digest,
-   - compiler contract version.
+    - compile duration,
+    - validation failures,
+    - deterministic digest,
+    - compiler contract version.
 10. Expand golden suite:
     - minimal circuit,
     - parameterized VQE,
@@ -255,12 +255,14 @@ Product `1.0.0` is ready only when all of the following gates pass:
     - unsupported target,
     - referenced artifact missing,
     - deterministic repeated compile.
+11. Close the Wave 3 contract inventory and compatibility rows for Eigen-Lang, compiler request mapping, AQO canonicalization, and compiler-to-QFS persistence.
 
 #### Exit criteria
 
 - Compiler is pure/deterministic and never executes user code.
 - AQO output is schema-validated and reproducible.
 - All compiler failures map to canonical errors.
+- Wave 3 documentation contains no unresolved `TBD` values for completed items.
 
 ---
 
