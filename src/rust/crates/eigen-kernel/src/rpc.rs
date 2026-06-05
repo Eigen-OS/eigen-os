@@ -2633,6 +2633,7 @@ mod tests {
                 subject: "alice".to_string(),
                 role: "user".to_string(),
                 source_service: "system-api".to_string(),
+                ..Default::default()
             }),
             name: name.to_string(),
             program: br#"{"qubits": 1, "parameters": [0.1]}"#.to_vec(),
@@ -2657,6 +2658,7 @@ mod tests {
                 subject: "alice".to_string(),
                 role: "user".to_string(),
                 source_service: "system-api".to_string(),
+                ..Default::default()
             }),
             job_id: job_id.to_string(),
         }
@@ -2713,6 +2715,7 @@ mod tests {
                     subject: "alice".to_string(),
                     role: "user".to_string(),
                     source_service: "system-api".to_string(),
+                    ..Default::default()
                 }),
                 job_id: response.job_id.clone(),
             }))
@@ -2757,6 +2760,7 @@ mod tests {
                     subject: "alice".to_string(),
                     role: "user".to_string(),
                     source_service: "system-api".to_string(),
+                    ..Default::default()
                 }),
                 job_id: response.job_id.clone(),
             }))
@@ -2872,6 +2876,7 @@ mod tests {
                 subject: "alice".to_string(),
                 role: "user".to_string(),
                 source_service: "system-api".to_string(),
+                ..Default::default()
             }),
             job_id: job_id.to_string(),
         }
@@ -2974,6 +2979,7 @@ mod tests {
                     subject: "alice".to_string(),
                     role: "user".to_string(),
                     source_service: "system-api".to_string(),
+                    ..Default::default()
                 }),
                 job_id: response.job_id.clone(),
                 last_event_seq: 0,

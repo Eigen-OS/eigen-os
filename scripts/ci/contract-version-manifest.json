@@ -27,7 +27,7 @@
     },
     {
       "path": "proto/eigen/internal/v1/kernel_gateway.proto",
-      "sha256": "26c24a3a1052d7ccd2f0781191fb1a3383e674325fe1d88a494f9369cde76989"
+      "sha256": "e688f29b5ccb0fead69bd4c9a4ec63899dfead8cdf96b510efffc4c05b014ad6"
     },
     {
       "path": "proto/eigen/internal/v1/types.proto",
