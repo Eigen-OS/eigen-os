@@ -1,6 +1,6 @@
 # Product 1.0 Contract Inventory
 
-**Status:** Wave 2-aligned inventory with concrete Kernel/QRTX slice mappings
+**Status:** Wave 3-aligned inventory with concrete Kernel/QRTX, compiler, and QFS slice mappings
 **Parent plan:** `docs/development/product-1.0-contract-alignment-plan.md`
 **Version policy:** `docs/development/product-1.0-version-policy.md`
 **Machine-readable manifest:** `contracts/product-1.0/manifest.json`
@@ -78,6 +78,14 @@ Implementation status values are `documented`, `partial`, `planned`, and `implem
 - **Runtime implementation:** `src/services/eigen-compiler`
 - **Coverage:** internal request validation, forbidden construct rejection, unsupported target rejection, missing source-reference handling
 - **Conformance evidence:** parser/validator fixtures and canonical error tests
+
+### 4.4 Wave 3 documentation sync artifacts
+
+- **Compatibility report:** `docs/development/wave-3/product-1.0-wave-3-compatibility-report.md`
+- **Exit evidence:** `docs/development/wave-3/product-1.0-wave-3-exit-evidence-bundle.md`
+- **Release readiness:** `docs/development/wave-3/product-1.0-wave-3-release-readiness-checklist.md`
+- **Governance review:** `docs/development/wave-3/product-1.0-wave-3-rfc-adr-gap-analysis.md`
+- **Coverage:** closure-level mapping for W3-06/W3-07/W3-08, with the parent plan, inventory, evidence bundle, and handoff notes synchronized to the compiler/AQO/QFS slices
 
 ## 5. Wave 2 concrete implementation slices
 

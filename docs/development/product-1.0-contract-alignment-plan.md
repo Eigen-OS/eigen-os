@@ -273,6 +273,15 @@ Product `1.0.0` is ready only when all of the following gates pass:
 - AQO validation occurs before persistence.
 - Canonical errors are returned for structural and semantic AQO violations.
 
+#### Concrete implementation artifacts
+
+The concrete Wave 3 mappings are captured in the inventory and closure package:
+
+- **Compiler safety / request shaping:** `src/services/eigen-compiler/tests/test_conformance_suite.py`, `proto/eigen/internal/v1/compilation_service.proto`
+- **AQO canonicalization:** `docs/reference/formats/aqo.md`, `src/services/eigen-compiler/tests/test_conformance_suite.py`
+- **QFS handoff:** `docs/reference/formats/qfs-layout.md`, `src/rust/crates/qfs/src/local_circuit_fs.rs`, `src/rust/crates/qfs/tests/`
+- **Wave 3 closure docs:** `docs/development/wave-3/product-1.0-wave-3-compatibility-report.md`, `docs/development/wave-3/product-1.0-wave-3-exit-evidence-bundle.md`, `docs/development/wave-3/product-1.0-wave-3-release-readiness-checklist.md`, `docs/development/wave-3/product-1.0-wave-3-rfc-adr-gap-analysis.md`
+
 ---
 
 ### Wave 4 — QFS data fabric maturity
