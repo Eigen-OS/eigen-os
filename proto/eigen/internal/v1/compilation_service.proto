@@ -11,6 +11,18 @@ option java_package = "com.eigen.api.internal.v1";
 
 // Internal compilation service contract.
 // Source of truth: RFC 0004 (CompilationService) + reference docs.
+
+message RequestMetadata {
+  string request_id = 1;
+  string trace_id = 2;
+  string traceparent = 3;
+  string deadline = 4;
+  string retry_policy = 5;
+  string security_context = 6;
+  string tenant_id = 7;
+  string project_id = 8;
+}
+
 service CompilationService {
   rpc CompileCircuit(CompileCircuitRequest) returns (CompileCircuitResponse);
   rpc CompileJob(CompileJobRequest) returns (CompileJobResponse);
@@ -21,11 +33,10 @@ service CompilationService {
 message CompileCircuitRequest {
   // Source language identifier, e.g. "eigen-lang" or "qasm3".
   string language = 1;
-  oneof input {
-    bytes source = 2;
-    string source_ref = 4; // QFS ref
-  }
+  bytes source = 2;
   map<string, string> options = 3;
+  string source_ref = 4; // QFS ref
+  RequestMetadata request_metadata = 5;
 }
 
 message CompileCircuitResponse {
@@ -36,11 +47,10 @@ message CompileCircuitResponse {
 message CompileJobRequest {
   string job_id = 1;
   string language = 2;
-  oneof input {
-    bytes source = 3;
-    string source_ref = 4; // QFS ref
-  }
+  bytes source = 3;
+  string source_ref = 4; // QFS ref
   map<string, string> options = 5;
+  RequestMetadata request_metadata = 6;
 }
 
 message CompileJobResponse {
@@ -63,6 +73,7 @@ message ValidateCircuitRequest {
   string language = 1;
   bytes source = 2;
   map<string, string> options = 3;
+  RequestMetadata request_metadata = 4;
 }
 
 message ValidateCircuitResponse {

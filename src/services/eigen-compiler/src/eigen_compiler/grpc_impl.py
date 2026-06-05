@@ -12,6 +12,39 @@ from .errors import abort_invalid_argument
 from .validation import validate_compile_circuit, validate_compile_job
 
 
+def _rpc_metadata_map(context: grpc.ServicerContext) -> dict[str, str]:
+    return {k.lower(): v for k, v in (context.invocation_metadata() or [])}
+
+
+def _request_context_from_rpc(request, context: grpc.ServicerContext) -> dict[str, str]:
+    rpc_md = _rpc_metadata_map(context)
+    request_md = request.request_metadata if request.HasField("request_metadata") else None
+
+    def pick(field: str, header_key: str) -> str:
+        if request_md is not None:
+            value = getattr(request_md, field, "")
+            if value:
+                return value
+        return rpc_md.get(header_key, "")
+
+    deadline = pick("deadline", "x-eigen-deadline")
+    if not deadline:
+        remaining = context.time_remaining()
+        if remaining is not None:
+            deadline = f"{remaining:.6f}s"
+
+    return {
+        "request_id": pick("request_id", "x-eigen-request-id"),
+        "trace_id": pick("trace_id", "x-eigen-trace-id"),
+        "traceparent": pick("traceparent", "traceparent"),
+        "deadline": deadline,
+        "retry_policy": pick("retry_policy", "x-eigen-retry-policy"),
+        "security_context": pick("security_context", "authorization"),
+        "tenant_id": pick("tenant_id", "x-eigen-tenant-id"),
+        "project_id": pick("project_id", "x-eigen-project-id"),
+    }
+
+
 def _circuit_format_value(types_pb, *names: str) -> int:
     for name in names:
         if hasattr(types_pb, name):
@@ -26,8 +59,8 @@ class CompilationService:
         self._comp_pb = comp_pb
         self._types_pb = types_pb
 
-    def _compile_response(self, *, source: bytes, source_ref: str | None = None, options: dict[str, str] | None = None):
-        result = compile_eigen_lang(source, source_ref=source_ref, options=options)
+    def _compile_response(self, *, source: bytes, source_ref: str | None = None, options: dict[str, str] | None = None, request_context: dict[str, str] | None = None):
+        result = compile_eigen_lang(source, source_ref=source_ref, options=options, request_context=request_context)
         return self._comp_pb.CompileCircuitResponse(
             circuit=self._types_pb.CircuitPayload(
                 format=_circuit_format_value(self._types_pb, "CIRCUIT_FORMAT_AQO_JSON", "AQO_JSON"),
@@ -42,10 +75,11 @@ class CompilationService:
         if violations:
             abort_invalid_argument(context, message="validation failed", violations=violations)
 
-        source = request.source if request.WhichOneof("input") == "source" else b""
-        source_ref = request.source_ref if request.WhichOneof("input") == "source_ref" else None
+        source = request.source if request.source else b""
+        source_ref = request.source_ref or None
+        request_context = _request_context_from_rpc(request, context)
         try:
-            resp = self._compile_response(source=source, source_ref=source_ref, options=dict(request.options))
+            resp = self._compile_response(source=source, source_ref=source_ref, options=dict(request.options), request_context=request_context)
             _log_end("CompilationService.CompileCircuit", "", context)
             return resp
         except CompilerValidationError as exc:
@@ -57,10 +91,11 @@ class CompilationService:
         if violations:
             abort_invalid_argument(context, message="validation failed", violations=violations)
 
-        source = request.source if request.WhichOneof("input") == "source" else b""
-        source_ref = request.source_ref if request.WhichOneof("input") == "source_ref" else None
+        source = request.source if request.source else b""
+        source_ref = request.source_ref or None
+        request_context = _request_context_from_rpc(request, context)
         try:
-            compiled = self._compile_response(source=source, source_ref=source_ref, options=dict(request.options))
+            compiled = self._compile_response(source=source, source_ref=source_ref, options=dict(request.options), request_context=request_context)
         except CompilerValidationError as exc:
             abort_invalid_argument(context, message="validation failed", violations=exc.violations)
 

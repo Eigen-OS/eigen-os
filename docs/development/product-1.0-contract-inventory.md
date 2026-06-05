@@ -22,7 +22,7 @@ Implementation status values are `documented`, `partial`, `planned`, and `implem
 | Public gRPC API (`eigen.api.v1`) | `1.0.0` target on namespace `v1` | System API; client SDKs/CLI | `docs/reference/api/grpc-public.md`; `docs/architecture/components/system-api.md` | `proto/eigen/api/v1/job_service.proto`; `proto/eigen/api/v1/device_service.proto`; `proto/eigen/api/v1/types.proto`; `proto/eigen/api/v1/knowledge_base_service.proto` | `src/services/system-api/tests/test_public_envelope_versioning.py`; `src/services/system-api/tests/test_idempotency.py`; `src/services/system-api/tests/test_public_error_conformance.py`; `src/services/system-api/tests/test_observability_smoke.py`; `src/rust/apps/cli/tests/`; `buf lint`; `buf breaking` | implemented | compatible |
 | Internal gRPC API (`eigen.internal.v1`) | `1.0.0` target on namespace `v1` | Kernel/QRTX; compiler; driver-manager; optimizer | `docs/reference/api/grpc-internal.md`; `docs/architecture/components/qrtx.md` | `proto/eigen/internal/v1/kernel_gateway.proto`; `proto/eigen/internal/v1/compilation_service.proto`; `proto/eigen/internal/v1/driver_manager_service.proto`; `proto/eigen/internal/v1/optimizer_service.proto`; `proto/eigen/internal/v1/types.proto` | `src/rust/crates/eigen-kernel/tests/` (planned Product 1.0 expansion); `src/services/eigen-compiler/tests/`; `buf lint`; `buf breaking` | partial | needs-alignment |
 | JobSpec | `1.0.0` | System API; CLI; Kernel/QRTX; packaging | `docs/reference/jobspec.md` | `docs/reference/schemas/jobspec-1.0.schema.json`; public `SubmitJobRequest` mapping in `proto/eigen/api/v1/job_service.proto` | `src/services/system-api/tests/test_jobspec_parser.py`; `docs/reference/fixtures/jobspec/1.0/`; `src/rust/apps/cli/tests/fixtures/jobspec-valid-minimal.yaml`; `cargo test --manifest-path src/rust/Cargo.toml -p cli` | implemented | compatible |
-+| Eigen-Lang | `1.0.0` | Compiler / Eigen-DPDA | `docs/reference/eigen-lang.md`; `docs/architecture/components/compiler.md` | `proto/eigen/internal/v1/compilation_service.proto`; language grammar/schema artifacts under `docs/reference/` or `contracts/product-1.0/` | `src/services/eigen-compiler/tests/test_conformance_suite.py`; parser/allowlist fixtures; forbidden-construct fixtures | partial | needs-alignment |
+| Eigen-Lang | `1.0.0` | Compiler / Eigen-DPDA | `docs/reference/eigen-lang.md`; `docs/architecture/components/compiler.md` | Planned grammar/schema artifacts; compiler service proto in `proto/eigen/internal/v1/compilation_service.proto` | `src/services/eigen-compiler/tests/test_conformance_suite.py` | partial | needs-alignment |
 | AQO format | `1.0.0` | Compiler; optimizer; QFS; Kernel/QRTX | `docs/reference/formats/aqo.md` | Planned AQO schema under `specs/` or `contracts/product-1.0/`; `proto/eigen/internal/v1/types.proto` circuit payload mapping | `src/services/eigen-compiler/tests/test_conformance_suite.py` (planned AQO golden expansion) | documented | needs-alignment |
 | QFS layout (CircuitFS) | `1.0.0` | QFS; Kernel/QRTX; System API facades | `docs/reference/formats/qfs-layout.md`; `docs/architecture/components/qfs.md` | Planned storage manifest schema under `contracts/product-1.0/` | `src/rust/crates/qfs/tests/` (planned Product 1.0 layout conformance) | partial | needs-alignment |
 | Canonical error model | `1.0.0` | All public/internal services | `docs/reference/error-model.md` | `google.rpc.Status` public detail mapping; `proto/eigen/api/v1/types.proto`; `proto/eigen/api/v1/job_service.proto` | `src/services/system-api/tests/test_public_error_conformance.py`; `src/services/system-api/tests/test_validation_errors.py`; `src/services/eigen-compiler/tests/`; `src/services/driver-manager/tests/` | partial; Wave 1 public-boundary slice implemented | compatible for Wave 1 public-boundary slice |
@@ -51,19 +51,19 @@ Implementation status values are `documented`, `partial`, `planned`, and `implem
 
 ## 4. Wave 3 concrete implementation slices
 
-### 4.1 Compiler safety slice
+### 4.1 Compiler request shaping slice
 
 - **Proto/schema anchor:** `proto/eigen/internal/v1/compilation_service.proto`
 - **Runtime implementation:** `src/services/eigen-compiler`
-- **Coverage:** accepted Eigen-Lang subset, forbidden AST, import/decorator restrictions, canonical compiler errors
-- **Conformance evidence:** parser/allowlist fixtures and compiler safety tests
+- **Coverage:** canonical request metadata, source precedence, deterministic request digest, option canonicalization, JobSpec-to-compiler input mapping
+- **Conformance evidence:** compiler request mapping tests and deterministic digest fixtures
 
-### 4.2 AQO and compiler persistence slice
++### 4.2 Compiler safety slice
 
-- **Proto/schema anchor:** AQO canonicalization and compiler output metadata under `docs/reference/formats/aqo.md` and `docs/reference/formats/qfs-layout.md`
-- **Runtime implementation:** `src/services/eigen-compiler`; `src/rust/crates/qfs`
-- **Coverage:** deterministic AQO emission, schema validation, artifact persistence through QFS, lineage metadata
-- **Conformance evidence:** AQO golden tests and artifact-layout tests
+- **Proto/schema anchor:** compiler safety rules in `docs/reference/eigen-lang.md` and `docs/architecture/components/compiler.md`
+- **Runtime implementation:** `src/services/eigen-compiler`
+- **Coverage:** internal request validation, forbidden construct rejection, unsupported target rejection, missing source-reference handling
+- **Conformance evidence:** parser/validator fixtures and canonical error tests
 
 ## 5. Wave 2 concrete implementation slices
 
