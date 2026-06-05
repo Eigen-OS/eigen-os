@@ -19,7 +19,7 @@
     },
     {
       "path": "proto/eigen/internal/v1/compilation_service.proto",
-      "sha256": "31379b1300caf22c0738ee1315f9cf1eeded6548789dcb1af198f3aa8f06efbc"
+      "sha256": "c1ae08ed4c8f40485eae826932d759cecfa1a34af58a17b8d41d19cdd2c5ece6"
     },
     {
       "path": "proto/eigen/internal/v1/driver_manager_service.proto",
@@ -27,7 +27,7 @@
     },
     {
       "path": "proto/eigen/internal/v1/kernel_gateway.proto",
-      "sha256": "7864731a8c1e2c76c02b1fa75c655ccb43ff80a07d51e2e4cbadcac449f707d6"
+      "sha256": "26c24a3a1052d7ccd2f0781191fb1a3383e674325fe1d88a494f9369cde76989"
     },
     {
       "path": "proto/eigen/internal/v1/types.proto",

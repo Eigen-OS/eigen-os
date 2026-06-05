@@ -3,6 +3,7 @@ syntax = "proto3";
 package eigen.internal.v1;
 
 import "eigen/internal/v1/types.proto";
+import "eigen/internal/v1/kernel_gateway.proto";
 
 option go_package = "github.com/eigen-os/eigen/api/internal/v1;internalv1";
 option java_multiple_files = true;
@@ -11,17 +12,6 @@ option java_package = "com.eigen.api.internal.v1";
 
 // Internal compilation service contract.
 // Source of truth: RFC 0004 (CompilationService) + reference docs.
-
-message RequestMetadata {
-  string request_id = 1;
-  string trace_id = 2;
-  string traceparent = 3;
-  string deadline = 4;
-  string retry_policy = 5;
-  string security_context = 6;
-  string tenant_id = 7;
-  string project_id = 8;
-}
 
 service CompilationService {
   rpc CompileCircuit(CompileCircuitRequest) returns (CompileCircuitResponse);

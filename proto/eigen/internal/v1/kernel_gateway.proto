@@ -65,6 +65,15 @@ message RequestMetadata {
   
   // Audit metadata: which component made this request.
   string source_service = 10;
+
+  // Compiler RPC compatibility: normalized tracing identifier.
+  string trace_id = 11;
+
+  // Compiler RPC compatibility: retry semantics passed from internal clients.
+  string retry_policy = 12;
+
+  // Compiler RPC compatibility: normalized security context label.
+  string security_context = 13;
 }
 
 // Canonical internal lifecycle states for Product 1.0.

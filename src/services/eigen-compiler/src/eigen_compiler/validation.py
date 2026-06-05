@@ -29,7 +29,7 @@ def _validate_source_inputs(req) -> list[FieldViolation]:
 
     if not source_present and not source_ref_present:
         violations.append(
-            FieldViolation(field="source", description="source or source_ref is required")
+            FieldViolation(field="input", description="input or source_ref is required")
         )
         return violations
 
@@ -101,9 +101,6 @@ def validate_compile_job(req) -> List[FieldViolation]:
 
     if not req.job_id:
         violations.append(FieldViolation(field="job_id", description="field is required"))
-
-    if req.HasField("request_metadata"):
-        violations.extend(validate_compile_circuit(req))
 
     violations.extend(validate_compile_circuit(req))
     return violations

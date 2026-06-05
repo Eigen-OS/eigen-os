@@ -678,8 +678,8 @@ mod tests {
 
         let loaded = fs.load_compiled_artifacts("job-1").expect("load");
         assert_eq!(loaded.aqo_json, aqo);
-        assert_eq!(loaded.qasm.as_deref(), Some(qasm));
-        assert_eq!(loaded.compile_report_json.as_deref(), Some(report));
+        assert_eq!(loaded.qasm.as_deref(), Some(qasm.as_slice()));
+        assert_eq!(loaded.compile_report_json.as_deref(), Some(report.as_slice()));
         assert_eq!(loaded.metadata.version, "1.0.0");
         assert_eq!(loaded.metadata.contract_version, "1.0.0");
         assert_eq!(loaded.metadata.producer_identity, "eigen-compiler");
@@ -704,7 +704,7 @@ mod tests {
         let err = fs
             .store_compiled_artifacts_v1("job-1", aqo, None, None, provenance)
             .expect_err("duplicate write must fail");
-        matches!(err, CircuitFsError::AlreadyExists { .. });
+        assert!(matches!(err, CircuitFsError::AlreadyExists { .. }));
     }
 
     #[test]
@@ -725,7 +725,7 @@ mod tests {
             .expect("store");
         std::fs::remove_file(fs.compiled_qasm_path("job-1").expect("path")).expect("remove qasm");
         let err = fs.load_compiled_artifacts("job-1").expect_err("load must fail");
-        matches!(err, CircuitFsError::NotFound { .. });
+        assert!(matches!(err, CircuitFsError::NotFound { .. }));
     }
 }
 
@@ -740,7 +740,7 @@ fn content_hash_hex(bytes: &[u8]) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+mod layout_tests {
     use super::*;
 
     fn tmp_fs() -> (tempfile::TempDir, CircuitFsLocal) {
