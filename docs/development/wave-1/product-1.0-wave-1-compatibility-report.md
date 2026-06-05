@@ -3,7 +3,7 @@
 **Status:** Complete for Wave 1 closure
 **Scope:** Public API, JobSpec, CLI payloads, canonical errors, public metrics, and compatibility evidence
 **Version policy:** `docs/development/product-1.0-version-policy.md`
-**Issue pack:** `docs/development/wave-1/product-1.0-wave-1-issue-pack.md`
+**Issue pack:** `docs/development/wave-1/product-1.0-wave-1-exit-evidence-bundle.md`
 **Evidence bundle:** `docs/development/wave-1/product-1.0-wave-1-exit-evidence-bundle.md`
 **Completed:** 2026-06-01
 

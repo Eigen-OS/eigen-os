@@ -203,8 +203,7 @@
       ],
       "conformance_tests": [
         "src/services/system-api/tests/test_observability_smoke.py",
-        "src/rust/crates/eigen-kernel/tests/",
-        "monitoring/metrics/tests/test_stage_observability.py"
+        "src/rust/crates/eigen-kernel/tests/"
        ],
       "implementation_notes": [
         "Kernel/QRTX emits the approved orchestration contract marker family",
