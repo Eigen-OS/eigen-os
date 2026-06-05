@@ -209,7 +209,7 @@ def test_compile_job_request_metadata_is_propagated(grpc_addr: str) -> None:
             {
                 "options": {"alpha": "1", "beta": "2"},
                 "request_context": {
-                    "deadline": "2026-06-06T12:00:00Z",
+                    "deadline": "0:00:30",
                     "project_id": "project-x",
                     "request_id": "req-123",
                     "retry_policy": "idempotent",

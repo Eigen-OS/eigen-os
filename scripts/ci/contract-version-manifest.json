@@ -19,7 +19,7 @@
     },
     {
       "path": "proto/eigen/internal/v1/compilation_service.proto",
-      "sha256": "c1ae08ed4c8f40485eae826932d759cecfa1a34af58a17b8d41d19cdd2c5ece6"
+      "sha256": "672605192d1f892b5392f4d754d697b5eee928d202c4212522db9d46bd77d679"
     },
     {
       "path": "proto/eigen/internal/v1/driver_manager_service.proto",
