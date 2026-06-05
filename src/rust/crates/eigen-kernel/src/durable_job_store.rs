@@ -152,15 +152,15 @@ impl DurableJobStore {
         .with_trace_id(rec.trace_id.clone().unwrap_or_default());
 
         // Persist event to QFS event log
-        let event_log_path = format!("qfs://jobs/{}/state/events.jsonl", job_id);
         let event_json = serde_json::to_string(&transition_event).unwrap_or_default();
         if let Err(e) = self.qfs.write_append(&event_log_path, &event_json) {
+        if let Err(e) = self.qfs.append_log_line(job_id, "state_events", &event_json) {
             tracing::warn!("failed to persist event to QFS: {}", e);
             // Continue anyway (fixture mode tolerance)
         }
 
         // Update in-memory event log
-        if let Ok(mut logs) = self.event_logs.write().get_mut(job_id) {
+        if let Some(logs) = self.event_logs.write().get_mut(job_id) {
             logs.append(transition_event);
         }
 
