@@ -1,12 +1,19 @@
 # Product 1.0 Wave 3 Compatibility Report
 
-**Status:** W3-06 closure draft; Wave 3 issue ledger complete for documented implementation slices  
-**Scope:** Eigen-Lang safety model, compiler request mapping, AQO canonicalization, compiler-to-QFS persistence, and compiler observability  
-**Version policy:** `docs/development/product-1.0-version-policy.md`  
-**Issue pack:** `docs/development/wave-3/product-1.0-wave-3-issue-pack.md`  
-**Evidence bundle:** `docs/development/wave-3/product-1.0-wave-3-exit-evidence-bundle.md`  
-**Created:** 2026-06-05  
-**Updated:** 2026-06-05
+**Status:** W3-04 closure draft  
+**Scope:** compiler artifact persistence, QFS L3 boundary, lineage metadata, integrity metadata, immutability semantics
+
+| Issue | Version Impact | Affected Interfaces | Compatibility | Breaking Marker | Migration Notes | Release Notes Draft | Evidence |
+|---|---|---|---|---|---|---|---|
+| W3-04 Compiler artifact persistence handoff to QFS | MINOR | Compiler contract; QFS; compiler metadata; compiled artifact layout | Backward-compatible | false | None | Added: QFS v1 compiled artifact metadata, lineage, and immutable sidecar write behavior; Changed: compiler persistence now uses canonical compiled artifact names; Fixed: duplicate-write and missing-sidecar handling | W3-E04 |
+
+## W3-04 closure requirements
+
+- Canonical compiled artifact names are documented.
+- Metadata includes lineage and integrity data.
+- Duplicate writes are rejected.
+- Replay reads are validated.
+- Sidecars are explicitly marked authoritative or advisory.
 
 ---
 

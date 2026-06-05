@@ -34,7 +34,29 @@ pub struct ResultsBundle {
 pub struct CompiledArtifacts {
     pub aqo_json: Vec<u8>,
     pub qasm: Option<Vec<u8>>,
+    pub compile_report_json: Option<Vec<u8>>,
     pub metadata: CompiledMetadata,
+}
+
+/// Provenance/lineage for compiler outputs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct CompiledArtifactLineage {
+    #[serde(default)]
+    pub request_id: Option<String>,
+    #[serde(default)]
+    pub source_ref: Option<String>,
+    #[serde(default)]
+    pub source_sha256: Option<String>,
+}
+
+/// Explicit inputs used to write canonical compiler artifacts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompiledArtifactProvenance {
+    pub producer_identity: String,
+    pub contract_version: String,
+    pub compiler_version: String,
+    pub created_at: String,
+    pub lineage: CompiledArtifactLineage,
 }
 
 /// Metadata for source bundle artifacts.
@@ -52,8 +74,21 @@ pub struct CompiledMetadata {
     pub version: String,
     pub schema_version: String,
     pub compiler_version: String,
+    #[serde(default)]
+    pub producer_identity: String,
+    #[serde(default)]
+    pub contract_version: String,
+    #[serde(default)]
+    pub created_at: String,
+    #[serde(default)]
+    pub source_sha256: String,
     pub aqo_hash: String,
+    #[serde(default)]
     pub qasm_hash: Option<String>,
+    #[serde(default)]
+    pub diagnostics_hash: Option<String>,
+    #[serde(default)]
+    pub lineage: CompiledArtifactLineage,
 }
 
 /// Versioned result envelope persisted under `results/result.json`.
@@ -99,6 +134,9 @@ pub enum CircuitFsError {
 
     #[error("invalid job_id: {job_id}")]
     InvalidJobId { job_id: String },
+
+    #[error("artifact already exists: {path}")]
+    AlreadyExists { path: PathBuf },
 
     #[error(transparent)]
     Io(#[from] io::Error),
@@ -201,6 +239,11 @@ impl CircuitFsLocal {
         Ok(self.compiled_dir(job_id)?.join("metadata.json"))
     }
 
+    /// `/circuit_fs/{job_id}/compiled/compile_report.json`
+    pub fn compiled_report_path(&self, job_id: &str) -> Result<PathBuf, CircuitFsError> {
+        Ok(self.compiled_dir(job_id)?.join("compile_report.json"))
+    }
+
     /// `/circuit_fs/{job_id}/results.parquet`
     pub fn results_parquet_path(&self, job_id: &str) -> Result<PathBuf, CircuitFsError> {
         Ok(self.job_root(job_id)?.join("results.parquet"))
@@ -290,12 +333,74 @@ impl CircuitFsLocal {
         self.store_compiled_artifacts(job_id, aqo_json, None, "unknown")
     }
 
+    /// Stores compiler outputs under `compiled/` using the v1 contract.
+    ///
+    /// This is the canonical persistence entrypoint for Wave 3.
+    pub fn store_compiled_artifacts_v1(
+        &self,
+        job_id: &str,
+        aqo_json: &[u8],
+        qasm: Option<&[u8]>,
+        compile_report_json: Option<&[u8]>,
+        provenance: CompiledArtifactProvenance,
+    ) -> Result<(), CircuitFsError> {
+        self.ensure_job_layout(job_id)?;
+
+        let compiled_aqo_path = self.compiled_aqo_json_path(job_id)?;
+        let compiled_metadata_path = self.compiled_metadata_path(job_id)?;
+        let compiled_qasm_path = self.compiled_qasm_path(job_id)?;
+        let compiled_report_path = self.compiled_report_path(job_id)?;
+
+        for path in [
+            compiled_aqo_path.clone(),
+            compiled_metadata_path.clone(),
+            compiled_qasm_path.clone(),
+            compiled_report_path.clone(),
+        ] {
+            if path.exists() {
+                return Err(CircuitFsError::AlreadyExists { path });
+            }
+        }
+
+        atomic_write_bytes(&compiled_aqo_path, aqo_json)?;
+        if let Some(qasm_bytes) = qasm {
+            atomic_write_bytes(&compiled_qasm_path, qasm_bytes)?;
+        }
+        if let Some(report_bytes) = compile_report_json {
+            atomic_write_bytes(&compiled_report_path, report_bytes)?;
+        }
+
+        let metadata = CompiledMetadata {
+            version: "1.0.0".to_string(),
+            schema_version: "compiled_artifacts.v1".to_string(),
+            compiler_version: provenance.compiler_version.clone(),
+            producer_identity: provenance.producer_identity,
+            contract_version: provenance.contract_version,
+            created_at: provenance.created_at,
+            source_sha256: provenance
+                .lineage
+                .source_sha256
+                .clone()
+                .unwrap_or_default(),
+            aqo_hash: content_hash_hex(aqo_json),
+            qasm_hash: qasm.map(content_hash_hex),
+            diagnostics_hash: compile_report_json.map(content_hash_hex),
+            lineage: provenance.lineage,
+        };
+
+        let bytes = serde_json::to_vec_pretty(&metadata).map_err(to_io_error)?;
+        atomic_write_bytes(&compiled_metadata_path, &bytes)?;
+        Ok(())
+    }
+
     /// Loads `compiled/circuit.aqo.json`.
     pub fn load_compiled_aqo_json(&self, job_id: &str) -> Result<Vec<u8>, CircuitFsError> {
         read_bytes_not_found(&self.compiled_aqo_json_path(job_id)?)
     }
 
     /// Stores compiler outputs under `compiled/` and writes `compiled/metadata.json`.
+    ///
+    /// Legacy compatibility helper retained for older call sites.
     pub fn store_compiled_artifacts(
         &self,
         job_id: &str,
@@ -303,23 +408,14 @@ impl CircuitFsLocal {
         qasm: Option<&[u8]>,
         compiler_version: &str,
     ) -> Result<(), CircuitFsError> {
-        self.ensure_job_layout(job_id)?;
-        atomic_write_bytes(&self.compiled_aqo_json_path(job_id)?, aqo_json)?;
-
-        if let Some(qasm_bytes) = qasm {
-            atomic_write_bytes(&self.compiled_qasm_path(job_id)?, qasm_bytes)?;
-        }
-
-        let metadata = CompiledMetadata {
-            version: "0.1".to_string(),
-            schema_version: "compiled_artifacts.v1".to_string(),
+        let provenance = CompiledArtifactProvenance {
+            producer_identity: "eigen-compiler".to_string(),
+            contract_version: "1.0.0".to_string(),
             compiler_version: compiler_version.to_string(),
-            aqo_hash: content_hash_hex(aqo_json),
-            qasm_hash: qasm.map(content_hash_hex),
+            created_at: "unknown".to_string(),
+            lineage: CompiledArtifactLineage::default(),
         };
-        let bytes = serde_json::to_vec_pretty(&metadata).map_err(to_io_error)?;
-        atomic_write_bytes(&self.compiled_metadata_path(job_id)?, &bytes)?;
-        Ok(())
+        self.store_compiled_artifacts_v1(job_id, aqo_json, qasm, None, provenance)
     }
 
     /// Loads `compiled/circuit.aqo.json`, optional `compiled/circuit.qasm`, and metadata.
@@ -328,13 +424,33 @@ impl CircuitFsLocal {
         job_id: &str,
     ) -> Result<CompiledArtifacts, CircuitFsError> {
         let aqo_json = read_bytes_not_found(&self.compiled_aqo_json_path(job_id)?)?;
-        let qasm = read_optional_bytes(&self.compiled_qasm_path(job_id)?)?;
+        let qasm_path = self.compiled_qasm_path(job_id)?;
+        let report_path = self.compiled_report_path(job_id)?;
         let metadata_bytes = read_bytes_not_found(&self.compiled_metadata_path(job_id)?)?;
         let metadata: CompiledMetadata =
             serde_json::from_slice(&metadata_bytes).map_err(to_io_error)?;
+        let qasm = if metadata.qasm_hash.is_some() {
+            Some(read_bytes_not_found(&qasm_path)?)
+        } else {
+            read_optional_bytes(&qasm_path)?
+        };
+        let compile_report_json = if metadata.diagnostics_hash.is_some() {
+            Some(read_bytes_not_found(&report_path)?)
+        } else {
+            read_optional_bytes(&report_path)?
+        };
+
+        if metadata.qasm_hash.is_some() && qasm.is_none() {
+            return Err(CircuitFsError::NotFound { path: qasm_path });
+        }
+        if metadata.diagnostics_hash.is_some() && compile_report_json.is_none() {
+            return Err(CircuitFsError::NotFound { path: report_path });
+        }
+
         Ok(CompiledArtifacts {
             aqo_json,
             qasm,
+            compile_report_json,
             metadata,
         })
     }
@@ -531,6 +647,85 @@ fn read_optional_bytes(path: &Path) -> Result<Option<Vec<u8>>, CircuitFsError> {
         Ok(bytes) => Ok(Some(bytes)),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(CircuitFsError::Io(e)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn store_compiled_artifacts_v1_is_canonical_and_round_trips() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let fs = CircuitFsLocal::new(tmp.path());
+        let aqo = br#"{"operations":[{"op":"H","q":[0]}],"qubits":1,"version":"1.0.0"}"#;
+        let qasm = b"OPENQASM 3.0;\n";
+        let report = br#"{"status":"ok"}"#;
+        let provenance = CompiledArtifactProvenance {
+            producer_identity: "eigen-compiler".to_string(),
+            contract_version: "1.0.0".to_string(),
+            compiler_version: "1.0.0".to_string(),
+            created_at: "2026-06-06T12:00:00Z".to_string(),
+            lineage: CompiledArtifactLineage {
+                request_id: Some("req-1".to_string()),
+                source_ref: Some("jobs/job-1/input/program.eigen.py".to_string()),
+                source_sha256: Some("sha256:abc".to_string()),
+            },
+        };
+
+        fs.store_compiled_artifacts_v1("job-1", aqo, Some(qasm), Some(report), provenance)
+            .expect("store");
+
+        let loaded = fs.load_compiled_artifacts("job-1").expect("load");
+        assert_eq!(loaded.aqo_json, aqo);
+        assert_eq!(loaded.qasm.as_deref(), Some(qasm));
+        assert_eq!(loaded.compile_report_json.as_deref(), Some(report));
+        assert_eq!(loaded.metadata.version, "1.0.0");
+        assert_eq!(loaded.metadata.contract_version, "1.0.0");
+        assert_eq!(loaded.metadata.producer_identity, "eigen-compiler");
+        assert_eq!(loaded.metadata.lineage.request_id.as_deref(), Some("req-1"));
+    }
+
+    #[test]
+    fn duplicate_compiled_writes_are_rejected() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let fs = CircuitFsLocal::new(tmp.path());
+        let aqo = br#"{"operations":[{"op":"H","q":[0]}],"qubits":1,"version":"1.0.0"}"#;
+        let provenance = CompiledArtifactProvenance {
+            producer_identity: "eigen-compiler".to_string(),
+            contract_version: "1.0.0".to_string(),
+            compiler_version: "1.0.0".to_string(),
+            created_at: "2026-06-06T12:00:00Z".to_string(),
+            lineage: CompiledArtifactLineage::default(),
+        };
+
+        fs.store_compiled_artifacts_v1("job-1", aqo, None, None, provenance.clone())
+            .expect("first write");
+        let err = fs
+            .store_compiled_artifacts_v1("job-1", aqo, None, None, provenance)
+            .expect_err("duplicate write must fail");
+        matches!(err, CircuitFsError::AlreadyExists { .. });
+    }
+
+    #[test]
+    fn missing_sidecar_reference_is_reported() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let fs = CircuitFsLocal::new(tmp.path());
+        let aqo = br#"{"operations":[{"op":"H","q":[0]}],"qubits":1,"version":"1.0.0"}"#;
+        let qasm = b"OPENQASM 3.0;\n";
+        let provenance = CompiledArtifactProvenance {
+            producer_identity: "eigen-compiler".to_string(),
+            contract_version: "1.0.0".to_string(),
+            compiler_version: "1.0.0".to_string(),
+            created_at: "2026-06-06T12:00:00Z".to_string(),
+            lineage: CompiledArtifactLineage::default(),
+        };
+
+        fs.store_compiled_artifacts_v1("job-1", aqo, Some(qasm), Some(br#"{"status":"ok"}"#), provenance)
+            .expect("store");
+        std::fs::remove_file(fs.compiled_qasm_path("job-1").expect("path")).expect("remove qasm");
+        let err = fs.load_compiled_artifacts("job-1").expect_err("load must fail");
+        matches!(err, CircuitFsError::NotFound { .. });
     }
 }
 

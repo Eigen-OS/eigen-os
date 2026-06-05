@@ -51,14 +51,28 @@ Implementation status values are `documented`, `partial`, `planned`, and `implem
 
 ## 4. Wave 3 concrete implementation slices
 
-### 4.1 Compiler request shaping slice
+### 4.1 Compiler-to-QFS artifact slice
+
+- **Proto/schema anchor:** `docs/reference/formats/qfs-layout.md`
+- **Runtime implementation:** `src/rust/crates/qfs/src/local_circuit_fs.rs`
+- **Coverage:** canonical `compiled/` artifact names, immutable write behavior, compiler metadata, lineage, integrity hashes, optional diagnostics sidecar
+- **Conformance evidence:** compiled-artifact round-trip, missing-sidecar, and duplicate-write tests
+
+### 4.2 Compiler contract slice
+
+- **Proto/schema anchor:** `docs/architecture/components/compiler.md`
+- **Runtime implementation:** `src/services/eigen-compiler`
+- **Coverage:** AQO persistence handoff, metadata handoff, sidecar authoritative/advisory boundary
+- **Conformance evidence:** compiler-to-QFS integration tests
+
+### 4.2 Compiler request shaping slice
 
 - **Proto/schema anchor:** `proto/eigen/internal/v1/compilation_service.proto`
 - **Runtime implementation:** `src/services/eigen-compiler`
 - **Coverage:** canonical request metadata, source precedence, deterministic request digest, option canonicalization, JobSpec-to-compiler input mapping
 - **Conformance evidence:** compiler request mapping tests and deterministic digest fixtures
 
-+### 4.2 Compiler safety slice
+### 4.3 Compiler safety slice
 
 - **Proto/schema anchor:** compiler safety rules in `docs/reference/eigen-lang.md` and `docs/architecture/components/compiler.md`
 - **Runtime implementation:** `src/services/eigen-compiler`

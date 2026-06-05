@@ -5,6 +5,10 @@
 **Created:** 2026-06-05  
 **Updated:** 2026-06-05
 
+| Evidence ID | Requirement | Command / artifact | Expected result | Actual result | Owner | Link |
+|---|---|---|---|---|---|---|
+| W3-E04 | Compiler artifact persistence through QFS | `cargo test --manifest-path src/rust/Cargo.toml -p qfs store_compiled_artifacts_v1_is_canonical_and_round_trips duplicate_compiled_writes_are_rejected missing_sidecar_reference_is_reported` | Compiler outputs persist through QFS with lineage/integrity metadata; duplicate writes are rejected; replay reads are validated | Pending | QFS | TBD |
+
 ---
 
 ## 1. Evidence index
