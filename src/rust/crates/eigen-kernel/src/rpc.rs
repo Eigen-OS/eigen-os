@@ -2826,7 +2826,6 @@ mod tests {
         assert_eq!(job.retry_attempts.len(), 1);
         assert_eq!(job.retry_final_reason.as_deref(), Some("DEADLINE_EXCEEDED"));
     }
- }
 
     fn make_cancel_request(job_id: &str) -> CancelJobRequest {
         CancelJobRequest {
