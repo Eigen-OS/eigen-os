@@ -7,7 +7,7 @@
 use thiserror::Error;
 
 /// Canonical MVP-3 job lifecycle states.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum JobState {
     Pending,
     Compiling,
@@ -19,7 +19,7 @@ pub enum JobState {
 }
 
 /// Events that can cause a state transition.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum JobEvent {
     StartCompiling,
     StartRunning,
