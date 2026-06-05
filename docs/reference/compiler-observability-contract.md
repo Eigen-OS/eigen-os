@@ -1,0 +1,117 @@
+# Compiler Observability Contract
+
+- **Subsystem:** Compiler Service
+- **Contract version:** `1.0.0`
+- **Status:** Normative
+- **Applies to:** parsing, validation, AQO emission, compiler request tracing, replay evidence
+
+---
+
+## 1. Purpose
+
+This document defines the observability contract for the Eigen compiler service. The contract standardizes:
+
+- stable metric families,
+- bounded-cardinality labels,
+- deterministic stage timing,
+- replay/duplicate compile evidence,
+- structured logs with stable correlation fields.
+
+The compiler observability surface MUST remain bounded and replay-safe.
+
+---
+
+## 2. Stable metric marker
+
+The compiler service MUST expose:
+
+```text
+eigen_compiler_contract_info{version="1.0.0"} 1
+```
+
+This metric is the contract marker for compiler observability conformance.
+
+---
+
+## 3. Required metric families
+
+The compiler observability surface MUST include:
+
+- `eigen_compiler_rpc_total{rpc,outcome}`
+- `eigen_compiler_stage_duration_seconds_count{stage,outcome}`
+- `eigen_compiler_stage_duration_seconds_sum{stage,outcome}`
+- `eigen_compiler_validation_failures_total{stage,reason}`
+- `eigen_compiler_aqo_digest_emitted_total{kind}`
+- `eigen_compiler_replay_compiles_total{kind}`
+
+### Allowed label values
+
+**rpc**
+- `CompileCircuit`
+- `CompileJob`
+
+**stage**
+- `request_validation`
+- `parse`
+- `validate_ast`
+- `annotate`
+- `lower_to_ir`
+- `eigen_dpda`
+- `canonicalize_aqo`
+- `emit`
+
+**outcome**
+- `success`
+- `failure`
+
+**reason**
+- `invalid_argument`
+- `not_found`
+- `resource_exhausted`
+- `unimplemented`
+- `internal`
+
+**kind**
+- `aqo`
+- `duplicate`
+
+Trace IDs, request IDs, tenant IDs, project IDs, and job IDs MUST NOT be exposed in metric labels.
+
+---
+
+## 4. Structured logs
+
+Compiler logs MUST include stable correlation fields:
+
+- `rpc`
+- `job_id`
+- `request_id`
+- `trace_id`
+- `traceparent`
+- `stage`
+- `outcome`
+- `elapsed_ms`
+- `aqo_sha256`
+- `source_sha256`
+
+---
+
+## 5. Replay evidence
+
+Repeated compilation of identical inputs MUST be observable as:
+
+- identical AQO bytes,
+- identical AQO hash,
+- incremented duplicate/replay counter,
+- stable request-correlation logs.
+
+---
+
+## 6. Deferred telemetry
+
+Intentionally deferred telemetry MUST be documented rather than introduced as ad-hoc labels. Deferred items include:
+
+- per-request identifiers in metric labels,
+- per-tenant metric cardinality,
+- backend-specific compiler internals,
+- QFS storage internals that are covered by the QFS contract instead.

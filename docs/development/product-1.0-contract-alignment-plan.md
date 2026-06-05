@@ -259,12 +259,15 @@ Product `1.0.0` is ready only when all of the following gates pass:
      - referenced artifact missing,
      - deterministic repeated compile.
 13. Add AQO schema-validation and round-trip checks for compiler output.
+14. Document intentionally deferred telemetry rather than introducing unbounded labels.
 
 #### Exit criteria
 
 - Compiler is pure/deterministic and never executes user code.
 - AQO output is schema-validated and reproducible.
 - All compiler failures map to canonical errors.
+- Contract marker metrics are present and bounded.
+- Trace continuity survives compilation and replay.
 - Compiler outputs are persisted through QFS with immutable artifact names and lineage metadata.
 - Identical inputs yield identical AQO bytes and hashes.
 - AQO validation occurs before persistence.
