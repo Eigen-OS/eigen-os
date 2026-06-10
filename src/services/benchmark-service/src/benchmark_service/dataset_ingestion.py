@@ -186,6 +186,18 @@ class DatasetIngestionService:
     @staticmethod
     def _sha256(path: Path) -> str:
         digest = hashlib.sha256()
+
+        # Canonicalize text fixtures so checksum validation stays stable across
+        # newline normalization differences in local checkouts.
+        if path.suffix.lower() in {".csv", ".json", ".txt", ".yaml", ".yml"}:
+            try:
+                normalized = path.read_text(encoding="utf-8").replace("\r\n", "\n").replace("\r", "\n")
+            except UnicodeDecodeError:
+                normalized = None
+            else:
+                digest.update(normalized.encode("utf-8"))
+                return digest.hexdigest()
+
         with path.open("rb") as fh:
             while True:
                 chunk = fh.read(8192)
