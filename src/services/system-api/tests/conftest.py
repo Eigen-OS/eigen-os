@@ -67,3 +67,7 @@ def _clean_qfs_store() -> Iterator[None]:
     QFS_STORE.clear()
     yield
     QFS_STORE.clear()
+
+@pytest.fixture
+def anyio_backend() -> str:
+    return "asyncio"
