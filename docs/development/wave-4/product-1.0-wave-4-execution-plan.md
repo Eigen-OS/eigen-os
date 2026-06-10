@@ -1,7 +1,7 @@
 # Product 1.0 Wave 4 Execution Plan
 
-**Wave:** Product 1.0 Wave 4 — QFS data fabric maturity, security alignment, and public mirror closure  
-**Status:** Ready for implementation planning  
+**Wave:** Product 1.0 Wave 4 — QFS data fabric maturity, security alignment, public mirror closure, and release evidence  
+**Status:** Completed — closure evidence published  
 **Created:** 2026-06-06  
 **Parent plan:** `docs/development/product-1.0-contract-alignment-plan.md`  
 **Inventory:** `docs/development/product-1.0-contract-inventory.md`  
@@ -12,9 +12,11 @@
 
 ## 1. Goal
 
-Wave 4 turns the QFS contract from a partially implemented artifact store into a mature data-fabric boundary with durable lineage, checkpoints, and live-resource semantics. It also closes the remaining Product 1.0 public-surface gaps around authorization, REST parity, and Knowledge Base integration so that runtime decisions, artifacts, and policy state are all traceable through the same contract-first path.
+Wave 4 turns the QFS contract from a partially implemented artifact store into a mature data-fabric boundary with durable lineage, checkpoints, and live-resource semantics. It also closes the remaining Product 1.0 public-surface gaps around authorization, REST parity, Knowledge Base integration, observability, and release evidence so that runtime decisions, artifacts, and policy state are all traceable through the same contract-first path.
 
 Wave 4 is a **major internal contract alignment wave**. It may change QFS internal storage behavior, checkpoint semantics, live qubit / reservation semantics, security enforcement details, and non-canonical public mirror plumbing when required to reconcile implementation with the normative references. Public `eigen.api.v1` semantics must remain compatible unless a specific public RFC/ADR approves the change.
+
+The Wave 4 closure record is complete once the compatibility report, release-readiness checklist, exit evidence bundle, and RFC/ADR gap analysis are published alongside the Wave 4 slice evidence.
 
 ---
 
@@ -44,6 +46,7 @@ Wave 4 is a **major internal contract alignment wave**. It may change QFS intern
 6. Add REST schema artifacts and conformance tests for the public mirror endpoints.
 7. Wire Knowledge Base record and decision-log paths into the runtime and benchmark flows.
 8. Emit contract markers, bounded-label metrics, and trace continuity evidence for the above boundaries.
+9. Publish the Wave 4 compatibility, readiness, exit-evidence, and RFC/ADR closure records.
 
 ### Out of scope
 
@@ -64,7 +67,7 @@ Wave 4 is a **major internal contract alignment wave**. It may change QFS intern
 | 4 | W4-04 Security and isolation hardening | Wave 1 public surface exists; authz contract available | Fail-closed ingress with service identity and audit trail |
 | 5 | W4-05 Public REST schema and error parity | W4-04 | REST mirror has schema artifacts and canonical errors |
 | 6 | W4-06 Knowledge Base record and decision-log integration | W4-01 through W4-05 | Runtime decisions are queryable and provenance-linked |
-| 7 | W4-07 Wave 4 observability, compatibility, and release evidence | All W4 issues | Closure docs, readiness checklist, and evidence bundle are complete |
+| 7 | W4-07 Wave 4 observability, compatibility, and release evidence | All W4 issues | Closure docs, readiness checklist, exit evidence bundle, and gap analysis are complete |
 
 ---
 
@@ -91,9 +94,10 @@ Wave 4 is 100% complete when:
 - Knowledge Base record and decision-log flows are wired into the runtime path.
 - Contract marker metrics, bounded labels, and trace continuity are present for the new boundaries.
 - The Wave 4 compatibility report, release-readiness checklist, exit evidence bundle, and RFC/ADR gap analysis have no unresolved `TBD` values.
+- The Product 1.0 manifest and contract inventory are synchronized to the final Wave 4 slice map.
 
 ---
 
 ## 7. Handoff to Wave 5
 
-Wave 5 may start when Wave 4 proves that artifact persistence, checkpoint semantics, and live-resource coordination are deterministic and durable. At that point, scheduling/resource authority can be promoted without reopening the QFS or security boundaries.
+Wave 5 may start when Wave 4 proves that artifact persistence, checkpoint semantics, live-resource coordination, public mirror parity, and release evidence are deterministic and durable. At that point, scheduling/resource authority can be promoted without reopening the QFS, KB, REST, or security boundaries.
