@@ -1,1 +1,928 @@
-PLACEHOLDER
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Eigen OS Public REST API",
+    "version": "1.0.0",
+    "description": "Product 1.0 REST mirror contract for benchmark submission and backend selection explainability. The schema is the source of truth for the public REST envelope and canonical error parity."
+  },
+  "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
+  "x-product-release-target": "1.0.0",
+  "x-schema-bundle-contract": "contracts/product-1.0/public-rest.openapi.json",
+  "x-observability-contract-marker": {
+    "metric_family": "eigen_public_api_contract_requests_total",
+    "labels": [
+      "contract_version",
+      "outcome"
+    ],
+    "outcomes": [
+      "accepted",
+      "replayed",
+      "conflict",
+      "limit",
+      "error"
+    ],
+    "trace_fields": [
+      "traceparent",
+      "x-request-id"
+    ]
+  },
+  "x-deterministic-request-hashing": {
+    "algorithm": "sha256",
+    "canonicalization": [
+      "UTF-8 encoding",
+      "lexicographically sorted JSON object keys",
+      "no insignificant whitespace",
+      "preserve array ordering",
+      "reject NaN/Infinity"
+    ]
+  },
+  "x-authn-authz-parity": {
+    "authentication": [
+      "Bearer JWT",
+      "OAuth2",
+      "mTLS for internal callers"
+    ],
+    "authorization": {
+      "/v1/benchmarks/run": "benchmarks:run",
+      "/v1/explain/backend-selection": "runtime:explain"
+    }
+  },
+  "servers": [
+    {
+      "url": "/"
+    }
+  ],
+  "tags": [
+    {
+      "name": "benchmarks",
+      "description": "Benchmark submission mirror"
+    },
+    {
+      "name": "explainability",
+      "description": "Backend selection explainability mirror"
+    }
+  ],
+  "paths": {
+    "/v1/benchmarks/run": {
+      "post": {
+        "tags": [
+          "benchmarks"
+        ],
+        "operationId": "runBenchmark",
+        "summary": "Submit a benchmark run",
+        "description": "Deterministically canonicalizes the request body, enforces idempotency parity, and maps all failures to the canonical Eigen OS public error model.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TraceParent"
+          },
+          {
+            "$ref": "#/components/parameters/RequestId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+       ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BenchmarkRunRequest"
+              },
+              "examples": {
+                "minimal": {
+                  "summary": "Canonical benchmark submission",
+                  "value": {
+                    "idempotency_key": "client-generated-key",
+                    "config": {
+                      "dataset": "qsbench-core",
+
+                     "dataset_version": "2026.04.27",
+                      "backend": "simulator",
+                      "seed": 42
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Benchmark accepted",
+            "headers": {
+              "x-request-id": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "traceparent": {
+                "$ref": "#/components/headers/TraceParent"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BenchmarkRunResponse"
+                }
+              }
+            },
+            "x-canonical-status": "ACCEPTED"
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidArgument"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "409": {
+            "$ref": "#/components/responses/IdempotencyConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadLimitExceeded"
+          },
+          "429": {
+            "$ref": "#/components/responses/ResourceExhausted"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "x-canonical-error-map": {
+          "INVALID_ARGUMENT": 400,
+          "UNAUTHENTICATED": 401,
+          "PERMISSION_DENIED": 403,
+          "FAILED_PRECONDITION": 409,
+          "RESOURCE_EXHAUSTED": 429,
+          "INTERNAL": 500,
+          "UNAVAILABLE": 503
+        },
+        "x-canonical-error-reasons": {
+          "INVALID_ARGUMENT": "EIGEN_PUBLIC_VALIDATION_FAILED",
+          "UNAUTHENTICATED": "EIGEN_PUBLIC_UNAUTHENTICATED",
+          "PERMISSION_DENIED": "EIGEN_PUBLIC_PERMISSION_DENIED",
+          "FAILED_PRECONDITION": "EIGEN_PUBLIC_IDEMPOTENCY_CONFLICT",
+          "RESOURCE_EXHAUSTED": "EIGEN_PUBLIC_PAYLOAD_LIMIT_EXCEEDED",
+          "INTERNAL": "EIGEN_PUBLIC_INTERNAL",
+          "UNAVAILABLE": "EIGEN_PUBLIC_UNAVAILABLE"
+        }
+      }
+    },
+    "/v1/explain/backend-selection": {
+      "post": {
+        "tags": [
+          "explainability"
+        ],
+        "operationId": "explainBackendSelection",
+        "summary": "Explain backend selection",
+        "description": "Returns a deterministic explanation snapshot for a scheduler decision artifact. The endpoint is read-only and idempotent.",
+        "security": [
+        {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TraceParent"
+          },
+          {
+            "$ref": "#/components/parameters/RequestId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExplainBackendSelectionRequest"
+              },
+              "examples": {
+                "minimal": {
+                  "summary": "Canonical explain request",
+                  "value": {
+                    "request_version": "1.0.0",
+                    "response_version": "1.0.0",
+                    "decision_id": "backend-selection-decision-001",
+                    "include_rejected_candidates": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Explainability snapshot",
+            "headers": {
+              "x-request-id": {
+                "$ref": "#/components/headers/RequestId"
+              },
+              "traceparent": {
+                "$ref": "#/components/headers/TraceParent"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExplainBackendSelectionResponse"
+                }
+              }
+            },
+            "x-canonical-status": "OK"
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidArgument"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        },
+        "x-canonical-error-map": {
+          "INVALID_ARGUMENT": 400,
+          "UNAUTHENTICATED": 401,
+          "PERMISSION_DENIED": 403,
+          "NOT_FOUND": 404,
+          "INTERNAL": 500,
+          "UNAVAILABLE": 503
+        },
+        "x-canonical-error-reasons": {
+          "INVALID_ARGUMENT": "EIGEN_PUBLIC_VALIDATION_FAILED",
+          "UNAUTHENTICATED": "EIGEN_PUBLIC_UNAUTHENTICATED",
+          "PERMISSION_DENIED": "EIGEN_PUBLIC_PERMISSION_DENIED",
+          "NOT_FOUND": "EIGEN_PUBLIC_BACKEND_SELECTION_NOT_FOUND",
+          "INTERNAL": "EIGEN_PUBLIC_INTERNAL",
+          "UNAVAILABLE": "EIGEN_PUBLIC_UNAVAILABLE"
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    },
+    "parameters": {
+      "TraceParent": {
+        "name": "traceparent",
+        "in": "header",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "minLength": 55,
+          "maxLength": 55
+        },
+        "description": "W3C TraceContext traceparent header propagated end-to-end."
+      },
+      "RequestId": {
+        "name": "x-request-id",
+        "in": "header",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "description": "Correlation identifier used for REST observability."
+      },
+      "IdempotencyKey": {
+        "name": "x-idempotency-key",
+        "in": "header",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "description": "Optional transport idempotency key matching the request body field."
+      }
+    },
+    "headers": {
+      "RequestId": {
+        "schema": {
+          "type": "string"
+        },
+        "description": "Correlation identifier echoed by the server."
+      },
+      "TraceParent": {
+        "schema": {
+          "type": "string"
+        },
+        "description": "TraceContext value echoed by the server."
+      }
+    },
+    "responses": {
+      "InvalidArgument": {
+        "description": "INVALID_ARGUMENT",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/CanonicalErrorEnvelope"
+            }
+          }
+        }
+      },
+      "Unauthenticated": {
+        "description": "UNAUTHENTICATED",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/CanonicalErrorEnvelope"
+            }
+          }
+        }
+      },
+      "PermissionDenied": {
+        "description": "PERMISSION_DENIED",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/CanonicalErrorEnvelope"
+            }
+          }
+        }
+      },
+      "IdempotencyConflict": {
+        "description": "FAILED_PRECONDITION",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/CanonicalErrorEnvelope"
+            }
+          }
+        }
+      },
+      "PayloadLimitExceeded": {
+        "description": "RESOURCE_EXHAUSTED",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/CanonicalErrorEnvelope"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "NOT_FOUND",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/CanonicalErrorEnvelope"
+            }
+          }
+        }
+      },
+      "Internal": {
+        "description": "INTERNAL",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/CanonicalErrorEnvelope"
+            }
+          }
+        }
+      },
+      "Unavailable": {
+        "description": "UNAVAILABLE",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/CanonicalErrorEnvelope"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "CanonicalErrorEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "code",
+              "message",
+              "details"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "INVALID_ARGUMENT",
+                  "UNAUTHENTICATED",
+                  "PERMISSION_DENIED",
+                  "RESOURCE_EXHAUSTED",
+                  "ALREADY_EXISTS",
+                  "FAILED_PRECONDITION",
+                  "INTERNAL",
+                  "UNAVAILABLE",
+                  "DEADLINE_EXCEEDED",
+                  "CANCELLED",
+                  "NOT_FOUND"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "details": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "properties": {
+                    "type": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "domain": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "string",
+                      "enum": [
+                        "true",
+                        "false"
+                      ]
+                    },
+                    "field": {
+                      "type": "string"
+                    },
+                    "description": {
+                      "type": "string"
+                    },
+                    "resource_type": {
+                      "type": "string"
+                    },
+                    "resource_name": {
+                      "type": "string"
+                    },
+                    "subject": {
+                      "type": "string"
+                    },
+                    "metadata": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              },
+              "trace": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "request_id": {
+                    "type": "string"
+                  },
+                  "trace_id": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "x-canonical-detail-shapes": [
+          "google.rpc.BadRequest",
+          "google.rpc.ErrorInfo",
+          "google.rpc.PreconditionFailure",
+          "google.rpc.QuotaFailure",
+          "google.rpc.ResourceInfo",
+          "google.rpc.RetryInfo",
+          "google.rpc.RequestInfo"
+        ]
+      },
+      "BenchmarkRunRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "idempotency_key",
+          "config"
+        ],
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "config": {
+            "type": "object",
+            "minProperties": 1,
+            "required": [
+              "dataset",
+              "backend",
+              "seed"
+            ],
+            "properties": {
+              "dataset": {
+                "type": "string",
+                "minLength": 1
+              },
+              "dataset_version": {
+                "type": "string",
+                "minLength": 1
+              },
+              "backend": {
+                "type": "string",
+                "minLength": 1
+              },
+              "seed": {
+                "type": "integer"
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        "x-canonical-request-hash": {
+          "algorithm": "sha256",
+          "source": "canonical_json(benchmark run request body)",
+          "collision_policy": "same idempotency key + identical canonical payload returns original response",
+          "conflict_policy": "same idempotency key + different canonical payload returns FAILED_PRECONDITION"
+        }
+      },
+      "BenchmarkRunResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "api_version",
+          "run",
+          "snapshot",
+          "trace"
+        ],
+        "properties": {
+          "api_version": {
+            "type": "string"
+          },
+          "run": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "run_id",
+              "state",
+              "state_contract_version",
+              "parent_run_id",
+              "idempotency_key"
+            ],
+            "properties": {
+              "run_id": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "PENDING",
+                  "COMPILING",
+                  "QUEUED",
+                  "RUNNING",
+                  "DONE",
+                  "ERROR",
+                  "CANCELED",
+                  "TIMEOUT"
+                ]
+              },
+              "state_contract_version": {
+                "type": "string"
+              },
+              "parent_run_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "idempotency_key": {
+                "type": "string"
+              }
+            }
+          },
+          "snapshot": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "contract_version",
+              "snapshot_version",
+              "history_entry_version",
+              "run_id",
+              "request_hash",
+              "created_at",
+              "payload"
+            ],
+            "properties": {
+              "contract_version": {
+                "type": "string"
+              },
+              "snapshot_version": {
+                "type": "string"
+              },
+              "history_entry_version": {
+                "type": "string"
+              },
+              "run_id": {
+                "type": "string"
+              },
+              "request_hash": {
+                "type": "string"
+              },
+              "created_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "payload": {
+                "type": "string"
+              }
+            }
+          },
+          "trace": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "trace_id",
+              "correlation_id"
+            ],
+            "properties": {
+              "trace_id": {
+                "type": "string"
+              },
+              "correlation_id": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "ExplainBackendSelectionRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "request_version",
+          "response_version",
+          "decision_id"
+        ],
+        "properties": {
+          "request_version": {
+            "type": "string",
+            "const": "1.0.0"
+          },
+          "response_version": {
+            "type": "string",
+            "const": "1.0.0"
+          },
+          "decision_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "include_rejected_candidates": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
+      "ExplainBackendSelectionResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "explain_contract_version",
+          "request_version",
+          "response_version",
+          "scoring_contract_version",
+          "profile_schema_version",
+          "profile_version",
+          "decision_id",
+          "job_id",
+          "scheduler_trace_id",
+          "selected_backend_id",
+          "decision_timestamp",
+          "tie_break_trace",
+          "candidate_scores",
+          "factor_contributions",
+          "confidence",
+          "provenance"
+        ],
+        "properties": {
+          "explain_contract_version": {
+            "type": "string"
+          },
+          "request_version": {
+            "type": "string"
+          },
+          "response_version": {
+            "type": "string"
+          },
+          "scoring_contract_version": {
+            "type": "string"
+          },
+          "profile_schema_version": {
+            "type": "string"
+          },
+          "profile_version": {
+            "type": "string"
+          },
+          "decision_id": {
+            "type": "string"
+          },
+          "job_id": {
+            "type": "string"
+          },
+          "scheduler_trace_id": {
+            "type": "string"
+          },
+          "selected_backend_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "decision_timestamp": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "tie_break_trace": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "candidate_scores": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CandidateScore"
+            }
+          },
+          "factor_contributions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FactorContribution"
+            }
+          },
+          "confidence": {
+            "$ref": "#/components/schemas/Confidence"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/ExplainProvenance"
+          }
+        }
+      },
+      "CandidateScore": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "backend_id",
+          "score_millis",
+          "eligible",
+          "ineligibility_reason",
+          "estimated_runtime_ms",
+          "estimated_queue_delay_ms",
+          "predicted_error_rate",
+          "feature_contributions"
+        ],
+        "properties": {
+          "backend_id": {
+            "type": "string"
+          },
+          "score_millis": {
+            "type": "integer"
+          },
+          "eligible": {
+            "type": "boolean"
+          },
+          "ineligibility_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "estimated_runtime_ms": {
+            "type": "integer"
+          },
+          "estimated_queue_delay_ms": {
+            "type": "integer"
+          },
+          "predicted_error_rate": {
+            "type": "number"
+          },
+          "feature_contributions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FeatureContribution"
+            }
+          }
+        }
+      },
+      "FeatureContribution": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "feature",
+          "contribution_millis"
+        ],
+        "properties": {
+          "feature": {
+            "type": "string"
+          },
+          "contribution_millis": {
+            "type": "integer"
+          }
+        }
+      },
+      "FactorContribution": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "backend_id",
+          "factor",
+          "contribution_millis"
+        ],
+        "properties": {
+          "backend_id": {
+            "type": "string"
+          },
+          "factor": {
+            "type": "string"
+          },
+          "contribution_millis": {
+            "type": "integer"
+          }
+        }
+      },
+      "Confidence": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "score_margin_millis",
+          "selected_score_millis",
+          "runner_up_score_millis",
+          "confidence"
+        ],
+        "properties": {
+          "score_margin_millis": {
+            "type": "integer"
+          },
+          "selected_score_millis": {
+            "type": "integer"
+          },
+          "runner_up_score_millis": {
+            "type": "integer"
+          },
+          "confidence": {
+            "type": "number"
+          }
+        }
+      },
+      "ExplainProvenance": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "scheduler_version",
+          "gnn_model_version",
+          "policy_version",
+          "driver_snapshot_version"
+        ],
+        "properties": {
+          "scheduler_version": {
+            "type": "string"
+          },
+          "gnn_model_version": {
+            "type": "string"
+          },
+          "policy_version": {
+            "type": "string"
+          },
+          "driver_snapshot_version": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

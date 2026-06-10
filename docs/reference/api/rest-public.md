@@ -45,3 +45,5 @@ Wave 0 accepts REST schema mappings as planned. Before a REST endpoint is implem
 - a JSON Schema document under `contracts/product-1.0/` plus endpoint-specific request/response examples.
 
 The schema artifact MUST be referenced from `contracts/product-1.0/manifest.json` in the same PR.
+
+The current canonical REST schema bundle is `contracts/product-1.0/public-rest.openapi.json`.

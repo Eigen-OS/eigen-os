@@ -116,6 +116,10 @@ The REST layer **MUST** transform requests into canonical internal `JobSpec` obj
 
 The REST API **MUST NOT** introduce transport-specific execution semantics.
 
+### Machine-readable schema artifact
+
+`contracts/product-1.0/public-rest.openapi.json`
+
 ---
 
 ## 2. Success Response
@@ -253,7 +257,7 @@ The system **MUST** guarantee idempotent benchmark submission.
 
 **Rules**:
 - If the same `idempotency_key` is reused with **identical** canonical payload → return the original response.
-- If the same `idempotency_key` is reused with **different** canonical payload → return `ALREADY_EXISTS`.
+- If the same `idempotency_key` is reused with **different** canonical payload → return `FAILED_PRECONDITION` with reason `EIGEN_PUBLIC_IDEMPOTENCY_CONFLICT`.
 
 ---
 
