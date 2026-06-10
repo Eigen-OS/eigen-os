@@ -76,6 +76,35 @@ class _MetricsState:
         for version in sorted(PUBLIC_API_CONTRACT_VERSION_LABELS)
         for outcome in sorted(PUBLIC_API_CONTRACT_OUTCOMES)
     }
+    kb_queries_total: dict[str, int] = {
+        "records": 0,
+        "decision_logs": 0,
+        "benchmark_runs": 0,
+        "runtime_decisions": 0,
+    }
+    kb_hits_total: dict[str, int] = {
+        "records": 0,
+        "decision_logs": 0,
+        "benchmark_runs": 0,
+        "runtime_decisions": 0,
+    }
+    kb_misses_total: dict[str, int] = {
+        "records": 0,
+        "decision_logs": 0,
+        "benchmark_runs": 0,
+        "runtime_decisions": 0,
+    }
+    kb_fallbacks_total: dict[str, int] = {
+        "storage_unavailable": 0,
+        "replay_validation_failed": 0,
+        "ingest_failed": 0,
+    }
+    kb_replay_failures_total = 0
+    kb_contract_requests_total: dict[tuple[str, str], int] = {
+        (version, outcome): 0
+        for version in sorted(PUBLIC_API_CONTRACT_VERSION_LABELS)
+        for outcome in sorted(PUBLIC_API_CONTRACT_OUTCOMES)
+    }
 
 
 class _MetricsHandler(BaseHTTPRequestHandler):
@@ -90,6 +119,12 @@ class _MetricsHandler(BaseHTTPRequestHandler):
             authz_denied = _MetricsState.authz_denied_total
             submit_outcomes = dict(_MetricsState.submit_job_outcomes_total)
             public_contract_outcomes = dict(_MetricsState.public_api_contract_requests_total)
+        kb_queries = dict(_MetricsState.kb_queries_total)
+        kb_hits = dict(_MetricsState.kb_hits_total)
+        kb_misses = dict(_MetricsState.kb_misses_total)
+        kb_fallbacks = dict(_MetricsState.kb_fallbacks_total)
+        kb_replay_failures = _MetricsState.kb_replay_failures_total
+        kb_contract_outcomes = dict(_MetricsState.kb_contract_requests_total)
         outcome_lines = "".join(
             f'eigen_api_submit_job_outcomes_total{{outcome="{outcome}"}} {count}\n'
             for outcome, count in sorted(submit_outcomes.items())
@@ -255,3 +290,34 @@ def record_public_api_contract_marker(contract_version: str, outcome: str) -> No
             _MetricsState.public_api_contract_requests_total.get((version_label, outcome_label), 0)
             + 1
         )
+
+
+def record_kb_query(kind: str, *, hit: bool) -> None:
+    kind_label = kind if kind in _MetricsState.kb_queries_total else "records"
+    with _MetricsState.lock:
+        _MetricsState.kb_queries_total[kind_label] = _MetricsState.kb_queries_total.get(kind_label, 0) + 1
+        if hit:
+            _MetricsState.kb_hits_total[kind_label] = _MetricsState.kb_hits_total.get(kind_label, 0) + 1
+        else:
+            _MetricsState.kb_misses_total[kind_label] = _MetricsState.kb_misses_total.get(kind_label, 0) + 1
+
+
+def record_kb_fallback(reason: str) -> None:
+    reason_label = reason if reason in _MetricsState.kb_fallbacks_total else "ingest_failed"
+    with _MetricsState.lock:
+        _MetricsState.kb_fallbacks_total[reason_label] = _MetricsState.kb_fallbacks_total.get(reason_label, 0) + 1
+
+
+def record_kb_replay_failure() -> None:
+    with _MetricsState.lock:
+        _MetricsState.kb_replay_failures_total += 1
+
+
+def record_kb_contract_marker(contract_version: str, outcome: str) -> None:
+    version_label = contract_version if contract_version in PUBLIC_API_CONTRACT_VERSION_LABELS else "unsupported"
+    outcome_label = outcome if outcome in PUBLIC_API_CONTRACT_OUTCOMES else "error"
+    with _MetricsState.lock:
+        _MetricsState.kb_contract_requests_total[(version_label, outcome_label)] = (
+            _MetricsState.kb_contract_requests_total.get((version_label, outcome_label), 0) + 1
+        )
+        

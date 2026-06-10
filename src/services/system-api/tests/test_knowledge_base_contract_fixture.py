@@ -64,3 +64,20 @@ def test_knowledge_base_immutability_anonymization_index_profile_fixture_v1_2_0(
     }
 
     assert payload["compatibility"]["breaking"] is False
+
+def test_knowledge_base_provenance_lineage_replay_bundle_fixture_v1_0_0() -> None:
+    fixture_path = (
+        Path(__file__).resolve().parent
+        / "fixtures"
+        / "contracts"
+        / "knowledge_base_v1"
+        / "provenance_lineage_replay_bundle_v1_0_0.json"
+    )
+    payload = json.loads(fixture_path.read_text(encoding="utf-8"))
+
+    assert payload["contract"] == "knowledge_base.provenance_lineage_replay_bundle"
+    assert payload["version"] == "1.0.0"
+    assert payload["record"]["provenance"]["compiler_ref"] == "compiler://v1"
+    assert payload["decision_log"]["selected_action"] == "backend-alpha"
+    assert payload["privacy"]["anonymized_attributes"] == ["user_id", "project_id", "client_ip"]
+    

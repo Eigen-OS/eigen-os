@@ -419,14 +419,22 @@
         "docs/architecture/components/knowledge-base.md"
       ],
       "proto_schema_files": [
-        "proto/eigen/api/v1/knowledge_base_service.proto"
+        "proto/eigen/api/v1/knowledge_base_service.proto",
+        "src/services/system-api/src/system_api/knowledge_base.py"
       ],
       "planned_proto_schema_files": [],
       "conformance_tests": [
-        "Product 1.0 KB API conformance suite"
+        "src/services/system-api/tests/test_knowledge_base_service.py",
+        "src/services/system-api/tests/test_knowledge_base_contract_fixture.py",
+        "src/services/benchmark-service/tests/test_run_lifecycle.py"
       ],
-      "implementation_status": "partial",
-      "compatibility_status": "planned"
+      "implementation_status": "implemented",
+      "compatibility_status": "compatible",
+      "implementation_notes": [
+        "KnowledgeBaseService now serves public records and decision logs with replay-safe pagination and retention enforcement.",
+        "Runtime decision lineage is ingested from JobService.GetDispatchRationale and benchmark run lifecycle callbacks.",
+        "Privacy-sensitive attributes are anonymized before persistence."
+      ]
     },
     {
       "name": "Component architecture boundary map",

@@ -536,18 +536,19 @@ Supports:
 - metadata filtering
 - pagination
 - ordering
+- replay-safe cursor semantics for deterministic retrieval
 
 ---
 
 ### 7.4 GetRecord
 
-Returns canonical stored record.
+Returns canonical stored record, including persisted provenance and replay metadata when present.
 
 ---
 
 ### 7.5 AppendDecisionLog
 
-Appends immutable audit/event log entries.
+Appends immutable audit/event log entries. The public baseline records runtime decision lineage and benchmark decision traces through this RPC, preserving append order for each trace ID.
 
 Retention MUST follow audit policy.
 
@@ -555,7 +556,7 @@ Retention MUST follow audit policy.
 
 ### 7.6 QueryDecisionLogs
 
-Returns paginated immutable decision logs filtered by trace ID and/or model version. Query results MUST be tenant-scoped and MUST preserve append order for entries with the same trace ID.
+Returns paginated immutable decision logs filtered by trace ID and/or model version. Query results MUST be tenant-scoped, MUST preserve append order for entries with the same trace ID, and MUST remain deterministic for replay-safe retrieval.
 
 ---
 

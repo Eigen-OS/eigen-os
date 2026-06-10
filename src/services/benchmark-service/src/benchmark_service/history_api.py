@@ -33,8 +33,8 @@ class BenchmarkHistoryRequestValidationError(ValueError):
 class BenchmarkHistoryApi:
     """Contract surface for /benchmarks/history deterministic trend queries."""
 
-    def __init__(self, run_service: BenchmarkRunService | None = None) -> None:
-        self._run_service = run_service or BenchmarkRunService()
+    def __init__(self, run_service: BenchmarkRunService | None = None, kb_sink=None) -> None:
+        self._run_service = run_service or BenchmarkRunService(kb_sink=kb_sink)
 
     def history(self, request: dict[str, Any]) -> dict[str, Any]:
         errors = self._validate_request(request)

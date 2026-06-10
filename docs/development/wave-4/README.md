@@ -20,6 +20,8 @@ The following documents are mandatory for Wave 4 closure:
 - `product-1.0-wave-4-release-readiness-checklist.md`
 - `product-1.0-wave-4-exit-evidence-bundle.md`
 - `product-1.0-wave-4-public-parity-matrix.md`
+- `product-1.0-wave-4-w4-06-privacy-policy-compatibility-report.md`
+- `product-1.0-wave-4-w4-06-exit-evidence-bundle.md`
 
 ---
 
