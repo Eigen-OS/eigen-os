@@ -181,8 +181,14 @@ It serves as:
 - durable artifact persistence,
 - deterministic lineage and provenance,
 - checkpoint/restore for eligible modes,
-- qubit reservation/isolation guarantees,
+- live reservation lease metadata for Kernel/QRTX replay,
+- qubit reservation/isolation evidence,
 - retention policy enforcement.
+
+#### Boundary note
+- Kernel/QRTX is the Product 1.0 runtime owner for live reservation tokens and
+  lease TTL enforcement.
+- Resource Manager remains the target owner of device-capacity reservations.
 
 ---
 

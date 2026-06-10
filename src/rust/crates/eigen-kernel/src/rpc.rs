@@ -357,6 +357,9 @@ struct JobRuntimeRecord {
     cancel_reason: Option<String>,
     cancellation_fanout_ref: Option<String>,
     reservation_state: Option<String>,
+    reservation_token: Option<String>,
+    reservation_lease_ms: u64,
+    reservation_released_reason: Option<String>,
     retry_attempts: Vec<RetryAttemptRecord>,
     retry_final_reason: Option<String>,
     retry_success_after_retry_total: u32,
@@ -450,6 +453,9 @@ impl JobRuntimeRecord {
             "error_summary": self.error_summary,
             "error_details_ref": self.error_details_ref,
             "cancel_requested": self.cancel_requested,
+            "reservation_state": self.reservation_state,
+            "reservation_token": self.reservation_token,
+            "reservation_lease_ms": self.reservation_lease_ms,
         }))
         .unwrap_or_default()
     }
@@ -496,6 +502,9 @@ impl KernelRuntimeStore {
             cancel_reason: None,
             cancellation_fanout_ref: None,
             reservation_state: Some("held".to_string()),
+            reservation_token: Some(reservation_token_for(&submission)),
+            reservation_lease_ms: reservation_lease_ms_for(&submission),
+            reservation_released_reason: None,
             retry_attempts: Vec::new(),
             retry_final_reason: None,
             retry_success_after_retry_total: 0,
@@ -505,6 +514,67 @@ impl KernelRuntimeStore {
             .write()
             .insert(submission.fingerprint.clone(), submission.job_id.clone());
         Ok((record, true))
+    }
+
+    fn reservation_active(&self, job_id: &str) -> Result<bool, Status> {
+        let job = self
+            .jobs
+            .read()
+            .get(job_id)
+            .ok_or_else(|| Status::not_found("job not found"))?;
+        Ok(job.reservation_state.as_deref() == Some("held") && !job.is_terminal())
+    }
+
+    fn reservation_lease_expired(&self, job_id: &str) -> Result<bool, Status> {
+        let job = self
+            .jobs
+            .read()
+            .get(job_id)
+            .ok_or_else(|| Status::not_found("job not found"))?;
+        if job.reservation_state.as_deref() != Some("held") {
+            return Ok(false);
+        }
+        let lease_ms = job.reservation_lease_ms.max(1);
+        let age_ms = timestamp_to_ms(&ts_now()) - timestamp_to_ms(&job.updated_at);
+        Ok(age_ms >= lease_ms as i128)
+    }
+
+    fn sweep_stale_reservations(&self) -> Vec<String> {
+        let mut released = Vec::new();
+        let mut jobs = self.jobs.write();
+        for (job_id, job) in jobs.iter_mut() {
+            if job.reservation_state.as_deref() == Some("held") && !job.is_terminal() {
+                let lease_ms = job.reservation_lease_ms.max(1);
+                let age_ms = timestamp_to_ms(&ts_now()) - timestamp_to_ms(&job.updated_at);
+                if age_ms >= lease_ms as i128 {
+                    job.reservation_state = Some("released".to_string());
+                    job.reservation_released_reason = Some("deadline_exceeded".to_string());
+                    job.reservation_released_reason = Some("lease_expired".to_string());
+                    job.updated_at = ts_now();
+                    released.push(job_id.clone());
+                }
+            }
+        }
+        released
+    }
+
+    fn acquire_live_reservation(&self, job_id: &str) -> Result<JobRuntimeRecord, Status> {
+        let mut jobs = self.jobs.write();
+        let job = jobs
+            .get_mut(job_id)
+            .ok_or_else(|| Status::not_found("job not found"))?;
+        if job.reservation_state.as_deref() == Some("held") && !job.is_terminal() {
+            if self.reservation_lease_expired(job_id)? {
+                job.reservation_state = Some("released".to_string());
+                job.reservation_released_reason = Some("lease_expired".to_string());
+            } else {
+                return Err(Status::failed_precondition("reservation already active"));
+            }
+        }
+        job.reservation_state = Some("held".to_string());
+        job.reservation_released_reason = None;
+        job.updated_at = ts_now();
+        Ok(job.clone())
     }
 
     fn request_error_terminalization(
@@ -799,6 +869,7 @@ impl KernelRuntimeStore {
         job.cancel_reason = reason;
         job.cancellation_fanout_ref = Some(format!("qfs://jobs/{job_id}/control/cancellation.json"));
         job.reservation_state = Some("release_pending".to_string());
+        job.reservation_released_reason = Some("cancel_requested".to_string());
         job.updated_at = ts_now();
         Ok(job.clone())
     }
@@ -1774,6 +1845,7 @@ async fn run_job_dag(
     let mut persist_output = BTreeMap::new();
     let mut observability_output = BTreeMap::new();
 
+    let _ = runtime.sweep_stale_reservations();
     let validate_stage = DagStageKind::ValidateEnqueue;
     let validate_stage_id = runtime
         .begin_stage(
@@ -1891,6 +1963,7 @@ async fn run_job_dag(
             stage_input_from_outputs(&submission, schedule_stage, &optimize_output),
         )
         .map_err(status_to_stage_error(schedule_stage, "begin_schedule"))?;
+    let _ = runtime.acquire_live_reservation(&job_id)?;
     schedule_output = adapters
         .schedule(&submission, &optimize_output)
         .await
@@ -2536,6 +2609,18 @@ fn stage_digest_bytes(stage: &StageRecord) -> Vec<u8> {
     .unwrap_or_default()
 }
 
+fn reservation_token_for(submission: &NormalizedSubmission) -> String {
+    hash_bytes_hex(
+        format!("reservation:{}:{}", submission.job_id, submission.fingerprint).as_bytes(),
+    )
+}
+
+fn reservation_lease_ms_for(submission: &NormalizedSubmission) -> u64 {
+    parse_positive_usize(&submission.metadata_kvs, "reservation.lease_ms")
+        .map(|v| v as u64)
+        .unwrap_or(60_000)
+}
+
 fn canonical_submission_fingerprint(
     contract_version: &str,
     request_id: &str,
@@ -2962,6 +3047,83 @@ mod tests {
         let job = wait_for_terminal(runtime, &response.job_id).await;
         assert_eq!(job.state, TaskState::Cancelled);
         assert_eq!(job.reservation_state.as_deref(), Some("released"));
+    }
+
+    #[tokio::test]
+    fn stale_reservation_is_swept_and_can_be_reacquired_with_same_token() {
+        let runtime = KernelRuntimeStore::default();
+        let submission = fixture_submission_with_lease_ms(1);
+        let (job, _) = runtime.create_or_get_job(submission.clone()).expect("job");
+        assert_eq!(job.reservation_state.as_deref(), Some("held"));
+
+        {
+            let mut jobs = runtime.jobs.write();
+            let record = jobs.get_mut(&job.job_id).expect("job");
+            record.updated_at = timestamp_from_ms(timestamp_to_ms(&ts_now()) - 10_000);
+        }
+
+        let released = runtime.sweep_stale_reservations();
+        assert_eq!(released, vec![job.job_id.clone()]);
+        let reacquired = runtime.acquire_live_reservation(&job.job_id).expect("reacquire");
+        assert_eq!(reacquired.reservation_state.as_deref(), Some("held"));
+        assert_eq!(reacquired.reservation_token, job.reservation_token);
+    }
+
+    #[tokio::test]
+    fn duplicate_live_reservation_is_rejected_while_active() {
+        let runtime = KernelRuntimeStore::default();
+        let submission = fixture_submission_with_lease_ms(60_000);
+        let (job, _) = runtime.create_or_get_job(submission).expect("job");
+
+        let err = runtime.acquire_live_reservation(&job.job_id).expect_err("duplicate");
+        assert_eq!(err.code(), Code::FailedPrecondition);
+    }
+
+    #[tokio::test]
+    fn reservation_replay_token_is_deterministic_for_same_submission() {
+        let runtime = KernelRuntimeStore::default();
+        let submission = fixture_submission_with_lease_ms(60_000);
+        let (job_a, _) = runtime.create_or_get_job(submission.clone()).expect("job a");
+        let snapshot_a = runtime.get(&job_a.job_id).unwrap().snapshot_digest();
+
+        let runtime2 = KernelRuntimeStore::default();
+        let (job_b, _) = runtime2.create_or_get_job(submission).expect("job b");
+        let snapshot_b = runtime2.get(&job_b.job_id).unwrap().snapshot_digest();
+
+        assert_eq!(job_a.reservation_token, job_b.reservation_token);
+        assert_eq!(snapshot_a, snapshot_b);
+    }
+
+    fn fixture_submission_with_lease_ms(lease_ms: u64) -> NormalizedSubmission {
+        let mut metadata = BTreeMap::new();
+        metadata.insert("contract_version".to_string(), "1.0.0".to_string());
+        metadata.insert("request_id".to_string(), "req-live-ownership".to_string());
+        metadata.insert("traceparent".to_string(), "00-11111111111111111111111111111111-2222222222222222-01".to_string());
+        metadata.insert("tenant_id".to_string(), "tenant-a".to_string());
+        metadata.insert("project_id".to_string(), "project-a".to_string());
+        metadata.insert("reservation.lease_ms".to_string(), lease_ms.to_string());
+        let req = EnqueueJobRequest {
+            name: "reservation-test".to_string(),
+            program: b"@quantum\ndef main(): pass".to_vec(),
+            program_format: "eigen_lang_source".to_string(),
+            target: "sim:local".to_string(),
+            priority: 50,
+            compiler_options: HashMap::new(),
+            metadata_kvs: HashMap::new(),
+            metadata: Some(RequestMetadata {
+                contract_version: "1.0.0".to_string(),
+                request_id: "req-live-ownership".to_string(),
+                idempotency_key: "".to_string(),
+                traceparent: "00-11111111111111111111111111111111-2222222222222222-01".to_string(),
+                deadline: None,
+                tenant_id: "tenant-a".to_string(),
+                project_id: "project-a".to_string(),
+                subject: "user".to_string(),
+                role: "user".to_string(),
+                source_service: "system-api".to_string(),
+            }),
+        };
+        NormalizedSubmission::from_request(&req).expect("submission")
     }
 
     #[tokio::test]

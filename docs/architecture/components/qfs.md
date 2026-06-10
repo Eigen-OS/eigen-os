@@ -169,6 +169,17 @@ CircuitFS SHALL evolve into:
 - replay-safe artifact resolution,
 - deterministic lineage graphs.
 
+#### Product 1.0 live-reservation boundary
+
+QFS-L1 live qubit / reservation semantics are split-authority for Product 1.0:
+
+- **Kernel/QRTX owns live execution reservation tokens and lease TTLs** for
+  runtime gating and replay determinism.
+- **Resource Manager remains the target owner of device-capacity reservations**
+  for future hardware scheduling authority.
+- **QFS stores lineage / replay evidence** for reservation-aware artifacts, but
+  does not own live scheduler authority.
+
 QFS-L2 checkpoints additionally enforce:
 
 - immutable replay-safe checkpoint envelopes,
