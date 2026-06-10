@@ -44,7 +44,17 @@ Product 1.0 authorization decisions are evaluated for these principal classes:
 
 ---
 
-## 4. Internal service scopes
+## 4. Runtime security contract additions for Wave 4
+
+- Public ingress MUST validate JWT/OAuth2 or configured static bearer tokens.
+- Service-to-service calls MUST carry normalized service identity.
+- Security policy MUST be loaded from a versioned snapshot or fail closed.
+- Security decisions MUST be written to an immutable audit sink.
+- Sandbox profile selection MUST be denied when not listed in the active policy snapshot.
+
+---
+
+## 5. Internal service scopes
 
 Internal service-to-service calls MUST authenticate workload identity and authorize by role. Product 1.0 implementation work MUST preserve least privilege for:
 
@@ -56,7 +66,7 @@ Internal service-to-service calls MUST authenticate workload identity and author
 
 ---
 
-## 5. Denial semantics
+## 6. Denial semantics
 
 Authorization failures MUST use canonical error semantics:
 

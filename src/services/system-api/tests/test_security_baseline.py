@@ -3,6 +3,10 @@ from __future__ import annotations
 import socket
 import time
 import urllib.request
+import base64
+import hashlib
+import hmac
+import json
 
 import grpc
 import pytest
@@ -44,6 +48,17 @@ def _extract_error_info(err: grpc.RpcError) -> error_details_pb2.ErrorInfo:
     assert len(st.details) >= 1
     assert st.details[0].Unpack(info)
     return info
+
+
+def _jwt(secret: str, claims: dict[str, object]) -> str:
+    def b64(data: bytes) -> str:
+        return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
+    header = {"alg": "HS256", "typ": "JWT"}
+    header_b64 = b64(json.dumps(header, separators=(",", ":"), sort_keys=True).encode("utf-8"))
+    payload_b64 = b64(json.dumps(claims, separators=(",", ":"), sort_keys=True).encode("utf-8"))
+    signing_input = f"{header_b64}.{payload_b64}".encode("ascii")
+    sig = hmac.new(secret.encode("utf-8"), signing_input, hashlib.sha256).digest()
+    return f"{header_b64}.{payload_b64}.{b64(sig)}"
 
 
 def test_auth_static_token_mode_requires_authorization(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -143,6 +158,80 @@ def test_authz_readonly_cannot_submit_but_can_list_devices(monkeypatch: pytest.M
                 metadata=md,
             )
         assert exc.value.code() == grpc.StatusCode.PERMISSION_DENIED
+    finally:
+        server.stop(grace=None)
+
+
+def test_expired_jwt_token_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SYSTEM_API_AUTH_MODE", "jwt_oauth2")
+    monkeypatch.setenv("SYSTEM_API_AUTH_JWT_SECRET", "jwt-secret")
+    monkeypatch.setenv("SYSTEM_API_AUTH_ISSUER", "eigen-auth")
+    monkeypatch.setenv("SYSTEM_API_AUTH_AUDIENCE", "eigen-api")
+    monkeypatch.setenv("SYSTEM_API_AUTH_SUBJECT", "jwt-user")
+    monkeypatch.setenv("SYSTEM_API_AUTH_TENANT", "jwt-tenant")
+
+    addr = f"127.0.0.1:{_free_port()}"
+    server = serve(bind=addr)
+    time.sleep(0.05)
+    try:
+        channel = grpc.insecure_channel(addr)
+        stub = dev_pb_grpc.DeviceServiceStub(channel)
+        token = _jwt("jwt-secret", {"iss": "eigen-auth", "aud": "eigen-api", "exp": 1, "sub": "jwt-user"})
+        with pytest.raises(grpc.RpcError) as exc:
+            stub.ListDevices(dev_pb.ListDevicesRequest(), metadata=(("authorization", f"Bearer {token}"),))
+        assert exc.value.code() == grpc.StatusCode.UNAUTHENTICATED
+    finally:
+        server.stop(grace=None)
+
+
+def test_policy_backend_outage_fails_closed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("SYSTEM_API_AUTH_MODE", "static_token")
+    monkeypatch.setenv("SYSTEM_API_AUTH_TOKEN", "outage-token")
+    monkeypatch.setenv("SYSTEM_API_AUTH_SUBJECT", "outage-user")
+    monkeypatch.setenv("SYSTEM_API_AUTH_TENANT", "outage-tenant")
+    monkeypatch.setenv("SYSTEM_API_POLICY_SNAPSHOT_PATH", str(tmp_path / "missing.json"))
+
+    addr = f"127.0.0.1:{_free_port()}"
+    server = serve(bind=addr)
+    time.sleep(0.05)
+    try:
+        channel = grpc.insecure_channel(addr)
+        stub = dev_pb_grpc.DeviceServiceStub(channel)
+        with pytest.raises(grpc.RpcError) as exc:
+            stub.ListDevices(dev_pb.ListDevicesRequest(), metadata=(("authorization", "Bearer outage-token"),))
+        assert exc.value.code() == grpc.StatusCode.PERMISSION_DENIED
+        info = _extract_error_info(exc.value)
+        assert info.metadata["policy"] == "POLICY_BACKEND_UNAVAILABLE"
+    finally:
+        server.stop(grace=None)
+
+
+def test_security_audit_sink_persists_and_sanitizes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    audit_path = tmp_path / "audit.jsonl"
+    monkeypatch.setenv("SYSTEM_API_AUDIT_SINK_PATH", str(audit_path))
+    monkeypatch.setenv("SYSTEM_API_AUTH_MODE", "static_token")
+    monkeypatch.setenv("SYSTEM_API_AUTH_TOKEN", "audit-token")
+    monkeypatch.setenv("SYSTEM_API_AUTH_SUBJECT", "audit-user")
+    monkeypatch.setenv("SYSTEM_API_AUTH_TENANT", "audit-tenant")
+    monkeypatch.setenv("SYSTEM_API_AUTH_ROLES", "readonly")
+
+    addr = f"127.0.0.1:{_free_port()}"
+    server = serve(bind=addr)
+    time.sleep(0.05)
+    try:
+        channel = grpc.insecure_channel(addr)
+        job_stub = job_pb_grpc.JobServiceStub(channel)
+        md = (("authorization", "Bearer audit-token"),)
+        with pytest.raises(grpc.RpcError):
+            job_stub.CancelJob(job_pb.CancelJobRequest(job_id="job_123"), metadata=md)
+        assert audit_path.exists()
+        body = audit_path.read_text(encoding="utf-8").strip().splitlines()
+        assert body
+        audit = json.loads(body[-1])
+        assert audit["decision"] == "deny"
+        assert audit["subject"] == "audit-user"
+        assert audit["trace_id"] == "" or "trace_id" in audit
+        assert "Bearer audit-token" not in audit_path.read_text(encoding="utf-8")
     finally:
         server.stop(grace=None)
 

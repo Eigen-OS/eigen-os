@@ -24,6 +24,7 @@ from .errors import FieldViolation, PublicErrorSpec, abort_invalid_argument, abo
 from .lifecycle import apply_signal
 from .scheduling import resolve_dag
 from .observability import (
+    append_security_audit_event,
     log_request_end,
     log_request_start,
     new_request_context,
@@ -32,7 +33,7 @@ from .observability import (
     trace_id_from_traceparent,
 )
 from .qfs_store import QFS_STORE
-from .security import auth_context, enforce_authn, enforce_authz
+from .security import auth_context, enforce_authn, enforce_authz, enforce_sandbox_policy, security_context
 from .validation import (
     validate_device_id,
     validate_job_id,
@@ -824,6 +825,8 @@ class JobService:
             or owner_project
             or "project-default"
         ).strip() or "project-default"
+        sandbox_profile = metadata.get("sandbox_profile", "default").strip() or "default"
+        sec = security_context(context=_DummyContext(metadata), method_name="JobService.SubmitJob") if False else None
         tenant_quota_limit = int(tenant_envelope.tenant_max_queued_jobs or os.getenv("EIGEN_SCHED_TENANT_QUOTA_MAX_QUEUED", "16"))
         project_quota_limit = int(tenant_envelope.project_max_queued_jobs or os.getenv("EIGEN_SCHED_PROJECT_QUOTA_MAX_QUEUED", "8"))
         created_at_dt = created_at.ToDatetime().replace(tzinfo=timezone.utc)
@@ -869,6 +872,12 @@ class JobService:
             "version": "0.3",
             "backend": request.target or "sim:local",
             "qfs_compiled_aqo": f"qfs://jobs/{job_id}/compiled/circuit.aqo.json",
+            "security_subject": owner_subject,
+            "security_tenant": owner_tenant,
+            "security_project": owner_project,
+            "security_sandbox_profile": sandbox_profile,
+            "security_policy_version": "1.0.0",
+            "security_service_identity": "system-api",
             "qfs_results_parquet": f"qfs://jobs/{job_id}/results.parquet",
             "qfs_metrics": f"qfs://jobs/{job_id}/results/metrics.json",
             "qfs_results_stream_prefix": f"qfs://jobs/{job_id}/results/streams/",
@@ -1240,6 +1249,14 @@ class JobService:
 
         envelope = _public_envelope(request, context)
         _apply_public_envelope_context(rc, envelope)
+        sec = security_context(context, method_name="JobService.SubmitJob")
+        rc.subject = sec.subject
+        rc.roles = sec.roles
+        rc.auth_mode = sec.auth_mode
+        rc.policy_version = sec.policy_version
+        rc.service_identity = sec.service_identity
+        rc.sandbox_profile = sec.sandbox_profile
+        enforce_sandbox_policy(context, sandbox_profile=sec.sandbox_profile or "default")
         log_request_start("JobService.SubmitJob", rc)
 
         violations = validate_submit_job(request)
@@ -1385,6 +1402,12 @@ class JobService:
         log_request_start("JobService.GetJobStatus", rc)
         envelope = _public_envelope(request, context)
         _apply_public_envelope_context(rc, envelope)
+        sec = security_context(context, method_name="JobService.GetJobStatus")
+        rc.subject = sec.subject
+        rc.roles = sec.roles
+        rc.auth_mode = sec.auth_mode
+        rc.policy_version = sec.policy_version
+        rc.service_identity = sec.service_identity
 
         violations = validate_job_id(request)
         if violations:
@@ -1428,6 +1451,12 @@ class JobService:
         log_request_start("JobService.CancelJob", rc)
         envelope = _public_envelope(request, context)
         _apply_public_envelope_context(rc, envelope)
+        sec = security_context(context, method_name="JobService.CancelJob")
+        rc.subject = sec.subject
+        rc.roles = sec.roles
+        rc.auth_mode = sec.auth_mode
+        rc.policy_version = sec.policy_version
+        rc.service_identity = sec.service_identity
 
         violations = validate_job_id(request)
         if violations:
@@ -1463,6 +1492,12 @@ class JobService:
         log_request_start("JobService.StreamJobUpdates", rc)
         envelope = _public_envelope(request, context)
         _apply_public_envelope_context(rc, envelope)
+        sec = security_context(context, method_name="JobService.StreamJobUpdates")
+        rc.subject = sec.subject
+        rc.roles = sec.roles
+        rc.auth_mode = sec.auth_mode
+        rc.policy_version = sec.policy_version
+        rc.service_identity = sec.service_identity
 
         violations = validate_job_id(request)
         if violations:
@@ -1503,6 +1538,12 @@ class JobService:
         log_request_start("JobService.GetJobResults", rc)
         envelope = _public_envelope(request, context)
         _apply_public_envelope_context(rc, envelope)
+        sec = security_context(context, method_name="JobService.GetJobResults")
+        rc.subject = sec.subject
+        rc.roles = sec.roles
+        rc.auth_mode = sec.auth_mode
+        rc.policy_version = sec.policy_version
+        rc.service_identity = sec.service_identity
 
         violations = validate_job_id(request)
         if violations:
@@ -1562,6 +1603,12 @@ class JobService:
         log_request_start("JobService.GetDispatchRationale", rc)
         envelope = _public_envelope(request, context)
         _apply_public_envelope_context(rc, envelope)
+        sec = security_context(context, method_name="JobService.GetDispatchRationale")
+        rc.subject = sec.subject
+        rc.roles = sec.roles
+        rc.auth_mode = sec.auth_mode
+        rc.policy_version = sec.policy_version
+        rc.service_identity = sec.service_identity
 
         violations = validate_job_id(request)
         if violations:
@@ -1633,6 +1680,12 @@ class DeviceService:
         log_request_start("DeviceService.ListDevices", rc)
         envelope = _public_envelope(request, context)
         _apply_public_envelope_context(rc, envelope)
+        sec = security_context(context, method_name="JobService.ListDevices")
+        rc.subject = sec.subject
+        rc.roles = sec.roles
+        rc.auth_mode = sec.auth_mode
+        rc.policy_version = sec.policy_version
+        rc.service_identity = sec.service_identity
 
         # backend_type is optional
         resp = self._dev_pb.ListDevicesResponse(
@@ -1659,6 +1712,12 @@ class DeviceService:
         log_request_start("DeviceService.GetDeviceDetails", rc)
         envelope = _public_envelope(request, context)
         _apply_public_envelope_context(rc, envelope)
+        sec = security_context(context, method_name="DeviceService.GetDeviceDetails")
+        rc.subject = sec.subject
+        rc.roles = sec.roles
+        rc.auth_mode = sec.auth_mode
+        rc.policy_version = sec.policy_version
+        rc.service_identity = sec.service_identity
 
         violations = validate_device_id(request)
         if violations:
@@ -1683,6 +1742,12 @@ class DeviceService:
         log_request_start("DeviceService.GetDeviceStatus", rc)
         envelope = _public_envelope(request, context)
         _apply_public_envelope_context(rc, envelope)
+        sec = security_context(context, method_name="DeviceService.GetDeviceStatus")
+        rc.subject = sec.subject
+        rc.roles = sec.roles
+        rc.auth_mode = sec.auth_mode
+        rc.policy_version = sec.policy_version
+        rc.service_identity = sec.service_identity
 
         violations = validate_device_id(request)
         if violations:
@@ -1706,6 +1771,12 @@ class DeviceService:
         log_request_start("DeviceService.ReserveDevice", rc)
         envelope = _public_envelope(request, context)
         _apply_public_envelope_context(rc, envelope)
+        sec = security_context(context, method_name="DeviceService.ReserveDevice")
+        rc.subject = sec.subject
+        rc.roles = sec.roles
+        rc.auth_mode = sec.auth_mode
+        rc.policy_version = sec.policy_version
+        rc.service_identity = sec.service_identity
 
         violations = validate_reserve_device(request)
         if violations:
