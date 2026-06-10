@@ -24,7 +24,7 @@ from system_api.grpc_delegation import DelegationHandler
 class TestMetadataNormalization:
     """Test public-to-internal metadata mapping without leaking public-only fields."""
     
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_request_metadata_mapping(self):
         """Verify metadata is correctly normalized from public to internal."""
         client = KernelGatewayClient()
@@ -59,7 +59,7 @@ class TestMetadataNormalization:
         # Verify public-only fields are NOT leaked
         assert "client_version" not in internal_metadata
     
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_request_id_generation(self):
         """Verify request_id is generated if missing from public envelope."""
         client = KernelGatewayClient()
@@ -79,7 +79,7 @@ class TestMetadataNormalization:
 class TestSubmitJobDelegation:
     """Test System API SubmitJob delegation to Kernel."""
     
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_submit_job_delegated(self):
         """Verify SubmitJob correctly delegates to Kernel and preserves Wave 1 behavior."""
         kernel_client = AsyncMock(spec=KernelGatewayClient)
@@ -111,7 +111,7 @@ class TestSubmitJobDelegation:
         # Verify delegation was called
         kernel_client.enqueue_job.assert_called_once()
     
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_submit_job_idempotency(self):
         """Verify idempotency key is preserved through delegation."""
         kernel_client = AsyncMock(spec=KernelGatewayClient)
@@ -147,7 +147,7 @@ class TestSubmitJobDelegation:
 class TestGetJobStatusDelegation:
     """Test System API GetJobStatus delegation to Kernel."""
     
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_job_status_delegated(self):
         """Verify GetJobStatus correctly delegates and maps internal state to public."""
         kernel_client = AsyncMock(spec=KernelGatewayClient)
@@ -182,7 +182,7 @@ class TestGetJobStatusDelegation:
 class TestCancelJobDelegation:
     """Test System API CancelJob delegation to Kernel."""
     
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_cancel_job_delegated(self):
         """Verify CancelJob correctly delegates to Kernel."""
         kernel_client = AsyncMock(spec=KernelGatewayClient)
@@ -206,7 +206,7 @@ class TestCancelJobDelegation:
         # Verify delegation was called
         kernel_client.cancel_job.assert_called_once()
     
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_cancel_job_already_terminal(self):
         """Verify CancelJob correctly handles already-terminal jobs."""
         kernel_client = AsyncMock(spec=KernelGatewayClient)
@@ -231,7 +231,7 @@ class TestCancelJobDelegation:
 class TestGetJobResultsDelegation:
     """Test System API GetJobResults delegation to Kernel."""
     
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_job_results_delegated(self):
         """Verify GetJobResults correctly delegates and maps response."""
         kernel_client = AsyncMock(spec=KernelGatewayClient)
@@ -287,7 +287,7 @@ class TestStateMapping:
 class TestWave1RegressionCompatibility:
     """Ensure Wave 1 public API contracts remain compatible through delegation."""
     
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_wave1_idempotency_preserved(self):
         """Verify Wave 1 idempotency semantics are preserved through Kernel delegation."""
         # Placeholder for full idempotency test
@@ -295,14 +295,14 @@ class TestWave1RegressionCompatibility:
         # result in same job_id and are deduplicated by Kernel
         pass
     
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_wave1_error_model_preserved(self):
         """Verify Wave 1 canonical error model is preserved through delegation."""
         # Placeholder for error model test
         # Would verify that Kernel errors are translated to public error envelopes
         pass
     
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_wave1_trace_context_propagated(self):
         """Verify W3C TraceContext is propagated end-to-end through delegation."""
         # Placeholder for trace context test
