@@ -127,6 +127,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "tokio-stream",
  "tonic",
  "tonic-prost",
  "tonic-prost-build",
@@ -757,6 +758,7 @@ dependencies = [
 name = "qrtx"
 version = "0.18.0"
 dependencies = [
+ "serde",
  "thiserror 1.0.69",
 ]
 

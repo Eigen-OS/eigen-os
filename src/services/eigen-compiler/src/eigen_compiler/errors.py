@@ -6,8 +6,14 @@ from dataclasses import dataclass
 from typing import Sequence
 
 import grpc
-from google.rpc import error_details_pb2, status_pb2
-from grpc_status import rpc_status
+
+try:
+    from google.rpc import error_details_pb2, status_pb2
+    from grpc_status import rpc_status
+except ModuleNotFoundError:  # pragma: no cover - exercised in lean test envs
+    error_details_pb2 = None
+    status_pb2 = None
+    rpc_status = None
 
 
 @dataclass(frozen=True)
@@ -25,6 +31,10 @@ def abort_invalid_argument(
     message: str,
     violations: Sequence[FieldViolation],
 ) -> None:
+    if error_details_pb2 is None or status_pb2 is None or rpc_status is None:
+        context.abort(grpc.StatusCode.INVALID_ARGUMENT, message)
+        return
+
     bad_request = error_details_pb2.BadRequest(
         field_violations=[
             error_details_pb2.BadRequest.FieldViolation(
