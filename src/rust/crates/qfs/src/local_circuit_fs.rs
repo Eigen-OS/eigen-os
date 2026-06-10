@@ -1,7 +1,7 @@
 use std::fs;
-use std::hash::{Hash, Hasher};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
@@ -77,6 +77,7 @@ pub struct CompiledMetadata {
     #[serde(default)]
     pub producer_identity: String,
     #[serde(default)]
+    pub retention_policy: String,
     pub contract_version: String,
     #[serde(default)]
     pub created_at: String,
@@ -99,6 +100,12 @@ pub struct ResultEnvelope {
     pub job_id: String,
     pub result_ref: String,
     pub manifest_ref: String,
+    #[serde(default)]
+    pub created_at_epoch_ms: u64,
+    #[serde(default)]
+    pub retention_policy: String,
+    #[serde(default)]
+    pub lineage: CompiledArtifactLineage,
 }
 
 /// Durable artifact manifest for runtime outputs.
@@ -107,6 +114,12 @@ pub struct ResultManifest {
     pub artifact_version: String,
     pub producer_version: String,
     pub schema_version: String,
+    #[serde(default)]
+    pub created_at_epoch_ms: u64,
+    #[serde(default)]
+    pub retention_policy: String,
+    #[serde(default)]
+    pub lineage: CompiledArtifactLineage,
     pub artifacts: Vec<ResultArtifactDescriptor>,
 }
 
@@ -137,6 +150,9 @@ pub enum CircuitFsError {
 
     #[error("artifact already exists: {path}")]
     AlreadyExists { path: PathBuf },
+
+    #[error("artifact integrity mismatch: {path}")]
+    IntegrityMismatch { path: PathBuf },
 
     #[error(transparent)]
     Io(#[from] io::Error),
@@ -414,6 +430,7 @@ impl CircuitFsLocal {
             compiler_version: compiler_version.to_string(),
             created_at: "unknown".to_string(),
             lineage: CompiledArtifactLineage::default(),
+            retention_policy: "pinned".to_string(),
         };
         self.store_compiled_artifacts_v1(job_id, aqo_json, qasm, None, provenance)
     }
@@ -429,6 +446,11 @@ impl CircuitFsLocal {
         let metadata_bytes = read_bytes_not_found(&self.compiled_metadata_path(job_id)?)?;
         let metadata: CompiledMetadata =
             serde_json::from_slice(&metadata_bytes).map_err(to_io_error)?;
+        verify_hash(
+            &self.compiled_aqo_json_path(job_id)?,
+            &metadata.aqo_hash,
+            &aqo_json,
+        )?;
         let qasm = if metadata.qasm_hash.is_some() {
             Some(read_bytes_not_found(&qasm_path)?)
         } else {
@@ -445,6 +467,14 @@ impl CircuitFsLocal {
         }
         if metadata.diagnostics_hash.is_some() && compile_report_json.is_none() {
             return Err(CircuitFsError::NotFound { path: report_path });
+        }
+        if let (Some(expected), Some(actual)) = (metadata.qasm_hash.as_ref(), qasm.as_ref()) {
+            verify_hash(&qasm_path, expected, actual)?;
+        }
+        if let (Some(expected), Some(actual)) =
+            (metadata.diagnostics_hash.as_ref(), compile_report_json.as_ref())
+        {
+            verify_hash(&report_path, expected, actual)?;
         }
 
         Ok(CompiledArtifacts {
@@ -464,25 +494,42 @@ impl CircuitFsLocal {
     ) -> Result<(), CircuitFsError> {
         self.ensure_job_layout(job_id)?;
 
-        // The results artifact is hot-read by APIs, so we always use atomic writes.
+        let results_parquet_path = self.results_parquet_path(job_id)?;
+        let result_envelope_path = self.result_envelope_path(job_id)?;
+        let result_manifest_path = self.result_manifest_path(job_id)?;
+        for path in [&results_parquet_path, &result_envelope_path, &result_manifest_path] {
+            if path.exists() {
+                return Err(CircuitFsError::AlreadyExists { path: path.clone() });
+            }
+        }
         atomic_write_bytes(&self.results_parquet_path(job_id)?, parquet_payload)?;
-        let results_path = self.results_parquet_path(job_id)?;
-        atomic_write_bytes(&results_path, parquet_payload)?;
 
         let result_rel_path = "results.parquet".to_string();
         let manifest_rel_path = "results/manifest.json".to_string();
+        let created_at_epoch_ms = unix_epoch_ms();
+        let lineage = CompiledArtifactLineage {
+            request_id: None,
+            source_ref: Some(format!("qfs://jobs/{job_id}/results.parquet")),
+            source_sha256: Some(content_hash_hex(parquet_payload)),
+        };
         let envelope = ResultEnvelope {
             artifact_version: "1.0.0".to_string(),
             producer_version: producer_version.to_string(),
             job_id: job_id.to_string(),
             result_ref: result_rel_path.clone(),
             manifest_ref: manifest_rel_path.clone(),
+            created_at_epoch_ms,
+            retention_policy: "pinned".to_string(),
+            lineage: lineage.clone(),
         };
         let envelope_bytes = serde_json::to_vec_pretty(&envelope).map_err(to_io_error)?;
         let manifest = ResultManifest {
             artifact_version: envelope.artifact_version.clone(),
             producer_version: producer_version.to_string(),
             schema_version: "result_manifest.v1".to_string(),
+            created_at_epoch_ms,
+            retention_policy: "pinned".to_string(),
+            lineage,
             artifacts: vec![
                 ResultArtifactDescriptor {
                     path: result_rel_path,
@@ -497,8 +544,8 @@ impl CircuitFsLocal {
             ],
         };
         let manifest_bytes = serde_json::to_vec_pretty(&manifest).map_err(to_io_error)?;
-        atomic_write_bytes(&self.result_manifest_path(job_id)?, &manifest_bytes)?;
-        atomic_write_bytes(&self.result_envelope_path(job_id)?, &envelope_bytes)?;
+        atomic_write_bytes(&result_manifest_path, &manifest_bytes)?;
+        atomic_write_bytes(&result_envelope_path, &envelope_bytes)?;
 
         Ok(())
     }
@@ -514,6 +561,9 @@ impl CircuitFsLocal {
                 job_id: job_id.to_string(),
                 result_ref: "results.parquet".to_string(),
                 manifest_ref: "".to_string(),
+                created_at_epoch_ms: 0,
+                retention_policy: "legacy".to_string(),
+                lineage: CompiledArtifactLineage::default(),
             },
         };
         let manifest = match read_optional_bytes(&self.result_manifest_path(job_id)?)? {
@@ -522,6 +572,9 @@ impl CircuitFsLocal {
                 artifact_version: envelope.artifact_version.clone(),
                 producer_version: envelope.producer_version.clone(),
                 schema_version: "result_manifest.v0".to_string(),
+                created_at_epoch_ms: envelope.created_at_epoch_ms,
+                retention_policy: envelope.retention_policy.clone(),
+                lineage: envelope.lineage.clone(),
                 artifacts: vec![ResultArtifactDescriptor {
                     path: "results.parquet".to_string(),
                     content_hash: content_hash_hex(&parquet),
@@ -529,6 +582,8 @@ impl CircuitFsLocal {
                 }],
             },
         };
+
+        verify_result_manifest(&self.results_parquet_path(job_id)?, &self.result_envelope_path(job_id)?, &self.result_manifest_path(job_id)?, &parquet, &envelope, &manifest)?;
 
         Ok(ResultsBundle {
             parquet,
@@ -589,6 +644,42 @@ impl CircuitFsLocal {
     }
 }
 
+fn verify_result_manifest(
+    parquet_path: &Path,
+    envelope_path: &Path,
+    manifest_path: &Path,
+    parquet: &[u8],
+    envelope: &ResultEnvelope,
+    manifest: &ResultManifest,
+) -> Result<(), CircuitFsError> {
+    verify_hash(parquet_path, &content_hash_hex(parquet), parquet)?;
+    if !envelope.result_ref.is_empty() {
+        let envelope_bytes = serde_json::to_vec_pretty(envelope).map_err(to_io_error)?;
+        verify_hash(envelope_path, &content_hash_hex(&envelope_bytes), &envelope_bytes)?;
+    }
+    if !manifest.artifacts.is_empty() {
+        let manifest_bytes = serde_json::to_vec_pretty(manifest).map_err(to_io_error)?;
+        verify_hash(manifest_path, &content_hash_hex(&manifest_bytes), &manifest_bytes)?;
+    }
+    for artifact in &manifest.artifacts {
+        let actual = match artifact.path.as_str() {
+            "results.parquet" => parquet,
+            "results/result.json" => {
+                let bytes = serde_json::to_vec_pretty(envelope).map_err(to_io_error)?;
+                bytes.as_slice()
+            }
+            _ => continue,
+        };
+        let actual_hash = content_hash_hex(actual);
+        if actual_hash != artifact.content_hash {
+            return Err(CircuitFsError::IntegrityMismatch {
+                path: parquet_path.to_path_buf(),
+            });
+        }
+    }
+    Ok(())
+}
+
 // ----------------------------
 // Internals
 // ----------------------------
@@ -619,6 +710,16 @@ fn atomic_write_bytes(path: &Path, bytes: &[u8]) -> Result<(), CircuitFsError> {
 
     // Persist performs an atomic rename on supported filesystems.
     tmp.persist(path).map_err(|e| CircuitFsError::Io(e.error))?;
+    Ok(())
+}
+
+fn verify_hash(path: &Path, expected: &str, actual: &[u8]) -> Result<(), CircuitFsError> {
+    let actual_hash = content_hash_hex(actual);
+    if actual_hash != expected {
+        return Err(CircuitFsError::IntegrityMismatch {
+            path: path.to_path_buf(),
+        });
+    }
     Ok(())
 }
 
@@ -734,9 +835,16 @@ fn to_io_error(err: serde_json::Error) -> CircuitFsError {
 }
 
 fn content_hash_hex(bytes: &[u8]) -> String {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    bytes.hash(&mut hasher);
-    format!("{:016x}", hasher.finish())
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("{:x}", hasher.finalize())
+}
+
+fn unix_epoch_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -793,7 +901,7 @@ mod layout_tests {
     }
 
     #[test]
-    fn atomic_write_replaces_existing_file() {
+    fn immutable_results_writes_reject_existing_file() {
         let (_dir, fs) = tmp_fs();
         let job_id = "job-1";
 
@@ -801,10 +909,9 @@ mod layout_tests {
         let p = fs.results_parquet_path(job_id).unwrap();
 
         fs::write(&p, b"old").unwrap();
-        fs.store_results_bundle(job_id, b"new", "eigen-kernel@0.1.0")
-            .unwrap();
-
-        assert_eq!(fs::read(&p).unwrap(), b"new");
+        let err = fs.store_results_bundle(job_id, b"new", "eigen-kernel@0.1.0")
+            .expect_err("duplicate results write must fail");
+        assert!(matches!(err, CircuitFsError::AlreadyExists { .. }));
     }
 
     #[test]
@@ -832,6 +939,8 @@ mod layout_tests {
         assert_eq!(res.parquet, b"PAR1....");
         assert_eq!(res.envelope.artifact_version, "1.0.0");
         assert_eq!(res.envelope.producer_version, "eigen-kernel@0.1.0");
+        assert_eq!(res.envelope.retention_policy, "pinned");
+        assert_eq!(res.envelope.lineage.source_sha256.as_deref(), Some(content_hash_hex(b"PAR1....").as_str()));
         assert_eq!(res.manifest.schema_version, "result_manifest.v1");
         assert_eq!(res.manifest.artifacts.len(), 2);
 
@@ -878,6 +987,20 @@ mod layout_tests {
         assert_eq!(compiled.metadata.compiler_version, "eigen-lang@0.1.0");
         assert_eq!(compiled.metadata.aqo_hash, content_hash_hex(aqo));
         assert_eq!(compiled.metadata.qasm_hash, Some(content_hash_hex(qasm)));
+        assert_eq!(compiled.metadata.retention_policy, "pinned");
+    }
+
+    #[test]
+    fn corrupted_compiled_artifact_digest_is_rejected() {
+        let (_dir, fs) = tmp_fs();
+        let job_id = "job-corrupt";
+        let aqo = br#"{"version":"0.1","type":"aqo"}"#;
+        fs.store_compiled_artifacts(job_id, aqo, None, "eigen-lang@0.1.0").unwrap();
+
+        fs::write(fs.compiled_aqo_json_path(job_id).unwrap(), br#"{"version":"0.1","type":"tampered"}"#)
+            .unwrap();
+        let err = fs.load_compiled_artifacts(job_id).expect_err("corrupt artifact must be rejected");
+        assert!(matches!(err, CircuitFsError::IntegrityMismatch { .. }));
     }
 
     #[test]
