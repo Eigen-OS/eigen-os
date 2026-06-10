@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import socket
 import sys
 import time
@@ -10,6 +11,21 @@ from pathlib import Path
 PACKAGE_ROOT = Path(__file__).resolve().parents[1] / "src"
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
+
+try:
+    import google.rpc  # type: ignore
+except ModuleNotFoundError:
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "install",
+            "googleapis-common-protos>=1.72",
+            "grpcio-status>=1.76",
+        ],
+        check=True,
+    )
 
 import pytest
 
