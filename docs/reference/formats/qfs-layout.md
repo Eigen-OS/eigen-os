@@ -230,6 +230,51 @@ All result artifacts MUST be content-verified on read.
 
 ---
 
+# Checkpoint Envelope Contract (QFS-L2)
+
+Checkpoint persistence MUST use a replay-safe immutable envelope.
+
+Canonical checkpoint envelope:
+
+```yaml
+schema_version: "1.0.0"
+checkpoint_id: chkpt-001
+job_id: job-123
+runtime_version: "1.1.0"
+payload_refs:
+  state_segments:
+    - path: qfs://...
+      content_hash: sha256:...
+      size_bytes: 1024
+integrity:
+  checksum_set: sha256
+compatibility:
+  min_reader_version: "1.0.0"
+  max_reader_version: null
+retention:
+  retention_class: hot|warm|cold
+  created_at_epoch_ms: 1715817600000
+  retention_until_epoch_ms: 1715904000000
+  pinned: true
+restore_lineage:
+  restored_from_checkpoint_id: chkpt-parent
+  replay_session_id: replay-001
+  restored_by_runtime_version: "1.1.0"
+```
+
+Normative requirements:
+
+- checkpoint writes MUST be atomic;
+- checkpoint payloads MUST be immutable once committed;
+- restore paths MUST validate compatibility windows before replay;
+- checkpoint payload hashes MUST use SHA-256;
+- corrupted checkpoint payloads MUST be rejected;
+- retention expiry MUST invalidate restore eligibility;
+- restore lineage MUST remain replay-stable;
+- replay restore operations MUST remain deterministic across retries.
+
+---
+
 ### 6.5 `checkpoints/`
 
 Contains checkpoint/restore artifacts.
