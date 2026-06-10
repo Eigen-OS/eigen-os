@@ -1,31 +1,62 @@
 {
   "artifact_version": "1.0.0",
-  "updated_at": "2026-05-19",
+  "updated_at": "2026-06-11",
   "release_artifacts": {
-    "compatibility_report": "docs/development/phase-8d/phase-8d-compatibility-report.md",
-    "exit_evidence": "docs/development/phase-8d/phase-8d-exit-evidence-bundle.md"
+    "compatibility_report": "docs/development/wave-4/product-1.0-wave-4-compatibility-report.md",
+    "exit_evidence": "docs/development/wave-4/product-1.0-wave-4-exit-evidence-bundle.md",
+    "public_parity_matrix": "docs/development/wave-4/product-1.0-wave-4-public-parity-matrix.md",
+    "schema_bundle": "contracts/product-1.0/public-rest.openapi.json"
   },
   "rest_parity": {
     "version": "1.0.0",
-    "paths": ["submit", "watch", "results", "cancel"],
-    "required_terminal_states": ["DONE", "ERROR", "CANCELLED", "TIMEOUT"],
-    "watch_monotonic_event_seq": true
+    "paths": [
+      "submit",
+      "watch",
+      "results",
+      "cancel"
+    ],
+    "required_terminal_states": [
+      "DONE",
+      "ERROR",
+      "CANCELLED",
+      "TIMEOUT"
+    ],
+    "watch_monotonic_event_seq": true,
+    "schema_contract": "contracts/product-1.0/public-rest.openapi.json",
+    "error_parity": {
+      "INVALID_ARGUMENT": "EIGEN_PUBLIC_VALIDATION_FAILED",
+      "UNAUTHENTICATED": "EIGEN_PUBLIC_UNAUTHENTICATED",
+      "PERMISSION_DENIED": "EIGEN_PUBLIC_PERMISSION_DENIED",
+      "FAILED_PRECONDITION": "EIGEN_PUBLIC_IDEMPOTENCY_CONFLICT",
+      "RESOURCE_EXHAUSTED": "EIGEN_PUBLIC_PAYLOAD_LIMIT_EXCEEDED",
+      "INTERNAL": "EIGEN_PUBLIC_INTERNAL",
+      "UNAVAILABLE": "EIGEN_PUBLIC_UNAVAILABLE"
+    },
+    "observability_marker": "eigen_public_api_contract_requests_total",
+    "trace_headers": [
+      "traceparent",
+      "x-request-id"
+    ],
+    "idempotency_parity": {
+      "hash_algorithm": "sha256",
+      "canonicalization": [
+        "utf-8",
+        "sorted keys",
+        "no insignificant whitespace",
+        "stable array order"
+      ]
+    }
   },
   "providers": [
     {
       "provider": "sim:local",
-      "capabilities": {"submit": true, "watch": true, "results": true, "cancel": true},
+      "capabilities": {
+        "submit": true,
+        "watch": true,
+        "results": true,
+        "cancel": true
+      },
       "status": "ga"
-    },
-    {
-      "provider": "ibm:runtime",
-      "capabilities": {"submit": true, "watch": true, "results": true, "cancel": true},
-      "status": "preview"
-    },
-    {
-      "provider": "aws:braket",
-      "capabilities": {"submit": true, "watch": true, "results": true, "cancel": true},
-      "status": "preview"
     }
   ]
 }

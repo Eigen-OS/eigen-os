@@ -21,7 +21,7 @@
       ],
       "planned_proto_schema_files": [],
       "conformance_tests": [
-         "src/services/system-api/tests/test_public_envelope_versioning.py",
+        "src/services/system-api/tests/test_public_envelope_versioning.py",
         "src/services/system-api/tests/test_idempotency.py",
         "src/services/system-api/tests/test_public_error_conformance.py",
         "src/services/system-api/tests/test_observability_smoke.py",
@@ -245,7 +245,7 @@
       "conformance_tests": [
         "src/services/system-api/tests/test_observability_smoke.py",
         "src/rust/crates/eigen-kernel/tests/"
-       ],
+      ],
       "implementation_notes": [
         "Kernel/QRTX emits the approved orchestration contract marker family",
         "Prometheus labels remain bounded; trace continuity is preserved in logs/traces rather than labels"
@@ -335,16 +335,20 @@
       "sources": [
         "docs/reference/api/benchmark-run.md"
       ],
-      "proto_schema_files": [],
-      "planned_proto_schema_files": [
-        "OpenAPI/JSON Schema under contracts/product-1.0/"
+      "proto_schema_files": [
+        "contracts/product-1.0/public-rest.openapi.json"
       ],
+      "planned_proto_schema_files": [],
       "conformance_tests": [
-        "scripts/ci/check-phase8c-gates.sh",
-        "Product 1.0 REST conformance suite"
+        "src/services/system-api/tests/test_rest_parity_and_compatibility_matrix.py",
+        "src/services/system-api/tests/test_public_error_conformance.py",
+        "src/services/system-api/tests/test_validation_errors.py"
       ],
-      "implementation_status": "documented",
-      "compatibility_status": "planned"
+      "implementation_status": "partial",
+      "compatibility_status": "planned",
+      "implementation_notes": [
+        "Schema-first REST mirror published in contracts/product-1.0/public-rest.openapi.json; runtime adapter remains pending."
+      ]
     },
     {
       "name": "Explain Backend Selection REST API",
@@ -353,15 +357,19 @@
       "sources": [
         "docs/reference/api/explain-backend-selection.md"
       ],
-      "proto_schema_files": [],
-      "planned_proto_schema_files": [
-        "OpenAPI/JSON Schema under contracts/product-1.0/"
+      "proto_schema_files": [
+        "contracts/product-1.0/public-rest.openapi.json"
       ],
+      "planned_proto_schema_files": [],
       "conformance_tests": [
-        "Product 1.0 explainability API conformance suite"
+        "src/services/system-api/tests/test_rest_parity_and_compatibility_matrix.py",
+        "src/services/system-api/tests/test_explain_execution_contract.py"
       ],
-      "implementation_status": "documented",
-      "compatibility_status": "planned"
+      "implementation_status": "partial",
+      "compatibility_status": "planned",
+      "implementation_notes": [
+        "Schema-first REST mirror published in contracts/product-1.0/public-rest.openapi.json; runtime adapter remains pending."
+      ]
     },
     {
       "name": "Public REST API envelope",
@@ -370,15 +378,19 @@
       "sources": [
         "docs/reference/api/rest-public.md"
       ],
-      "proto_schema_files": [],
-      "planned_proto_schema_files": [
-        "OpenAPI under contracts/product-1.0/"
+      "proto_schema_files": [
+
+        "contracts/product-1.0/public-rest.openapi.json"
       ],
+      "planned_proto_schema_files": [],
       "conformance_tests": [
-        "Product 1.0 REST mirror conformance suite"
+        "src/services/system-api/tests/test_rest_parity_and_compatibility_matrix.py"
       ],
-      "implementation_status": "planned",
-      "compatibility_status": "planned"
+      "implementation_status": "partial",
+      "compatibility_status": "planned",
+      "implementation_notes": [
+        "Schema-first REST mirror published in contracts/product-1.0/public-rest.openapi.json; runtime adapter remains pending."
+      ]
     },
     {
       "name": "Authorization and security policy",

@@ -25,6 +25,10 @@ The endpoint exposes:
 
 This API is part of the Eigen OS explainability and auditability framework and integrates with:
 
+### Machine-readable schema artifact
+
+`contracts/product-1.0/public-rest.openapi.json`
+
 - QRTX,
 - Knowledge Base (KB),
 - Driver Manager,

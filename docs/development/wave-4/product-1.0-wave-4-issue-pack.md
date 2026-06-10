@@ -313,7 +313,7 @@ Close the Product 1.0 REST mirror gap with explicit schema artifacts and canonic
 
 ## Exit evidence
 
-- Schema bundle.
+- Schema bundle (`contracts/product-1.0/public-rest.openapi.json`).
 - REST compatibility report.
 - Public parity matrix.
 
