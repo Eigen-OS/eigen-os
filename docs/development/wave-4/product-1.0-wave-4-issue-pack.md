@@ -48,6 +48,36 @@ Promote QFS L3 from a local artifact helper into the canonical Product 1.0 artif
 - Integrity verification report.
 - Retention-policy compatibility notes.
 
+## Required issue completion block MUST retain and complete this block before closure:
+
+### Summary
+
+-
+
+### Validation
+
+- [] Tests added/updated
+- [] Documentation updated (if contracts/behavior changed)
+
+### Versioning & Compatibility (required)
+
+- **Version Impact:** <!-- MAJOR | MINOR | PATCH | NONE -->
+- **Affected Interfaces:** <!-- Internal API | Public API facade | Compiler contract | AQO | QFS | Metrics | Trace context | Compatibility matrix | Migration docs -->
+- **Compatibility:** <!-- Backward-compatible | Breaking (requires MAJOR) -->
+- **Breaking Marker:** <!-- true | false -->
+- **Migration Notes:** <!-- Required when Breaking Marker=true (or Version Impact=MAJOR); otherwise "None" is allowed -->
+
+### Release Notes Draft
+
+```markdown
+### Added
+-
+### Changed
+-
+### Fixed
+-
+```
+
 ---
 
 # W4-02 — QFS L2 checkpoint envelope and restore compatibility
@@ -83,6 +113,36 @@ Define and enforce the Product 1.0 checkpoint envelope contract for replay-safe 
 - Checkpoint schema fixtures.
 - Restore replay evidence.
 - Compatibility matrix.
+
+## Required issue completion block MUST retain and complete this block before closure:
+
+### Summary
+
+-
+
+### Validation
+
+- [] Tests added/updated
+- [] Documentation updated (if contracts/behavior changed)
+
+### Versioning & Compatibility (required)
+
+- **Version Impact:** <!-- MAJOR | MINOR | PATCH | NONE -->
+- **Affected Interfaces:** <!-- Internal API | Public API facade | Compiler contract | AQO | QFS | Metrics | Trace context | Compatibility matrix | Migration docs -->
+- **Compatibility:** <!-- Backward-compatible | Breaking (requires MAJOR) -->
+- **Breaking Marker:** <!-- true | false -->
+- **Migration Notes:** <!-- Required when Breaking Marker=true (or Version Impact=MAJOR); otherwise "None" is allowed -->
+
+### Release Notes Draft
+
+```markdown
+### Added
+-
+### Changed
+-
+### Fixed
+-
+```
 
 ---
 
@@ -121,6 +181,36 @@ Resolve the ownership boundary for live-resource semantics and implement reserva
 - Ownership ADR.
 - Reservation lifecycle fixtures.
 - Failover replay report.
+
+## Required issue completion block MUST retain and complete this block before closure:
+
+### Summary
+
+-
+
+### Validation
+
+- [] Tests added/updated
+- [] Documentation updated (if contracts/behavior changed)
+
+### Versioning & Compatibility (required)
+
+- **Version Impact:** <!-- MAJOR | MINOR | PATCH | NONE -->
+- **Affected Interfaces:** <!-- Internal API | Public API facade | Compiler contract | AQO | QFS | Metrics | Trace context | Compatibility matrix | Migration docs -->
+- **Compatibility:** <!-- Backward-compatible | Breaking (requires MAJOR) -->
+- **Breaking Marker:** <!-- true | false -->
+- **Migration Notes:** <!-- Required when Breaking Marker=true (or Version Impact=MAJOR); otherwise "None" is allowed -->
+
+### Release Notes Draft
+
+```markdown
+### Added
+-
+### Changed
+-
+### Fixed
+-
+```
 
 ---
 
@@ -161,6 +251,36 @@ Turn Product 1.0 security from MVP middleware into a fail-closed contract bounda
 - Policy snapshot fixtures.
 - Audit replay evidence.
 
+## Required issue completion block MUST retain and complete this block before closure:
+
+### Summary
+
+-
+
+### Validation
+
+- [] Tests added/updated
+- [] Documentation updated (if contracts/behavior changed)
+
+### Versioning & Compatibility (required)
+
+- **Version Impact:** <!-- MAJOR | MINOR | PATCH | NONE -->
+- **Affected Interfaces:** <!-- Internal API | Public API facade | Compiler contract | AQO | QFS | Metrics | Trace context | Compatibility matrix | Migration docs -->
+- **Compatibility:** <!-- Backward-compatible | Breaking (requires MAJOR) -->
+- **Breaking Marker:** <!-- true | false -->
+- **Migration Notes:** <!-- Required when Breaking Marker=true (or Version Impact=MAJOR); otherwise "None" is allowed -->
+
+### Release Notes Draft
+
+```markdown
+### Added
+-
+### Changed
+-
+### Fixed
+-
+```
+
 ---
 
 # W4-05 — Public REST schema and error parity
@@ -196,6 +316,36 @@ Close the Product 1.0 REST mirror gap with explicit schema artifacts and canonic
 - Schema bundle.
 - REST compatibility report.
 - Public parity matrix.
+
+## Required issue completion block MUST retain and complete this block before closure:
+
+### Summary
+
+-
+
+### Validation
+
+- [] Tests added/updated
+- [] Documentation updated (if contracts/behavior changed)
+
+### Versioning & Compatibility (required)
+
+- **Version Impact:** <!-- MAJOR | MINOR | PATCH | NONE -->
+- **Affected Interfaces:** <!-- Internal API | Public API facade | Compiler contract | AQO | QFS | Metrics | Trace context | Compatibility matrix | Migration docs -->
+- **Compatibility:** <!-- Backward-compatible | Breaking (requires MAJOR) -->
+- **Breaking Marker:** <!-- true | false -->
+- **Migration Notes:** <!-- Required when Breaking Marker=true (or Version Impact=MAJOR); otherwise "None" is allowed -->
+
+### Release Notes Draft
+
+```markdown
+### Added
+-
+### Changed
+-
+### Fixed
+-
+```
 
 ---
 
@@ -233,6 +383,36 @@ Wire runtime decision lineage into the Product 1.0 Knowledge Base contract.
 - Provenance lineage fixtures.
 - Privacy-policy compatibility report.
 
+## Required issue completion block MUST retain and complete this block before closure:
+
+### Summary
+
+-
+
+### Validation
+
+- [] Tests added/updated
+- [] Documentation updated (if contracts/behavior changed)
+
+### Versioning & Compatibility (required)
+
+- **Version Impact:** <!-- MAJOR | MINOR | PATCH | NONE -->
+- **Affected Interfaces:** <!-- Internal API | Public API facade | Compiler contract | AQO | QFS | Metrics | Trace context | Compatibility matrix | Migration docs -->
+- **Compatibility:** <!-- Backward-compatible | Breaking (requires MAJOR) -->
+- **Breaking Marker:** <!-- true | false -->
+- **Migration Notes:** <!-- Required when Breaking Marker=true (or Version Impact=MAJOR); otherwise "None" is allowed -->
+
+### Release Notes Draft
+
+```markdown
+### Added
+-
+### Changed
+-
+### Fixed
+-
+```
+
 ---
 
 # W4-07 — Wave 4 observability, compatibility, and release evidence
@@ -255,3 +435,33 @@ Produce the closure and release evidence proving that Wave 4 contracts are enfor
 - Conformance test inventory.
 - Migration notes for all MAJOR deltas.
 - Manifest alignment proof.
+
+## Required issue completion block MUST retain and complete this block before closure:
+
+### Summary
+
+-
+
+### Validation
+
+- [] Tests added/updated
+- [] Documentation updated (if contracts/behavior changed)
+
+### Versioning & Compatibility (required)
+
+- **Version Impact:** <!-- MAJOR | MINOR | PATCH | NONE -->
+- **Affected Interfaces:** <!-- Internal API | Public API facade | Compiler contract | AQO | QFS | Metrics | Trace context | Compatibility matrix | Migration docs -->
+- **Compatibility:** <!-- Backward-compatible | Breaking (requires MAJOR) -->
+- **Breaking Marker:** <!-- true | false -->
+- **Migration Notes:** <!-- Required when Breaking Marker=true (or Version Impact=MAJOR); otherwise "None" is allowed -->
+
+### Release Notes Draft
+
+```markdown
+### Added
+-
+### Changed
+-
+### Fixed
+-
+```

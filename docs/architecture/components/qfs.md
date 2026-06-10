@@ -169,6 +169,8 @@ CircuitFS SHALL evolve into:
 - replay-safe artifact resolution,
 - deterministic lineage graphs.
 
+The current L3 implementation now enforces immutable writes for `compiled/` and `results/` artifacts, persists lineage and retention metadata, and verifies digests on read for compiled and result bundles.
+
 ---
 
 ## 5. Canonical Reference Model

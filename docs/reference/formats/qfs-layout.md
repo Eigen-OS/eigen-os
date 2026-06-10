@@ -185,8 +185,10 @@ Contains compiler outputs.
 - `qasm_hash` when `circuit.qasm` exists
 - `diagnostics_hash` when `compile_report.json` exists
 - `lineage` with request/source provenance
+- `retention_policy`
 
 The compiler output directory is immutable within a job scope: duplicate writes to the same artifact path MUST be rejected by the persistence layer.
+Readers MUST verify stored digests before returning bytes.
 
 ---
 
@@ -222,6 +224,9 @@ Contains execution outputs and structured metadata.
 | `error.json` | conditional | Failure details |
 
 `error.json` MUST exist for failed terminal executions where structured error details are available.
+
+`results/result.json` and `results/manifest.json` MUST carry immutable lineage and retention metadata.
+All result artifacts MUST be content-verified on read.
 
 ---
 
