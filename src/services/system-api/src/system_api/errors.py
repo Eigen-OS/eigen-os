@@ -18,8 +18,14 @@ from dataclasses import dataclass
 from typing import Iterable, Sequence
 
 import grpc
-from google.rpc import error_details_pb2, status_pb2
-from grpc_status import rpc_status
+
+try:
+    from google.rpc import error_details_pb2, status_pb2
+    from grpc_status import rpc_status
+except ModuleNotFoundError:  # pragma: no cover
+    error_details_pb2 = None
+    status_pb2 = None
+    rpc_status = None
 
 
 @dataclass(frozen=True)
@@ -61,6 +67,13 @@ def build_public_status(spec: PublicErrorSpec) -> status_pb2.Status:
     extract reason/retryability uniformly, followed by scenario-specific detail
     messages required by docs/reference/error-model.md.
     """
+
+    if error_details_pb2 is None or status_pb2 is None:
+        raise RuntimeError(
+            "google.rpc support is unavailable; install "
+            "'googleapis-common-protos' and 'grpcio-status'"
+        )
+
 
     metadata = dict(spec.metadata or {})
     metadata["retryable"] = "true" if spec.retryable else "false"
@@ -113,6 +126,10 @@ def build_public_status(spec: PublicErrorSpec) -> status_pb2.Status:
 
 def abort_public(context: grpc.ServicerContext, spec: PublicErrorSpec) -> None:
     """Abort RPC with canonical public google.rpc.Status details."""
+
+    if rpc_status is None:
+        context.abort(spec.grpc_code, spec.message)
+        return
 
     context.abort_with_status(rpc_status.to_status(build_public_status(spec)))
 
