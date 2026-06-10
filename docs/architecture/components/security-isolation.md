@@ -156,6 +156,11 @@ Implemented:
 - multi-tenant access controls
 - fine-grained runtime permissions (per job/device/artifact)
 - device-level authorization and policy gating
+- fail-closed behavior on policy backend outage
+- immutable audit sink for security decisions
+- replay markers on authorization decisions
+- sandbox profile enforcement hooks
+- normalized security context propagation to downstream services
 
 #### Runtime isolation enforcement
 

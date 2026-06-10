@@ -8,12 +8,16 @@ import re
 import threading
 import time
 import uuid
+import os
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import grpc
 
 _LOG = logging.getLogger("system_api")
+_AUDIT_LOG = logging.getLogger("system_api.security_audit")
+_AUDIT_LOCK = threading.Lock()
+_AUDIT_SINK_PATH = os.getenv("SYSTEM_API_AUDIT_SINK_PATH", "/tmp/eigen-system-api-audit.jsonl")
 
 _TRACEPARENT_RE = re.compile(
     r"^(?P<version>[0-9a-f]{2})-(?P<trace_id>[0-9a-f]{32})-(?P<span_id>[0-9a-f]{16})-(?P<trace_flags>[0-9a-f]{2})$"
@@ -26,6 +30,13 @@ class RequestContext:
     traceparent: str | None
     trace_id: str | None
     job_id: str | None = None
+    subject: str | None = None
+    roles: tuple[str, ...] | None = None
+    auth_mode: str | None = None
+    policy_version: str | None = None
+    service_identity: str | None = None
+    sandbox_profile: str | None = None
+    replay_marker: str | None = None
 
 
 class JsonFormatter(logging.Formatter):
@@ -38,7 +49,7 @@ class JsonFormatter(logging.Formatter):
             "service": "system-api",
             "message": record.getMessage(),
         }
-        for field in ("trace_id", "job_id", "traceparent", "method", "request_id", "subject", "permission"):
+        for field in ("trace_id", "job_id", "traceparent", "method", "request_id", "subject", "permission", "policy_version", "service_identity", "sandbox_profile", "replay_marker", "auth_mode"):
             value = getattr(record, field, None)
             if value:
                 payload[field] = value
@@ -128,6 +139,22 @@ def start_metrics_server(port: int) -> ThreadingHTTPServer:
     return server
 
 
+def append_security_audit_event(event: dict[str, object]) -> None:
+    """Append-only audit sink for security decisions.
+
+    The file is never truncated; every record is written as one JSON line.
+    """
+    record = json.dumps(event, sort_keys=True, separators=(",", ":"))
+    line = record + "\n"
+    with _AUDIT_LOCK:
+        os.makedirs(os.path.dirname(_AUDIT_SINK_PATH), exist_ok=True)
+        with open(_AUDIT_SINK_PATH, "a", encoding="utf-8") as fh:
+            fh.write(line)
+            fh.flush()
+            os.fsync(fh.fileno())
+    _AUDIT_LOG.info("security_audit", extra=event)
+
+
 def trace_id_from_traceparent(traceparent: str | None) -> str | None:
     if not traceparent:
         return None
@@ -135,6 +162,18 @@ def trace_id_from_traceparent(traceparent: str | None) -> str | None:
     if not m:
         return None
     return m.group("trace_id")
+
+
+def sanitized_security_metadata(*, subject: str, roles: tuple[str, ...], auth_mode: str, policy_version: str, service_identity: str | None, sandbox_profile: str | None, replay_marker: str | None) -> dict[str, object]:
+    return {
+        "subject": subject,
+        "roles": ",".join(roles),
+        "auth_mode": auth_mode,
+        "policy_version": policy_version,
+        "service_identity": service_identity or "",
+        "sandbox_profile": sandbox_profile or "",
+        "replay_marker": replay_marker or "",
+    }
 
 
 def new_request_context(context: grpc.ServicerContext) -> RequestContext:
@@ -147,6 +186,7 @@ def new_request_context(context: grpc.ServicerContext) -> RequestContext:
         request_id=str(uuid.uuid4()),
         traceparent=traceparent,
         trace_id=trace_id,
+        replay_marker=md.get("x-eigen-replay-marker"),
     )
 
 
