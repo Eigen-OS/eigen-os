@@ -507,6 +507,66 @@ impl KernelRuntimeStore {
         Ok((record, true))
     }
 
+    fn request_error_terminalization(
+        &self,
+        job_id: &str,
+        error_code: &str,
+        error_summary: &str,
+        error_details_ref: &str,
+    ) -> Result<JobRuntimeRecord, Status> {
+        let mut jobs = self.jobs.write();
+        let job = jobs
+            .get_mut(job_id)
+            .ok_or_else(|| Status::not_found("job not found"))?;
+        if job.is_terminal() {
+            return Ok(job.clone());
+        }
+
+        let stage = job.current_stage.unwrap_or(DagStageKind::ValidateEnqueue);
+        let stage_id = stage_id(job_id, stage);
+        let state_before = job.state;
+
+        if let Some(record) = job.stage_records.iter_mut().find(|record| record.stage_id == stage_id) {
+            record.status = StageStatus::Failed;
+            record.state_after = TaskState::Error;
+            record.error_code = Some(error_code.to_string());
+            record.error_summary = Some(error_summary.to_string());
+            record.error_details_ref = Some(error_details_ref.to_string());
+            record.completed_at = Some(ts_now());
+            record.replay_token = hash_bytes_hex(&stage_digest_bytes(record));
+        } else {
+            job.stage_records.push(StageRecord {
+                stage_id: stage_id.clone(),
+                stage_key: stage.key().to_string(),
+                order: stage.index(),
+                state_before,
+                state_after: TaskState::Error,
+                status: StageStatus::Failed,
+                started_at: ts_now(),
+                completed_at: Some(ts_now()),
+                input: BTreeMap::from([
+                    ("job_id".to_string(), job_id.to_string()),
+                    ("error_code".to_string(), error_code.to_string()),
+                    ("error_summary".to_string(), error_summary.to_string()),
+                ]),
+                output: BTreeMap::new(),
+                error_code: Some(error_code.to_string()),
+                error_summary: Some(error_summary.to_string()),
+                error_details_ref: Some(error_details_ref.to_string()),
+                replay_token: String::new(),
+            });
+        }
+
+        job.state = TaskState::Error;
+        job.reservation_state = Some("released".to_string());
+        job.updated_at = ts_now();
+        job.completed_at = Some(ts_now());
+        job.error_code = Some(error_code.to_string());
+        job.error_summary = Some(error_summary.to_string());
+        job.error_details_ref = Some(error_details_ref.to_string());
+        Ok(job.clone())
+    }
+
     fn get(&self, job_id: &str) -> Option<JobRuntimeRecord> {
         self.jobs.read().get(job_id).cloned()
     }
@@ -1521,7 +1581,18 @@ impl KernelGatewayService for KernelGatewaySvc {
             tokio::spawn(async move {
                 let span = tracing::info_span!("kernel_dag", job_id = %job_id);
                 async move {
-                    if let Err(err) = run_job_dag(runtime, adapters, job_id, submission_for_task).await {
+                    if let Err(err) =
+                        run_job_dag(runtime.clone(), adapters.clone(), job_id.clone(), submission_for_task).await
+                    {
+                        let terminalization = match err.grpc_code {
+                            Code::DeadlineExceeded => runtime.request_deadline_terminalization(&job_id).map(|_| ()),
+                            _ => runtime
+                                .request_error_terminalization(&job_id, &err.error_code, &err.summary, &err.details_ref)
+                                .map(|_| ()),
+                        };
+                        if let Err(status) = terminalization {
+                            tracing::error!(error = %status, "kernel terminalization failed");
+                        }
                         tracing::error!(error = %err, "kernel dag failed");
                     }
                 }
@@ -2083,6 +2154,14 @@ fn cancel_after_stage(
             format!("cancel terminalization failed: {}", status.message()),
             format!("status::{:?}", status.code()),
         ))?;
+    runtime
+        .set_reservation_state(job_id, "released")
+        .map_err(|status| KernelStageError::new(
+            Code::Internal,
+            "RUNTIME_STAGE_FAILURE",
+            "reservation release after cancellation failed",
+            format!("status::{:?}", status.code()),
+        ))?;
     Ok(())
 }
 
@@ -2093,43 +2172,21 @@ fn terminalize_control(
     stage_label: &str,
 ) -> Result<(), KernelStageError> {
     let is_cancel = runtime.is_cancel_requested(job_id);
-    let stage_id = stage_id(job_id, stage);
-    let reason = if is_cancel {
-        "cancelled by request"
+    let _ = (stage, stage_label);
+
+    if is_cancel {
+        cancel_after_stage(runtime, job_id, stage, "cancelled by request")
     } else {
-        "deadline exceeded"
-    };
-    let terminal_state = if is_cancel { TaskState::Cancelled } else { TaskState::Timeout };
-    let error_code = if is_cancel { "CANCELLED" } else { "DEADLINE_EXCEEDED" };
-    let error_details_ref = if is_cancel {
-        format!("qfs://jobs/{job_id}/errors/cancelled.json")
-    } else {
-        format!("qfs://jobs/{job_id}/errors/deadline.json")
-    };
-    runtime
-        .finish_stage_failure(
-            job_id,
-            &stage_id,
-            terminal_state,
-            error_code,
-            &format!("{stage_label} {reason}"),
-            &error_details_ref,
-        )
-        .map_err(|status| KernelStageError::new(
-            Code::Internal,
-            "RUNTIME_STAGE_FAILURE",
-            format!("{stage_label} terminalization failed"),
-            format!("status::{:?}", status.code()),
-        ))?;
-    runtime
-        .set_reservation_state(job_id, "released")
-        .map_err(|status| KernelStageError::new(
-            Code::Internal,
-            "RUNTIME_STAGE_FAILURE",
-            format!("{stage_label} reservation release failed"),
-            format!("status::{:?}", status.code()),
-        ))?;
-    Ok(())
+        runtime
+            .request_deadline_terminalization(job_id)
+            .map_err(|status| KernelStageError::new(
+                Code::Internal,
+                "RUNTIME_STAGE_FAILURE",
+                "deadline terminalization failed",
+                format!("status::{:?}", status.code()),
+            ))?;
+        Ok(())
+    }
 }
 
 async fn execute_with_retry(
@@ -2143,8 +2200,49 @@ async fn execute_with_retry(
     let policy = RetryPolicy::from_metadata(&submission.metadata_kvs);
     let started = Instant::now();
     let mut attempt: u32 = 0;
+    
+    let terminalize_deadline = |runtime: &Arc<KernelRuntimeStore>| -> Result<ExecutionOutcome, KernelStageError> {
+        runtime
+            .set_retry_final_reason(job_id, "DEADLINE_EXCEEDED")
+            .map_err(|status| KernelStageError::new(
+                Code::Internal,
+                "RUNTIME_STAGE_FAILURE",
+                "retry final reason update failed",
+                format!("status::{:?}", status.code()),
+            ))?;
+        runtime
+            .finish_stage_failure(
+                job_id,
+                execute_stage_id,
+                TaskState::Timeout,
+                "DEADLINE_EXCEEDED",
+                "execution retry interrupted by deadline",
+                &format!("qfs://jobs/{job_id}/errors/deadline.json"),
+            )
+            .map_err(|status| KernelStageError::new(
+                Code::Internal,
+                "RUNTIME_STAGE_FAILURE",
+                "deadline terminalization failed",
+                format!("status::{:?}", status.code()),
+            ))?;
+        runtime
+            .set_reservation_state(job_id, "released")
+            .map_err(|status| KernelStageError::new(
+                Code::Internal,
+                "RUNTIME_STAGE_FAILURE",
+                "reservation release after deadline failed",
+                format!("status::{:?}", status.code()),
+            ))?;
+        Err(KernelStageError::deadline_exceeded(
+            "execution retry interrupted by deadline",
+            format!("qfs://jobs/{job_id}/errors/deadline.json"),
+        ))
+    };
 
     loop {
+        if runtime.deadline_expired(job_id) {
+            return terminalize_deadline(runtime);
+        }
         attempt = attempt.saturating_add(1);
         let attempt_started = Instant::now();
         let span = tracing::info_span!(
@@ -2167,6 +2265,9 @@ async fn execute_with_retry(
 
         match result {
             Ok(outcome) => {
+                if runtime.deadline_expired(job_id) {
+                    return terminalize_deadline(runtime);
+                }
                 if attempt > 1 {
                     runtime
                         .set_retry_success_after_retry_total(job_id, 1)
@@ -2180,7 +2281,7 @@ async fn execute_with_retry(
                 return Ok(outcome);
             }
             Err(err) => {
-                let retryable = RetryPolicy::default().is_retryable(&err);
+                let retryable = policy.is_retryable(&err);
                 let delay = if retryable { policy.backoff_for_attempt(attempt) } else { Duration::from_millis(0) };
                 let elapsed_ms = started.elapsed().as_millis() as u64;
                 runtime
@@ -2204,41 +2305,7 @@ async fn execute_with_retry(
                     ))?;
 
                 if runtime.deadline_expired(job_id) {
-                    runtime
-                        .set_retry_final_reason(job_id, "DEADLINE_EXCEEDED")
-                        .map_err(|status| KernelStageError::new(
-                            Code::Internal,
-                            "RUNTIME_STAGE_FAILURE",
-                            "retry final reason update failed",
-                            format!("status::{:?}", status.code()),
-                        ))?;
-                    runtime
-                        .finish_stage_failure(
-                            job_id,
-                            execute_stage_id,
-                            TaskState::Timeout,
-                            "DEADLINE_EXCEEDED",
-                            "execution retry interrupted by deadline",
-                            &format!("qfs://jobs/{job_id}/errors/deadline.json"),
-                        )
-                        .map_err(|status| KernelStageError::new(
-                            Code::Internal,
-                            "RUNTIME_STAGE_FAILURE",
-                            "deadline terminalization failed",
-                            format!("status::{:?}", status.code()),
-                        ))?;
-                    runtime
-                        .set_reservation_state(job_id, "released")
-                        .map_err(|status| KernelStageError::new(
-                            Code::Internal,
-                            "RUNTIME_STAGE_FAILURE",
-                            "reservation release after deadline failed",
-                            format!("status::{:?}", status.code()),
-                        ))?;
-                    return Err(KernelStageError::deadline_exceeded(
-                        "execution retry interrupted by deadline",
-                        format!("qfs://jobs/{job_id}/errors/deadline.json"),
-                    ));
+                    return terminalize_deadline(runtime);
                 }
 
                 if !retryable || attempt >= policy.max_attempts {

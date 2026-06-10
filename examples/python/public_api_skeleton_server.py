@@ -12,15 +12,22 @@ Run (from repo root):
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from concurrent import futures
 from pathlib import Path
 
 import grpc
 
-# Make generated code importable.
 REPO_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO_ROOT / "gen" / "python"))
+GENERATED_ROOT = REPO_ROOT / "gen" / "python"
+if not (GENERATED_ROOT / "eigen_api").exists():
+    subprocess.run(
+        ["bash", str(REPO_ROOT / "scripts" / "dev" / "generate-protos.sh")],
+        check=True,
+    )
+if str(GENERATED_ROOT) not in sys.path:
+    sys.path.insert(0, str(GENERATED_ROOT))
 
 from eigen_api.v1 import device_service_pb2, device_service_pb2_grpc
 from eigen_api.v1 import job_service_pb2, job_service_pb2_grpc
