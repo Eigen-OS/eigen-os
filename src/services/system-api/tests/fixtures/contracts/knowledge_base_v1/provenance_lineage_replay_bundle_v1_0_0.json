@@ -1,0 +1,42 @@
+{
+  "contract": "knowledge_base.provenance_lineage_replay_bundle",
+  "version": "1.0.0",
+  "semver_impact": "NONE",
+  "record": {
+    "record_id": "kb-record-1",
+    "job_id": "job-kb-record-1",
+    "provenance": {
+      "compiler_ref": "compiler://v1",
+      "optimizer_ref": "optimizer://v1",
+      "runtime_ref": "runtime://v1",
+      "checkpoint_ref": "checkpoint://v1"
+    },
+    "lineage": {
+      "model_version": "m1",
+      "training_set_hash": "train-hash",
+      "evaluation_bundle_hash": "eval-hash",
+      "promotion_policy_version": "policy-v1",
+      "promotion_outcome": "PROMOTED"
+    },
+    "replay_bundle_ref": "kb://replay/kb-record-1"
+  },
+  "decision_log": {
+    "decision_id": "decision-a",
+    "trace_id": "trace-b",
+    "model_version": "m1",
+    "component": "runtime",
+    "policy_branch": "baseline",
+    "selected_action": "backend-alpha",
+    "fallback_used": false,
+    "feature_snapshot": {
+      "queue_depth": "2"
+    }
+  },
+  "privacy": {
+    "anonymized_attributes": [
+      "user_id",
+      "project_id",
+      "client_ip"
+    ]
+  }
+}

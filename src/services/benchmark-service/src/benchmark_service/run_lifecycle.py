@@ -58,11 +58,12 @@ class BenchmarkRun:
 class BenchmarkRunService:
     """In-memory benchmark run lifecycle core with idempotent start/retry."""
 
-    def __init__(self, *, now_fn: Callable[[], datetime] | None = None) -> None:
+    def __init__(self, *, now_fn: Callable[[], datetime] | None = None, kb_sink: Callable[[dict[str, Any]], None] | None = None) -> None:
         self._runs: dict[str, BenchmarkRun] = {}
         self._start_index: dict[str, str] = {}
         self._retry_index: dict[tuple[str, str], str] = {}
         self._now_fn = now_fn or (lambda: datetime.now(tz=timezone.utc))
+        self._kb_sink = kb_sink
 
     def start_run(self, *, idempotency_key: str, config: dict[str, Any]) -> BenchmarkRun:
         existing_run_id = self._start_index.get(idempotency_key)
@@ -73,6 +74,7 @@ class BenchmarkRunService:
         run = self._create_run(run_id=run_id, parent_run_id=None, idempotency_key=idempotency_key, config=config)
         self._runs[run_id] = run
         self._start_index[idempotency_key] = run_id
+        self._emit_kb_record(run, kind="start", source_run_id=None, retry_key=None)
         return run
 
     def retry_run(self, *, run_id: str, retry_key: str) -> BenchmarkRun:
@@ -99,6 +101,7 @@ class BenchmarkRunService:
         )
         self._runs[retry_run_id] = retry_run
         self._retry_index[key] = retry_run_id
+        self._emit_kb_record(retry_run, kind="retry", source_run_id=run_id, retry_key=retry_key)
         return retry_run
 
     def transition(self, *, run_id: str, new_state: RunState) -> BenchmarkRun:
@@ -107,6 +110,7 @@ class BenchmarkRunService:
         if new_state not in allowed_targets:
             raise RunTransitionError(f"transition {run.state} -> {new_state} is forbidden in {RUN_CONTRACT_VERSION}")
         run.state = new_state
+        self._emit_kb_record(run, kind="transition", source_run_id=run_id, retry_key=None)
         return run
 
     def get_run(self, run_id: str) -> BenchmarkRun:
@@ -133,7 +137,7 @@ class BenchmarkRunService:
             created_at=self._now_fn().astimezone(timezone.utc).isoformat(),
             payload=canonical_payload,
         )
-        return BenchmarkRun(
+        run = BenchmarkRun(
             run_id=run_id,
             parent_run_id=parent_run_id,
             state=RunState.PENDING,
@@ -141,9 +145,52 @@ class BenchmarkRunService:
             idempotency_key=idempotency_key,
             snapshot=snapshot,
         )
+        return run
 
     @staticmethod
     def _stable_run_id(scope: str, key: str, payload: dict[str, Any]) -> str:
         normalized_payload = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         digest = hashlib.sha256(f"{scope}:{key}:{normalized_payload}".encode("utf-8")).hexdigest()
         return f"run_{digest[:16]}"
+
+    def _emit_kb_record(self, run: BenchmarkRun, *, kind: str, source_run_id: str | None, retry_key: str | None) -> None:
+        if self._kb_sink is None:
+            return
+        payload = {
+            "contract_version": RUN_CONTRACT_VERSION,
+            "record_id": f"benchmark:{run.run_id}",
+            "run_id": run.run_id,
+            "job_id": run.run_id,
+            "parent_run_id": run.parent_run_id or source_run_id,
+            "idempotency_key": run.idempotency_key,
+            "state": run.state.value,
+            "request_hash": run.snapshot.request_hash,
+            "created_at": run.snapshot.created_at,
+            "trace_id": f"trace_{run.run_id[:8]}",
+            "tenant_id": "tenant-default",
+            "project_id": "project-default",
+            "replay_bundle_ref": f"qfs://benchmarks/{run.run_id}/replay_bundle.json",
+            "attributes": {
+                "kind": kind,
+                "scope": "benchmark",
+                "source_run_id": source_run_id or "",
+                "retry_key": retry_key or "",
+                "request_hash": run.snapshot.request_hash,
+                "state": run.state.value,
+            },
+            "provenance": {
+                "runtime_ref": f"qfs://benchmarks/{run.run_id}/runtime.json",
+                "checkpoint_ref": f"qfs://benchmarks/{run.run_id}/checkpoint.json",
+                "compiler_ref": "",
+                "optimizer_ref": "",
+            },
+            "lineage": {
+                "model_version": RUN_CONTRACT_VERSION,
+                "training_set_hash": run.snapshot.request_hash,
+                "evaluation_bundle_hash": run.snapshot.request_hash,
+                "promotion_policy_version": RUN_CONTRACT_VERSION,
+                "promotion_outcome": run.state.value,
+            },
+        }
+        self._kb_sink(payload)
+        

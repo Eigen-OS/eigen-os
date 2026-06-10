@@ -379,9 +379,10 @@ Wire runtime decision lineage into the Product 1.0 Knowledge Base contract.
 
 ## Exit evidence
 
+- `docs/development/wave-4/product-1.0-wave-4-w4-06-exit-evidence-bundle.md`
+- `docs/development/wave-4/product-1.0-wave-4-w4-06-privacy-policy-compatibility-report.md`
 - KB replay bundle.
 - Provenance lineage fixtures.
-- Privacy-policy compatibility report.
 
 ## Required issue completion block MUST retain and complete this block before closure:
 

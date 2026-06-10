@@ -186,8 +186,10 @@ Implemented APIs (baseline, already present in architecture contracts):
 - `BatchUpsertRecords`
 - `QueryRecords`
 - `GetRecord`
+- `AppendDecisionLog`
+- `QueryDecisionLogs`
 
-These operations provide a stable, queryable record store used by tooling and future intelligence layers.
+These operations provide a stable, queryable record store used by tooling and future intelligence layers. The implemented public baseline persists provenance metadata, replay metadata, and tenant-scoped decision lineage with deterministic pagination semantics.
 
 ---
 
@@ -487,7 +489,10 @@ Storage model is implementation-defined but MUST preserve:
 
 - stable record IDs,
 - schema versioning,
-- deterministic query semantics where declared.
+- deterministic query semantics where declared,
+- replay-safe cursor behavior for repeatable queries,
+- persisted provenance and replay bundle references,
+- anonymized storage of privacy-sensitive attributes when exposed at the public boundary.
 
 ---
 

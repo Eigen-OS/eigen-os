@@ -70,3 +70,22 @@ def test_snapshot_is_immutable_and_deterministic() -> None:
         assert err is not None
     else:
         raise AssertionError("snapshot must be immutable")
+
+
+def test_run_lifecycle_emits_kb_replay_payloads() -> None:
+    emitted: list[dict[str, object]] = []
+    service = BenchmarkRunService(kb_sink=emitted.append)
+    run = service.start_run(idempotency_key="kb-key", config={"dataset": "d3", "seed": 19})
+    service.transition(run_id=run.run_id, new_state=RunState.PREPARING)
+    service.transition(run_id=run.run_id, new_state=RunState.FAILED)
+    retry = service.retry_run(run_id=run.run_id, retry_key="kb-retry")
+
+    assert emitted[0]["record_id"] == f"benchmark:{run.run_id}"
+    assert emitted[0]["attributes"].__class__ is dict
+    assert emitted[0]["attributes"]["kind"] == "start"
+    assert emitted[1]["attributes"]["kind"] == "transition"
+    assert emitted[2]["attributes"]["kind"] == "transition"
+    assert emitted[3]["attributes"]["kind"] == "retry"
+    assert emitted[3]["parent_run_id"] == run.run_id
+    assert emitted[3]["record_id"] == f"benchmark:{retry.run_id}"
+    

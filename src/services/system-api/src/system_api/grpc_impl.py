@@ -28,10 +28,12 @@ from .observability import (
     log_request_end,
     log_request_start,
     new_request_context,
+    record_kb_fallback,
     record_public_api_contract_marker,
     record_submit_job_outcome,
     trace_id_from_traceparent,
 )
+from .knowledge_base import KnowledgeBaseService, KnowledgeBaseUnavailable
 from .qfs_store import QFS_STORE
 from .security import auth_context, enforce_authn, enforce_authz, enforce_sandbox_policy, security_context
 from .validation import (
@@ -273,9 +275,10 @@ class _IdempotencyRecord:
 class JobService:
     """Implementation of eigen.api.v1.JobService."""
 
-    def __init__(self, job_pb, types_pb):
+    def __init__(self, job_pb, types_pb, kb_service: KnowledgeBaseService | None = None):
         self._job_pb = job_pb
         self._types_pb = types_pb
+        self._kb_service = kb_service
         self._jobs: dict[str, _JobRecord] = {}
         self._idempotency: dict[str, _IdempotencyRecord] = {}
         self._idempotency_ttl_sec = max(float(os.getenv("SYSTEM_API_IDEMPOTENCY_TTL_SECONDS", "86400")), 1.0)
@@ -1646,6 +1649,43 @@ class JobService:
                     separators=(",", ":"),
                 )
             rationale["attributes"] = attrs
+
+        decision_payload = {
+            "contract_version": PUBLIC_API_CONTRACT_VERSION,
+            "record_id": f"decision:{record.job_id}",
+            "job_id": record.job_id,
+            "trace_id": str(rationale["trace_id"]),
+            "request_id": rc.request_id,
+            "tenant_id": record.owner_tenant,
+            "project_id": record.owner_project,
+            "component": "runtime",
+            "model_version": str(rationale["policy_version"]),
+            "policy_branch": str(rationale["attributes"].get("policy_branch", "baseline")),
+            "selected_action": str(rationale["selected_backend"]),
+            "fallback_used": any(str(code).endswith("FALLBACK") for code in rationale["reason_codes"]),
+            "feature_snapshot": {
+                "queue_delay_ms": str(max(int(float(record.queue_delay_sec) * 1000), 0)),
+                "dispatch_latency_ms": str(rationale["attributes"].get("dispatch_latency_ms", "150")),
+                "execution_time_ms": str(max(int(record.run_duration_sec * 1000), 0)),
+                "selected_queue": str(rationale["selected_queue"]),
+                "selected_backend": str(rationale["selected_backend"]),
+            },
+            "provenance": {
+                "runtime_ref": str(rationale["timeline_ref"]),
+                "checkpoint_ref": str(rationale["logs_ref"]),
+                "compiler_ref": str(rationale["attributes"].get("compiler_ref", "")),
+                "optimizer_ref": str(rationale["attributes"].get("optimizer_ref", "")),
+            },
+            "replay_bundle_ref": str(rationale["attributes"].get("replay_bundle_ref", f"qfs://jobs/{record.job_id}/kb/replay_bundle.json")),
+            "request_hash": str(rationale["attributes"].get("request_hash", "")),
+        }
+        if self._kb_service is not None:
+            try:
+                self._kb_service.ingest_runtime_decision(decision_payload)
+            except KnowledgeBaseUnavailable:
+                record_kb_fallback("storage_unavailable")
+            except Exception:
+                record_kb_fallback("ingest_failed")
 
         resp = self._job_pb.GetDispatchRationaleResponse(
             rationale=self._job_pb.DispatchRationale(
