@@ -5,6 +5,7 @@ use qfs::{
     CheckpointAdmissionReasonCode, CheckpointBudgetPolicy, CHECKPOINT_ENVELOPE_SCHEMA_VERSION,
     CheckpointEnvelopeV1, CheckpointEnvelopeValidationError,
 };
+use sha2::{Digest, Sha256};
 
 fn fixture(path: &str) -> String {
     let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -71,4 +72,59 @@ fn qfs_l2_checkpoint_restore_admission_rejects_cost_budget_with_stable_reason_co
         CheckpointAdmissionReasonCode::RestoreCostBudgetExceeded
     );
     assert!(err.hint.contains("estimated_restore_cost_units"));
+}
+
+#[test]
+fn qfs_l2_checkpoint_restore_compatibility_rejects_unsupported_runtime_version() {
+    let raw = fixture("qfs_l2_checkpoint_envelope_v1_0_0.json");
+    let envelope: CheckpointEnvelopeV1 =
+        serde_json::from_str(&raw).expect("fixture must decode");
+
+    let err = envelope
+        .validate_restore_compatibility("0.8.0")
+        .expect_err("old runtime must be rejected");
+
+    assert!(matches!(
+        err,
+        CheckpointEnvelopeValidationError::RestoreVersionIncompatible { .. }
+    ));
+}
+
+#[test]
+fn qfs_l2_checkpoint_corrupted_payload_is_rejected() {
+    let raw = fixture("qfs_l2_checkpoint_envelope_v1_0_0.json");
+    let mut envelope: CheckpointEnvelopeV1 =
+        serde_json::from_str(&raw).expect("fixture must decode");
+
+    let payload = b"checkpoint-payload";
+    envelope.payload_refs.state_segments[0].content_hash =
+        format!("sha256:{:x}", Sha256::digest(payload));
+
+    let err = envelope
+        .verify_payload_integrity(b"tampered")
+        .expect_err("tampered payload must fail");
+
+    assert_eq!(
+        err,
+        CheckpointEnvelopeValidationError::PayloadIntegrityViolation
+    );
+}
+
+#[test]
+fn qfs_l2_checkpoint_retention_window_validation_is_stable() {
+    let raw = fixture("qfs_l2_checkpoint_envelope_v1_0_0.json");
+    let mut envelope: CheckpointEnvelopeV1 =
+        serde_json::from_str(&raw).expect("fixture must decode");
+
+    envelope.retention.created_at_epoch_ms = 200;
+    envelope.retention.retention_until_epoch_ms = 100;
+
+    let err = envelope
+        .validate()
+        .expect_err("invalid retention must fail");
+
+    assert_eq!(
+        err,
+        CheckpointEnvelopeValidationError::InvalidRetentionWindow
+    );
 }

@@ -169,6 +169,22 @@ CircuitFS SHALL evolve into:
 - replay-safe artifact resolution,
 - deterministic lineage graphs.
 
+QFS-L2 checkpoints additionally enforce:
+
+- immutable replay-safe checkpoint envelopes,
+- atomic checkpoint persistence semantics,
+- compatibility-window validation before restore,
+- SHA-256 payload integrity verification,
+- restore lineage persistence,
+- deterministic replay metadata,
+- retention-aware restore admission.
+
+Checkpoint restore behavior MUST remain deterministic across:
+
+- retry execution,
+- distributed replay,
+- multi-device merge recovery flows.
+
 The current L3 implementation now enforces immutable writes for `compiled/` and `results/` artifacts, persists lineage and retention metadata, and verifies digests on read for compiled and result bundles.
 
 ---

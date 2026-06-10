@@ -42,5 +42,16 @@
   },
   "extensions": {
     "extension_keys": []
+  },
+  "retention": {
+    "retention_class": "hot",
+    "created_at_epoch_ms": 1715817600000,
+    "retention_until_epoch_ms": 1715904000000,
+    "pinned": true
+  },
+  "restore_lineage": {
+    "restored_from_checkpoint_id": null,
+    "replay_session_id": "replay-session-001",
+    "restored_by_runtime_version": "1.1.0"
   }
 }
