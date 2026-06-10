@@ -25,6 +25,10 @@ The Resource Manager subsystem is responsible for:
 - durable reservation registry,
 - queue-aware scheduling integration.
 
+**Wave 4 boundary:** live execution reservation tokens and lease TTLs are owned
+by Kernel/QRTX for replay-safe runtime gating; Resource Manager remains the
+target authority for future device-capacity reservations.
+
 This document freezes:
 
 1. what exists today and its semantics, and
@@ -164,6 +168,10 @@ Current responses provide simplified/static runtime info (MVP-safe baseline), ty
 - The current reservation is **NOT enforced** against scheduler/kernel capacity.
 - The current reservation does **NOT** guarantee exclusive access, slot ownership, or priority.
 - The reservation MUST be treated as a **client-visible token** only, suitable for future compatibility, not a hard allocation.
+
+For Product 1.0 Wave 4, Kernel/QRTX live reservation state is the authoritative
+runtime lease used by orchestration hooks; DeviceService reservations remain a
+compatibility surface until Resource Manager is fully implemented.
 
 If a client requests enforced reservation semantics (Phase-1 features) against an MVP deployment, the system SHOULD return:
 

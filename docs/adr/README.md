@@ -45,6 +45,8 @@ Architecture Decision Records (ADRs) capture decisions that are already adopted 
 - [0033 — Phase-9B intelligence closure contract v1](0033-phase9b-intelligence-closure-contract-v1.md)
 - [0034 — Phase-9C multi-tenant plugin boundary contract v1](0034-phase9c-multitenant-plugin-boundary-contract-v1.md)
 - [0035 — Product 1.0 public API, JobSpec, and error boundary](0035-product-1.0-public-api-jobspec-error-boundary.md)
+- [0036 — Product 1.0 Kernel/QRTX lifecycle authority](0036-product-1.0-kernel-qrtx-lifecycle-authority.md)
+- [0037 — Product 1.0 QFS-L1 live qubit / reservation split authority](0037-product-1.0-qfs-l1-live-qubit-reservation-split-authority.md)
 
 ## Phase-3 status
 
