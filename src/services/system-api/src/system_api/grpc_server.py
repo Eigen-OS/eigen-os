@@ -12,6 +12,7 @@ from google.rpc import code_pb2, status_pb2, error_details_pb2
 from grpc_status import rpc_status
 
 from .grpc_impl import DeviceService, JobService, KnowledgeBaseService
+from .knowledge_base import KnowledgeBaseService
 from .proto_gen import ensure_generated
 
 _LOG = logging.getLogger("system_api")
@@ -102,6 +103,8 @@ class ValidationAndExceptionInterceptor(grpc.ServerInterceptor):
                     # 4. Terminate pipeline with high-fidelity status mapping
                     context.abort_with_status(rpc_status.to_status(status_proto))
                 except Exception as ex:
+                    if _is_grpc_abort_exception(context):
+                        raise
                     _LOG.exception("Unhandled application state caught by interceptor")
                     context.abort(grpc.StatusCode.INTERNAL, "An unexpected system error occurred.")
 
@@ -116,11 +119,26 @@ class ValidationAndExceptionInterceptor(grpc.ServerInterceptor):
 
 # --- Logging Helpers ---
 
+def _is_grpc_abort_exception(context: grpc.ServicerContext) -> bool:
+    state = getattr(context, "_state", None)
+    if state is not None and getattr(state, "code", None) is not None:
+        return True
+    code_fn = getattr(context, "code", None)
+    if callable(code_fn):
+        try:
+            return code_fn() is not None
+        except Exception:
+            return False
+    return False
+
+
 class StructuredTraceFilter(logging.Filter):
     """Dynamically injects active trace context data straight into standard log records."""
     def filter(self, record: logging.LogRecord) -> bool:
-        record.trace_id = ctx_trace_id.get()
-        record.request_id = ctx_request_id.get()
+        if not getattr(record, "trace_id", None):
+            record.trace_id = ctx_trace_id.get()
+        if not getattr(record, "request_id", None):
+            record.request_id = ctx_request_id.get()
         return True
 
 
