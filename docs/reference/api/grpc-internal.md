@@ -333,6 +333,15 @@ service DriverManagerService {
 }
 ```
 
+Driver Manager capability registry semantics are read-only and queryable through the same internal boundary:
+
+- device and capability snapshots MUST be deterministic,
+- live session state MUST remain separate from snapshot metadata,
+- versioned device profiles MUST be queryable for provider selection,
+- unsupported profile negotiation MUST fail closed unless the simulator fallback is explicitly available.
+
+The kernel-facing transport surface remains the implementation boundary; profile negotiation is a contract over registry behavior and metadata stability, not a new public wire surface.
+
 Canonical final-contract reference for this boundary:
 
 - `docs/reference/api/qdriver.md`

@@ -70,6 +70,17 @@ for Resource Manager inventory snapshots and Kernel scheduling decisions.
 - device topology/connectivity (when applicable),
 - queue / capacity hints (when available).
 
+DM MUST also maintain versioned device profiles derived from the capability snapshot. A device profile is the queryable, read-only source of truth for provider selection and hardware-aware execution.
+
+Device profile rules:
+
+- profile metadata MUST be normalized and bounded,
+- profile snapshots MUST be separated from live session state,
+- capability descriptors MUST be versioned,
+- snapshot ordering MUST be deterministic by `device_id`,
+- unknown `device_id` MUST be rejected,
+- unsupported profile requests MAY fall back to the simulator profile when one is registered, otherwise they MUST fail closed.
+
 DM MUST provide a snapshot-style interface to the kernel for:
 
 - `ListDevices`
@@ -350,6 +361,12 @@ DM MUST follow the canonical Eigen OS error model:
 - **Backend/provider outages:** `UNAVAILABLE` (+ `RetryInfo` when appropriate)
 - **Quota/capacity limits:** `RESOURCE_EXHAUSTED` (+ `RetryInfo` when appropriate)
 - **Unexpected invariants:** `INTERNAL` with correlation metadata
+
+Device profile negotiation failures MUST use the same canonical model:
+
+- unknown device lookup => `NOT_FOUND`
+- unsupported profile negotiation => `FAILED_PRECONDITION`
+- capability snapshot corruption => `INTERNAL`
 
 ---
 
