@@ -7,9 +7,60 @@ import json
 import logging
 import os
 import threading
+from collections import Counter, defaultdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from .grpc_server import serve
+
+
+_METRICS_LOCK = threading.Lock()
+_REQUESTS_TOTAL = Counter()
+_REQUESTS_LATENCY_MS_BUCKET = defaultdict(Counter)
+_REQUESTS_LATENCY_MS_BUCKETS = (1, 5, 10, 25, 50, 100, 250, 500, 1000)
+_SESSION_TOTAL = Counter()
+_BACKEND_FAILURES_TOTAL = Counter()
+
+
+def record_driver_request(rpc: str, code: str, duration_ms: float) -> None:
+    rpc = str(rpc)
+    code = str(code)
+    latency_ms = max(0.0, float(duration_ms))
+    with _METRICS_LOCK:
+        _REQUESTS_TOTAL[(rpc, code)] += 1
+        for bucket in _REQUESTS_LATENCY_MS_BUCKETS:
+            if latency_ms <= bucket:
+                _REQUESTS_LATENCY_MS_BUCKET[rpc][bucket] += 1
+        _REQUESTS_LATENCY_MS_BUCKET[rpc]["+Inf"] += 1
+
+
+def record_driver_session(driver: str, state: str) -> None:
+    with _METRICS_LOCK:
+        _SESSION_TOTAL[(str(driver), str(state))] += 1
+
+
+def record_backend_failure(component: str, taxonomy: str) -> None:
+    with _METRICS_LOCK:
+        _BACKEND_FAILURES_TOTAL[(str(component), str(taxonomy))] += 1
+
+
+def render_metrics_text() -> str:
+    with _METRICS_LOCK:
+        lines = [
+            '# TYPE eigen_driver_requests_total counter',
+            '# TYPE eigen_driver_request_latency_ms_bucket counter',
+            '# TYPE eigen_driver_sessions counter',
+            '# TYPE eigen_driver_backend_failures_total counter',
+        ]
+        for (rpc, code), count in sorted(_REQUESTS_TOTAL.items()):
+            lines.append(f'eigen_driver_requests_total{{rpc="{rpc}",code="{code}"}} {count}')
+        for rpc, buckets in sorted(_REQUESTS_LATENCY_MS_BUCKET.items()):
+            for bucket, count in buckets.items():
+                lines.append(f'eigen_driver_request_latency_ms_bucket{{rpc="{rpc}",le="{bucket}"}} {count}')
+        for (driver, state), count in sorted(_SESSION_TOTAL.items()):
+            lines.append(f'eigen_driver_sessions{{driver="{driver}",state="{state}"}} {count}')
+        for (component, taxonomy), count in sorted(_BACKEND_FAILURES_TOTAL.items()):
+            lines.append(f'eigen_driver_backend_failures_total{{component="{component}",taxonomy="{taxonomy}"}} {count}')
+        return "\n".join(lines) + "\n"
 
 
 class _JsonFormatter(logging.Formatter):
@@ -20,7 +71,7 @@ class _JsonFormatter(logging.Formatter):
             "service": "driver-manager",
             "message": record.getMessage(),
         }
-        for field in ("trace_id", "job_id", "traceparent", "method"):
+        for field in ("trace_id", "job_id", "traceparent", "method", "rpc_method", "grpc_status", "error_reason", "artifact_ref"):
             value = getattr(record, field, None)
             if value:
                 payload[field] = value
@@ -35,9 +86,7 @@ _health_state = {"registry": None}
 class _MetricsHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/metrics":
-            with _metrics_lock:
-                total = _metrics["requests_total"]
-            body = f"# TYPE eigen_driver_requests_total counter\neigen_driver_requests_total {total}\n".encode()
+            body = render_metrics_text().encode()
             self.send_response(200)
             self.send_header("Content-Type", "text/plain; version=0.0.4")
             self.send_header("Content-Length", str(len(body)))

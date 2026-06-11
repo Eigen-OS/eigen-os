@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import socket
 import time
+import logging
 from typing import Iterator
 
 import grpc
@@ -12,6 +13,7 @@ from grpc_status import rpc_status
 
 from driver_manager.base_driver import DeviceStatusInfo, DriverCapabilities, DriverHealth
 from driver_manager.grpc_server import serve
+from driver_manager.main import _JsonFormatter, render_metrics_text
 from driver_manager.proto_gen import ensure_generated
 from driver_manager.simulator_driver import DriverExecutionError
 
@@ -277,6 +279,48 @@ def test_execute_circuit_simulated_resource_exhausted(grpc_addr: str) -> None:
     retry_info = _extract_detail(err.value, error_details_pb2.RetryInfo)
     assert retry_info is not None
     assert retry_info.retry_delay.seconds == 5
+
+
+def test_observability_smoke_and_trace_continuity(grpc_addr: str, caplog: pytest.LogCaptureFixture) -> None:
+    _ensure_normalized_driver_registered()
+    caplog.set_level(logging.INFO, logger="driver_manager")
+
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = drv_pb_grpc.DriverManagerServiceStub(channel)
+
+    metadata = [("traceparent", "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01")]
+    resp = _execute(
+        stub,
+        payload=_aqo([{"op": "MEASURE", "q": [0], "c": [0]}], qubits=1),
+        device_id="norm:0",
+        job_id="job-trace",
+    )
+    assert dict(resp.counts)
+    assert any(getattr(record, "trace_id", None) == "0123456789abcdef0123456789abcdef" for record in caplog.records)
+    assert any(getattr(record, "job_id", None) == "job-trace" for record in caplog.records)
+    assert any(getattr(record, "method", None) == "DriverManagerService.ExecuteCircuit" for record in caplog.records)
+
+
+def test_bounded_label_regression_gate() -> None:
+    formatter = _JsonFormatter()
+    record = logging.LogRecord(
+        name="driver_manager",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg="rpc_start",
+        args=(),
+        exc_info=None,
+    )
+    record.trace_id = "0123456789abcdef0123456789abcdef"
+    record.job_id = "job-1"
+    record.traceparent = "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"
+    record.method = "DriverManagerService.ExecuteCircuit"
+    record.unbounded = "should_not_escape"
+    payload = json.loads(formatter.format(record))
+    assert "unbounded" not in payload
+    assert payload["service"] == "driver-manager"
+    assert payload["trace_id"] == "0123456789abcdef0123456789abcdef"
 
 
 @pytest.mark.parametrize(

@@ -62,6 +62,18 @@
   - demotion paths remain auditable
   - provider drift remains fail-closed in conformance gating
 
+### W6-07 observability and reproducibility evidence
+
+- Metrics snapshot
+  - bounded driver-manager metrics exported
+  - labels remain enumerated and non-sensitive
+- Trace continuity report
+  - `traceparent` is preserved into DM logs and request handling
+  - `trace_id` is derived consistently at the DM boundary
+- Release evidence bundle
+  - rollback and quarantine evidence links to this bundle
+  - release artifacts remain reproducible from the versioned fixtures
+
 ---
 
 ## Closure note

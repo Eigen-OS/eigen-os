@@ -8,8 +8,10 @@ import re
 import grpc
 
 from .errors import FieldViolation, abort_invalid_argument, abort_normalized, map_backend_error
+from .main import record_backend_failure, record_driver_request, record_driver_session
 from .registry import DriverRegistry
 from .simulator_driver import DriverExecutionError
+import time
 
 
 def _circuit_format_value(types_pb, *names: str) -> int:
@@ -47,10 +49,15 @@ class DriverManagerService:
         self._registry = registry
 
     def ListDevices(self, request, context: grpc.ServicerContext):
+        start = time.perf_counter()
         _log_start("DriverManagerService.ListDevices", "", context)
-        return self._drv_pb.ListDevicesResponse(devices=self._registry.list_devices())
+        resp = self._drv_pb.ListDevicesResponse(devices=self._registry.list_devices())
+        record_driver_request("ListDevices", "OK", (time.perf_counter() - start) * 1000.0)
+        _log_end("DriverManagerService.ListDevices", "", context)
+        return resp
 
     def GetDeviceStatus(self, request, context: grpc.ServicerContext):
+        start = time.perf_counter()
         _log_start("DriverManagerService.GetDeviceStatus", request.device_id, context)
         if not request.device_id:
             abort_invalid_argument(
@@ -75,10 +82,12 @@ class DriverManagerService:
             estimated_wait_sec=info.estimated_wait_sec,
             metadata=info.metadata,
         )
+        record_driver_request("GetDeviceStatus", "OK", (time.perf_counter() - start) * 1000.0)
         _log_end("DriverManagerService.GetDeviceStatus", request.device_id, context)
         return resp
 
     def ExecuteCircuit(self, request, context: grpc.ServicerContext):
+        start = time.perf_counter()
         _log_start("DriverManagerService.ExecuteCircuit", request.job_id, context)
         violations: list[FieldViolation] = []
         if not request.device_id:
@@ -120,6 +129,7 @@ class DriverManagerService:
                 options=dict(request.options),
             )
         except DriverExecutionError as err:
+            record_backend_failure("driver_manager", err.code.name.lower())
             abort_normalized(
                 context,
                 normalized=map_backend_error(err.code, err.message),
@@ -132,11 +142,14 @@ class DriverManagerService:
             execution_time_sec=_normalize_execution_time_sec(execution_time_sec),
             metadata=_normalize_metadata(metadata),
         )
+        record_driver_session(getattr(driver, "name", "unknown"), "active")
+        record_driver_request("ExecuteCircuit", "OK", (time.perf_counter() - start) * 1000.0)
         _log_end("DriverManagerService.ExecuteCircuit", request.job_id, context)
 
         return resp
 
     def CalibrateDevice(self, request, context: grpc.ServicerContext):
+        start = time.perf_counter()
         driver = self._registry.get_driver_for_device(request.device_id)
 
         if driver is None:

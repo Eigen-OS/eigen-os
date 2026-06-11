@@ -446,6 +446,24 @@ DM MUST support driver trust controls:
 
 ---
 
+### 11.1.1 Bounded driver-manager metrics
+
+Driver Manager MUST expose bounded metrics families with deterministic labels:
+
+- `eigen_driver_requests_total{rpc,code}`
+- `eigen_driver_request_latency_ms_bucket{rpc,le}`
+- `eigen_driver_sessions{driver,state}`
+- `eigen_driver_backend_failures_total{component,taxonomy}`
+
+Rules:
+
+- labels MUST remain bounded and enumerated,
+- trace and job identifiers MUST NOT appear in metric labels,
+- metrics emission MUST NOT block execution paths,
+- metrics failures MUST remain non-fatal.
+
+---
+
 ### 11.2 Required Telemetry Shape (Normative Targets)
 
 DM SHOULD export bounded-cardinality metrics such as:
@@ -474,7 +492,7 @@ Target spans:
 - per-driver execution span
 - backend API latency span (where meaningful)
 
-Trace continuity must be preserved across DM → driver → backend boundaries.
+Trace continuity must be preserved across kernel → DM → driver → backend boundaries, with `traceparent` propagation and stable `trace_id` derivation at the DM boundary.
 
 ---
 

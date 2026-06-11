@@ -244,6 +244,15 @@ eigen_service_snapshot_age_seconds
 
 `rpc` MUST be bounded (enumerated RPC names). `code` MUST be bounded (gRPC code set).
 
+Driver Manager adds the following bounded service metrics as its stable surface:
+
+- `eigen_driver_requests_total{rpc,code}`
+- `eigen_driver_request_latency_ms_bucket{rpc,le}`
+- `eigen_driver_sessions{driver,state}`
+- `eigen_driver_backend_failures_total{component,taxonomy}`
+
+These metric families remain bounded and MUST NOT encode trace/job identifiers.
+
 ---
 
 ### 6.5 Contract-specific metrics (authoritative)
@@ -273,6 +282,8 @@ Client/CLI/SDK
 → Driver Manager
 → Backend (where supported)
 ```
+
+For Driver Manager, the boundary logs MUST preserve `traceparent` and derived `trace_id` across the kernel → DM → provider adapter path.
 
 ---
 
@@ -342,6 +353,13 @@ All services MUST emit structured JSON logs with (at minimum):
 | `grpc_status` | no | for RPC logs |
 | `error_reason` | no | stable `EIGEN_*` reason code |
 | `artifact_ref` | no | QFS reference for large diagnostics |
+
+Driver Manager log emission SHOULD additionally expose stable RPC context fields:
+
+- `method` or `rpc_method`
+- `grpc_status`
+- `error_reason`
+- `artifact_ref`
 
 ---
 
