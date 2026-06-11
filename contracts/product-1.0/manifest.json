@@ -219,7 +219,9 @@
         "docs/reference/intelligent-runtime-observability-contract.md"
       ],
       "proto_schema_files": [],
-      "planned_proto_schema_files": [],
+    "planned_proto_schema_files": [
+      "Not applicable (internal Rust contract surface)"
+    ],
       "conformance_tests": [
         "src/rust/crates/resource-manager/src/lib.rs",
         "src/rust/crates/resource-manager/tests/scheduler_contract_compatibility.rs",
@@ -419,7 +421,7 @@
     ],
     "planned_proto_schema_files": [],
     "conformance_tests": [
-      "monitoring/metrics/tests/test_wave5_observability_conformance.py"
+      "planned monitoring/metrics/tests/test_wave5_observability_conformance.py"
     ],
     "implementation_status": "implemented",
     "compatibility_status": "compatible"
