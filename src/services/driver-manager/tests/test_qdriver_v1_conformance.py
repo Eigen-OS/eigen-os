@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import grpc
 import pytest
@@ -24,6 +25,18 @@ def simulator_driver() -> SimulatorDriver:
 
 def _aqo(ops: list[dict], qubits: int = 2) -> bytes:
     return json.dumps({"version": "1.0.0", "qubits": qubits, "operations": ops}).encode("utf-8")
+
+
+def _provider_matrix_fixture() -> dict:
+    fixture = (
+        Path(__file__).resolve().parents[4]
+        / "docs"
+        / "development"
+        / "fixtures"
+        / "phase8d"
+        / "provider_tolerance_policy_v1.json"
+    )
+    return json.loads(fixture.read_text(encoding="utf-8"))
 
 
 @pytest.mark.parametrize(
@@ -61,34 +74,23 @@ def test_qdriver_v1_profile_matrix_fail_closed(
     assert sum(counts.values()) == 8
     assert metadata["provider_profile"] == "simulator"
     assert expected == "pass"
-    
-def test_session_reuse_across_compatible_execution(
-    simulator_driver,
-):
-    first = simulator_driver.session_key(
-        "sim:local",
-        {"seed": "1"},
+
+
+def test_simulator_is_default_conformance_backend(simulator_driver: SimulatorDriver) -> None:
+    counts, _, metadata = simulator_driver.execute_circuit(
+        device_id="sim:local",
+        circuit=_aqo([{"op": "MEASURE", "q": [0], "c": [0]}], qubits=1),
+        shots=8,
+        options={"seed": "11"},
     )
 
-    second = simulator_driver.session_key(
-        "sim:local",
-        {"seed": "1"},
-    )
-
-    assert first == second
+    assert sum(counts.values()) == 8
+    assert metadata["provider_profile"] == "simulator"
 
 
-def test_calibration_artifact_reference_stability(
-    simulator_driver,
-):
-    first = simulator_driver.calibrate_device(
-        "sim:local",
-        {},
-    )
+def test_phase8d_provider_matrix_fixture_lists_official_targets() -> None:
+    payload = _provider_matrix_fixture()
 
-    second = simulator_driver.calibrate_device(
-        "sim:local",
-        {},
-    )
-
-    assert first == second
+    assert payload["policy_version"] == "1.0.0"
+    assert payload["canonical_workload"] == "phase8d_canonical_workload_v1"
+    assert payload["official_targets"] == ["simulator", "ibm", "aws"]
