@@ -51,3 +51,18 @@ def test_rollback_safety_fails_closed_when_controls_are_missing() -> None:
     assert any("escalation_path" in violation for violation in violations)
     assert REQUIRED_CONTROLS
     assert REQUIRED_FAILURE_CLASSES
+
+def test_session_restart_safety():
+    registry = DriverRegistry()
+
+    registry.invalidate_session(
+        "simulator",
+        "stable-session",
+    )
+
+    session = registry.get_or_create_session(
+        "simulator",
+        "stable-session",
+    )
+
+    assert session["state"] == "active"

@@ -9,6 +9,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Protocol
+from enum import StrEnum
+
+
+class DriverSessionState(StrEnum):
+    CREATED = "created"
+    ACTIVE = "active"
+    REFRESHING = "refreshing"
+    INVALIDATED = "invalidated"
+    CLOSED = "closed"
 
 
 @dataclass(frozen=True)
@@ -64,6 +73,25 @@ class BaseDriver(Protocol):
         options: dict[str, str],
     ) -> tuple[dict[str, int], float, dict[str, str]]:
         """Execute a circuit and return normalized counts/time/metadata."""
+
+    def session_key(
+        self,
+        device_id: str,
+        options: dict[str, str],
+    ) -> str:
+        """Return deterministic reusable session identity."""
+
+    def refresh_session(
+        self,
+        session_key: str,
+    ) -> None:
+        """Refresh reusable execution session."""
+
+    def close_session(
+        self,
+        session_key: str,
+    ) -> None:
+        """Close execution session safely."""
 
     def get_device_status(self, device_id: str) -> DeviceStatusInfo:
         """Return status for a specific device."""

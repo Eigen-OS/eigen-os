@@ -38,3 +38,21 @@
 ## Closure note
 
 Wave 6 is not ready to close until each evidence slot above is attached to the issue pack or referenced by the release checklist.
+
+## W6-03 Session lifecycle evidence
+
+- Session lifecycle fixture:
+  - created
+  - active
+  - refreshed
+  - invalidated
+  - closed
+
+- Calibration lifecycle evidence:
+  - artifact reference stable
+  - rollback does not mutate reference
+
+- Restart behavior report:
+  - invalid sessions are not reused
+  - compatible sessions are reused deterministically
+  
