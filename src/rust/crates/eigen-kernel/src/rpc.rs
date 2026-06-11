@@ -7,7 +7,7 @@
 //! - explicit fixture adapters for downstream handoff points
 //! - canonical terminal state / error metadata propagation
 
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::fmt;
 use std::net::SocketAddr;
 use std::pin::Pin;
@@ -23,6 +23,9 @@ use tonic::{Code, Request, Response, Status};
 use tracing::Instrument;
 
 use qfs::CircuitFsLocal;
+use resource_manager::{
+    SCHEDULER_DECISION_VERSION, SCHEDULING_POLICY_BUNDLE_ID, SCHEDULING_POLICY_BUNDLE_VERSION,
+};
 
 use crate::proto::kernel_gateway_service_server::{
     KernelGatewayService, KernelGatewayServiceServer,
@@ -457,10 +460,78 @@ impl JobRuntimeRecord {
         .unwrap_or_default()
     }
 
+    fn schedule_stage(&self) -> Option<&StageRecord> {
+        self.stage_records
+            .iter()
+            .find(|stage| stage.stage_key == "schedule" && matches!(stage.status, StageStatus::Succeeded))
+    }
+}
+
+fn bounded_dispatch_rationale_attributes(
+    job: &JobRuntimeRecord,
+    schedule_stage: &StageRecord,
+    selected_backend: &str,
+    selected_queue: &str,
+) -> BTreeMap<String, String> {
+    let decision_input_digest = schedule_stage
+        .input
+        .get("fingerprint")
+        .cloned()
+        .unwrap_or_else(|| job.snapshot_digest());
+    BTreeMap::from([
+        ("job_id".to_string(), job.job_id.clone()),
+        ("stage_count".to_string(), job.stage_records.len().to_string()),
+        (
+            "schedule_stage_id".to_string(),
+            schedule_stage.stage_id.clone(),
+        ),
+        (
+            "schedule_stage_state".to_string(),
+            schedule_stage.state_after.to_string(),
+        ),
+        (
+            "scheduler_decision_version".to_string(),
+            schedule_stage
+                .output
+                .get("scheduler_decision_version")
+                .cloned()
+                .unwrap_or_else(|| SCHEDULER_DECISION_VERSION.to_string()),
+        ),
+        (
+            "policy_bundle_id".to_string(),
+            schedule_stage
+                .output
+                .get("policy_bundle_id")
+                .cloned()
+                .unwrap_or_else(|| SCHEDULING_POLICY_BUNDLE_ID.to_string()),
+        ),
+        (
+            "policy_bundle_version".to_string(),
+            schedule_stage
+                .output
+                .get("policy_bundle_version")
+                .cloned()
+                .unwrap_or_else(|| SCHEDULING_POLICY_BUNDLE_VERSION.to_string()),
+        ),
+        ("selected_backend".to_string(), selected_backend.to_string()),
+        ("selected_queue".to_string(), selected_queue.to_string()),
+        (
+            "resource_plan_ref".to_string(),
+            schedule_stage
+                .output
+                .get("resource_plan_ref")
+                .cloned()
+                .unwrap_or_default(),
+        ),
+        ("decision_input_digest".to_string(), decision_input_digest),
+        ("snapshot_digest".to_string(), job.snapshot_digest()),
+    ])
+}
+
     fn snapshot_digest(&self) -> String {
         hash_bytes_hex(&self.snapshot_bytes())
     }
-}
+
 
 #[derive(Default)]
 struct KernelRuntimeStore {
@@ -1406,11 +1477,27 @@ impl OrchestrationAdapters for FixtureAdapters {
         self.maybe_fail(DagStageKind::Schedule)?;
         Ok(BTreeMap::from([
             ("message".to_string(), "resource schedule selected".to_string()),
+            (
+                "scheduler_decision_version".to_string(),
+                SCHEDULER_DECISION_VERSION.to_string(),
+            ),
+            (
+                "policy_bundle_id".to_string(),
+                SCHEDULING_POLICY_BUNDLE_ID.to_string(),
+            ),
+            (
+                "policy_bundle_version".to_string(),
+                SCHEDULING_POLICY_BUNDLE_VERSION.to_string(),
+            ),
             ("selected_backend".to_string(), submission.target.clone()),
             ("selected_queue".to_string(), "scheduler:default".to_string()),
             (
                 "resource_plan_ref".to_string(),
                 format!("qfs://jobs/{}/schedule/plan.json", submission.job_id),
+            ),
+            (
+                "decision_input_digest".to_string(),
+                submission.fingerprint.clone(),
             ),
         ]))
     }
@@ -1777,31 +1864,56 @@ impl KernelGatewayService for KernelGatewaySvc {
             .get(&job_id)
             .ok_or_else(|| Status::not_found("job not found"))?;
 
-        let mut reason_codes = vec![
-            "validate_enqueue".to_string(),
-            "compile".to_string(),
-            "optimize".to_string(),
-            "schedule".to_string(),
-            "execute".to_string(),
-            "persist".to_string(),
-            "record_knowledge_observability".to_string(),
-            "finalize".to_string(),
-        ];
+        let schedule_stage = job
+            .schedule_stage()
+            .ok_or_else(|| Status::failed_precondition("dispatch rationale requires a completed schedule stage"))?;
+
+        let selected_backend = schedule_stage
+            .output
+            .get("selected_backend")
+            .cloned()
+            .ok_or_else(|| Status::failed_precondition("schedule stage missing selected_backend"))?;
+        let selected_queue = schedule_stage
+            .output
+            .get("selected_queue")
+            .cloned()
+            .ok_or_else(|| Status::failed_precondition("schedule stage missing selected_queue"))?;
+        let policy_bundle_id = schedule_stage
+            .output
+            .get("policy_bundle_id")
+            .cloned()
+            .unwrap_or_else(|| SCHEDULING_POLICY_BUNDLE_ID.to_string());
+        let policy_bundle_version = schedule_stage
+            .output
+            .get("policy_bundle_version")
+            .cloned()
+            .unwrap_or_else(|| SCHEDULING_POLICY_BUNDLE_VERSION.to_string());
+        let policy_version = format!("{policy_bundle_id}/{policy_bundle_version}");
+        let mut reason_codes = BTreeSet::from([
+            "schedule_stage_completed".to_string(),
+            "policy_bundle_applied".to_string(),
+            "backend_selected".to_string(),
+            "queue_selected".to_string(),
+            "trace_linked".to_string(),
+        ]);
         if let Some(code) = job.error_code.clone() {
-            reason_codes.push(code);
+            reason_codes.insert(code);
         }
 
         let rationale = DispatchRationale {
             version: "1.0.0".to_string(),
-            policy_version: "wave-2-dag-fixture/1".to_string(),
-            reason_codes,
-            selected_backend: job.submission.target.clone(),
-            selected_queue: "scheduler:default".to_string(),
-            attributes: HashMap::from([
-                ("job_id".to_string(), job.job_id.clone()),
-                ("stage_count".to_string(), job.stage_records.len().to_string()),
-                ("snapshot_digest".to_string(), job.snapshot_digest()),
-            ]),
+            policy_version,
+            reason_codes: reason_codes.into_iter().collect(),
+            selected_backend: selected_backend.clone(),
+            selected_queue: selected_queue.clone(),
+            attributes: bounded_dispatch_rationale_attributes(
+                &job,
+                schedule_stage,
+                &selected_backend,
+                &selected_queue,
+            )
+            .into_iter()
+            .collect(),
             timeline_ref: format!("qfs://jobs/{}/timeline.jsonl", job.job_id),
             logs_ref: format!("qfs://jobs/{}/logs/runtime.json", job.job_id),
             trace_id: job.submission.trace_id.clone(),
@@ -2739,6 +2851,7 @@ fn ts_to_json(ts: &Timestamp) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
     use prost_types::{Duration as ProtoDuration, Timestamp};
     use tokio_stream::StreamExt;
     use tonic::Request;
@@ -3245,5 +3358,158 @@ mod tests {
         let collected: Vec<_> = stream.collect().await;
         assert!(!collected.is_empty());
         assert_eq!(collected[0].as_ref().unwrap().update.as_ref().unwrap().event_seq, 1);
+    }
+
+    #[tokio::test]
+    async fn dispatch_rationale_matches_completed_schedule_state() {
+        let (svc, runtime) = make_service(None);
+        let response = svc
+            .enqueue_job(Request::new(make_request("dispatch-rationale")))
+            .await
+            .expect("enqueue should succeed")
+            .into_inner();
+
+        let job = wait_for_terminal(runtime, &response.job_id).await;
+        assert_eq!(job.state, TaskState::Done);
+
+        let rationale = svc
+            .get_dispatch_rationale(Request::new(GetDispatchRationaleRequest {
+                metadata: Some(RequestMetadata {
+                    contract_version: "1.0.0".to_string(),
+                    request_id: format!("rationale-{}", response.job_id),
+                    idempotency_key: format!("rationale-{}", response.job_id),
+                    traceparent: "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01".to_string(),
+                    deadline: Some(ProtoDuration { seconds: 30, nanos: 0 }),
+                    tenant_id: "tenant-a".to_string(),
+                    project_id: "project-a".to_string(),
+                    subject: "alice".to_string(),
+                    role: "user".to_string(),
+                    source_service: "system-api".to_string(),
+                    trace_id: "".to_string(),
+                    retry_policy: "".to_string(),
+                    security_context: "".to_string(),
+                }),
+                job_id: response.job_id.clone(),
+            }))
+            .await
+            .expect("dispatch rationale should succeed")
+            .into_inner()
+            .rationale
+            .expect("rationale must be present");
+
+        assert_eq!(rationale.version, "1.0.0");
+        assert_eq!(rationale.policy_version, "balanced/1.0.0");
+        assert_eq!(rationale.selected_backend, "sim:local");
+        assert_eq!(rationale.selected_queue, "scheduler:default");
+        assert_eq!(
+            rationale.attributes.get("policy_bundle_id").map(String::as_str),
+            Some("balanced")
+        );
+        assert_eq!(
+            rationale.attributes.get("policy_bundle_version").map(String::as_str),
+            Some("1.0.0")
+        );
+        assert!(rationale.attributes.contains_key("decision_input_digest"));
+        assert!(rationale.attributes.contains_key("schedule_stage_id"));
+    }
+
+    #[tokio::test]
+    async fn dispatch_rationale_is_stable_for_identical_inputs() {
+        let (svc_a, runtime_a) = make_service(None);
+        let (svc_b, runtime_b) = make_service(None);
+
+        let response_a = svc_a
+            .enqueue_job(Request::new(make_request("dispatch-rationale-stability")))
+            .await
+            .expect("enqueue should succeed")
+            .into_inner();
+        let response_b = svc_b
+            .enqueue_job(Request::new(make_request("dispatch-rationale-stability")))
+            .await
+            .expect("enqueue should succeed")
+            .into_inner();
+
+        let _ = wait_for_terminal(runtime_a, &response_a.job_id).await;
+        let _ = wait_for_terminal(runtime_b, &response_b.job_id).await;
+
+        let rationale_a = svc_a
+            .get_dispatch_rationale(Request::new(make_rationale_request(&response_a.job_id)))
+            .await
+            .expect("dispatch rationale a")
+            .into_inner()
+            .rationale
+            .expect("rationale a");
+        let rationale_b = svc_b
+            .get_dispatch_rationale(Request::new(make_rationale_request(&response_b.job_id)))
+            .await
+            .expect("dispatch rationale b")
+            .into_inner()
+            .rationale
+            .expect("rationale b");
+
+        assert_eq!(rationale_a, rationale_b);
+    }
+
+    #[tokio::test]
+    async fn dispatch_rationale_uses_bounded_metadata_only() {
+        let (svc, runtime) = make_service(None);
+        let response = svc
+            .enqueue_job(Request::new(make_request("dispatch-rationale-bounded")))
+            .await
+            .expect("enqueue should succeed")
+            .into_inner();
+        let _ = wait_for_terminal(runtime, &response.job_id).await;
+
+        let rationale = svc
+            .get_dispatch_rationale(Request::new(make_rationale_request(&response.job_id)))
+            .await
+            .expect("dispatch rationale should succeed")
+            .into_inner()
+            .rationale
+            .expect("rationale");
+
+        let allowed: BTreeSet<&str> = BTreeSet::from([
+            "job_id",
+            "stage_count",
+            "schedule_stage_id",
+            "schedule_stage_state",
+            "scheduler_decision_version",
+            "policy_bundle_id",
+            "policy_bundle_version",
+            "selected_backend",
+            "selected_queue",
+            "resource_plan_ref",
+            "decision_input_digest",
+            "snapshot_digest",
+        ]);
+
+        let keys: BTreeSet<&str> = rationale.attributes.keys().map(String::as_str).collect();
+        assert_eq!(keys, allowed);
+        assert!(!rationale.attributes.contains_key("traceparent"));
+        assert!(!rationale.attributes.contains_key("subject"));
+        assert!(!rationale.attributes.contains_key("request_id"));
+        assert!(!rationale.attributes.contains_key("compiler_options"));
+        assert!(!rationale.attributes.contains_key("metadata_kvs"));
+    }
+
+    fn make_rationale_request(job_id: &str) -> GetDispatchRationaleRequest {
+        GetDispatchRationaleRequest {
+            metadata: Some(RequestMetadata {
+                contract_version: "1.0.0".to_string(),
+                request_id: format!("rationale-{job_id}"),
+                idempotency_key: format!("rationale-{job_id}"),
+                traceparent: "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01".to_string(),
+                deadline: Some(ProtoDuration { seconds: 30, nanos: 0 }),
+                tenant_id: "tenant-a".to_string(),
+                project_id: "project-a".to_string(),
+                subject: "alice".to_string(),
+                role: "user".to_string(),
+                source_service: "system-api".to_string(),
+                trace_id: "".to_string(),
+                retry_policy: "".to_string(),
+                security_context: "".to_string(),
+            }),
+            job_id: job_id.to_string(),
+        }
     }
 }
