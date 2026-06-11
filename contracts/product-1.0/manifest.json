@@ -649,6 +649,26 @@
       ],
       "implementation_status": "documented",
       "compatibility_status": "needs-alignment"
+    },
+    {
+      "name": "Driver Manager capability registry and device profile negotiation",
+      "contract_version": "1.0.0",
+      "owner": "Driver Manager; Kernel/QRTX",
+      "sources": [
+        "docs/architecture/components/driver-manager.md",
+        "docs/architecture/components/qrtx.md",
+        "docs/reference/api/grpc-internal.md"
+      ],
+      "proto_schema_files": [
+        "src/services/driver-manager/src/driver_manager/registry.py"
+      ],
+      "planned_proto_schema_files": [],
+      "conformance_tests": [
+        "src/services/driver-manager/tests/test_device_profile_registry.py",
+        "src/services/driver-manager/tests/test_official_driver_matrix_fixture.py"
+      ],
+      "implementation_status": "implemented",
+      "compatibility_status": "compatible"
     }
   ]
 }
