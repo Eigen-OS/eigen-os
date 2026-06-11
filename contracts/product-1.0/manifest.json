@@ -310,6 +310,32 @@
       "compatibility_status": "needs-alignment"
     },
     {
+      "name": "Reservation lifecycle and recovery semantics",
+      "contract_version": "1.0.0",
+      "owner": "System API; Resource Manager; Kernel/QRTX",
+      "sources": [
+        "docs/architecture/components/resource-manager.md",
+        "docs/architecture/contract-map.md",
+        "docs/reference/formats/qfs-layout.md",
+        "docs/reference/orchestration-observability-contract.md",
+        "docs/reference/api/grpc-public.md"
+      ],
+      "proto_schema_files": [
+        "proto/eigen/api/v1/device_service.proto"
+      ],
+      "planned_proto_schema_files": [],
+      "conformance_tests": [
+        "src/services/system-api/tests/test_validation_errors.py",
+        "src/services/system-api/src/system_api/grpc_impl.py"
+      ],
+      "implementation_notes": [
+        "Reservations are persisted as a compatibility bridge with deterministic replay-safe binding by purpose.",
+        "Active reservations renew identically normalized requests and reject double-booking on the same device."
+      ],
+      "implementation_status": "implemented",
+      "compatibility_status": "compatible"
+    },
+    {
       "name": "Intelligent runtime observability",
       "contract_version": "2.1.0",
       "owner": "Observability; scheduler; policy engine; driver-manager",

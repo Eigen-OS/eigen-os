@@ -121,6 +121,9 @@ Invalid `job_id` values MUST be rejected before filesystem access.
 │   ├── scheduler.log
 │   ├── driver.log
 │   └── audit.log
+├── reservations/
+│   ├── reservation.json
+│   └── history.jsonl
 ├── meta/
 │   ├── job.json
 │   ├── retention.json
@@ -347,6 +350,26 @@ Rules:
 - MUST NOT be treated as durable storage.
 - MAY be deleted at any time.
 - MUST NOT contain canonical artifacts.
+
+---
+
+### 6.9 `reservations/`
+
+Contains durable reservation lifecycle artifacts for compatibility-layer and recovery flows.
+
+#### Files
+
+| **File** | **Required** | **Description** |
+|-------------|------------|-----------|
+| `reservation.json` | yes | Canonical reservation record with state, owner, device binding, and expiry |
+| `history.jsonl` | recommended | Append-only reservation lifecycle history for replay/debug |
+
+#### Notes
+
+- Reservation records MUST be replay-safe and deterministic for identical normalized inputs.
+- Expired records MUST remain restorable for audit and recovery.
+- The path is used for compatibility-layer persistence until a dedicated
+  Resource Manager store exists.
 
 ---
 

@@ -189,6 +189,15 @@ coordination.
 Public reservation behavior MUST remain backward-compatible with the current
 MVP surface while the kernel-owned authority is being introduced.
 
+Wave 5 target semantics require the reservation layer to act like a durable
+compatibility bridge:
+
+- identical binding inputs MUST renew the same reservation lineage,
+- reservation state MUST be persisted and restored after restart,
+- active reservations MUST reject double-booking of the same device,
+- expiry sweeps MUST transition active leases to a terminal expired state,
+- replay evidence MUST remain deterministic for identical normalized inputs.
+
 If a client requests enforced reservation semantics (Phase-1 features) against an MVP deployment, the system SHOULD return:
 
 - `UNIMPLEMENTED` (preferred) or `FAILED_PRECONDITION`,
@@ -258,6 +267,10 @@ Resource Manager SHALL own:
 - restart recovery,
 - audit-safe history retention,
 - replay-safe reservation lineage.
+
+For Product 1.0 Wave 5, `purpose` is the stable binding handle used to keep
+reservation lineage replay-safe until a separate internal binding identifier is
+introduced.
 
 ---
 
