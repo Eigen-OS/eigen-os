@@ -522,6 +522,8 @@ impl KernelRuntimeStore {
             .read()
             .get(job_id)
             .ok_or_else(|| Status::not_found("job not found"))?;
+        let jobs = self.jobs.read();
+        let job = jobs.get(job_id).ok_or_else(|| Status::not_found("job not found"))?;
         Ok(job.reservation_state.as_deref() == Some("held") && !job.is_terminal())
     }
 
@@ -531,6 +533,8 @@ impl KernelRuntimeStore {
             .read()
             .get(job_id)
             .ok_or_else(|| Status::not_found("job not found"))?;
+        let jobs = self.jobs.read();
+        let job = jobs.get(job_id).ok_or_else(|| Status::not_found("job not found"))?;
         if job.reservation_state.as_deref() != Some("held") {
             return Ok(false);
         }
@@ -548,7 +552,6 @@ impl KernelRuntimeStore {
                 let age_ms = timestamp_to_ms(&ts_now()) - timestamp_to_ms(&job.updated_at);
                 if age_ms >= lease_ms as i128 {
                     job.reservation_state = Some("released".to_string());
-                    job.reservation_released_reason = Some("deadline_exceeded".to_string());
                     job.reservation_released_reason = Some("lease_expired".to_string());
                     job.updated_at = ts_now();
                     released.push(job_id.clone());
@@ -1963,7 +1966,11 @@ async fn run_job_dag(
             stage_input_from_outputs(&submission, schedule_stage, &optimize_output),
         )
         .map_err(status_to_stage_error(schedule_stage, "begin_schedule"))?;
-    let _ = runtime.acquire_live_reservation(&job_id)?;
+    let _ = runtime
+        .acquire_live_reservation(&job_id)
+        .map_err(|status| {
+            KernelStageError::new(Code::FailedPrecondition, "RUNTIME_STAGE_FAILURE", "live reservation acquisition failed", format!("status::{:?}", status.code()))
+        })?;
     schedule_output = adapters
         .schedule(&submission, &optimize_output)
         .await
@@ -2547,6 +2554,13 @@ fn timestamp_to_ms(ts: &Timestamp) -> i128 {
     (ts.seconds as i128) * 1000 + (ts.nanos as i128 / 1_000_000)
 }
 
+fn timestamp_from_ms(ms: i128) -> Timestamp {
+    Timestamp {
+        seconds: (ms.div_euclid(1000)) as i64,
+        nanos: ((ms.rem_euclid(1000)) * 1_000_000) as i32,
+    }
+}
+
 fn parse_stage_kind(value: &str) -> Option<DagStageKind> {
     match value {
         "validate" | "validate_enq" | "validate-enqueue" => Some(DagStageKind::ValidateEnqueue),
@@ -2785,6 +2799,9 @@ mod tests {
                 subject: "alice".to_string(),
                 role: "user".to_string(),
                 source_service: "system-api".to_string(),
+                trace_id: "".to_string(),
+                retry_policy: "".to_string(),
+                security_context: "".to_string(),
                 ..Default::default()
             }),
             name: name.to_string(),
@@ -2810,6 +2827,9 @@ mod tests {
                 subject: "alice".to_string(),
                 role: "user".to_string(),
                 source_service: "system-api".to_string(),
+                trace_id: "".to_string(),
+                retry_policy: "".to_string(),
+                security_context: "".to_string(),
                 ..Default::default()
             }),
             job_id: job_id.to_string(),
@@ -2867,6 +2887,9 @@ mod tests {
                     subject: "alice".to_string(),
                     role: "user".to_string(),
                     source_service: "system-api".to_string(),
+                    trace_id: "".to_string(),
+                    retry_policy: "".to_string(),
+                    security_context: "".to_string(),
                     ..Default::default()
                 }),
                 job_id: response.job_id.clone(),
@@ -2912,6 +2935,9 @@ mod tests {
                     subject: "alice".to_string(),
                     role: "user".to_string(),
                     source_service: "system-api".to_string(),
+                    trace_id: "".to_string(),
+                    retry_policy: "".to_string(),
+                    security_context: "".to_string(),
                     ..Default::default()
                 }),
                 job_id: response.job_id.clone(),
@@ -3028,6 +3054,9 @@ mod tests {
                 subject: "alice".to_string(),
                 role: "user".to_string(),
                 source_service: "system-api".to_string(),
+                trace_id: "".to_string(),
+                retry_policy: "".to_string(),
+                security_context: "".to_string(),
                 ..Default::default()
             }),
             job_id: job_id.to_string(),
@@ -3049,7 +3078,7 @@ mod tests {
         assert_eq!(job.reservation_state.as_deref(), Some("released"));
     }
 
-    #[tokio::test]
+    #[test]
     fn stale_reservation_is_swept_and_can_be_reacquired_with_same_token() {
         let runtime = KernelRuntimeStore::default();
         let submission = fixture_submission_with_lease_ms(1);
@@ -3069,7 +3098,7 @@ mod tests {
         assert_eq!(reacquired.reservation_token, job.reservation_token);
     }
 
-    #[tokio::test]
+    #[test]
     fn duplicate_live_reservation_is_rejected_while_active() {
         let runtime = KernelRuntimeStore::default();
         let submission = fixture_submission_with_lease_ms(60_000);
@@ -3079,7 +3108,7 @@ mod tests {
         assert_eq!(err.code(), Code::FailedPrecondition);
     }
 
-    #[tokio::test]
+    #[test]
     fn reservation_replay_token_is_deterministic_for_same_submission() {
         let runtime = KernelRuntimeStore::default();
         let submission = fixture_submission_with_lease_ms(60_000);
@@ -3121,6 +3150,9 @@ mod tests {
                 subject: "user".to_string(),
                 role: "user".to_string(),
                 source_service: "system-api".to_string(),
+                trace_id: "".to_string(),
+                retry_policy: "".to_string(),
+                security_context: "".to_string(),
             }),
         };
         NormalizedSubmission::from_request(&req).expect("submission")
@@ -3208,6 +3240,9 @@ mod tests {
                     subject: "alice".to_string(),
                     role: "user".to_string(),
                     source_service: "system-api".to_string(),
+                    trace_id: "".to_string(),
+                    retry_policy: "".to_string(),
+                    security_context: "".to_string(),
                     ..Default::default()
                 }),
                 job_id: response.job_id.clone(),
