@@ -419,6 +419,8 @@ To support deterministic replay and audits, the system SHOULD persist:
 - error artifacts,
 - decision/explainability artifacts (where enabled),
 - optimizer/neuro-symbolic decision traces (where enabled).
+- replay snapshots for job-scoped durable recovery,
+- bounded audit lineage for schedule, reservation, split, merge, and terminalization decisions.
 
 Recommended job-scoped layout (illustrative; exact paths may vary by deployment profile):
 
@@ -428,10 +430,27 @@ qfs://jobs/<job_id>/
   results/error.json
   timeline/timeline.json
   logs/run.log
+  logs/state_events.jsonl
+  logs/replay_snapshot.jsonl
   orchestration/...
   runtime/...
   explain/...
 ```
+
+---
+
+### 10.3 Minimum audit fields
+
+Every auditable decision artifact SHOULD carry:
+
+- trace_id
+- request_id where available
+- job_id
+- stage
+- attempt
+- stable decision version / policy version
+- durable artifact reference (qfs://...)
+- replay digest or equivalent deterministic fingerprint
 
 ---
 

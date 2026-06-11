@@ -411,10 +411,18 @@ Examples:
 - optimistic concurrency conflicts,
 - transactional race conditions.
 - merge ownership conflicts.
+- replay identity conflicts where the recorded audit lineage does not match the deterministic replay input set.
 
 ---
 
-### 2.13 CANCELLED
+### 2.13 REPLAY VS RETRY DISTINCTION
+
+Replay mismatches MUST be surfaced as deterministic audit/evidence failures and
+MUST NOT be silently treated as transient retries.
+
+---
+
+### 2.14 CANCELLED
 
 Use when:
 

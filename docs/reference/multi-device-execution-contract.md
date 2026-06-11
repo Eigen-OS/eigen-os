@@ -488,14 +488,20 @@ manifest, shard lineage, and merge validation metadata as multi-shard runs.
 
 ## 16.2 Replay-safe manifest rules
 
-- `created_at_ms` MUST be provided by the caller that creates the plan and MUST
+- `created_at_ms` MUST be provided by the caller that creates the plan and MUST be treated as part of the replayed manifest identity.
+- `trace_id` MUST be preserved across split, partial result, merge, and
+  terminalization records.
+- `attempt` MUST begin at 1 for the initial shard execution record.
+- `lineage_ref` SHOULD point at a QFS path or equivalent durable lineage ref.
+- replay identity MUST remain stable for identical `{parent_job_id, created_at_ms, trace_id, shard_plans[]}` inputs.
 
-  - be treated as part of the replayed manifest identity.
-  - `trace_id` MUST be preserved across split, partial result, and merge records.
-  - `attempt` MUST begin at 1 for the initial shard execution record.
-  - `lineage_ref` SHOULD point at a QFS path or equivalent durable lineage ref.
+## 16.3 Retry vs replay evidence
 
-## 16.3 Final aggregation
+- retries are recorded as new attempts under the same lineage,
+- replays are recorded with the same replay identity and a new recovery marker,
+- terminalization records MUST distinguish `cancelled`, `deadline_exceeded`, and `failed` outcomes in the durable audit trail.
+
+## 16.4 Final aggregation
 
 `MergeDecision` is the canonical merge-validation record. Final result material
 must be written through the runtime persistence layer using the same shard

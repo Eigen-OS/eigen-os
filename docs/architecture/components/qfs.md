@@ -69,6 +69,15 @@ QFS is the **canonical persistence layer** for:
 - split/merge lineage artifacts (where enabled),
 - replay and audit evidence.
 
+Replay/audit evidence MUST be written in a stable job-scoped form so that restart
+recovery can reconstruct the same decision history from the same recorded inputs.
+The minimum durable evidence set is:
+
+- schedule / reservation decision snapshots,
+- split / merge decision artifacts,
+- terminalization records,
+- append-only event streams for state transitions.
+
 QFS is not a general-purpose database API exposed to end users. Public APIs expose **artifact references**, not raw storage internals.
 
 ---
@@ -321,6 +330,7 @@ For a single artifact write operation:
 - `list`
 - `delete` (subject to policy; see §12)
 - `atomic_write`
+- `append_log_line` for append-only audit/event records
 
 Kernel initializes QFS through:
 

@@ -165,6 +165,11 @@ impl JobEventLog {
         Ok(current_state)
     }
 
+    pub fn replay_digest(&self) -> String {
+        let material = serde_json::to_vec(self).unwrap_or_default();
+        format!("{:x}", sha2::Sha256::digest(&material))
+    }
+
     /// Verify event log consistency (all checksums, sequences, ordering).
     pub fn verify(&self) -> Result<(), ReplayError> {
         // Check sequence numbers are monotonic
