@@ -1,7 +1,7 @@
 {
   "version": "3.1.0",
   "parent_job_id": "job-parent-compat-01",
-  "scheduler_decision_version": "3.1.0",
+  "scheduler_decision_version": "2.3.0",
   "created_at_ms": 1746200000000,
   "trace_id": "trace-compat-01",
   "shard_plans": [

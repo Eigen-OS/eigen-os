@@ -99,7 +99,8 @@ fn split_planner_rejects_tasks_without_compatible_backends() {
         compatible_backends: vec![],
     }];
 
-    let err = plan_split("job-parent-42", &tasks, 4).expect_err("planner must reject task");
+    let err = plan_split("job-parent-42", &tasks, 4, 1_746_200_000_000, "trace-xyz")
+        .expect_err("planner must reject task");
     assert_eq!(
         err,
         SplitPlanError::EmptyCompatibleBackends {
@@ -238,6 +239,10 @@ fn merge_quorum_succeeds_when_threshold_met() {
             parent_job_id: "job-parent-42".to_string(),
             shard_id: "job-parent-42-shard-001".to_string(),
             backend_id: "backend-a".to_string(),
+            attempt: 1,
+            emitted_at_ms: 1_746_200_000_010,
+            trace_id: "trace-xyz".to_string(),
+            correlation_id: "corr-123".to_string(),
             payload_ref: "qfs://job-parent-42/shards/001/result.json".to_string(),
             payload_checksum: "sha256:ok1".to_string(),
         },
@@ -246,6 +251,10 @@ fn merge_quorum_succeeds_when_threshold_met() {
             parent_job_id: "job-parent-42".to_string(),
             shard_id: "job-parent-42-shard-002".to_string(),
             backend_id: "backend-b".to_string(),
+            attempt: 1,
+            emitted_at_ms: 1_746_200_000_120,
+            trace_id: "trace-xyz".to_string(),
+            correlation_id: "corr-123".to_string(),
             payload_ref: "qfs://job-parent-42/shards/002/result.json".to_string(),
             payload_checksum: "sha256:ok2".to_string(),
         },

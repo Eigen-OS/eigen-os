@@ -413,6 +413,8 @@ impl JobRuntimeRecord {
     }
 
     fn snapshot_bytes(&self) -> Vec<u8> {
+        // Snapshot digest is used as a stability fingerprint for identical logical jobs.
+        // Exclude wall-clock fields and derived replay tokens so equivalent runs hash the same.
         let stage_json: Vec<serde_json::Value> = self
             .stage_records
             .iter()
@@ -428,14 +430,11 @@ impl JobRuntimeRecord {
                         StageStatus::Succeeded => "succeeded",
                         StageStatus::Failed => "failed",
                     },
-                    "started_at": ts_to_json(&stage.started_at),
-                    "completed_at": stage.completed_at.as_ref().map(ts_to_json),
                     "input": stage.input,
                     "output": stage.output,
                     "error_code": stage.error_code,
                     "error_summary": stage.error_summary,
                     "error_details_ref": stage.error_details_ref,
-                    "replay_token": stage.replay_token,
                 })
             })
             .collect();
@@ -487,7 +486,7 @@ fn bounded_dispatch_rationale_attributes(
         ),
         (
             "schedule_stage_state".to_string(),
-            schedule_stage.state_after.to_string(),
+            format!("{:?}", schedule_stage.state_after),
         ),
         (
             "scheduler_decision_version".to_string(),
@@ -528,10 +527,11 @@ fn bounded_dispatch_rationale_attributes(
     ])
 }
 
+impl JobRuntimeRecord {
     fn snapshot_digest(&self) -> String {
         hash_bytes_hex(&self.snapshot_bytes())
     }
-
+}
 
 #[derive(Default)]
 struct KernelRuntimeStore {

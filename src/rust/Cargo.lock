@@ -162,6 +162,7 @@ dependencies = [
  "qrtx",
  "resource-manager",
  "security-module",
+ "serde",
  "serde_json",
  "tempfile",
  "tokio",
@@ -808,6 +809,8 @@ name = "qrtx"
 version = "0.18.0"
 dependencies = [
  "serde",
+ "serde_json",
+ "sha2",
  "thiserror 1.0.69",
 ]
 
