@@ -537,8 +537,8 @@ class KnowledgeBaseService:
                     return False
                 if query_filter.HasField("created_before") and _ts_to_dt(query_filter.created_before) <= _ts_to_dt(record.created_at):
                     return False
-            except Exception:
-                pass
+            except (ValueError, TypeError):
+                return False
         return True
 
     def _decision_matches_filter(self, decision_log: Any, *, trace_id: str, model_version: str) -> bool:

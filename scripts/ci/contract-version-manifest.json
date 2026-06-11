@@ -67,7 +67,7 @@
     },
     {
       "path": "src/services/system-api/tests/fixtures/contracts/system_api_rest_v1/parity_matrix_v1_0_0.json",
-      "sha256": "e680c037e80e85a958ea8fbd6c932a629d29ee1854836360c353480cd74a17e6"
+      "sha256": "b7668ae89c4212a25415c76e9a414deac3c346cc7ae2a549c4699bb041dcc990"
     }
   ]
 }

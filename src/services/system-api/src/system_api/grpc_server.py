@@ -11,7 +11,7 @@ import grpc
 from google.rpc import code_pb2, status_pb2, error_details_pb2
 from grpc_status import rpc_status
 
-from .grpc_impl import DeviceService, JobService
+from .grpc_impl import DeviceService, JobService, KnowledgeBaseService
 from .proto_gen import ensure_generated
 
 _LOG = logging.getLogger("system_api")
