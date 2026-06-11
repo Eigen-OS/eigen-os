@@ -208,6 +208,31 @@
       "wave_1_status": "implemented-public-boundary-slice"
     },
     {
+      "name": "Scheduling policy engine",
+      "contract_version": "2.3.0",
+      "owner": "Resource Manager; QRTX",
+      "sources": [
+        "docs/architecture/components/resource-manager.md",
+        "docs/architecture/components/qrtx.md",
+        "docs/reference/multi-device-execution-contract.md",
+        "docs/reference/orchestration-observability-contract.md",
+        "docs/reference/intelligent-runtime-observability-contract.md"
+      ],
+      "proto_schema_files": [],
+      "planned_proto_schema_files": [],
+      "conformance_tests": [
+        "src/rust/crates/resource-manager/src/lib.rs",
+        "src/rust/crates/resource-manager/tests/scheduler_contract_compatibility.rs",
+        "src/rust/crates/resource-manager/tests/deterministic_replay_gate.rs"
+      ],
+      "implementation_notes": [
+        "Scheduler decisions carry explicit policy bundle identity and version metadata.",
+        "Deadline-aware dispatch is deterministic for equivalent inputs."
+      ],
+      "implementation_status": "implemented",
+      "compatibility_status": "compatible"
+    },
+    {
       "name": "Error mapping matrix",
       "contract_version": "1.0.0",
       "owner": "All public/internal services",

@@ -10,7 +10,8 @@ use resource_manager::{
     WORKER_RUNTIME_ARTIFACT_CONTRACT_VERSION, ClusterWorkerRegistration, ClusterWorkerState,
     DEVICE_SCORE_VERSION, DispatchReasonCode, FairnessPolicy,
     MULTI_DEVICE_EXECUTION_CONTRACT_VERSION, REBALANCING_POLICY_VERSION,
-    SCHEDULER_DECISION_VERSION, ScheduledJob, Scheduler, assign_cluster_job, plan_split,
+    SCHEDULER_DECISION_VERSION, SCHEDULING_POLICY_BUNDLE_ID,
+    SCHEDULING_POLICY_BUNDLE_VERSION, ScheduledJob, Scheduler, assign_cluster_job, plan_split,
     QueueAdapter, QueueTaskEnvelope,
 };
 use serde_json::{Value, json};
@@ -32,15 +33,19 @@ fn scheduler_decision_contract_matches_golden_fixture() {
         tenant_id: "tenant-a".to_string(),
         project_id: "project-a".to_string(),
         priority: 7,
+        deadline_ms: None,
     });
     let decision = scheduler.dispatch_next();
 
     let snapshot = json!({
         "version": decision.version,
+        "policy_bundle_id": decision.policy_bundle_id,
+        "policy_bundle_version": decision.policy_bundle_version,
         "selected_job_id": decision.selected_job_id,
         "selected_tenant_id": decision.selected_tenant_id,
         "selected_project_id": decision.selected_project_id,
         "selected_priority": decision.selected_priority,
+        "selected_deadline_ms": decision.selected_deadline_ms,
         "queue_depth_after": decision.queue_depth_after,
         "reason_code": format!("{:?}", decision.reason_code),
     });
@@ -253,6 +258,7 @@ fn deterministic_fair_queueing_fixture_matches_golden_snapshot() {
             tenant_id: job["tenant_id"].as_str().expect("tenant_id").to_string(),
             project_id: job["project_id"].as_str().expect("project_id").to_string(),
             priority: job["priority"].as_u64().expect("priority") as u8,
+            deadline_ms: None,
         });
     }
 
@@ -275,8 +281,39 @@ fn deterministic_fair_queueing_fixture_matches_golden_snapshot() {
 }
 
 #[test]
+fn scheduler_policy_bundle_identity_is_explicit_and_deadline_sensitive() {
+    let mut scheduler = Scheduler::new(AdmissionPolicy::default(), FairnessPolicy::default())
+        .with_policy_bundle_metadata("deadline-balanced", "1.0.0");
+
+    scheduler.submit(ScheduledJob {
+        job_id: "job-late".to_string(),
+        tenant_id: "tenant-a".to_string(),
+        project_id: "project-a".to_string(),
+        priority: 8,
+        deadline_ms: Some(2_000),
+    });
+    scheduler.submit(ScheduledJob {
+        job_id: "job-early".to_string(),
+        tenant_id: "tenant-a".to_string(),
+        project_id: "project-a".to_string(),
+        priority: 8,
+        deadline_ms: Some(1_000),
+    });
+
+    let decision = scheduler.dispatch_next();
+    assert_eq!(decision.version, SCHEDULER_DECISION_VERSION);
+    assert_eq!(decision.policy_bundle_id, "deadline-balanced");
+    assert_eq!(decision.policy_bundle_version, "1.0.0");
+    assert_eq!(decision.selected_job_id.as_deref(), Some("job-early"));
+    assert_eq!(decision.selected_deadline_ms, Some(1_000));
+}
+
+#[test]
 fn all_orchestration_contracts_keep_explicit_version_markers() {
-    assert_eq!(SCHEDULER_DECISION_VERSION, "2.2.0");
+    assert_eq!(SCHEDULER_DECISION_VERSION, "2.3.0");
+    assert_eq!(SCHEDULING_POLICY_BUNDLE_ID, "balanced");
+    assert_eq!(SCHEDULING_POLICY_BUNDLE_VERSION, "1.0.0");
+    assert_eq!(DEVICE_SCORE_VERSION, "2.1.0");
     assert_eq!(DEVICE_SCORE_VERSION, "2.1.0");
     assert_eq!(BACKEND_SCORING_CONTRACT_VERSION, "1.0.0");
     assert_eq!(BACKEND_SCORING_PROFILE_SCHEMA_VERSION, "1.0.0");

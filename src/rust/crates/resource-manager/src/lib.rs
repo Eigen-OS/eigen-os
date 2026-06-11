@@ -16,6 +16,9 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 /// Any breaking change to queue semantics, quota semantics,
 /// dispatch reason codes, or dispatch contracts must bump MAJOR.
 pub const SCHEDULER_DECISION_VERSION: &str = "2.2.0";
+pub const SCHEDULER_DECISION_VERSION: &str = "2.3.0";
+pub const SCHEDULING_POLICY_BUNDLE_ID: &str = "balanced";
+pub const SCHEDULING_POLICY_BUNDLE_VERSION: &str = "1.0.0";
 /// SemVer version for device score DTOs/contracts.
 pub const DEVICE_SCORE_VERSION: &str = "2.1.0";
 /// SemVer version for backend scoring contract artifacts (Phase-4 intelligent runtime).
@@ -1873,6 +1876,7 @@ pub struct ScheduledJob {
     pub tenant_id: String,
     pub project_id: String,
     pub priority: u8,
+    pub deadline_ms: Option<u64>,
 }
 
 /// Admission decision DTO (observable and auditable).
@@ -1891,10 +1895,13 @@ pub struct AdmissionDecision {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SchedulerDecision {
     pub version: &'static str,
+    pub policy_bundle_id: String,
+    pub policy_bundle_version: String,
     pub selected_job_id: Option<String>,
     pub selected_tenant_id: Option<String>,
     pub selected_project_id: Option<String>,
     pub selected_priority: Option<u8>,
+    pub selected_deadline_ms: Option<u64>,
     pub queue_depth_after: usize,
     pub reason_code: DispatchReasonCode,
     pub device_dispatch: Option<DeviceDispatchRecord>,
@@ -2003,11 +2010,23 @@ impl QueueState {
             .per_priority
             .get_mut(&priority)
             .expect("priority bucket must exist");
-        let job = queue.pop_front();
+
+        let best_index = queue
+            .iter()
+            .enumerate()
+            .min_by(|(_, left), (_, right)| {
+                compare_deadline(left.deadline_ms, right.deadline_ms)
+                    .then_with(|| left.job_id.cmp(&right.job_id))
+            })
+            .map(|(idx, _)| idx)?;
+
+        let job = queue
+            .remove(best_index)
+            .expect("selected queue item must exist");
         if queue.is_empty() {
             self.per_priority.remove(&priority);
         }
-        job
+        Some(job)
     }
 }
 
@@ -2127,6 +2146,8 @@ struct ActiveDispatch {
 pub struct Scheduler {
     admission_policy: AdmissionPolicy,
     fairness_policy: FairnessPolicy,
+    policy_bundle_id: String,
+    policy_bundle_version: String,
     queues: HashMap<FairnessKey, QueueState>,
     total_depth: usize,
     per_priority_depth: HashMap<u8, usize>,
@@ -2147,6 +2168,8 @@ impl Scheduler {
         Self {
             admission_policy,
             fairness_policy,
+            policy_bundle_id: SCHEDULING_POLICY_BUNDLE_ID.to_string(),
+            policy_bundle_version: SCHEDULING_POLICY_BUNDLE_VERSION.to_string(),
             queues: HashMap::new(),
             total_depth: 0,
             per_priority_depth: HashMap::new(),
@@ -2161,6 +2184,17 @@ impl Scheduler {
             applied_requeue_tokens: HashMap::new(),
             metrics: SchedulerMetrics::default(),
         }
+    }
+
+    /// Overrides the active policy bundle identity/version carried by decision artifacts.
+    pub fn with_policy_bundle_metadata(
+        mut self,
+        policy_bundle_id: impl Into<String>,
+        policy_bundle_version: impl Into<String>,
+    ) -> Self {
+        self.policy_bundle_id = policy_bundle_id.into();
+        self.policy_bundle_version = policy_bundle_version.into();
+        self
     }
 
     pub fn with_preemption_policy(mut self, preemption_policy: PreemptionPolicy) -> Self {
@@ -2329,10 +2363,13 @@ impl Scheduler {
         if self.total_depth == 0 {
             return SchedulerDecision {
                 version: SCHEDULER_DECISION_VERSION,
+                policy_bundle_id: self.policy_bundle_id.clone(),
+                policy_bundle_version: self.policy_bundle_version.clone(),
                 selected_job_id: None,
                 selected_tenant_id: None,
                 selected_project_id: None,
                 selected_priority: None,
+                selected_deadline_ms: None,
                 queue_depth_after: 0,
                 reason_code: DispatchReasonCode::QueueEmpty,
                 device_dispatch: None,
@@ -2383,10 +2420,13 @@ impl Scheduler {
 
         SchedulerDecision {
             version: SCHEDULER_DECISION_VERSION,
+            policy_bundle_id: self.policy_bundle_id.clone(),
+            policy_bundle_version: self.policy_bundle_version.clone(),
             selected_job_id: Some(job.job_id),
             selected_tenant_id: Some(job.tenant_id),
             selected_project_id: Some(job.project_id),
             selected_priority: Some(job.priority),
+            selected_deadline_ms: job.deadline_ms,
             queue_depth_after: self.total_depth,
             reason_code,
             device_dispatch: None,
@@ -3088,6 +3128,15 @@ fn compare_keys(a: &FairnessKey, b: &FairnessKey) -> Ordering {
         .then_with(|| a.project_id.cmp(&b.project_id))
 }
 
+fn compare_deadline(left: Option<u64>, right: Option<u64>) -> Ordering {
+    match (left, right) {
+        (Some(left_ms), Some(right_ms)) => left_ms.cmp(&right_ms),
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (None, None) => Ordering::Equal,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3485,6 +3534,42 @@ mod tests {
             Some(PolicyResolutionErrorCode::PolicyResolutionFailed)
         );
     }
+
+    #[test]
+    fn scheduler_policy_bundle_metadata_and_deadline_ordering_are_explicit() {
+        let mut scheduler = Scheduler::new(AdmissionPolicy::default(), FairnessPolicy::default())
+            .with_policy_bundle_metadata("deadline-balanced", "1.0.0");
+
+        scheduler.submit(ScheduledJob {
+            job_id: "job-late".to_string(),
+            tenant_id: "tenant-a".to_string(),
+            project_id: "project-a".to_string(),
+            priority: 7,
+            deadline_ms: Some(2_000),
+        });
+        scheduler.submit(ScheduledJob {
+            job_id: "job-early".to_string(),
+            tenant_id: "tenant-a".to_string(),
+            project_id: "project-a".to_string(),
+            priority: 7,
+            deadline_ms: Some(1_000),
+        });
+
+        let decision = scheduler.dispatch_next();
+        assert_eq!(decision.version, SCHEDULER_DECISION_VERSION);
+        assert_eq!(decision.policy_bundle_id, "deadline-balanced");
+        assert_eq!(decision.policy_bundle_version, "1.0.0");
+        assert_eq!(decision.selected_job_id.as_deref(), Some("job-early"));
+        assert_eq!(decision.selected_deadline_ms, Some(1_000));
+    }
+
+    fn all_orchestration_contracts_keep_explicit_version_markers() {
+        assert_eq!(SCHEDULER_DECISION_VERSION, "2.3.0");
+        assert_eq!(SCHEDULING_POLICY_BUNDLE_ID, "balanced");
+        assert_eq!(SCHEDULING_POLICY_BUNDLE_VERSION, "1.0.0");
+        assert_eq!(DEVICE_SCORE_VERSION, "2.1.0");
+        assert_eq!(BACKEND_SCORING_CONTRACT_VERSION, "1.0.0");
+        assert_eq!(BACKEND_SCORING_PROFILE_SCHEMA_VERSION, "1.0.0");
 
     #[test]
     fn policy_plugin_failure_is_isolated_with_stable_reason_codes() {
