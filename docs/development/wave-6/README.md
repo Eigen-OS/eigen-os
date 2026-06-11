@@ -1,7 +1,7 @@
 # Product 1.0 Wave 6 Documentation Index
 
 **Wave:** Product 1.0 Wave 6 — Driver Manager and QDriver final contract
-**Status:** Planning baseline
+**Status:** Closed
 **Parent execution plan:** `docs/development/product-1.0-contract-alignment-plan.md`
 
 ---
