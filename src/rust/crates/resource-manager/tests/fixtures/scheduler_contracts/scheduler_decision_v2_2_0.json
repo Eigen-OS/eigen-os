@@ -1,9 +1,12 @@
 {
-  "version": "2.2.0",
+  "version": "2.3.0",
+  "policy_bundle_id": "balanced",
+  "policy_bundle_version": "1.0.0",
   "selected_job_id": "job-contract-001",
   "selected_tenant_id": "tenant-a",
   "selected_project_id": "project-a",
   "selected_priority": 7,
+  "selected_deadline_ms": null,
   "queue_depth_after": 0,
   "reason_code": "WeightedFairness"
 }

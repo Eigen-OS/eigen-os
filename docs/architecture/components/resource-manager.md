@@ -283,6 +283,22 @@ Resource Manager SHALL coordinate with:
 - future **HWE** (adaptation/reroute),
 - future intelligent runtime (policy/scoring).
 
+### 6.5 Scheduling policy engine (Product 1.0)
+
+Resource Manager SHALL expose a versioned scheduling policy bundle identity for
+deterministic dispatch decisions. The active bundle describes admission quotas,
+fairness weights, and deadline-aware ordering semantics.
+
+The current Product 1.0 scheduler behavior is:
+
+- deterministic for equivalent inputs,
+- explicit about active policy bundle id/version in decision artifacts,
+- deadline-aware for equivalent priority/fairness pressure,
+- explainable through decision metadata rather than placeholder values.
+
+Where jobs have equivalent priority and fairness pressure, earlier deadlines MUST
+win before lexicographic job-id tie-breaking.
+
 ---
 
 ## 7. Interfaces
@@ -409,6 +425,8 @@ SubscribeToQueueUpdates
 - reservation expiration and enforced ownership semantics,
 - queue placement and estimated wait,
 - scheduler diagnostics and pressure indicators,
+- policy bundle id/version and selected deadline metadata,
+- deadline-aware dispatch rationale and replay evidence,
 - replay-safe allocation artifacts and lineage references.
 
 ---
