@@ -1,4 +1,5 @@
 use std::fs;
+use std::fs::OpenOptions;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -27,8 +28,6 @@ pub struct ResultArtifactDescriptor {
     pub size_bytes: u64,
 }
 
-pub type ResultArtifact = ResultArtifactDescriptor;
-
 #[derive(Debug, Error)]
 pub enum CircuitFsError {
     #[error("artifact already exists: {path}")]
@@ -52,6 +51,150 @@ pub struct CircuitFsLocal {
 impl CircuitFsLocal {
     pub fn new(root: impl AsRef<Path>) -> Self {
         Self { root: root.as_ref().to_path_buf() }
+    }
+
+    pub fn ensure_job_layout(&self, job_id: &str) -> Result<(), CircuitFsError> {
+        fs::create_dir_all(self.job_root_path(job_id))?;
+        fs::create_dir_all(self.compiled_dir_path(job_id)?)?;
+        fs::create_dir_all(self.results_dir_path(job_id)?)?;
+        fs::create_dir_all(self.observability_dir_path(job_id)?)?;
+        fs::create_dir_all(self.logs_dir_path(job_id)?)?;
+        Ok(())
+    }
+
+    pub fn append_log_line(&self, job_id: &str, stream: &str, line: &str) -> Result<(), CircuitFsError> {
+        self.ensure_job_layout(job_id)?;
+        let path = self.log_path(job_id, stream)?;
+        let parent = path
+            .parent()
+            .ok_or_else(|| CircuitFsError::Io(io::Error::new(io::ErrorKind::InvalidInput, "missing log parent")))?;
+        fs::create_dir_all(parent)?;
+        let mut fh = OpenOptions::new().create(true).append(true).open(&path)?;
+        fh.write_all(line.trim_end_matches('\n').as_bytes())?;
+        fh.write_all(b"\n")?;
+        fh.flush()?;
+        fh.sync_all()?;
+        Ok(())
+    }
+
+    pub fn store_results_bundle(
+        &self,
+        job_id: &str,
+        payload: &[u8],
+        producer_version: &str,
+    ) -> Result<(), CircuitFsError> {
+        self.ensure_job_layout(job_id)?;
+
+        let result_path = self.result_json_path(job_id)?;
+        let manifest_path = self.result_manifest_path(job_id)?;
+        let envelope_path = self.result_envelope_path(job_id)?;
+
+        for path in [result_path.clone(), manifest_path.clone(), envelope_path.clone()] {
+            if path.exists() {
+                return Err(CircuitFsError::AlreadyExists { path });
+            }
+        }
+
+        atomic_write_bytes(&result_path, payload)?;
+
+        let created_at_epoch_ms = unix_epoch_ms();
+        let envelope = ResultEnvelope {
+            artifact_version: "1.0.0".to_string(),
+            producer_version: producer_version.to_string(),
+            job_id: job_id.to_string(),
+            result_ref: "results/result.json".to_string(),
+            manifest_ref: "results/manifest.json".to_string(),
+            created_at_epoch_ms,
+            retention_policy: "pinned".to_string(),
+            lineage: CompiledArtifactLineage::default(),
+        };
+        let envelope_bytes = serde_json::to_vec_pretty(&envelope).map_err(to_io_error)?;
+        atomic_write_bytes(&envelope_path, &envelope_bytes)?;
+
+        let manifest = ResultManifest {
+            artifact_version: "1.0.0".to_string(),
+            producer_version: producer_version.to_string(),
+            schema_version: "result_manifest.v1".to_string(),
+            created_at_epoch_ms,
+            retention_policy: "pinned".to_string(),
+            artifacts: vec![ResultArtifactDescriptor {
+                path: "results/result.json".to_string(),
+                content_hash: content_hash_hex(payload),
+                size_bytes: payload.len() as u64,
+            }],
+        };
+        let manifest_bytes = serde_json::to_vec_pretty(&manifest).map_err(to_io_error)?;
+        atomic_write_bytes(&manifest_path, &manifest_bytes)?;
+        Ok(())
+    }
+
+    pub fn store_metrics_json(&self, job_id: &str, metrics: &[u8]) -> Result<(), CircuitFsError> {
+        self.ensure_job_layout(job_id)?;
+        let path = self.metrics_json_path(job_id)?;
+        if path.exists() {
+            return Err(CircuitFsError::AlreadyExists { path });
+        }
+        atomic_write_bytes(&path, metrics)
+    }
+
+    fn observability_dir_path(&self, job_id: &str) -> Result<PathBuf, CircuitFsError> {
+        Ok(self.job_root_path(job_id).join("observability"))
+    }
+
+    fn logs_dir_path(&self, job_id: &str) -> Result<PathBuf, CircuitFsError> {
+        Ok(self.job_root_path(job_id).join("logs"))
+    }
+
+    fn result_json_path(&self, job_id: &str) -> Result<PathBuf, CircuitFsError> {
+        Ok(self.results_dir_path(job_id)?.join("result.json"))
+    }
+
+    fn result_manifest_path(&self, job_id: &str) -> Result<PathBuf, CircuitFsError> {
+        Ok(self.results_dir_path(job_id)?.join("manifest.json"))
+    }
+
+    fn result_envelope_path(&self, job_id: &str) -> Result<PathBuf, CircuitFsError> {
+        Ok(self.results_dir_path(job_id)?.join("envelope.json"))
+    }
+
+    fn metrics_json_path(&self, job_id: &str) -> Result<PathBuf, CircuitFsError> {
+        Ok(self.observability_dir_path(job_id)?.join("metrics.json"))
+    }
+
+    fn log_path(&self, job_id: &str, stream: &str) -> Result<PathBuf, CircuitFsError> {
+        Ok(self.logs_dir_path(job_id)?.join(format!("{stream}.jsonl")))
+    }
+
+    fn root_path(&self) -> &Path {
+        &self.root
+    }
+
+    fn job_root_path(&self, job_id: &str) -> PathBuf {
+        self.root_path().join("jobs").join(job_id)
+    }
+
+    fn compiled_dir_path(&self, job_id: &str) -> Result<PathBuf, CircuitFsError> {
+        Ok(self.job_root_path(job_id).join("compiled"))
+    }
+
+    fn compiled_aqo_json_path(&self, job_id: &str) -> Result<PathBuf, CircuitFsError> {
+        Ok(self.compiled_dir_path(job_id)?.join("compiled.aqo"))
+    }
+
+    fn compiled_metadata_path(&self, job_id: &str) -> Result<PathBuf, CircuitFsError> {
+        Ok(self.compiled_dir_path(job_id)?.join("metadata.json"))
+    }
+
+    fn compiled_qasm_path(&self, job_id: &str) -> Result<PathBuf, CircuitFsError> {
+        Ok(self.compiled_dir_path(job_id)?.join("circuit.qasm"))
+    }
+
+    fn compiled_report_path(&self, job_id: &str) -> Result<PathBuf, CircuitFsError> {
+        Ok(self.compiled_dir_path(job_id)?.join("compile-report.json"))
+    }
+
+    fn results_dir_path(&self, job_id: &str) -> Result<PathBuf, CircuitFsError> {
+        Ok(self.job_root_path(job_id).join("results"))
     }
 }
 
@@ -177,12 +320,13 @@ impl CircuitFsLocal {
         let compiled_qasm_path = self.compiled_qasm_path(job_id)?;
         let compiled_report_path = self.compiled_report_path(job_id)?;
 
-        for path in [
+        let compiled_paths: [PathBuf; 4] = [
             compiled_aqo_path.clone(),
             compiled_metadata_path.clone(),
             compiled_qasm_path.clone(),
             compiled_report_path.clone(),
-        ] {
+        ];
+        for path in compiled_paths {
             if path.exists() {
                 return Err(CircuitFsError::AlreadyExists { path });
             }
@@ -287,6 +431,13 @@ fn verify_hash(path: &Path, expected: &str, actual: &[u8]) -> Result<(), Circuit
         });
     }
     Ok(())
+}
+
+fn unix_epoch_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or_default()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
