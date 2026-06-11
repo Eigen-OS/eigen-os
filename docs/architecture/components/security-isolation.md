@@ -282,10 +282,13 @@ check_execution(task, device, context) -> Result<SecurityDecision, SecurityError
 - Driver Manager is internal-only
 - Credentials are not exposed to clients
 - Vendor/provider boundary is encapsulated
+- Provider credentials are resolved only through the security/secrets path and never through raw provider env/config secrets in production profiles
+- Provider configuration is explicit, versioned, and validated before provider activation
 
 #### Required target
 
 - per-provider credential vault integration (no raw secrets in env in production profiles)
+- provider config versioning with deterministic validation and fail-closed rejection of missing or revoked secrets
 - plugin signing verification for drivers (if/when dynamic plugins are enabled)
 - execution isolation boundaries between plugins/drivers and the manager runtime
 - provider egress controls (network policy by deployment profile)
