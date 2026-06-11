@@ -618,7 +618,8 @@ class KnowledgeBaseService:
 
         record.created_at.FromDatetime(created_at)
         fingerprint = self._record_fingerprint(record, replay_bundle_ref=replay_bundle_ref)
-
+        record.attributes["request_hash"] = fingerprint
+        record.attributes["replay_bundle_ref"] = replay_bundle_ref
         if existing and not allow_overwrite:
             if existing.fingerprint == fingerprint:
                 ts = Timestamp()

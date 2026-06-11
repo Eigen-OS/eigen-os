@@ -23,10 +23,6 @@ _TRACEPARENT_RE = re.compile(
 )
 
 
-def _audit_sink_path() -> str:
-    return os.getenv("SYSTEM_API_AUDIT_SINK_PATH", "/tmp/eigen-system-api-audit.jsonl")
-
-
 @dataclass
 class RequestContext:
     request_id: str
