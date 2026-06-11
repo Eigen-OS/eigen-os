@@ -320,17 +320,11 @@ The concrete Wave 3 mappings are captured in the inventory and closure package:
 
 ### Wave 5 — Resource Manager and multi-device execution
 
-**Status:** Complete
-
 **Goal:** implement mature scheduling/resource contracts and distributed execution semantics.
 
 **Planning package:** `docs/development/wave-5/product-1.0-wave-5-execution-plan.md`, `docs/development/wave-5/product-1.0-wave-5-issue-pack.md`, `docs/development/wave-5/product-1.0-wave-5-rfc-adr-gap-analysis.md`, `docs/development/wave-5/product-1.0-wave-5-compatibility-report.md`, `docs/development/wave-5/product-1.0-wave-5-release-readiness-checklist.md`, `docs/development/wave-5/product-1.0-wave-5-exit-evidence-bundle.md`.
 
 **Governance baseline:** `rfcs/0053-product-1.0-resource-manager-authority.md`, `rfcs/0054-product-1.0-deterministic-scheduling-and-replay.md`, `docs/adr/0041-product-1.0-resource-manager-deployment-model.md`, `docs/adr/0042-product-1.0-distributed-execution-split-merge-policy.md`, `docs/adr/0043-product-1.0-queue-delivery-and-recovery-semantics.md`.
-
-#### Closure note
-
-Wave 5 is closed. The inventory and manifest are synchronized, the completion evidence is documented, and Wave 6 may proceed with the driver manager/QDriver contract package.
 
 #### Work items
 
