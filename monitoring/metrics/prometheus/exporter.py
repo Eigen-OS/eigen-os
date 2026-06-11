@@ -5,16 +5,39 @@ from __future__ import annotations
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Lock, Thread
+from typing import Mapping
 
 from monitoring.metrics.aggregation.aggregator import StageLatencyAggregator, StageLatencyStats
 from monitoring.metrics.aggregation.alerts import StageSLOAlertEvaluator, default_stage_slos
+
+
+_ALLOWED_STAGE_LABELS = {
+    "validate",
+    "compile",
+    "optimize",
+    "schedule",
+    "execute",
+    "persist",
+    "observability",
+    "record-knowledge-observability",
+    "finalize",
+}
+
+_SENSITIVE_LOG_KEYS = {
+    "authorization",
+    "password",
+    "secret",
+    "stacktrace",
+    "subject",
+    "token",
+    "traceparent",
+}
 
 
 @dataclass(frozen=True)
 class OrchestrationMetricsSnapshot:
     """Stable orchestration metrics contract (version 2.3.0, bounded-label baseline)."""
 
-    contract_version: str
     queue_depth: int
     queue_oldest_age_seconds: float
     queue_avg_age_seconds: float
@@ -24,6 +47,14 @@ class OrchestrationMetricsSnapshot:
     quota_denied_project_total: int
     rebalance_trigger_total: int
     starvation_prevention_total: int
+    contract_version: str
+    schedule_decisions_total: int = 0
+    reservation_events_total: int = 0
+    split_merge_events_total: int = 0
+    replay_events_total: int = 0
+    runtime_contract_version: str = "2.1.0"
+    cluster_contract_version: str = "1.0.0"
+    multidevice_contract_version: str = "3.1.0"
 
 
 @dataclass(frozen=True)
@@ -142,12 +173,24 @@ class OrchestrationTelemetryExporter:
 
         lines: list[str] = [
             "# TYPE eigen_orch_contract_info gauge",
+            "# TYPE eigen_runtime_contract_info gauge",
+            "# TYPE eigen_cluster_contract_info gauge",
+            "# TYPE eigen_multidevice_contract_info gauge",
+            "# TYPE eigen_orch_contract_info gauge",
             "# TYPE eigen_orch_queue_depth gauge",
             "# TYPE eigen_orch_queue_oldest_age_seconds gauge",
             "# TYPE eigen_orch_queue_avg_age_seconds gauge",
             "# TYPE eigen_orch_fairness_lag_millis_total counter",
             "# TYPE eigen_orch_fairness_lag_millis_max gauge",
             "# TYPE eigen_orch_quota_denied_tenant_total counter",
+            "# TYPE eigen_orch_schedule_decisions_total counter",
+            "# TYPE eigen_orch_reservation_events_total counter",
+            "# TYPE eigen_orch_split_merge_events_total counter",
+            "# TYPE eigen_orch_replay_events_total counter",
+            f'eigen_orch_contract_info{{version="{snapshot.contract_version}"}} 1',
+            f'eigen_runtime_contract_info{{version="{snapshot.runtime_contract_version}"}} 1',
+            f'eigen_cluster_contract_info{{version="{snapshot.cluster_contract_version}"}} 1',
+            f'eigen_multidevice_contract_info{{version="{snapshot.multidevice_contract_version}"}} 1',
             "# TYPE eigen_orch_quota_denied_project_total counter",
             "# TYPE eigen_orch_rebalance_trigger_total counter",
             "# TYPE eigen_orch_starvation_prevention_total counter",
@@ -161,6 +204,10 @@ class OrchestrationTelemetryExporter:
             f"eigen_orch_quota_denied_project_total {snapshot.quota_denied_project_total}",
             f"eigen_orch_rebalance_trigger_total {snapshot.rebalance_trigger_total}",
             f"eigen_orch_starvation_prevention_total {snapshot.starvation_prevention_total}",
+            f"eigen_orch_schedule_decisions_total {snapshot.schedule_decisions_total}",
+            f"eigen_orch_reservation_events_total {snapshot.reservation_events_total}",
+            f"eigen_orch_split_merge_events_total {snapshot.split_merge_events_total}",
+            f"eigen_orch_replay_events_total {snapshot.replay_events_total}",
         ]
         return "\n".join(lines) + "\n"
     
@@ -193,7 +240,7 @@ def start_stage_metrics_server(port: int, exporter: StageTelemetryExporter) -> T
 
 
 def _encode_stage_stats(stage: str, stats: StageLatencyStats) -> list[str]:
-    labels = f'stage="{stage}"'
+    labels = f'stage="{_bounded_stage_label(stage)}"'
     return [
         f'eigen_stage_latency_seconds{{quantile="0.50",{labels}}} {stats.p50_seconds:.6f}',
         f'eigen_stage_latency_seconds{{quantile="0.95",{labels}}} {stats.p95_seconds:.6f}',
@@ -202,3 +249,21 @@ def _encode_stage_stats(stage: str, stats: StageLatencyStats) -> list[str]:
         f"eigen_stage_samples_total{{{labels}}} {stats.sample_count}",
         f"eigen_stage_error_rate{{{labels}}} {stats.error_rate:.6f}",
     ]
+
+
+def _bounded_stage_label(stage: str) -> str:
+    normalized = stage.strip().lower().replace("_", "-")
+    return normalized if normalized in _ALLOWED_STAGE_LABELS else "other"
+
+
+def sanitize_observability_metadata(metadata: Mapping[str, str], *, max_value_length: int = 128) -> dict[str, str]:
+    safe: dict[str, str] = {}
+    for key, value in metadata.items():
+        normalized_key = key.strip().lower()
+        if normalized_key in _SENSITIVE_LOG_KEYS:
+            continue
+        normalized_value = value.strip()
+        if not normalized_value:
+            continue
+        safe[normalized_key] = normalized_value[:max_value_length]
+    return {key: safe[key] for key in sorted(safe)}

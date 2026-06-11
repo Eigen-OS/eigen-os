@@ -493,15 +493,24 @@ manifest, shard lineage, and merge validation metadata as multi-shard runs.
   terminalization records.
 - `attempt` MUST begin at 1 for the initial shard execution record.
 - `lineage_ref` SHOULD point at a QFS path or equivalent durable lineage ref.
-- replay identity MUST remain stable for identical `{parent_job_id, created_at_ms, trace_id, shard_plans[]}` inputs.
+- replay identity MUST remain stable for identical
+  `{parent_job_id, created_at_ms, trace_id, shard_plans[]}` inputs.
 
 ## 16.3 Retry vs replay evidence
+
+- retries are recorded as new attempts under the same lineage,
+- replays are recorded with the same replay identity and a recovery marker,
+- terminalization records MUST distinguish `cancelled`, `deadline_exceeded`,
+  and `failed` outcomes in the durable audit trail.
+- replay identity MUST remain stable for identical `{parent_job_id, created_at_ms, trace_id, shard_plans[]}` inputs.
+
+## 16.4 Retry vs replay evidence
 
 - retries are recorded as new attempts under the same lineage,
 - replays are recorded with the same replay identity and a new recovery marker,
 - terminalization records MUST distinguish `cancelled`, `deadline_exceeded`, and `failed` outcomes in the durable audit trail.
 
-## 16.4 Final aggregation
+## 16.5 Final aggregation
 
 `MergeDecision` is the canonical merge-validation record. Final result material
 must be written through the runtime persistence layer using the same shard

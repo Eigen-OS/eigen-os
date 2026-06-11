@@ -74,6 +74,8 @@ Kernel/QRTX implementations MAY use the same contract marker family with the Pro
 eigen_orch_contract_info{version="1.0.0"} 1
 ```
 
+Implementations MAY additionally expose bounded companion markers for runtime,cluster, and multi-device surfaces when the same scrape endpoint covers those Wave 5 responsibilities.
+
 ### 3.2 SemVer Policy
 
 #### MAJOR
@@ -168,6 +170,8 @@ Scheduling decisions, fairness corrections, throttling, and rebalancing MUST rem
 
 Replay or retry execution MUST NOT produce ambiguous orchestration telemetry semantics.
 
+Replay evidence SHOULD be distinguishable from retry evidence through stable event types or durable artifact references, not through unbounded labels.
+
 ---
 
 ### 5.5 Failure Visibility
@@ -252,6 +256,8 @@ The following are intentionally deferred until the scheduler/resource waves comp
 - per-worker allocation churn metrics.
 
 These are out of scope for W2-07 and MUST NOT be substituted for the bounded orchestration contract marker or stage metrics.
+
+For Wave 5 conformance, the exporter MAY surface additional bounded counters for schedule decisions, reservation events, split/merge events, and replay events. Those counters MUST remain label-free or use only bounded enumerations.
 
 ---
 

@@ -36,6 +36,8 @@ All intelligent-runtime exporters MUST expose:
 eigen_runtime_contract_info{version="2.1.0"} 1
 ```
 
+For Kernel/QRTX and Resource Manager conformance, the same scrape surface MAY also expose bounded companion markers for orchestration, cluster, and multi-device surfaces.
+
 The contract marker metric:
 
 - MUST be exported on every scrape,
@@ -161,6 +163,8 @@ Runtime decisions MUST remain trace-correlatable across:
 - artifact systems,
 - replay/recovery systems.
 
+Trace continuity evidence SHOULD include stable `trace_id`, `request_id` (where applicable), `job_id`, `stage`, and `attempt` fields in logs or durable artifacts. These fields MUST NOT be introduced as unbounded metric labels.
+
 ---
 
 # 6. Required Metrics
@@ -208,6 +212,8 @@ degraded
 rejected
 failed
 ```
+
+Where replay or recovery flows are exported, they SHOULD use bounded result families such as `replayed`, `recovered`, or `conflict`, and MUST remain stable within the contract major version.
 
 Definition:
 

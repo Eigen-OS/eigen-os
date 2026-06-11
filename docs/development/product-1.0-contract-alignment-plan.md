@@ -356,7 +356,8 @@ The concrete Wave 3 mappings are captured in the inventory and closure package:
 8. Add deterministic replay gate for scheduling decisions.
 9. Emit cluster/runtime observability metrics and traces.
 10. Add compatibility fixtures for placeholder reservation behavior while Resource Manager is still being aligned.
-11. Add a wave-level contract inventory row update and manifest alignment for the Wave 5 surfaces.
+11. Add conformance coverage for bounded labels, trace continuity, sanitized logs, and contract markers across runtime and multi-device surfaces.
+12. Add a wave-level contract inventory row update and manifest alignment for the Wave 5 surfaces.
 
 #### Exit criteria
 

@@ -63,7 +63,7 @@ Breaking changes require:
 4. conformance fixture update,
 5. release evidence entry.
 
-Replay/audit lineage updates are backward-compatible when they only add bounded fields or durable evidence artifacts. They become breaking only if existing record identity, replay ordering, or canonical error mappings change.
+Replay and observability conformance updates are backward-compatible when they only add bounded markers, fields, or durable evidence artifacts. They become breaking only if the existing metric names, replay identity, or canonical error mapping semantics change.
 
 ---
 
