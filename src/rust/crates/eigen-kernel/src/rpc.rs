@@ -442,9 +442,6 @@ impl JobRuntimeRecord {
             "submission": self.submission.summary_map(),
             "state": self.state as i32,
             "current_stage": self.current_stage.map(|s| s.key()),
-            "created_at": ts_to_json(&self.created_at),
-            "updated_at": ts_to_json(&self.updated_at),
-            "completed_at": self.completed_at.as_ref().map(ts_to_json),
             "stage_records": stage_json,
             "counts": self.counts,
             "metadata": self.metadata,
@@ -517,30 +514,24 @@ impl KernelRuntimeStore {
     }
 
     fn reservation_active(&self, job_id: &str) -> Result<bool, Status> {
-        let job = self
-            .jobs
-            .read()
-            .get(job_id)
-            .ok_or_else(|| Status::not_found("job not found"))?;
         let jobs = self.jobs.read();
         let job = jobs.get(job_id).ok_or_else(|| Status::not_found("job not found"))?;
         Ok(job.reservation_state.as_deref() == Some("held") && !job.is_terminal())
     }
 
     fn reservation_lease_expired(&self, job_id: &str) -> Result<bool, Status> {
-        let job = self
-            .jobs
-            .read()
-            .get(job_id)
-            .ok_or_else(|| Status::not_found("job not found"))?;
         let jobs = self.jobs.read();
         let job = jobs.get(job_id).ok_or_else(|| Status::not_found("job not found"))?;
+        Ok(Self::reservation_lease_expired_record(job))
+    }
+
+    fn reservation_lease_expired_record(job: &JobRuntimeRecord) -> bool {
         if job.reservation_state.as_deref() != Some("held") {
-            return Ok(false);
+            return false;
         }
         let lease_ms = job.reservation_lease_ms.max(1);
         let age_ms = timestamp_to_ms(&ts_now()) - timestamp_to_ms(&job.updated_at);
-        Ok(age_ms >= lease_ms as i128)
+        age_ms >= lease_ms as i128
     }
 
     fn sweep_stale_reservations(&self) -> Vec<String> {
@@ -567,7 +558,7 @@ impl KernelRuntimeStore {
             .get_mut(job_id)
             .ok_or_else(|| Status::not_found("job not found"))?;
         if job.reservation_state.as_deref() == Some("held") && !job.is_terminal() {
-            if self.reservation_lease_expired(job_id)? {
+            if Self::reservation_lease_expired_record(job) {
                 job.reservation_state = Some("released".to_string());
                 job.reservation_released_reason = Some("lease_expired".to_string());
             } else {
@@ -1966,11 +1957,6 @@ async fn run_job_dag(
             stage_input_from_outputs(&submission, schedule_stage, &optimize_output),
         )
         .map_err(status_to_stage_error(schedule_stage, "begin_schedule"))?;
-    let _ = runtime
-        .acquire_live_reservation(&job_id)
-        .map_err(|status| {
-            KernelStageError::new(Code::FailedPrecondition, "RUNTIME_STAGE_FAILURE", "live reservation acquisition failed", format!("status::{:?}", status.code()))
-        })?;
     schedule_output = adapters
         .schedule(&submission, &optimize_output)
         .await
@@ -3131,6 +3117,10 @@ mod tests {
         metadata.insert("tenant_id".to_string(), "tenant-a".to_string());
         metadata.insert("project_id".to_string(), "project-a".to_string());
         metadata.insert("reservation.lease_ms".to_string(), lease_ms.to_string());
+
+        let mut metadata_kvs = HashMap::new();
+        metadata_kvs.insert("reservation.lease_ms".to_string(), lease_ms.to_string());
+
         let req = EnqueueJobRequest {
             name: "reservation-test".to_string(),
             program: b"@quantum\ndef main(): pass".to_vec(),
@@ -3138,7 +3128,7 @@ mod tests {
             target: "sim:local".to_string(),
             priority: 50,
             compiler_options: HashMap::new(),
-            metadata_kvs: HashMap::new(),
+            metadata_kvs,
             metadata: Some(RequestMetadata {
                 contract_version: "1.0.0".to_string(),
                 request_id: "req-live-ownership".to_string(),

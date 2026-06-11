@@ -181,6 +181,7 @@ class KnowledgeBaseService:
                 record=record,
                 envelope=envelope,
                 allow_overwrite=bool(request.allow_overwrite),
+                anonymize_attributes=True,
                 source="rpc",
                 replay_bundle_ref=self._replay_bundle_ref(record.record_id),
                 context=context,
@@ -206,6 +207,7 @@ class KnowledgeBaseService:
                         record=record,
                         envelope=envelope,
                         allow_overwrite=bool(request.allow_overwrite),
+                        anonymize_attributes=True,
                         source="rpc",
                         replay_bundle_ref=self._replay_bundle_ref(record.record_id),
                         context=context,
@@ -357,7 +359,7 @@ class KnowledgeBaseService:
         envelope = self._payload_envelope(payload)
         with self._lock:
             self._gc_locked()
-            self._upsert_record(record=record, envelope=envelope, allow_overwrite=True, source="benchmark", replay_bundle_ref=attrs["replay_bundle_ref"], context=None)
+            self._upsert_record(record=record, envelope=envelope, allow_overwrite=True, anonymize_attributes=False, source="benchmark", replay_bundle_ref=attrs["replay_bundle_ref"], context=None)
         record_kb_query("benchmark_runs", hit=True)
         return record.record_id
 
@@ -605,6 +607,7 @@ class KnowledgeBaseService:
         record: Any,
         envelope: dict[str, Any],
         allow_overwrite: bool,
+        anonymize_attributes: bool,
         source: str,
         replay_bundle_ref: str,
         context: grpc.ServicerContext | None,
@@ -617,9 +620,17 @@ class KnowledgeBaseService:
             created_at = existing.created_at
 
         record.created_at.FromDatetime(created_at)
+        
+        attrs = dict(record.attributes)
+        if anonymize_attributes:
+            attrs = _anonymize_mapping(attrs, salt=self._anon_salt, epoch=self._anon_epoch)
+
         fingerprint = self._record_fingerprint(record, replay_bundle_ref=replay_bundle_ref)
-        record.attributes["request_hash"] = fingerprint
-        record.attributes["replay_bundle_ref"] = replay_bundle_ref
+        attrs["request_hash"] = fingerprint
+        attrs["replay_bundle_ref"] = replay_bundle_ref
+        record.attributes.clear()
+        record.attributes.update({k: str(v) for k, v in attrs.items()})
+
         if existing and not allow_overwrite:
             if existing.fingerprint == fingerprint:
                 ts = Timestamp()

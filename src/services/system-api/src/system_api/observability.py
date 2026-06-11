@@ -173,6 +173,14 @@ def start_metrics_server(port: int) -> ThreadingHTTPServer:
     return server
 
 
+def _audit_sink_path() -> str:
+    raw = os.getenv("SYSTEM_API_AUDIT_SINK_PATH", "").strip()
+    if raw:
+        return raw
+    tmpdir = os.getenv("TMPDIR", "/tmp").strip() or "/tmp"
+    return os.path.join(tmpdir, "system-api", "audit.jsonl")
+
+
 def append_security_audit_event(event: dict[str, object]) -> None:
     """Append-only audit sink for security decisions.
 
