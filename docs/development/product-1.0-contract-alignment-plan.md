@@ -322,6 +322,10 @@ The concrete Wave 3 mappings are captured in the inventory and closure package:
 
 **Goal:** implement mature scheduling/resource contracts and distributed execution semantics.
 
+**Planning package:** `docs/development/wave-5/product-1.0-wave-5-execution-plan.md`, `docs/development/wave-5/product-1.0-wave-5-issue-pack.md`, `docs/development/wave-5/product-1.0-wave-5-rfc-adr-gap-analysis.md`, `docs/development/wave-5/product-1.0-wave-5-compatibility-report.md`, `docs/development/wave-5/product-1.0-wave-5-release-readiness-checklist.md`, `docs/development/wave-5/product-1.0-wave-5-exit-evidence-bundle.md`.
+
+**Governance baseline:** `rfcs/0053-product-1.0-resource-manager-authority.md`, `rfcs/0054-product-1.0-deterministic-scheduling-and-replay.md`, `docs/adr/0041-product-1.0-resource-manager-deployment-model.md`, `docs/adr/0042-product-1.0-distributed-execution-split-merge-policy.md`, `docs/adr/0043-product-1.0-queue-delivery-and-recovery-semantics.md`.
+
 #### Work items
 
 1. Decide final deployment shape: standalone Resource Manager service vs embedded kernel module with stable internal API.
@@ -351,12 +355,17 @@ The concrete Wave 3 mappings are captured in the inventory and closure package:
 7. Implement `GetDispatchRationale` from real scheduling decisions, not static placeholders.
 8. Add deterministic replay gate for scheduling decisions.
 9. Emit cluster/runtime observability metrics and traces.
+10. Add compatibility fixtures for placeholder reservation behavior while Resource Manager is still being aligned.
+11. Add a wave-level contract inventory row update and manifest alignment for the Wave 5 surfaces.
 
 #### Exit criteria
 
 - Scheduling decisions are explainable and reproducible.
 - Multi-device execution is governed by contract envelopes.
 - Queue and worker failures have deterministic recovery behavior.
+- Resource Manager ownership is unambiguous in architecture and governance docs.
+- Trace/metrics coverage exists for scheduling, reservation, split/merge, and replay.
+- The current placeholder reservation behavior is documented as compatibility-only, not canonical.
 
 ---
 
