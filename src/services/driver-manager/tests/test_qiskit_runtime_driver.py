@@ -11,58 +11,78 @@ ensure_generated()
 from eigen_internal.v1 import types_pb2 as types_pb  # noqa: E402
 
 
-def test_initialize_from_direct_token() -> None:
+def test_initialize_from_secret_ref(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DRIVER_MANAGER_SECRETS_JSON", '{"ibm/runtime/token":{"value":"from-secret","state":"issued"}}')
     driver = QiskitRuntimeDriver(types_pb=types_pb)
 
-    driver.initialize({"token": "abc123"})
+    driver.initialize(
+        {
+            "provider_config_version": "1.0",
+            "runtime_isolation": "process",
+            "token_secret_ref": "ibm/runtime/token",
+        }
+    )
 
     health = driver.healthcheck()
     assert health.ready is True
-    assert health.details["auth_source"] == "token"
+    assert health.details["auth_source"] == "secret_ref:ibm/runtime/token"
+    assert health.details["provider_config_version"] == "1.0"
+    assert health.details["runtime_isolation"] == "process"
     assert driver.get_devices()[0].device_id == "ibm:qiskit-runtime"
 
 
-def test_initialize_from_env_token(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("IBM_RUNTIME_TOKEN", "from-env")
+def test_initialize_rejects_direct_secret_material() -> None:
     driver = QiskitRuntimeDriver(types_pb=types_pb)
 
-    driver.initialize({"token_env": "IBM_RUNTIME_TOKEN"})
+    with pytest.raises(ValueError, match="resolved through token_secret_ref"):
+        driver.initialize(
+            {
+                "provider_config_version": "1.0",
+                "runtime_isolation": "process",
+                "token": "abc123",
+                "token_secret_ref": "ibm/runtime/token",
+            }
+        )
 
-    assert driver.healthcheck().details["auth_source"] == "env:IBM_RUNTIME_TOKEN"
 
-
-def test_initialize_from_secret_ref(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("DRIVER_MANAGER_SECRETS_JSON", '{"ibm/runtime/token":"from-secret"}')
+def test_initialize_requires_provider_config_version() -> None:
     driver = QiskitRuntimeDriver(types_pb=types_pb)
 
-    driver.initialize({"token_secret_ref": "ibm/runtime/token"})
+    with pytest.raises(ValueError, match="provider config version must be 1.0"):
+        driver.initialize(
+            {
+                "runtime_isolation": "process",
+                "token_secret_ref": "ibm/runtime/token",
+            }
+        )
 
-    assert driver.healthcheck().details["auth_source"] == "secret_ref:ibm/runtime/token"
 
-
-def test_initialize_requires_auth() -> None:
+def test_initialize_rejects_insecure_runtime_isolation(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DRIVER_MANAGER_SECRETS_JSON", '{"ibm/runtime/token":{"value":"from-secret","state":"issued"}}')
     driver = QiskitRuntimeDriver(types_pb=types_pb)
 
-    with pytest.raises(ValueError, match="auth missing"):
-        driver.initialize({})
+    with pytest.raises(ValueError, match="sandbox policy violation"):
+        driver.initialize(
+            {
+                "provider_config_version": "1.0",
+                "runtime_isolation": "in_process",
+                "token_secret_ref": "ibm/runtime/token",
+            }
+        )
 
-    health = driver.healthcheck()
-    assert health.ready is False
-    assert "auth missing" in health.reason
 
-
-def test_missing_env_token_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("IBM_RUNTIME_TOKEN", raising=False)
+def test_execute_retries_resource_exhausted_then_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DRIVER_MANAGER_SECRETS_JSON", '{"ibm/runtime/token":{"value":"from-secret","state":"issued"}}')
     driver = QiskitRuntimeDriver(types_pb=types_pb)
-
-    with pytest.raises(ValueError, match="missing token in env var"):
-        driver.initialize({"token_env": "IBM_RUNTIME_TOKEN"})
-
-    assert driver.healthcheck().ready is False
-
-def test_execute_retries_resource_exhausted_then_succeeds() -> None:
-    driver = QiskitRuntimeDriver(types_pb=types_pb)
-    driver.initialize({"token": "abc", "max_retries": "2", "retry_backoff_sec": "0.001"})
+    driver.initialize(
+        {
+            "provider_config_version": "1.0",
+            "runtime_isolation": "process",
+            "token_secret_ref": "ibm/runtime/token",
+            "max_retries": "2",
+            "retry_backoff_sec": "0.001",
+        }
+    )
     calls = {"n": 0}
 
     def _executor(**_kwargs):
@@ -78,9 +98,19 @@ def test_execute_retries_resource_exhausted_then_succeeds() -> None:
     assert calls["n"] == 3
 
 
-def test_execute_timeout_surface_deadline() -> None:
+def test_execute_timeout_surface_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DRIVER_MANAGER_SECRETS_JSON", '{"ibm/runtime/token":{"value":"from-secret","state":"issued"}}')
     driver = QiskitRuntimeDriver(types_pb=types_pb)
-    driver.initialize({"token": "abc", "max_retries": "1", "retry_backoff_sec": "0.001", "timeout_sec": "0.001"})
+    driver.initialize(
+        {
+            "provider_config_version": "1.0",
+            "runtime_isolation": "process",
+            "token_secret_ref": "ibm/runtime/token",
+            "max_retries": "1",
+            "retry_backoff_sec": "0.001",
+            "timeout_sec": "0.001",
+        }
+    )
 
     def _executor(**_kwargs):
         raise DriverExecutionError(grpc.StatusCode.UNAVAILABLE, "upstream timeout")

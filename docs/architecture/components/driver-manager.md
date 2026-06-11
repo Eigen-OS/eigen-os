@@ -406,7 +406,9 @@ Device profile negotiation failures MUST use the same canonical model:
   - QFS artifacts,
   - logs,
   - metrics labels.
+- Provider configuration MUST be versioned and explicit; secret material MUST be referenced only by secret refs and fetched through the security/secrets path.
 - Drivers may receive credentials **only on demand** and only for the duration required.
+- Provider code MUST respect the declared isolation profile (sandbox or dedicated process) and fail closed when the configured profile is unsupported.
 
 ---
 
@@ -424,6 +426,8 @@ DM MUST support driver trust controls:
 ### 10.4 Least Privilege & Isolation
 
 - Drivers SHOULD run in isolated containers/processes.
+- Provider configuration MUST be explicit, versioned, and validated before driver activation.
+- Provider credentials MUST be resolved only through the security/secrets path; raw credentials must not be passed in env/config for production profiles.
 - DM MUST restrict driver capabilities (filesystem/network) to the minimum needed.
 
 ---

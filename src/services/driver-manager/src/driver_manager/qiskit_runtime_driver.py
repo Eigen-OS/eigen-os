@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
-import json
-import os
 import time
 from dataclasses import dataclass
 
 import grpc
 
 from .base_driver import DeviceStatusInfo, DriverCapabilities, DriverHealth
-from .simulator_driver import DriverExecutionError
 from .secret_lifecycle import SecretLifecycleStore
+from .simulator_driver import DriverExecutionError
+
+_PROVIDER_CONFIG_VERSION = "1.0"
+_ALLOWED_RUNTIME_ISOLATION = {"process", "sandbox"}
 
 
 @dataclass(frozen=True)
@@ -35,11 +36,14 @@ class QiskitRuntimeDriver:
         self._timeout_sec = 30.0
         self._max_retries = 2
         self._retry_backoff_sec = 0.25
+        self._provider_config_version = ""
+        self._runtime_isolation = "process"
         self._executor = None
 
     def initialize(self, config: dict[str, str]) -> None:
         self._initialized = False
         self._init_error = ""
+        self._provider_config_version, self._runtime_isolation = self._validate_provider_config(config)
         auth = self._resolve_auth(config)
         self._auth_source = auth.source
         self._instance = config.get("instance", "")
@@ -54,8 +58,11 @@ class QiskitRuntimeDriver:
             driver_api_version="1.0",
             features={
                 "execution": "qiskit_runtime",
-                "auth_sources": "token,token_env,token_secret_ref",
+                "auth_sources": "token_secret_ref",
                 "channel": self._channel,
+                "provider_config_version": self._provider_config_version or _PROVIDER_CONFIG_VERSION,
+                "runtime_isolation": self._runtime_isolation,
+                "secret_resolution": "security/secrets",
                 "timeouts": "execute_timeout_sec",
                 "retry_policy": "unavailable,deadline_exceeded,resource_exhausted",
             },
@@ -70,6 +77,8 @@ class QiskitRuntimeDriver:
                     "auth_source": self._auth_source,
                     "channel": self._channel,
                     "instance": self._instance,
+                    "provider_config_version": self._provider_config_version,
+                    "runtime_isolation": self._runtime_isolation,
                 },
             )
         return DriverHealth(
@@ -93,6 +102,9 @@ class QiskitRuntimeDriver:
                     "formats": "AQO_JSON",
                     "provider": "ibm_quantum",
                     "auth_source": self._auth_source,
+                    "provider_config_version": self._provider_config_version,
+                    "runtime_isolation": self._runtime_isolation,
+                    "secret_resolution": "security/secrets",
                 },
             )
         ]
@@ -142,19 +154,7 @@ class QiskitRuntimeDriver:
         raise DriverExecutionError(grpc.StatusCode.UNIMPLEMENTED, "Qiskit Runtime calibration is not implemented yet")
 
     def _resolve_auth(self, config: dict[str, str]) -> _AuthConfig:
-        direct_token = config.get("token", "").strip()
-        if direct_token:
-            return _AuthConfig(source="token", token=direct_token)
-
-        token_env = config.get("token_env", "").strip()
-        if token_env:
-            token = os.getenv(token_env, "").strip()
-            if token:
-                return _AuthConfig(source=f"env:{token_env}", token=token)
-            self._init_error = f"missing token in env var '{token_env}'"
-            raise ValueError(self._init_error)
-
-        token_secret_ref = config.get("token_secret_ref", "").strip()
+        token_secret_ref = str(config.get("token_secret_ref", "")).strip()
         if token_secret_ref:
             secrets = SecretLifecycleStore()
             token = str(secrets.get(token_secret_ref, actor=self.name, workload_id=config.get("workload_id", "driver-init"), consumer=self.name)).strip()
@@ -163,8 +163,31 @@ class QiskitRuntimeDriver:
             self._init_error = f"missing token for secret ref '{token_secret_ref}'"
             raise ValueError(self._init_error)
 
-        self._init_error = "qiskit runtime auth missing: set token, token_env, or token_secret_ref"
+        self._init_error = "qiskit runtime auth missing: set token_secret_ref"
         raise ValueError(self._init_error)
+
+    def _validate_provider_config(self, config: dict[str, str]) -> tuple[str, str]:
+        provider_config_version = str(config.get("provider_config_version", "")).strip()
+        if provider_config_version != _PROVIDER_CONFIG_VERSION:
+            self._init_error = f"qiskit runtime provider config version must be {_PROVIDER_CONFIG_VERSION}"
+            raise ValueError(self._init_error)
+
+        runtime_isolation = str(config.get("runtime_isolation", "process")).strip().lower() or "process"
+        if runtime_isolation not in _ALLOWED_RUNTIME_ISOLATION:
+            self._init_error = (
+                f"qiskit runtime sandbox policy violation: unsupported runtime_isolation '{runtime_isolation}'"
+            )
+            raise ValueError(self._init_error)
+
+        if any(str(config.get(field, "")).strip() for field in ("token", "token_env")):
+            self._init_error = "qiskit runtime credentials must be resolved through token_secret_ref"
+            raise ValueError(self._init_error)
+
+        if not str(config.get("token_secret_ref", "")).strip():
+            self._init_error = "qiskit runtime auth missing: set token_secret_ref"
+            raise ValueError(self._init_error)
+
+        return provider_config_version, runtime_isolation
 
     def _ensure_ready(self) -> None:
         if not self._initialized:
