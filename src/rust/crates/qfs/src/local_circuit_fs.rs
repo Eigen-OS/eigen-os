@@ -53,6 +53,10 @@ impl CircuitFsLocal {
         Self { root: root.as_ref().to_path_buf() }
     }
 
+    pub fn root_path(&self) -> &Path {
+        &self.root
+    }
+
     pub fn ensure_job_layout(&self, job_id: &str) -> Result<(), CircuitFsError> {
         fs::create_dir_all(self.job_root_path(job_id))?;
         fs::create_dir_all(self.compiled_dir_path(job_id)?)?;

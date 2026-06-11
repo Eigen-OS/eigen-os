@@ -11,6 +11,7 @@
 //! - ADR: Kernel Durable State & Event Sourcing (TBD)
 
 use std::collections::HashMap;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -43,6 +44,22 @@ pub struct DurableJobRecord {
     pub trace_id: Option<String>,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct DurableJobReplaySnapshot {
+    job_id: String,
+    name: String,
+    created_at_unix_ms: i64,
+    updated_at_unix_ms: i64,
+    trace_id: Option<String>,
+    sequence: u64,
+    state: JobState,
+    error_code: Option<String>,
+    error_summary: Option<String>,
+    error_details_ref: Option<String>,
+    counts: HashMap<String, i64>,
+    results_metadata: HashMap<String, String>,
+}
+
 /// Durable job store with QFS persistence and event replay capability.
 pub struct DurableJobStore {
     /// In-memory cache of job records (reconstructed from event logs on startup).
@@ -69,14 +86,62 @@ impl DurableJobStore {
     ///
     /// Scans `qfs://jobs/*/state/events.jsonl` and replays each job's event sequence.
     pub fn recover_from_qfs(&self) -> Result<usize, Box<dyn std::error::Error>> {
-        // For now, recovery is a no-op (fixture mode). In production, this would:
-        // 1. List all job_ids in QFS
-        // 2. Load events.jsonl for each
-        // 3. Replay to reconstruct current state
-        // 4. Populate records and event_logs
-        
-        tracing::info!("durable store recovery: qfs recovery stub (phase-1 fixture mode)");
-        Ok(0)
+        let jobs_root = self.qfs.root_path().join("jobs");
+        if !jobs_root.exists() {
+            return Ok(0);
+        }
+
+        let mut recovered = 0usize;
+        for entry in fs::read_dir(&jobs_root)? {
+            let entry = entry?;
+            if !entry.file_type()?.is_dir() {
+                continue;
+            }
+
+            let job_id = entry.file_name().to_string_lossy().to_string();
+            let state_events_path = entry.path().join("logs").join("state_events.jsonl");
+            let snapshot_path = entry.path().join("logs").join("replay_snapshot.jsonl");
+            if !state_events_path.exists() || !snapshot_path.exists() {
+                continue;
+            }
+
+            let snapshot_line = fs::read_to_string(&snapshot_path)?
+                .lines()
+                .next()
+                .ok_or("missing replay snapshot")?;
+            let snapshot: DurableJobReplaySnapshot = serde_json::from_str(snapshot_line)?;
+
+            let mut log = JobEventLog::new(job_id.clone());
+            for line in fs::read_to_string(&state_events_path)?.lines() {
+                if line.trim().is_empty() {
+                    continue;
+                }
+                log.append(serde_json::from_str(line)?);
+            }
+            log.verify().map_err(|e| format!("event log verification failed: {e}"))?;
+
+            let current_state = log.replay_to_current_state().map_err(|e| format!("{e}"))?;
+            let record = DurableJobRecord {
+                job_id: snapshot.job_id.clone(),
+                name: snapshot.name,
+                state: current_state,
+                created_at_unix_ms: snapshot.created_at_unix_ms,
+                updated_at_unix_ms: snapshot.updated_at_unix_ms,
+                error_code: snapshot.error_code,
+                error_summary: snapshot.error_summary,
+                error_details_ref: snapshot.error_details_ref,
+                counts: snapshot.counts,
+                results_metadata: snapshot.results_metadata,
+                sequence: snapshot.sequence,
+                trace_id: snapshot.trace_id,
+            };
+
+            self.event_logs.write().insert(job_id.clone(), log);
+            self.records.write().insert(job_id, record);
+            recovered += 1;
+        }
+
+        Ok(recovered)
     }
 
     /// Create a new job (initial state = PENDING).
@@ -104,6 +169,22 @@ impl DurableJobStore {
         event_logs.insert(job_id.clone(), JobEventLog::new(job_id.clone()));
 
         self.records.write().insert(job_id.clone(), record.clone());
+        let snapshot = DurableJobReplaySnapshot {
+            job_id: job_id.clone(),
+            name: record.name.clone(),
+            created_at_unix_ms: record.created_at_unix_ms,
+            updated_at_unix_ms: record.updated_at_unix_ms,
+            trace_id: record.trace_id.clone(),
+            sequence: record.sequence,
+            state: record.state,
+            error_code: None,
+            error_summary: None,
+            error_details_ref: None,
+            counts: HashMap::new(),
+            results_metadata: HashMap::new(),
+        };
+        let snapshot_json = serde_json::to_string(&snapshot).unwrap();
+        let _ = self.qfs.append_log_line(&job_id, "replay_snapshot", &snapshot_json);
         record
     }
 
