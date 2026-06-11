@@ -419,8 +419,8 @@ To support deterministic replay and audits, the system SHOULD persist:
 - error artifacts,
 - decision/explainability artifacts (where enabled),
 - optimizer/neuro-symbolic decision traces (where enabled).
-- replay snapshots for job-scoped durable recovery,
-- bounded audit lineage for schedule, reservation, split, merge, and terminalization decisions.
+- bounded audit lineage for schedule, reservation, split, merge, and terminalization decisions,
+- replay snapshots for restart recovery and evidence inspection.
 
 Recommended job-scoped layout (illustrative; exact paths may vary by deployment profile):
 
