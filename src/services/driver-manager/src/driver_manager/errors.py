@@ -10,6 +10,7 @@ from enum import Enum
 from typing import Sequence
 
 import grpc
+from google.protobuf import duration_pb2
 from google.rpc import error_details_pb2, status_pb2
 from grpc_status import rpc_status
 import uuid
@@ -26,6 +27,7 @@ class ErrorTaxonomy(str, Enum):
     NETWORK = "network"
     AUTH = "auth"
     QUOTA = "quota"
+    RUNTIME = "runtime"
     INTERNAL = "internal"
 
 
@@ -45,6 +47,40 @@ def _grpc_code_int(code: grpc.StatusCode) -> int:
 def _correlation_id(context: grpc.ServicerContext) -> str:
     md = {k.lower(): v for (k, v) in (context.invocation_metadata() or [])}
     return md.get("x-correlation-id") or md.get("x-request-id") or str(uuid.uuid4())
+
+
+def _retry_delay_for(code: grpc.StatusCode) -> duration_pb2.Duration | None:
+    if code == grpc.StatusCode.UNAVAILABLE:
+        delay = 1
+    elif code == grpc.StatusCode.RESOURCE_EXHAUSTED:
+        delay = 5
+    elif code == grpc.StatusCode.DEADLINE_EXCEEDED:
+        delay = 2
+    else:
+        return None
+
+    return duration_pb2.Duration(seconds=delay)
+
+
+def _add_retry_info(status: status_pb2.Status, code: grpc.StatusCode) -> None:
+    retry_delay = _retry_delay_for(code)
+    if retry_delay is None:
+        return
+    retry_info = error_details_pb2.RetryInfo(retry_delay=retry_delay)
+    status.details.add().Pack(retry_info)
+
+
+def _add_precondition_failure(status: status_pb2.Status, *, provider: str, job_id: str) -> None:
+    precondition = error_details_pb2.PreconditionFailure(
+        violations=[
+            error_details_pb2.PreconditionFailure.Violation(
+                type="STATE",
+                subject=provider or "driver_manager",
+                description=job_id or "backend precondition failure",
+            )
+        ]
+    )
+    status.details.add().Pack(precondition)
 
 
 def abort_normalized(
@@ -69,20 +105,27 @@ def abort_normalized(
         )
         st.details.add().Pack(bad_request)
 
+    metadata = {
+        "taxonomy": normalized.taxonomy.value,
+        "remediation": normalized.remediation,
+        "correlation_id": corr,
+        "job_id": job_id,
+        "provider": provider,
+        "job_timeline": f"qfs://jobs/{job_id}/timeline.json" if job_id else "",
+        "trace": f"trace://{trace_id}" if trace_id else "",
+        "retryable": "true" if normalized.grpc_code in {grpc.StatusCode.UNAVAILABLE, grpc.StatusCode.RESOURCE_EXHAUSTED, grpc.StatusCode.DEADLINE_EXCEEDED} else "false",
+        "precondition": "true" if normalized.grpc_code == grpc.StatusCode.FAILED_PRECONDITION else "false",
+    }
+    
     info = error_details_pb2.ErrorInfo(
         reason=normalized.eigen_code,
         domain="eigen.driver_manager",
-        metadata={
-            "taxonomy": normalized.taxonomy.value,
-            "remediation": normalized.remediation,
-            "correlation_id": corr,
-            "job_id": job_id,
-            "provider": provider,
-            "job_timeline": f"qfs://jobs/{job_id}/timeline.json" if job_id else "",
-            "trace": f"trace://{trace_id}" if trace_id else "",
-        },
+        metadata=metadata,
     )
     st.details.add().Pack(info)
+    _add_retry_info(st, normalized.grpc_code)
+    if normalized.grpc_code == grpc.StatusCode.FAILED_PRECONDITION:
+        _add_precondition_failure(st, provider=provider, job_id=job_id)
 
     if job_id:
         resource = error_details_pb2.ResourceInfo(resource_type="job", resource_name=job_id, owner="eigen")
@@ -118,6 +161,10 @@ def map_backend_error(code: grpc.StatusCode, message: str) -> NormalizedError:
         return NormalizedError(code, "EIGEN_BACKEND_UNAVAILABLE", msg, ErrorTaxonomy.NETWORK, "Retry with exponential backoff; verify provider status.")
     if code == grpc.StatusCode.RESOURCE_EXHAUSTED:
         return NormalizedError(code, "EIGEN_BACKEND_QUOTA", msg, ErrorTaxonomy.QUOTA, "Reduce load/shots or wait for quota reset then retry.")
+    if code == grpc.StatusCode.DEADLINE_EXCEEDED:
+        return NormalizedError(code, "EIGEN_BACKEND_TIMEOUT", msg, ErrorTaxonomy.NETWORK, "Retry after reducing workload or increasing the deadline.")
+    if code == grpc.StatusCode.FAILED_PRECONDITION:
+        return NormalizedError(code, "EIGEN_BACKEND_PRECONDITION", msg, ErrorTaxonomy.RUNTIME, "Refresh state or satisfy the backend precondition before retrying.")
     if code == grpc.StatusCode.UNIMPLEMENTED:
         return NormalizedError(code, "EIGEN_BACKEND_PROVIDER", msg, ErrorTaxonomy.PROVIDER, "Use a supported backend capability or payload format.")
     if code == grpc.StatusCode.INVALID_ARGUMENT:

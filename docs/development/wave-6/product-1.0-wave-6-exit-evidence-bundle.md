@@ -33,6 +33,20 @@
 - Release readiness checklist
 - Migration notes for any tightened behavior
 
+### W6-04 normalized results and error mapping evidence
+
+- Normalization matrix
+  - counts are sorted and backend-independent
+  - metadata keys are deterministic and string-normalized
+  - execution timing is rounded to a stable precision
+- Error mapping report
+  - retryable backend outages and quota pressure include `RetryInfo`
+  - backend precondition failures preserve `PreconditionFailure`
+  - unsupported payload formats fail closed with `UNIMPLEMENTED`
+- Conformance assertions
+  - response shape is stable across compatible backends
+  - unsupported-operation errors are deterministic
+
 ---
 
 ## Closure note
