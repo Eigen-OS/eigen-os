@@ -21,6 +21,7 @@ dependencies = [
 dev = [
   "pytest>=9",
   "pytest-asyncio>=0.24",
+  "pytest-anyio>=0.0.0",
 ]
 
 [project.scripts]

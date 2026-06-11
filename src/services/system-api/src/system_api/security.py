@@ -83,7 +83,12 @@ def _load_policy_snapshot(cfg: SecurityConfig) -> PolicySnapshot:
     if cfg.policy_snapshot_json.strip():
         payload = json.loads(cfg.policy_snapshot_json)
     elif cfg.policy_snapshot_path.strip():
-        payload = json.loads(Path(cfg.policy_snapshot_path).read_text(encoding="utf-8"))
+        try:
+            payload = json.loads(Path(cfg.policy_snapshot_path).read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return PolicySnapshot(version="", issuer=cfg.jwt_issuer, audience=cfg.jwt_audience, role_permissions={}, service_permissions={}, sandbox_profiles=set())
+        except json.JSONDecodeError:
+            return PolicySnapshot(version="", issuer=cfg.jwt_issuer, audience=cfg.jwt_audience, role_permissions={}, service_permissions={}, sandbox_profiles=set())
     else:
         payload = {
             "version": "1.0.0",

@@ -71,6 +71,24 @@
         "operationId": "runBenchmark",
         "summary": "Submit a benchmark run",
         "description": "Deterministically canonicalizes the request body, enforces idempotency parity, and maps all failures to the canonical Eigen OS public error model.",
+        "x-observability-contract-marker": {
+          "metric_family": "eigen_public_api_contract_requests_total",
+          "labels": [
+            "contract_version",
+            "outcome"
+          ],
+          "outcomes": [
+            "accepted",
+            "replayed",
+            "conflict",
+            "limit",
+            "error"
+          ],
+          "trace_fields": [
+            "traceparent",
+            "x-request-id"
+          ]
+        },
         "security": [
           {
             "bearerAuth": []
@@ -185,6 +203,24 @@
         "operationId": "explainBackendSelection",
         "summary": "Explain backend selection",
         "description": "Returns a deterministic explanation snapshot for a scheduler decision artifact. The endpoint is read-only and idempotent.",
+        "x-observability-contract-marker": {
+          "metric_family": "eigen_public_api_contract_requests_total",
+          "labels": [
+            "contract_version",
+            "outcome"
+          ],
+          "outcomes": [
+            "accepted",
+            "replayed",
+            "conflict",
+            "limit",
+            "error"
+          ],
+          "trace_fields": [
+            "traceparent",
+            "x-request-id"
+          ]
+        },
         "security": [
         {
             "bearerAuth": []
