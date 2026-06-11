@@ -200,14 +200,18 @@ class BaseDriver:
 
 A QDriver is a **gRPC service** implementing a stable device-facing contract.
 
-Normative methods (conceptual, per TЗ):
+Canonical final-contract reference:
+
+- `docs/reference/api/qdriver.md`
+
+Normative methods:
 
 - `Initialize(DeviceConfig) -> InitResponse`
 - `Execute(ExecutionRequest) -> ExecutionResponse`
 - `GetStatus(StatusRequest) -> DeviceStatus`
-- `Calibrate(...) -> ...` (optional; may be unimplemented depending on device)
 
 DM acts as the client of QDriver services and provides the kernel-facing abstraction.
+The kernel-facing `DriverManagerService` is the transport projection of that final contract, and may retain legacy MVP method names while preserving the canonical QDriver semantics and error mapping.
 
 ---
 
@@ -237,6 +241,8 @@ eigen.internal.v1.DriverManagerService
 | `GetDeviceStatus` | Implemented | returns health/topology hints (partial) |
 | `ExecuteCircuit` | Implemented | primary execution entrypoint |
 | `CalibrateDevice` | Defined; may return `UNIMPLEMENTED` | optional per backend |
+
+The method list above is the transport surface; the semantic contract remains the final QDriver v1 baseline documented in `docs/reference/api/qdriver.md`.
 
 ---
 

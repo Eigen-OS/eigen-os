@@ -58,6 +58,7 @@ Wave 6 is a **major internal contract alignment wave**. It may change driver-man
 ### 4.1 Final QDriver contract alignment
 
 - Reconcile the current `DriverManagerService` interface with the accepted QDriver v1 semantics.
+- Add/maintain the canonical `docs/reference/api/qdriver.md` reference so the final contract is frozen on the docs surface.
 - Document the accepted method set, capability negotiation, and unsupported-operation policy.
 - Ensure the implementation does not leak provider-specific SDK details across the kernel boundary.
 - Keep gRPC status mapping stable and deterministic.
@@ -121,6 +122,7 @@ Wave 6 is ready to close only when:
 - Wave 6 compatibility report
 - Wave 6 release readiness checklist
 - Wave 6 exit evidence bundle
+- Canonical QDriver v1 reference: `docs/reference/api/qdriver.md`
 - Inventory row and manifest row for the Driver Manager / QDriver final contract
 
 ---

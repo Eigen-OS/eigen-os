@@ -33,6 +33,7 @@ Wave 6 closes the Driver Manager / QDriver boundary so that provider execution i
 ## Primary source-of-truth references
 
 - `docs/architecture/components/driver-manager.md`
+- `docs/reference/api/qdriver.md`
 - `docs/reference/api/grpc-internal.md`
 - `docs/reference/orchestration-observability-contract.md`
 - `docs/reference/intelligent-runtime-observability-contract.md`
