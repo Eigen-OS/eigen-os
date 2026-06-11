@@ -21,16 +21,30 @@ fn split_planner_builds_versioned_shards_with_parent_references() {
         },
     ];
 
-    let manifest = plan_split("job-parent-42", &tasks, 4).expect("split plan must be valid");
+    let manifest = plan_split(
+        "job-parent-42",
+        &tasks,
+        4,
+        1_746_200_000_000,
+        "trace-xyz",
+    )
+    .expect("split plan must be valid");
 
     assert_eq!(manifest.version, MULTI_DEVICE_EXECUTION_CONTRACT_VERSION);
     assert_eq!(manifest.parent_job_id, "job-parent-42");
+    assert_eq!(manifest.created_at_ms, 1_746_200_000_000);
+    assert_eq!(manifest.trace_id, "trace-xyz");
     assert_eq!(manifest.shard_plans.len(), 3);
 
     for shard in &manifest.shard_plans {
         assert_eq!(shard.version, MULTI_DEVICE_EXECUTION_CONTRACT_VERSION);
         assert_eq!(shard.parent_job_id, "job-parent-42");
         assert!(shard.shard_id.starts_with("job-parent-42-shard-"));
+        assert_eq!(shard.attempt, 1);
+        assert_eq!(shard.lease_timeout_ms, None);
+        assert_eq!(shard.resource_profile, None);
+        assert_eq!(shard.trace_id, "trace-xyz");
+        assert!(shard.lineage_ref.as_deref().unwrap_or("").contains(&shard.shard_id));
     }
 
     let backend_a = manifest
@@ -53,6 +67,29 @@ fn split_planner_builds_versioned_shards_with_parent_references() {
         .find(|shard| shard.backend_id == "backend-c")
         .expect("backend-c shard exists");
     assert_eq!(backend_c.task_ids, vec!["task-003"]);
+}
+
+#[test]
+fn split_planner_is_deterministic_for_identical_inputs() {
+    let tasks = vec![
+        SplitTask {
+            task_id: "task-001".to_string(),
+            compatible_backends: vec!["backend-b".to_string(), "backend-a".to_string()],
+        },
+        SplitTask {
+            task_id: "task-002".to_string(),
+            compatible_backends: vec!["backend-b".to_string()],
+        },
+    ];
+
+    let first = plan_split("job-parent-42", &tasks, 4, 1_746_200_000_000, "trace-xyz")
+        .expect("split plan must be valid");
+    let second = plan_split("job-parent-42", &tasks, 4, 1_746_200_000_000, "trace-xyz")
+        .expect("split plan must be valid");
+
+    assert_eq!(first, second);
+    assert_eq!(first.shard_plans[0].attempt, 1);
+    assert_eq!(first.shard_plans[0].trace_id, "trace-xyz");
 }
 
 #[test]
@@ -84,6 +121,10 @@ fn merge_all_required_reports_missing_and_failed_shards_in_standardized_envelope
         parent_job_id: "job-parent-42".to_string(),
         shard_id: "job-parent-42-shard-001".to_string(),
         backend_id: "backend-a".to_string(),
+        attempt: 1,
+        emitted_at_ms: 1_746_200_000_010,
+        trace_id: "trace-xyz".to_string(),
+        correlation_id: "corr-123".to_string(),
         payload_ref: "qfs://job-parent-42/shards/001/result.json".to_string(),
         payload_checksum: "sha256:ok1".to_string(),
     }];
@@ -93,6 +134,10 @@ fn merge_all_required_reports_missing_and_failed_shards_in_standardized_envelope
         parent_job_id: "job-parent-42".to_string(),
         shard_id: "job-parent-42-shard-002".to_string(),
         backend_id: "backend-b".to_string(),
+        attempt: 2,
+        emitted_at_ms: 1_746_200_000_100,
+        trace_id: "trace-xyz".to_string(),
+        correlation_id: "corr-123".to_string(),
         reason_code: PartialFailureReasonCode::ExecutionTimeout,
         retryable: true,
         message: "backend timeout".to_string(),
@@ -116,6 +161,66 @@ fn merge_all_required_reports_missing_and_failed_shards_in_standardized_envelope
     assert_eq!(
         merge.failures[0].reason_code,
         PartialFailureReasonCode::ExecutionTimeout
+    );
+}
+
+#[test]
+fn merge_validation_is_deterministic_for_identical_inputs() {
+    let expected = vec![
+        "job-parent-42-shard-001".to_string(),
+        "job-parent-42-shard-002".to_string(),
+    ];
+
+    let results = vec![
+        PartialResultEnvelope {
+            version: MULTI_DEVICE_EXECUTION_CONTRACT_VERSION,
+            parent_job_id: "job-parent-42".to_string(),
+            shard_id: "job-parent-42-shard-002".to_string(),
+            backend_id: "backend-b".to_string(),
+            attempt: 1,
+            emitted_at_ms: 1_746_200_000_120,
+            trace_id: "trace-xyz".to_string(),
+            correlation_id: "corr-123".to_string(),
+            payload_ref: "qfs://job-parent-42/shards/002/result.json".to_string(),
+            payload_checksum: "sha256:ok2".to_string(),
+        },
+        PartialResultEnvelope {
+            version: MULTI_DEVICE_EXECUTION_CONTRACT_VERSION,
+            parent_job_id: "job-parent-42".to_string(),
+            shard_id: "job-parent-42-shard-001".to_string(),
+            backend_id: "backend-a".to_string(),
+            attempt: 1,
+            emitted_at_ms: 1_746_200_000_010,
+            trace_id: "trace-xyz".to_string(),
+            correlation_id: "corr-123".to_string(),
+            payload_ref: "qfs://job-parent-42/shards/001/result.json".to_string(),
+            payload_checksum: "sha256:ok1".to_string(),
+        },
+    ];
+
+    let first = merge_partial_results(
+        "job-parent-42",
+        &expected,
+        &results,
+        &[],
+        MergePolicy::AllShardsRequired,
+    );
+    let second = merge_partial_results(
+        "job-parent-42",
+        &expected,
+        &results,
+        &[],
+        MergePolicy::AllShardsRequired,
+    );
+
+    assert_eq!(first, second);
+    assert_eq!(first.reason_code, MergeReasonCode::AllShardsMerged);
+    assert_eq!(
+        first.merged_shard_ids,
+        vec![
+            "job-parent-42-shard-001".to_string(),
+            "job-parent-42-shard-002".to_string(),
+        ]
     );
 }
 

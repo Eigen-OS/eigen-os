@@ -426,11 +426,15 @@
         "Split/merge lifecycle internal proto expansion"
       ],
       "conformance_tests": [
-        "src/rust/crates/resource-manager/tests/",
-        "Product 1.0 split/merge integration tests"
+        "src/rust/crates/resource-manager/tests/multi_device_contract_integration.rs",
+        "src/rust/crates/resource-manager/tests/scheduler_contract_compatibility.rs"
       ],
       "implementation_status": "documented",
-      "compatibility_status": "needs-alignment"
+      "implementation_notes": [
+        "Split-plan manifests carry replay-safe created_at_ms / trace_id metadata.",
+        "Partial result and partial failure envelopes are deterministically ordered for merge validation."
+      ],
+      "compatibility_status": "compatible"
     },
     {
       "name": "Benchmark Run REST API",

@@ -35,7 +35,9 @@ pub const SCHEDULING_POLICY_BUNDLE_SCHEMA_VERSION: &str = "1.0.0";
 pub const SCHEDULING_POLICY_RESOLUTION_VERSION: &str = "1.2.0";
 /// SemVer version for rebalancing/preemption safety artifacts.
 pub const REBALANCING_POLICY_VERSION: &str = "2.2.0";
+pub const MULTI_DEVICE_EXECUTION_CONTRACT_VERSION: &str = "2.0.0";
 /// SemVer version for multi-device split/merge execution contract artifacts.
+pub const MULTI_DEVICE_EXECUTION_CONTRACT_VERSION: &str = "3.1.0";
 ///
 /// Breaking changes to partial-result envelopes or merge semantics must bump MAJOR.
 pub const MULTI_DEVICE_EXECUTION_CONTRACT_VERSION: &str = "2.0.0";
@@ -882,6 +884,11 @@ pub struct SplitShardPlan {
     pub shard_id: String,
     pub backend_id: String,
     pub task_ids: Vec<String>,
+    pub attempt: u32,
+    pub lease_timeout_ms: Option<u64>,
+    pub resource_profile: Option<String>,
+    pub trace_id: String,
+    pub lineage_ref: Option<String>,
 }
 
 /// Split planner output that can be persisted as a manifest artifact.
@@ -890,6 +897,8 @@ pub struct SplitPlanManifest {
     pub version: &'static str,
     pub parent_job_id: String,
     pub scheduler_decision_version: &'static str,
+    pub created_at_ms: u64,
+    pub trace_id: String,
     pub shard_plans: Vec<SplitShardPlan>,
 }
 
@@ -898,6 +907,7 @@ pub struct SplitPlanManifest {
 pub enum SplitPlanError {
     EmptyParentJobId,
     EmptyTaskSet,
+    EmptyTraceId,
     EmptyCompatibleBackends { task_id: String },
     TooManyShards { requested: usize, allowed: usize },
 }
@@ -909,6 +919,10 @@ pub struct PartialFailureEnvelope {
     pub parent_job_id: String,
     pub shard_id: String,
     pub backend_id: String,
+    pub attempt: u32,
+    pub emitted_at_ms: u64,
+    pub trace_id: String,
+    pub correlation_id: String,
     pub reason_code: PartialFailureReasonCode,
     pub retryable: bool,
     pub message: String,
@@ -930,6 +944,10 @@ pub struct PartialResultEnvelope {
     pub parent_job_id: String,
     pub shard_id: String,
     pub backend_id: String,
+    pub attempt: u32,
+    pub emitted_at_ms: u64,
+    pub trace_id: String,
+    pub correlation_id: String,
     pub payload_ref: String,
     pub payload_checksum: String,
 }
@@ -971,12 +989,17 @@ pub fn plan_split(
     parent_job_id: &str,
     tasks: &[SplitTask],
     max_shards: usize,
+    created_at_ms: u64,
+    trace_id: &str,
 ) -> Result<SplitPlanManifest, SplitPlanError> {
     if parent_job_id.trim().is_empty() {
         return Err(SplitPlanError::EmptyParentJobId);
     }
     if tasks.is_empty() {
         return Err(SplitPlanError::EmptyTaskSet);
+    }
+    if trace_id.trim().is_empty() {
+        return Err(SplitPlanError::EmptyTraceId);
     }
     if max_shards == 0 {
         return Err(SplitPlanError::TooManyShards {
@@ -1022,15 +1045,24 @@ pub fn plan_split(
         });
     }
 
+    let trace_id = trace_id.trim().to_string();
     let shard_plans = assignments
         .into_iter()
         .enumerate()
-        .map(|(idx, (backend_id, task_ids))| SplitShardPlan {
-            version: MULTI_DEVICE_EXECUTION_CONTRACT_VERSION,
-            parent_job_id: parent_job_id.to_string(),
-            shard_id: format!("{}-shard-{:03}", parent_job_id, idx + 1),
-            backend_id,
-            task_ids,
+        .map(|(idx, (backend_id, task_ids))| {
+            let shard_id = format!("{}-shard-{:03}", parent_job_id, idx + 1);
+            SplitShardPlan {
+                version: MULTI_DEVICE_EXECUTION_CONTRACT_VERSION,
+                parent_job_id: parent_job_id.to_string(),
+                shard_id: shard_id.clone(),
+                backend_id,
+                task_ids,
+                attempt: 1,
+                lease_timeout_ms: None,
+                resource_profile: None,
+                trace_id: trace_id.clone(),
+                lineage_ref: Some(format!("qfs://jobs/{}/lineage/{}.json", parent_job_id, shard_id)),
+            }
         })
         .collect();
 
@@ -1038,6 +1070,8 @@ pub fn plan_split(
         version: MULTI_DEVICE_EXECUTION_CONTRACT_VERSION,
         parent_job_id: parent_job_id.to_string(),
         scheduler_decision_version: SCHEDULER_DECISION_VERSION,
+        created_at_ms,
+        trace_id,
         shard_plans,
     })
 }
@@ -1050,12 +1084,30 @@ pub fn merge_partial_results(
     failures: &[PartialFailureEnvelope],
     policy: MergePolicy,
 ) -> MergeDecision {
+    let mut normalized_results: Vec<&PartialResultEnvelope> = results.iter().collect();
+    normalized_results.sort_by(|left, right| {
+        left.shard_id
+            .cmp(&right.shard_id)
+            .then_with(|| left.attempt.cmp(&right.attempt))
+            .then_with(|| left.backend_id.cmp(&right.backend_id))
+            .then_with(|| left.payload_checksum.cmp(&right.payload_checksum))
+    });
+
+    let mut normalized_failures: Vec<&PartialFailureEnvelope> = failures.iter().collect();
+    normalized_failures.sort_by(|left, right| {
+        left.shard_id
+            .cmp(&right.shard_id)
+            .then_with(|| left.attempt.cmp(&right.attempt))
+            .then_with(|| left.backend_id.cmp(&right.backend_id))
+            .then_with(|| left.reason_code.cmp(&right.reason_code))
+    });
+
     let mut observed = std::collections::HashSet::new();
     let mut merged_shard_ids = Vec::new();
     let mut failed_shard_ids = Vec::new();
     let mut filtered_failures = Vec::new();
 
-    for result in results {
+    for result in normalized_results {
         if result.parent_job_id != parent_job_id {
             return MergeDecision {
                 version: MULTI_DEVICE_EXECUTION_CONTRACT_VERSION,
@@ -1081,7 +1133,7 @@ pub fn merge_partial_results(
         merged_shard_ids.push(result.shard_id.clone());
     }
 
-    for failure in failures {
+    for failure in normalized_failures {
         if failure.parent_job_id != parent_job_id {
             return MergeDecision {
                 version: MULTI_DEVICE_EXECUTION_CONTRACT_VERSION,

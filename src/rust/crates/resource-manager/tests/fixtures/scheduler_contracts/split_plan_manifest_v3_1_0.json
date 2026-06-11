@@ -1,0 +1,37 @@
+{
+  "version": "3.1.0",
+  "parent_job_id": "job-parent-compat-01",
+  "scheduler_decision_version": "3.1.0",
+  "created_at_ms": 1746200000000,
+  "trace_id": "trace-compat-01",
+  "shard_plans": [
+    {
+      "version": "3.1.0",
+      "parent_job_id": "job-parent-compat-01",
+      "shard_id": "job-parent-compat-01-shard-001",
+      "backend_id": "backend-a",
+      "task_ids": [
+        "task-a"
+      ],
+      "attempt": 1,
+      "lease_timeout_ms": null,
+      "resource_profile": null,
+      "trace_id": "trace-compat-01",
+      "lineage_ref": "qfs://jobs/job-parent-compat-01/lineage/job-parent-compat-01-shard-001.json"
+    },
+    {
+      "version": "3.1.0",
+      "parent_job_id": "job-parent-compat-01",
+      "shard_id": "job-parent-compat-01-shard-002",
+      "backend_id": "backend-b",
+      "task_ids": [
+        "task-b"
+      ],
+      "attempt": 1,
+      "lease_timeout_ms": null,
+      "resource_profile": null,
+      "trace_id": "trace-compat-01",
+      "lineage_ref": "qfs://jobs/job-parent-compat-01/lineage/job-parent-compat-01-shard-002.json"
+    }
+  ]
+}
