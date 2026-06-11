@@ -19,7 +19,7 @@ from urllib.parse import urlparse
 import grpc
 
 from .errors import PublicErrorSpec, abort_public
-from .observability import append_security_audit_event, log_authz_denied, sanitized_security_metadata
+from .observability import log_authz_denied, trace_id_from_traceparent, append_security_audit_event, sanitized_security_metadata
 
 _AUTH_ALLOW_ALL = "allow_all"
 _AUTH_STATIC_TOKEN = "static_token"
@@ -203,20 +203,22 @@ def _service_context(md: dict[str, str], cfg: SecurityConfig, snapshot: PolicySn
     return identity, role.lower() if role else None
 
 
-def _security_audit(method_name: str, decision: str, ctx: SecurityContext, reason: str) -> None:
+def _security_audit(method_name: str, decision: str, ctx: SecurityContext, reason: str, trace_id: str | None = None) -> None:
     append_security_audit_event(
         {
             "method": method_name,
             "decision": decision,
             "reason": reason,
-            "subject": ctx.subject,
-            "roles": list(ctx.roles),
-            "tenant": ctx.tenant,
-            "auth_mode": ctx.auth_mode,
-            "policy_version": ctx.policy_version,
-            "service_identity": ctx.service_identity or "",
-            "service_role": ctx.service_role or "",
-            "sandbox_profile": ctx.sandbox_profile or "",
+            "trace_id": trace_id or "",
+            **sanitized_security_metadata(
+                subject=ctx.subject,
+                roles=ctx.roles,
+                auth_mode=ctx.auth_mode,
+                policy_version=ctx.policy_version,
+                service_identity=ctx.service_identity,
+                sandbox_profile=ctx.sandbox_profile,
+                replay_marker=ctx.claims.get("replay_marker"),
+            ),
         }
     )
 
@@ -345,6 +347,7 @@ def enforce_authz(context: grpc.ServicerContext, *, required_permission: str) ->
     snapshot = _load_policy_snapshot(cfg)
 
     md = {k.lower(): v for k, v in (context.invocation_metadata() or [])}
+    trace_id = md.get("trace_id") or trace_id_from_traceparent(md.get("traceparent"))
     raw_permissions = md.get("x-eigen-permissions", "")
     raw_roles = md.get("x-eigen-roles", "")
     granted = {
@@ -375,8 +378,9 @@ def enforce_authz(context: grpc.ServicerContext, *, required_permission: str) ->
         _security_audit(
             "authz",
             "deny",
-            SecurityContext(subject=subject or "unknown", roles=tuple(granted), tenant=tenant or "", auth_mode=cfg.auth_mode, policy_version=snapshot.version, service_identity=cfg.service_identity, service_role=cfg.service_role, sandbox_profile=cfg.sandbox_profile, claims={}),
+            SecurityContext(subject=subject, roles=tuple(sorted(granted)), tenant=tenant, auth_mode=cfg.auth_mode, policy_version=snapshot.version, service_identity=cfg.service_identity, service_role=cfg.service_role, sandbox_profile=cfg.sandbox_profile, claims={}),
             "POLICY_DENY_MISSING_AUTH_CONTEXT",
+            trace_id=trace_id,
         )
         log_authz_denied(
             method=getattr(context, "_rpc_event_call_details", None).method if hasattr(context, "_rpc_event_call_details") else "unknown",
@@ -412,8 +416,9 @@ def enforce_authz(context: grpc.ServicerContext, *, required_permission: str) ->
         _security_audit(
             "authz",
             "allow",
-            SecurityContext(subject=subject, roles=tuple(granted), tenant=tenant, auth_mode=cfg.auth_mode, policy_version=snapshot.version, service_identity=cfg.service_identity, service_role=cfg.service_role, sandbox_profile=cfg.sandbox_profile, claims={}),
+            SecurityContext(subject=subject, roles=tuple(sorted(granted)), tenant=tenant, auth_mode=cfg.auth_mode, policy_version=snapshot.version, service_identity=cfg.service_identity, service_role=cfg.service_role, sandbox_profile=cfg.sandbox_profile, claims={}),
             need,
+            trace_id=trace_id,
         )
         return
 

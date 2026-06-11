@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use sha2::Sha256;
+use thiserror::Error;
 use tempfile::NamedTempFile;
 
 /// Default filesystem root for CircuitFS (QFS-L3).
@@ -18,6 +18,41 @@ pub const DEFAULT_CIRCUIT_FS_ROOT: &str = "/var/lib/eigen/circuit_fs";
 pub struct SourceBundle {
     pub job_yaml: String,
     pub program_eigen_py: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResultArtifactDescriptor {
+    pub path: String,
+    pub content_hash: String,
+    pub size_bytes: u64,
+}
+
+pub type ResultArtifact = ResultArtifactDescriptor;
+
+#[derive(Debug, Error)]
+pub enum CircuitFsError {
+    #[error("artifact already exists: {path}")]
+    AlreadyExists { path: PathBuf },
+
+    #[error("artifact integrity mismatch: {path}")]
+    IntegrityMismatch { path: PathBuf },
+
+    #[error("artifact not found: {path}")]
+    NotFound { path: PathBuf },
+
+    #[error(transparent)]
+    Io(#[from] io::Error),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CircuitFsLocal {
+    root: PathBuf,
+}
+
+impl CircuitFsLocal {
+    pub fn new(root: impl AsRef<Path>) -> Self {
+        Self { root: root.as_ref().to_path_buf() }
+    }
 }
 
 /// Represents the “results bundle” artifacts stored in QFS.
@@ -121,7 +156,7 @@ pub struct ResultManifest {
     #[serde(default)]
     pub retention_policy: String,
     #[serde(default)]
-    pub artifacts: Vec<ResultArtifact>,
+    pub artifacts: Vec<ResultArtifactDescriptor>,
 }
 
 /// ... existing content omitted for brevity ...
@@ -228,4 +263,35 @@ fn content_hash_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     format!("{:x}", hasher.finalize())
+}
+
+fn atomic_write_bytes(path: &Path, bytes: &[u8]) -> Result<(), CircuitFsError> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| CircuitFsError::Io(io::Error::new(io::ErrorKind::InvalidInput, "missing parent directory")))?;
+    fs::create_dir_all(parent)?;
+    let mut tmp = NamedTempFile::new_in(parent)?;
+    tmp.write_all(bytes)?;
+    tmp.flush()?;
+    tmp.as_file().sync_all()?;
+    tmp.persist(path)
+        .map_err(|err| CircuitFsError::Io(err.error))?;
+    Ok(())
+}
+
+fn verify_hash(path: &Path, expected: &str, actual: &[u8]) -> Result<(), CircuitFsError> {
+    let actual_hash = content_hash_hex(actual);
+    if actual_hash != expected {
+        return Err(CircuitFsError::IntegrityMismatch {
+            path: path.to_path_buf(),
+        });
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ErrorDetails {
+    pub code: String,
+    pub summary: String,
+    pub detail: String,
 }
