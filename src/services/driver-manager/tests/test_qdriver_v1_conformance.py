@@ -76,6 +76,38 @@ def test_qdriver_v1_profile_matrix_fail_closed(
     assert expected == "pass"
 
 
+def test_session_reuse_across_compatible_execution(
+    simulator_driver: SimulatorDriver,
+) -> None:
+    first = simulator_driver.session_key(
+        "sim:local",
+        {"seed": "1"},
+    )
+
+    second = simulator_driver.session_key(
+        "sim:local",
+        {"seed": "1"},
+    )
+
+    assert first == second
+
+
+def test_calibration_artifact_reference_stability(
+    simulator_driver: SimulatorDriver,
+) -> None:
+    first = simulator_driver.calibrate_device(
+        "sim:local",
+        {},
+    )
+
+    second = simulator_driver.calibrate_device(
+        "sim:local",
+        {},
+    )
+
+    assert first == second
+
+
 def test_simulator_is_default_conformance_backend(simulator_driver: SimulatorDriver) -> None:
     counts, _, metadata = simulator_driver.execute_circuit(
         device_id="sim:local",
@@ -94,3 +126,4 @@ def test_phase8d_provider_matrix_fixture_lists_official_targets() -> None:
     assert payload["policy_version"] == "1.0.0"
     assert payload["canonical_workload"] == "phase8d_canonical_workload_v1"
     assert payload["official_targets"] == ["simulator", "ibm", "aws"]
+    
