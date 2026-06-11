@@ -26,8 +26,9 @@ The project follows the **Product 1.0 Contract Alignment Plan** – a service‑
 | **Wave 3** – Compiler, Eigen-Lang, and AQO closure | ✅ Completed |
 | **Wave 4** – QFS data fabric maturity | ✅ Completed |
 | **Wave 5** – Resource Manager and multi-device execution | ✅ Completed |
-| **Wave 6** – Driver Manager and QDriver final contract | 🔄 In progress |
-| **Waves 7–10** – Optimizer, Knowledge Base, Security, Observability, Release | ⏳ Planned |
+| **Wave 6** – Driver Manager and QDriver final contract | ✅ Completed |
+| **Wave 7** – GNN Optimizer and intelligent runtime | 🔄 In progress |
+| **Waves 9–10** – Knowledge Base, Security, Observability, Release | ⏳ Planned |
 
 All normative contracts described in `docs/reference/` are being implemented as versioned wire representations with conformance tests, canonical errors, and observability markers. The **target release** is **Product `1.0.0`** – a mature, contract‑first platform.
 
