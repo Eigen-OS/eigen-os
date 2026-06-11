@@ -2,7 +2,6 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
-use sha2::{Digest, Sha256};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -205,13 +204,10 @@ fn verify_result_manifest(
         verify_hash(manifest_path, &content_hash_hex(&manifest_bytes), &manifest_bytes)?;
     }
     for artifact in &manifest.artifacts {
-        let actual_bytes: Option<Vec<u8>> = match artifact.path.as_str() {
-            "results.parquet" => Some(parquet.to_vec()),
-            "results/result.json" => Some(serde_json::to_vec_pretty(envelope).map_err(to_io_error)?),
-            _ => None,
-        };
-        let Some(actual_bytes) = actual_bytes else {
-            continue;
+        let actual_bytes: Vec<u8> = match artifact.path.as_str() {
+            "results.parquet" => parquet.to_vec(),
+            "results/result.json" => serde_json::to_vec_pretty(envelope).map_err(to_io_error)?,
+            _ => continue,
         };
 
         let actual_hash = content_hash_hex(&actual_bytes);

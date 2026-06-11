@@ -17,11 +17,14 @@ import grpc
 _LOG = logging.getLogger("system_api")
 _AUDIT_LOG = logging.getLogger("system_api.security_audit")
 _AUDIT_LOCK = threading.Lock()
-_AUDIT_SINK_PATH = os.getenv("SYSTEM_API_AUDIT_SINK_PATH", "/tmp/eigen-system-api-audit.jsonl")
 
 _TRACEPARENT_RE = re.compile(
     r"^(?P<version>[0-9a-f]{2})-(?P<trace_id>[0-9a-f]{32})-(?P<span_id>[0-9a-f]{16})-(?P<trace_flags>[0-9a-f]{2})$"
 )
+
+
+def _audit_sink_path() -> str:
+    return os.getenv("SYSTEM_API_AUDIT_SINK_PATH", "/tmp/eigen-system-api-audit.jsonl")
 
 
 @dataclass
@@ -181,9 +184,10 @@ def append_security_audit_event(event: dict[str, object]) -> None:
     """
     record = json.dumps(event, sort_keys=True, separators=(",", ":"))
     line = record + "\n"
+    sink_path = _audit_sink_path()
     with _AUDIT_LOCK:
-        os.makedirs(os.path.dirname(_AUDIT_SINK_PATH), exist_ok=True)
-        with open(_AUDIT_SINK_PATH, "a", encoding="utf-8") as fh:
+        os.makedirs(os.path.dirname(sink_path), exist_ok=True)
+        with open(sink_path, "a", encoding="utf-8") as fh:
             fh.write(line)
             fh.flush()
             os.fsync(fh.fileno())

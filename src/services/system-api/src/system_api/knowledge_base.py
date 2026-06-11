@@ -537,7 +537,7 @@ class KnowledgeBaseService:
                     return False
                 if query_filter.HasField("created_before") and _ts_to_dt(query_filter.created_before) <= _ts_to_dt(record.created_at):
                     return False
-            except (ValueError, TypeError):
+            except Exception:
                 return False
         return True
 
@@ -612,8 +612,22 @@ class KnowledgeBaseService:
         record_id = record.record_id
         now = datetime.now(timezone.utc)
         existing = self._records.get(record_id)
+        created_at = _ts_to_dt(record.created_at) if getattr(record, "created_at", None) else now
+        if existing:
+            created_at = existing.created_at
+
+        record.created_at.FromDatetime(created_at)
+        fingerprint = self._record_fingerprint(record, replay_bundle_ref=replay_bundle_ref)
 
         if existing and not allow_overwrite:
+            if existing.fingerprint == fingerprint:
+                ts = Timestamp()
+                ts.FromDatetime(existing.updated_at)
+                return {
+                    "record_id": record_id,
+                    "created": False,
+                    "updated_at": ts,
+                }
             if context:
                 abort_with_error_info(
                     context,
@@ -627,12 +641,6 @@ class KnowledgeBaseService:
                 raise ValueError(f"Record {record_id} already exists and overwrite is disabled.")
 
         self._sequence += 1
-        created_at = _ts_to_dt(record.created_at) if getattr(record, "created_at", None) else now
-        if existing:
-            created_at = existing.created_at
-
-        record.created_at.FromDatetime(created_at)
-        fingerprint = self._record_fingerprint(record, replay_bundle_ref=replay_bundle_ref)
 
         stored = _StoredRecord(
             record=self._clone_record(record),
