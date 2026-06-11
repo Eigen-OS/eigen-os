@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import cmath
+import hashlib
 import json
 import math
 import random
@@ -40,6 +41,7 @@ class SimulatorDriver:
 
     def __init__(self, types_pb):
         self._types_pb = types_pb
+        self._sessions: dict[str, str] = {}
 
     def initialize(self, config: dict[str, str]) -> None:
         _ = config
@@ -119,6 +121,29 @@ class SimulatorDriver:
     def calibrate_device(self, device_id: str, options: dict[str, str]) -> str:
         _ = (options,)
         return f"calib://simulator/{device_id}"
+
+    def session_key(self, device_id: str, options: dict[str, str]) -> str:
+        normalized_options = {
+            str(key): str(value)
+            for key, value in sorted(options.items(), key=lambda item: str(item[0]))
+        }
+        payload = json.dumps(
+            {"device_id": str(device_id), "options": normalized_options},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        key = f"session://simulator/{hashlib.sha256(payload).hexdigest()[:24]}"
+        self._sessions.setdefault(key, "created")
+        return key
+
+    def refresh_session(self, session_key: str) -> None:
+        if session_key not in self._sessions:
+            raise DriverExecutionError(grpc.StatusCode.FAILED_PRECONDITION, f"unknown session: {session_key}")
+        self._sessions[session_key] = "active"
+
+    def close_session(self, session_key: str) -> None:
+        if session_key in self._sessions:
+            self._sessions[session_key] = "closed"
 
     def _validate_provider_profile(self, options: dict[str, str]) -> None:
         profile = options.get("provider_profile", "simulator").strip().lower()
