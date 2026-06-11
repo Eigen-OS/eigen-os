@@ -136,3 +136,10 @@ Architecture Decision Records (ADRs) capture decisions that are already adopted 
 - Required coverage check: [`../development/product-1.0-wave-2-rfc-adr-gap-analysis.md`](../development/product-1.0-wave-2-rfc-adr-gap-analysis.md).
 - Wave 2 planning and release package: [`../development/product-1.0-wave-2-execution-plan.md`](../development/product-1.0-wave-2-execution-plan.md), [`../development/product-1.0-wave-2-issue-pack.md`](../development/product-1.0-wave-2-issue-pack.md), [`../development/product-1.0-wave-2-release-readiness-checklist.md`](../development/product-1.0-wave-2-release-readiness-checklist.md), [`../development/product-1.0-wave-2-compatibility-report.md`](../development/product-1.0-wave-2-compatibility-report.md), [`../development/product-1.0-wave-2-exit-evidence-bundle.md`](../development/product-1.0-wave-2-exit-evidence-bundle.md).
 - Policy reminder: Wave 2 may contain MAJOR internal changes, but public Wave 1 behavior remains protected unless a separate public RFC/ADR approves a breaking change.
+
+## Product 1.0 Wave 4 status
+
+- As of 2026-06-11, Product 1.0 Wave 4 closure governance is synchronized with RFC 0051, RFC 0052, and ADRs 0037–0040.
+- Required coverage check: [`../development/wave-4/product-1.0-wave-4-rfc-adr-gap-analysis.md`](../development/wave-4/product-1.0-wave-4-rfc-adr-gap-analysis.md).
+- Wave 4 release package: [`../development/wave-4/product-1.0-wave-4-compatibility-report.md`](../development/wave-4/product-1.0-wave-4-compatibility-report.md), [`../development/wave-4/product-1.0-wave-4-release-readiness-checklist.md`](../development/wave-4/product-1.0-wave-4-release-readiness-checklist.md), [`../development/wave-4/product-1.0-wave-4-exit-evidence-bundle.md`](../development/wave-4/product-1.0-wave-4-exit-evidence-bundle.md), [`../development/wave-4/product-1.0-wave-4-rfc-adr-gap-analysis.md`](../development/wave-4/product-1.0-wave-4-rfc-adr-gap-analysis.md).
+- Policy reminder: Wave 4 closure evidence must remain synchronized with the Product 1.0 manifest and inventory.

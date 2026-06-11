@@ -12,9 +12,9 @@
 
 ---
 
-## Planned closure artifacts
+## Closure artifacts
 
-The following documents are mandatory for Wave 4 closure:
+The following documents complete the Wave 4 closure set:
 
 - `product-1.0-wave-4-compatibility-report.md`
 - `product-1.0-wave-4-release-readiness-checklist.md`
@@ -53,3 +53,12 @@ Wave 4 depends on:
 - `docs/reference/api/explain-backend-selection.md`
 - `docs/reference/error-model.md`
 - `docs/reference/error-mapping.md`
+
+### Governance and evidence
+
+- `rfcs/0051-product-1.0-qfs-storage-authority-and-retention-semantics.md`
+- `rfcs/0052-product-1.0-security-identity-and-fail-closed-policy.md`
+- `docs/adr/0037-product-1.0-qfs-l1-live-qubit-reservation-split-authority.md`
+- `docs/adr/0038-product-1.0-checkpoint-envelope-and-restore-compatibility-policy.md`
+- `docs/adr/0039-product-1.0-public-rest-schema-parity-policy.md`
+- `docs/adr/0040-product-1.0-knowledge-base-decision-log-lineage-contract.md`

@@ -198,3 +198,22 @@
   - [development/product-1.0-wave-2-release-readiness-checklist.md](development/product-1.0-wave-2-release-readiness-checklist.md)
   - [development/product-1.0-wave-2-compatibility-report.md](development/product-1.0-wave-2-compatibility-report.md)
   - [development/product-1.0-wave-2-exit-evidence-bundle.md](development/product-1.0-wave-2-exit-evidence-bundle.md)
+
+## Product 1.0 Wave 4 RFC set (proposed)
+
+- Status on 2026-06-11: Product 1.0 Wave 4 governance package is synchronized with the accepted ADR set and closure evidence.
+- Proposed RFCs:
+  - [RFC 0051 — Product 1.0 QFS storage authority and retention semantics](../rfcs/0051-product-1.0-qfs-storage-authority-and-retention-semantics.md)
+  - [RFC 0052 — Product 1.0 security identity and fail-closed policy](../rfcs/0052-product-1.0-security-identity-and-fail-closed-policy.md)
+- Synchronized ADRs:
+  - [ADR 0037 — Product 1.0 QFS L1 live qubit / reservation split authority](adr/0037-product-1.0-qfs-l1-live-qubit-reservation-split-authority.md)
+  - [ADR 0038 — Product 1.0 checkpoint envelope and restore compatibility policy](adr/0038-product-1.0-checkpoint-envelope-and-restore-compatibility-policy.md)
+  - [ADR 0039 — Product 1.0 public REST schema parity policy](adr/0039-product-1.0-public-rest-schema-parity-policy.md)
+  - [ADR 0040 — Product 1.0 Knowledge Base decision-log lineage contract](adr/0040-product-1.0-knowledge-base-decision-log-lineage-contract.md)
+- Release closure package:
+  - [development/wave-4/product-1.0-wave-4-execution-plan.md](development/wave-4/product-1.0-wave-4-execution-plan.md)
+  - [development/wave-4/product-1.0-wave-4-compatibility-report.md](development/wave-4/product-1.0-wave-4-compatibility-report.md)
+  - [development/wave-4/product-1.0-wave-4-release-readiness-checklist.md](development/wave-4/product-1.0-wave-4-release-readiness-checklist.md)
+  - [development/wave-4/product-1.0-wave-4-exit-evidence-bundle.md](development/wave-4/product-1.0-wave-4-exit-evidence-bundle.md)
+  - [development/wave-4/product-1.0-wave-4-rfc-adr-gap-analysis.md](development/wave-4/product-1.0-wave-4-rfc-adr-gap-analysis.md)
+  

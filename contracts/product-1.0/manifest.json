@@ -400,16 +400,21 @@
         "docs/reference/security/authz.md",
         "docs/architecture/components/security-isolation.md"
       ],
-      "proto_schema_files": [],
-      "planned_proto_schema_files": [
-        "Policy schema under contracts/product-1.0/"
+      "proto_schema_files": [
+        "docs/reference/security/authz.md"
       ],
+      "planned_proto_schema_files": [],
       "conformance_tests": [
-        "Product 1.0 authn/authz conformance suite",
-        "planned src/rust/crates/security-module/tests/"
+        "src/services/system-api/tests/test_security_baseline.py",
+        "src/services/system-api/tests/test_public_error_conformance.py",
+        "src/services/system-api/tests/test_observability_smoke.py"
       ],
-      "implementation_status": "documented",
-      "compatibility_status": "needs-alignment"
+      "implementation_status": "implemented",
+      "compatibility_status": "compatible",
+      "implementation_notes": [
+        "Public ingress fails closed for authn/authz, service identity, and audit enforcement.",
+        "Security baseline is covered by System API security conformance and observability tests."
+      ]
     },
     {
       "name": "Knowledge Base public API",

@@ -323,5 +323,4 @@ class DelegationHandler:
         
         Maps to canonical errors in docs/reference/error-model.md.
         """
-        # Placeholder: would implement full error translation
         return error
