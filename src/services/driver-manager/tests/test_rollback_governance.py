@@ -9,6 +9,7 @@ from driver_manager.rollback_governance import (
     RollbackRehearsalEvidence,
     evaluate_rollback_safety,
 )
+from driver_manager.registry import DriverRegistry
 
 
 def test_phase8d_rollback_rehearsal_fixture_is_complete() -> None:

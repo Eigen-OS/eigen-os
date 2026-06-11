@@ -47,6 +47,21 @@
   - response shape is stable across compatible backends
   - unsupported-operation errors are deterministic
 
+### W6-06 official simulator reference backend and provider matrix parity evidence
+
+- Provider matrix report
+  - simulator remains the canonical conformance backend
+  - official targets are versioned as simulator / ibm / aws
+  - tolerance policy is pinned to `1.0.0`
+- Tolerance profile artifact
+  - canonical workload is `phase8d_canonical_workload_v1`
+  - result-shape drift is governed by the versioned policy fixture
+  - latency and noise drift remain bounded by the policy thresholds
+- Rollback / demotion rehearsal evidence
+  - rollback controls are covered by the rollback governance fixture
+  - demotion paths remain auditable
+  - provider drift remains fail-closed in conformance gating
+
 ---
 
 ## Closure note
