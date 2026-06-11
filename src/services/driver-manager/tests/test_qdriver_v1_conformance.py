@@ -62,3 +62,33 @@ def test_qdriver_v1_profile_matrix_fail_closed(
     assert metadata["provider_profile"] == "simulator"
     assert expected == "pass"
     
+def test_session_reuse_across_compatible_execution(
+    simulator_driver,
+):
+    first = simulator_driver.session_key(
+        "sim:local",
+        {"seed": "1"},
+    )
+
+    second = simulator_driver.session_key(
+        "sim:local",
+        {"seed": "1"},
+    )
+
+    assert first == second
+
+
+def test_calibration_artifact_reference_stability(
+    simulator_driver,
+):
+    first = simulator_driver.calibrate_device(
+        "sim:local",
+        {},
+    )
+
+    second = simulator_driver.calibrate_device(
+        "sim:local",
+        {},
+    )
+
+    assert first == second

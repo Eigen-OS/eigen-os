@@ -117,7 +117,26 @@ class DriverManagerService:
         return resp
 
     def CalibrateDevice(self, request, context: grpc.ServicerContext):
-        context.abort(grpc.StatusCode.UNIMPLEMENTED, "CalibrateDevice is not implemented in MVP-2")
+        driver = self._registry.get_driver_for_device(request.device_id)
+
+        if driver is None:
+            abort_normalized(
+                context,
+                normalized=map_backend_error(
+                    grpc.StatusCode.INVALID_ARGUMENT,
+                    f"device not registered: {request.device_id}",
+                ),
+                provider="driver_registry",
+            )
+
+        artifact = driver.calibrate_device(
+            request.device_id,
+            dict(request.options),
+        )
+
+        return self._drv_pb.CalibrateDeviceResponse(
+            calibration_artifact_ref=artifact,
+        )
 
 _LOG = logging.getLogger("driver_manager")
 _TRACEPARENT_RE = re.compile(r"^[0-9a-f]{2}-(?P<trace_id>[0-9a-f]{32})-[0-9a-f]{16}-[0-9a-f]{2}$")

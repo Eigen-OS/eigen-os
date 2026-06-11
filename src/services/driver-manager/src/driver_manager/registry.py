@@ -60,6 +60,7 @@ class DriverRegistry:
     """Manage registered drivers and reverse index device_id -> driver."""
 
     def __init__(self) -> None:
+        self._sessions = {}
         self._drivers: dict[str, RegisteredDriver] = {}
         self._device_to_driver: dict[str, str] = {}
         self._device_profiles: dict[str, DeviceProfileSnapshot] = {}
@@ -70,6 +71,31 @@ class DriverRegistry:
             "driver_signature_reject_total": 0,
             "driver_matrix_mismatch_reject_total": 0,
         }
+
+    def get_or_create_session(
+        self,
+        driver_name: str,
+        session_key: str,
+    ):
+        key = (driver_name, session_key)
+
+        if key in self._sessions:
+            return self._sessions[key]
+
+        self._sessions[key] = {
+            "state": "active",
+            "driver": driver_name,
+        }
+        return self._sessions[key]
+
+    def invalidate_session(
+        self,
+        driver_name: str,
+        session_key: str,
+    ) -> None:
+        key = (driver_name, session_key)
+        if key in self._sessions:
+            self._sessions[key]["state"] = "invalidated"
 
     def add_plugin_driver(
         self,
