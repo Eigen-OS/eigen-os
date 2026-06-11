@@ -3,7 +3,7 @@
 - **Document status:** Normative architecture + contract specification (device capacity, reservation lifecycle, allocation coordination)
 - **Contract version:** `1.0.0`
 - **Snapshot date:** 2026-05-25
-- **Implementation state:** Partially implemented through system-api, driver-manager, and kernel-adjacent runtime logic; no standalone Resource Manager service currently exists.
+- **Implementation state:** Partially implemented through system-api, driver-manager, and kernel-adjacent runtime logic; Product 1.0 treats Resource Manager as a kernel-owned internal authority rather than a standalone service.
 
 ---
 
@@ -25,9 +25,10 @@ The Resource Manager subsystem is responsible for:
 - durable reservation registry,
 - queue-aware scheduling integration.
 
-**Wave 4 boundary:** live execution reservation tokens and lease TTLs are owned
-by Kernel/QRTX for replay-safe runtime gating; Resource Manager remains the
-target authority for future device-capacity reservations.
+**Wave 5 boundary:** Resource Manager is the kernel-owned authority for device
+inventory, reservations, and capacity decisions. QRTX remains the lifecycle
+authority; Driver Manager remains the device-truth source; public reservation
+shapes remain compatibility-only until the Product 1.0 boundary is fully wired.
 
 This document freezes:
 
@@ -69,6 +70,16 @@ eigen_resource_contract_info{version="1.0.0"} 1
 - documentation fixes,
 - bug fixes without semantic change,
 - dashboard/alert tuning.
+
+### Wave 5 decision (normative)
+
+Resource Manager SHALL be treated as an embedded kernel-owned internal authority
+for Product 1.0. It SHALL NOT be introduced as a separate public-facing service
+in the current release boundary.
+
+Resource Manager SHALL consume deterministic inventory snapshots sourced from
+Driver Manager topology/capability metadata and SHALL expose scheduling and
+reservation inputs to QRTX through a stable internal boundary.
 
 ---
 
@@ -169,9 +180,14 @@ Current responses provide simplified/static runtime info (MVP-safe baseline), ty
 - The current reservation does **NOT** guarantee exclusive access, slot ownership, or priority.
 - The reservation MUST be treated as a **client-visible token** only, suitable for future compatibility, not a hard allocation.
 
-For Product 1.0 Wave 4, Kernel/QRTX live reservation state is the authoritative
-runtime lease used by orchestration hooks; DeviceService reservations remain a
-compatibility surface until Resource Manager is fully implemented.
+For Product 1.0 Wave 5, DeviceService reservations remain a compatibility
+surface only. The authoritative reservation boundary is the kernel-owned
+Resource Manager path, which receives its inventory and capability truth from
+Driver Manager snapshots and is consumed by QRTX for scheduling and execution
+coordination.
+
+Public reservation behavior MUST remain backward-compatible with the current
+MVP surface while the kernel-owned authority is being introduced.
 
 If a client requests enforced reservation semantics (Phase-1 features) against an MVP deployment, the system SHOULD return:
 
@@ -184,6 +200,29 @@ with structured details indicating “reservations not enforced in this deployme
 
 - Device inventory and status are partially sourced from `driver-manager`.
 - Kernel does not currently own reservation lifecycle or slot accounting.
+
+### 5.5 Deterministic device/resource inventory snapshots
+
+Resource Manager inventory snapshots SHALL be built from Driver Manager topology
+metadata and capability snapshots using stable canonical ordering.
+
+Snapshot requirements:
+
+- device identity MUST be stable and deterministic,
+- topology/capability fields MUST be bounded and schema-fixed,
+- equivalent Driver Manager inputs MUST produce equivalent snapshot bytes or
+  equivalent canonical snapshot objects,
+- missing or empty inventory MUST be representable without introducing
+  placeholder device records,
+- snapshot materialization MUST be replay-safe and suitable for QRTX scheduling
+  decisions.
+
+### 5.6 Reservation compatibility surface
+
+The current MVP reservation API surface MAY remain exposed as a compatibility
+layer while the kernel-owned Resource Manager boundary is introduced. That
+compatibility layer MUST NOT be documented as the canonical authority for
+capacity or allocation decisions.
 
 ---
 
