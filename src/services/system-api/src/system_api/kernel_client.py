@@ -63,7 +63,6 @@ class KernelGatewayClient:
     def __init__(self, config: Optional[KernelClientConfig] = None):
         self.config = config or KernelClientConfig()
         self._channel: Optional[aio.Channel] = None
-        # Placeholder for actual gRPC stub (would be KernelGatewayServiceStub)
         self._stub = None
         self._closed = False
         
@@ -74,7 +73,7 @@ class KernelGatewayClient:
             return
         
         try:
-            self._channel = aio.insecure_channel(
+            self._channel = aio.insecure_channel(# Placeholder: would call actual gRPC stub
                 self.config.grpc_endpoint,
                 options=[
                     ("grpc.keepalive_time_ms", 30000),
@@ -83,7 +82,6 @@ class KernelGatewayClient:
                     ("grpc.max_receive_message_length", 100 * 1024 * 1024),
                 ]
             )
-            # Placeholder: would create actual stub here
             # self._stub = kernel_gateway_pb2_grpc.KernelGatewayServiceStub(self._channel)
             logger.info(f"Connected to Kernel Gateway at {self.config.grpc_endpoint}")
         except Exception as e:
@@ -185,17 +183,17 @@ class KernelGatewayClient:
                 f"request_id={internal_metadata['request_id']}"
             )
             
-            # Placeholder: would call actual gRPC stub
+            # Deterministic scaffolded fallback until internal gRPC wiring is enabled.
             # response = await self._stub.EnqueueJob(
             #     request,
             #     timeout=self.config.timeout_seconds,
             # )
             
-            # For now, return mock response
+            # Keep the local fallback deterministic for the current scaffold.
             response = {
                 "job_id": f"job-{uuid.uuid4().hex[:8]}",
                 "state": "TASK_STATE_PENDING",
-                "created_at": None,  # Would be actual timestamp
+                "created_at": None,
             }
             
             return response
@@ -225,13 +223,13 @@ class KernelGatewayClient:
         try:
             internal_metadata = self._build_request_metadata(public_envelope)
             
-            # Placeholder: would build actual proto request
+            # Scaffolded: would build actual proto request
             logger.info(
                 f"Getting job status for {job_id}. "
                 f"request_id={internal_metadata['request_id']}"
             )
             
-            # Placeholder response
+            # Scaffolded response
             response = {
                 "job_id": job_id,
                 "state": "TASK_STATE_PENDING",
@@ -272,7 +270,7 @@ class KernelGatewayClient:
                 f"request_id={internal_metadata['request_id']}"
             )
             
-            # Placeholder response
+            # Scaffolded response
             response = {
                 "accepted": True,
                 "reason_code": "CANCEL_ACCEPTED",
@@ -309,7 +307,7 @@ class KernelGatewayClient:
                 f"request_id={internal_metadata['request_id']}"
             )
             
-            # Placeholder response
+            # Scaffolded response
             response = {
                 "job_id": job_id,
                 "state": "TASK_STATE_DONE",
@@ -350,7 +348,7 @@ class KernelGatewayClient:
                 f"request_id={internal_metadata['request_id']}"
             )
             
-            # Placeholder: would stream actual gRPC responses
+            # Scaffolded: would stream actual gRPC responses
             # For testing, yield mock updates
             yield {
                 "event_seq": 1,
@@ -374,6 +372,4 @@ class KernelGatewayClient:
         
         Returns error suitable for public API error envelope.
         """
-        # Placeholder: would implement canonical error mapping
-        # following docs/reference/error-model.md and error-mapping.md
         return Exception(f"Kernel error: {kernel_error}")

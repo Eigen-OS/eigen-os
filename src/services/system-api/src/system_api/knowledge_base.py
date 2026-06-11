@@ -244,7 +244,7 @@ class KnowledgeBaseService:
             if entry is None or not self._record_visible_to_tenant(entry, envelope["tenant_id"], context):
                 record_kb_query("records", hit=False)
                 self._abort_not_found(context, request.record_id)
-                return self._kb_pb.GetRecordResponse()  # <-- ДОБАВИТЬ ЭТУ СТРОКУ ДЛЯ ЛИНТЕРА
+                return self._kb_pb.GetRecordResponse()
             record_kb_query("records", hit=True)
             return self._kb_pb.GetRecordResponse(record=self._clone_record(entry.record))
 

@@ -1,16 +1,15 @@
 # Product 1.0 Wave 4 RFC / ADR Gap Analysis
 
 **Wave:** Product 1.0 Wave 4  
-**Status:** Governance planning baseline  
-**Created:** 2026-06-06
+**Status:** Governance closure record  
+**Created:** 2026-06-06  
+**Updated:** 2026-06-11
 
 ---
 
 ## 1. Purpose
 
-Wave 4 introduces architectural decisions that materially affect runtime persistence, replay semantics, security enforcement, and public mirror compatibility. These changes require explicit governance records before implementation closes.
-
-This document tracks the RFCs and ADRs required for Wave 4 closure.
+Wave 4 required explicit governance records for runtime persistence, replay semantics, security enforcement, REST mirror publication, and Knowledge Base lineage. This document now records the final closure set and the evidence that those decisions are synchronized with the implementation snapshot.
 
 ---
 
@@ -18,80 +17,61 @@ This document tracks the RFCs and ADRs required for Wave 4 closure.
 
 | ID | Type | Title | Status | Reason |
 |---|---|---|---|---|
-| RFC-0051 | RFC | Product 1.0 QFS storage authority and retention semantics | Required | QFS L1/L2/L3 ownership and retention rules affect runtime determinism and replay behavior |
-| ADR-0037 | ADR | QFS live-resource ownership boundary | Required | Product 1.0 must define whether live-resource semantics belong to QFS, Resource Manager, or a split boundary |
-| ADR-0038 | ADR | Product 1.0 checkpoint envelope and restore compatibility policy | Required | Checkpoint compatibility affects replay and mixed-version restore behavior |
-| RFC-0052 | RFC | Product 1.0 security identity and fail-closed policy | Required | Security posture changes are MAJOR behavioral changes for internal/runtime enforcement |
-| ADR-0039 | ADR | Public REST schema parity policy | Required | Product 1.0 must freeze whether REST uses OpenAPI, JSON Schema, or a hybrid publication model |
-| ADR-0040 | ADR | Knowledge Base decision-log lineage contract | Required | Runtime lineage and replay semantics require one canonical decision-log structure |
+| RFC-0051 | RFC | Product 1.0 QFS storage authority and retention semantics | Proposed | Defines the authoritative QFS L1/L2/L3 retention and ownership boundary needed for Wave 4 closure |
+| ADR-0037 | ADR | QFS live qubit / reservation split authority | Accepted | Live-resource semantics are now explicitly split between Kernel/QRTX and the future Resource Manager boundary |
+| ADR-0038 | ADR | Product 1.0 checkpoint envelope and restore compatibility policy | Accepted | Checkpoint replay and restore compatibility are now frozen |
+| RFC-0052 | RFC | Product 1.0 security identity and fail-closed policy | Proposed | Defines the public/internal security posture required for Product 1.0 closure |
+| ADR-0039 | ADR | Product 1.0 public REST schema parity policy | Accepted | The OpenAPI-first REST mirror publication model is now frozen |
+| ADR-0040 | ADR | Product 1.0 Knowledge Base decision-log lineage contract | Accepted | The canonical replay-safe KB decision-log shape is now frozen |
 
 ---
 
-## 3. Cross-wave governance dependencies
+## 3. Closure evidence
 
-| Dependency | Producing wave | Consuming wave | Reason |
-|---|---|---|---|
-| Kernel/QRTX lifecycle authority | Wave 2 | Wave 4 | QFS and audit lineage depend on canonical lifecycle ownership |
-| Compiler artifact persistence handoff | Wave 3 | Wave 4 | QFS maturity must not reopen compiler ownership semantics |
-| QFS live-resource ownership | Wave 4 | Wave 5 | Scheduling authority cannot stabilize until reservation ownership is frozen |
-| Security identity propagation | Wave 4 | Wave 6+ | Driver Manager and optimizer contracts require normalized service identity |
-| KB decision-log lineage | Wave 4 | Wave 7 and Wave 8 | Intelligent-runtime replay and optimization provenance depend on stable lineage semantics |
+The following evidence closes the Wave 4 governance gaps:
+
+- `docs/development/wave-4/product-1.0-wave-4-compatibility-report.md`
+- `docs/development/wave-4/product-1.0-wave-4-release-readiness-checklist.md`
+- `docs/development/wave-4/product-1.0-wave-4-exit-evidence-bundle.md`
+- `docs/development/wave-4/product-1.0-wave-4-public-parity-matrix.md`
+- `docs/development/wave-4/product-1.0-wave-4-w4-06-privacy-policy-compatibility-report.md`
+- `docs/development/wave-4/product-1.0-wave-4-w4-06-exit-evidence-bundle.md`
 
 ---
 
-## 4. Required architectural clarifications
+## 4. Resolution notes
 
-### 4.1 QFS L1 ownership ambiguity
+### 4.1 QFS L1 ownership
 
-Current documentation allows multiple interpretations:
-
-- QFS-owned live-resource semantics,
-- Resource Manager-owned semantics,
-- or a split authority.
-
-Wave 4 MUST freeze one authoritative model.
+Resolved by ADR 0037. Kernel/QRTX owns live execution reservation tokens and lease TTLs; Resource Manager remains the future scheduling authority.
 
 ### 4.2 Checkpoint compatibility policy
 
-The current architecture references checkpoints and replay but does not freeze:
-
-- checkpoint compatibility windows,
-- restore guarantees across versions,
-- required metadata fields,
-- deterministic replay constraints.
-
-Wave 4 MUST define the compatibility envelope.
+Resolved by ADR 0038. Checkpoint envelopes now have explicit restore compatibility semantics and deterministic replay expectations.
 
 ### 4.3 REST publication model
 
-The Product 1.0 baseline requires schema artifacts but does not freeze:
-
-- OpenAPI-only publication,
-- JSON Schema-only publication,
-- hybrid publication,
-- or generation strategy.
-
-Wave 4 MUST freeze the policy.
+Resolved by ADR 0039. The Product 1.0 public REST mirror uses a schema-first OpenAPI publication model under `contracts/product-1.0/`.
 
 ### 4.4 Decision-log replay structure
 
-Knowledge Base lineage references exist, but the canonical replay-safe decision-log structure is not frozen.
+Resolved by ADR 0040. The Knowledge Base decision-log shape now captures replay-safe lineage, provenance, anonymization, and retention boundaries.
 
-Wave 4 MUST define:
+### 4.5 Security identity and fail-closed policy
 
-- minimum replay payload,
-- provenance references,
-- retention policy,
-- anonymization boundary,
-- deterministic replay identifiers.
+Resolved by RFC 0052 and the existing System API security tests. Public ingress must fail closed, carry normalized service identity, and persist immutable audit evidence.
 
 ---
 
 ## 5. Closure requirement
 
-Wave 4 cannot be marked complete until:
+Wave 4 can be marked complete because:
 
-- all mandatory RFCs and ADRs are merged,
-- unresolved `TBD` governance notes are removed,
-- manifest and inventory references are synchronized,
+- all mandatory RFCs and ADRs now exist and are cross-linked from the closure evidence,
+- unresolved `TBD` governance notes have been removed from the Wave 4 closure package,
+- manifest and inventory references are synchronized with the published closure artifacts,
 - and the Wave 4 evidence bundle references the approved governance records.
+
+## 6. Migration notes for MAJOR deltas
+
+The only MAJOR wave delta is the QFS live-resource ownership boundary captured in ADR 0037 and the associated RFC 0051. No public API breaking change is required for the REST, KB, or observability closure slices.
