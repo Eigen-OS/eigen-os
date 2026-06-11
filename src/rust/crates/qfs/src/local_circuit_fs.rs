@@ -169,12 +169,8 @@ impl CircuitFsLocal {
         Ok(self.logs_dir_path(job_id)?.join(format!("{stream}.jsonl")))
     }
 
-    fn root_path(&self) -> &Path {
-        &self.root
-    }
-
     fn job_root_path(&self, job_id: &str) -> PathBuf {
-        self.root_path().join("jobs").join(job_id)
+        self.root.join("jobs").join(job_id)
     }
 
     fn compiled_dir_path(&self, job_id: &str) -> Result<PathBuf, CircuitFsError> {

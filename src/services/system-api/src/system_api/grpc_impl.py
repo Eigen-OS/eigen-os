@@ -333,12 +333,23 @@ class JobService:
     def __init__(self, job_pb, types_pb, kb_service: KnowledgeBaseService | None = None):
         self._job_pb = job_pb
         self._types_pb = types_pb
-        self._reservation_store_path = Path(
-            os.getenv("SYSTEM_API_RESERVATION_STORE_PATH", "/tmp/eigen-system-api-reservations.json")
+        self._kb_service = kb_service
+        self._jobs: dict[str, _JobRecord] = {}
+        self._idempotency: dict[str, _IdempotencyRecord] = {}
+        self._idempotency_ttl_sec = max(float(os.getenv("SYSTEM_API_IDEMPOTENCY_TTL_SECONDS", "86400")), 1.0)
+        self._idempotency_store_path = Path(
+            os.getenv("SYSTEM_API_IDEMPOTENCY_STORE_PATH", "/tmp/eigen-system-api-idempotency.json")
         )
-        self._reservation_qfs_root = os.getenv("SYSTEM_API_RESERVATION_QFS_ROOT", "qfs://reservations")
-        self._reservations: dict[str, _ReservationRecord] = {}
-        self._load_reservation_records()
+        self._lock = threading.RLock()
+        self._load_idempotency_records()
+        self._batch_mode_enabled = os.getenv("EIGEN_BATCH_MODE", "1").strip() not in {"0", "false", "off"}
+        self._batch_size = max(int(os.getenv("EIGEN_BATCH_SIZE", "4")), 2)
+        self._batch_wait_window_sec = max(float(os.getenv("EIGEN_BATCH_WAIT_WINDOW_SEC", "0.2")), 0.0)
+        self._batch_dispatch_gap_sec = max(float(os.getenv("EIGEN_BATCH_DISPATCH_GAP_SEC", "0.15")), 0.0)
+        self._batch_inflight_limit = max(int(os.getenv("EIGEN_BATCH_INFLIGHT_LIMIT", "64")), self._batch_size)
+        self._quota_per_target = max(int(os.getenv("EIGEN_SCHED_QUOTA_PER_TARGET", "8")), 1)
+        self._starvation_threshold_sec = max(float(os.getenv("EIGEN_SCHED_STARVATION_SEC", "2.0")), 0.0)
+        self._dispatch_slot_seq = 0
 
     def _reservation_binding_key(
         self,
@@ -440,23 +451,6 @@ class JobService:
                 changed = True
         if changed:
             self._persist_reservation_records()
-        self._kb_service = kb_service
-        self._jobs: dict[str, _JobRecord] = {}
-        self._idempotency: dict[str, _IdempotencyRecord] = {}
-        self._idempotency_ttl_sec = max(float(os.getenv("SYSTEM_API_IDEMPOTENCY_TTL_SECONDS", "86400")), 1.0)
-        self._idempotency_store_path = Path(
-            os.getenv("SYSTEM_API_IDEMPOTENCY_STORE_PATH", "/tmp/eigen-system-api-idempotency.json")
-        )
-        self._lock = threading.RLock()
-        self._load_idempotency_records()
-        self._batch_mode_enabled = os.getenv("EIGEN_BATCH_MODE", "1").strip() not in {"0", "false", "off"}
-        self._batch_size = max(int(os.getenv("EIGEN_BATCH_SIZE", "4")), 2)
-        self._batch_wait_window_sec = max(float(os.getenv("EIGEN_BATCH_WAIT_WINDOW_SEC", "0.2")), 0.0)
-        self._batch_dispatch_gap_sec = max(float(os.getenv("EIGEN_BATCH_DISPATCH_GAP_SEC", "0.15")), 0.0)
-        self._batch_inflight_limit = max(int(os.getenv("EIGEN_BATCH_INFLIGHT_LIMIT", "64")), self._batch_size)
-        self._quota_per_target = max(int(os.getenv("EIGEN_SCHED_QUOTA_PER_TARGET", "8")), 1)
-        self._starvation_threshold_sec = max(float(os.getenv("EIGEN_SCHED_STARVATION_SEC", "2.0")), 0.0)
-        self._dispatch_slot_seq = 0
 
     def _load_idempotency_records(self) -> None:
         if not self._idempotency_store_path.exists():
@@ -1874,6 +1868,114 @@ class DeviceService:
     def __init__(self, dev_pb, types_pb):
         self._dev_pb = dev_pb
         self._types_pb = types_pb
+        self._reservation_store_path = Path(
+            os.getenv("SYSTEM_API_RESERVATION_STORE_PATH", "/tmp/eigen-system-api-reservations.json")
+        )
+        self._reservation_qfs_root = os.getenv("SYSTEM_API_RESERVATION_QFS_ROOT", "qfs://reservations")
+        self._reservations: dict[str, _ReservationRecord] = {}
+        self._lock = threading.RLock()
+        self._load_reservation_records()
+
+    def _reservation_binding_key(
+        self,
+        *,
+        device_id: str,
+        purpose: str,
+        owner_subject: str,
+        owner_tenant: str,
+        owner_project: str,
+    ) -> str:
+        payload = {
+            "device_id": device_id,
+            "purpose": purpose,
+            "owner_subject": owner_subject,
+            "owner_tenant": owner_tenant,
+            "owner_project": owner_project,
+        }
+        return sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+    def _reservation_request_hash(
+        self,
+        *,
+        device_id: str,
+        purpose: str,
+        ttl_seconds: int,
+        owner_subject: str,
+        owner_tenant: str,
+        owner_project: str,
+    ) -> str:
+        payload = {
+            "device_id": device_id,
+            "purpose": purpose,
+            "ttl_seconds": ttl_seconds,
+            "owner_subject": owner_subject,
+            "owner_tenant": owner_tenant,
+            "owner_project": owner_project,
+        }
+        return sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+    def _reservation_id_for(self, binding_key: str) -> str:
+        return f"rsv_{binding_key[:12]}"
+
+    def _reservation_artifact_ref(self, reservation_id: str) -> str:
+        return f"{self._reservation_qfs_root}/{reservation_id}/reservation.json"
+
+    def _write_reservation_artifact(self, record: _ReservationRecord) -> None:
+        QFS_STORE.atomic_write_bytes(
+            self._reservation_artifact_ref(record.reservation_id),
+            json.dumps(
+                {
+                    "version": "1.0.0",
+                    "reservation": record.to_json(),
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8"),
+        )
+
+    def _load_reservation_records(self) -> None:
+        if not self._reservation_store_path.exists():
+            return
+        try:
+            payload = json.loads(self._reservation_store_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
+        records = payload.get("reservations", {}) if isinstance(payload, dict) else {}
+        if not isinstance(records, dict):
+            return
+        for raw in records.values():
+            if not isinstance(raw, dict):
+                continue
+            try:
+                record = _ReservationRecord.from_json(raw)
+            except (KeyError, TypeError, ValueError):
+                continue
+            self._reservations[record.reservation_id] = record
+        self._sweep_expired_reservations(time.time())
+        self._persist_reservation_records()
+
+    def _persist_reservation_records(self) -> None:
+        payload = {
+            "version": "1.0.0",
+            "reservations": {
+                reservation_id: record.to_json()
+                for reservation_id, record in sorted(self._reservations.items())
+            },
+        }
+        self._reservation_store_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self._reservation_store_path.with_suffix(self._reservation_store_path.suffix + ".tmp")
+        tmp.write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")), encoding="utf-8")
+        tmp.replace(self._reservation_store_path)
+
+    def _sweep_expired_reservations(self, now_unix: float) -> None:
+        changed = False
+        for record in self._reservations.values():
+            if record.state == "ACTIVE" and now_unix >= record.expires_at_unix:
+                record.state = "EXPIRED"
+                record.updated_at_unix = now_unix
+                changed = True
+        if changed:
+            self._persist_reservation_records()
 
     def ListDevices(self, request, context: grpc.ServicerContext):
         enforce_authn(context, method_name="DeviceService.ListDevices")

@@ -105,7 +105,8 @@ impl DurableJobStore {
                 continue;
             }
 
-            let snapshot_line = fs::read_to_string(&snapshot_path)?
+            let snapshot_text = fs::read_to_string(&snapshot_path)?;
+            let snapshot_line = snapshot_text
                 .lines()
                 .next()
                 .ok_or("missing replay snapshot")?;

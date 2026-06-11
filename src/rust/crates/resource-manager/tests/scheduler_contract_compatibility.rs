@@ -327,7 +327,7 @@ fn all_orchestration_contracts_keep_explicit_version_markers() {
     assert_eq!(BACKEND_SCORING_CONTRACT_VERSION, "1.0.0");
     assert_eq!(BACKEND_SCORING_PROFILE_SCHEMA_VERSION, "1.0.0");
     assert_eq!(REBALANCING_POLICY_VERSION, "2.2.0");
-    assert_eq!(MULTI_DEVICE_EXECUTION_CONTRACT_VERSION, "2.0.0");
+    assert_eq!(MULTI_DEVICE_EXECUTION_CONTRACT_VERSION, "3.1.0");
     assert_eq!(CLUSTER_CONTROL_PLANE_CONTRACT_VERSION, "1.0.0");
     assert_eq!(CLUSTER_ASSIGNMENT_LINEAGE_VERSION, "1.0.0");
     assert_eq!(WORKER_NODE_EXECUTION_CONTRACT_VERSION, "1.0.0");

@@ -26,9 +26,17 @@ def _free_port() -> int:
         return int(sock.getsockname()[1])
 
 
-def _reserve(stub: dev_pb_grpc.DeviceServiceStub, *, device_id: str, ttl_seconds: int, purpose: str) -> dev_pb.ReserveDeviceResponse:
+def _reserve(
+    stub: dev_pb_grpc.DeviceServiceStub,
+    *,
+    device_id: str,
+    ttl_seconds: int,
+    purpose: str,
+    metadata=None,
+) -> dev_pb.ReserveDeviceResponse:
     return stub.ReserveDevice(
-        dev_pb.ReserveDeviceRequest(device_id=device_id, ttl_seconds=ttl_seconds, purpose=purpose)
+        dev_pb.ReserveDeviceRequest(device_id=device_id, ttl_seconds=ttl_seconds, purpose=purpose),
+        metadata=metadata,
     )
 
 
@@ -151,9 +159,9 @@ def test_reserve_device_rejects_double_booking(monkeypatch: pytest.MonkeyPatch, 
         channel = grpc.insecure_channel(addr)
         stub = dev_pb_grpc.DeviceServiceStub(channel)
         md = (("authorization", "Bearer reserve-token"),)
-        _reserve(stub, device_id="sim:local", ttl_seconds=2, purpose="job-a")
+        _reserve(stub, device_id="sim:local", ttl_seconds=2, purpose="job-a", metadata=md)
         with pytest.raises(grpc.RpcError) as exc:
-            _reserve(stub, device_id="sim:local", ttl_seconds=2, purpose="job-b")
+            _reserve(stub, device_id="sim:local", ttl_seconds=2, purpose="job-b", metadata=md)
         assert exc.value.code() == grpc.StatusCode.FAILED_PRECONDITION
     finally:
         server.stop(0)
@@ -174,9 +182,15 @@ def test_reserve_device_expires_and_allows_reallocation(monkeypatch: pytest.Monk
         channel = grpc.insecure_channel(addr)
         stub = dev_pb_grpc.DeviceServiceStub(channel)
         md = (("authorization", "Bearer reserve-token"),)
-        _reserve(stub, device_id="sim:local", ttl_seconds=1, purpose="job-expire-a")
+        _reserve(stub, device_id="sim:local", ttl_seconds=1, purpose="job-expire-a", metadata=md)
         time.sleep(1.2)
-        recovered = _reserve(stub, device_id="sim:local", ttl_seconds=1, purpose="job-expire-b")
+        recovered = _reserve(
+            stub,
+            device_id="sim:local",
+            ttl_seconds=1,
+            purpose="job-expire-b",
+            metadata=md,
+        )
         assert recovered.reservation_id
     finally:
         server.stop(0)

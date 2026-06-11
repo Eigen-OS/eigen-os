@@ -11,6 +11,7 @@
 //! - RFC 0007 (QRTX MVP)
 
 use serde::{Deserialize, Serialize};
+use sha2::Digest;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::state_machine::{JobEvent, JobState, transition};
