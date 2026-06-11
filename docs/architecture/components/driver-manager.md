@@ -106,8 +106,9 @@ DM MUST accept execution requests from the kernel and:
 
 DM MUST return backend-independent results:
 
-- canonical `counts` bitstring ordering (per system contract),
-- stable metadata keys (backend id/name, timing, shots, etc.),
+- canonical `counts` bitstring ordering (sorted by bitstring key),
+- normalized execution timing (non-negative, rounded to microsecond precision),
+- stable metadata keys and string values (backend id/name, timing, shots, etc.),
 - stable error mapping (gRPC status + structured details).
 
 Normalization MUST be deterministic for equivalent backend outputs.
@@ -356,10 +357,11 @@ DM MUST follow the canonical Eigen OS error model:
 
 - **Transport failures:** gRPC status codes
 - **Validation failures:** `INVALID_ARGUMENT` with structured field violations
-- **Missing resources: `NOT_FOUND` for unknown `device_id` (preferred)
-- **Unsupported featur**e/format:** `UNIMPLEMENTED`
+- **Missing resources:** `NOT_FOUND` for unknown `device_id` (preferred)
+- **Unsupported feature/format:** `UNIMPLEMENTED`
 - **Backend/provider outages:** `UNAVAILABLE` (+ `RetryInfo` when appropriate)
 - **Quota/capacity limits:** `RESOURCE_EXHAUSTED` (+ `RetryInfo` when appropriate)
+- **Backend precondition failures:** `FAILED_PRECONDITION` (+ `PreconditionFailure` when appropriate)
 - **Unexpected invariants:** `INTERNAL` with correlation metadata
 
 Device profile negotiation failures MUST use the same canonical model:

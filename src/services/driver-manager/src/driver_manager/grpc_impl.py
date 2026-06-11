@@ -19,6 +19,25 @@ def _circuit_format_value(types_pb, *names: str) -> int:
     raise AttributeError(f"None of the enum names exist: {names}")
 
 
+def _circuit_format_name(types_pb, value: int) -> str:
+    for name, enum_value in vars(types_pb).items():
+        if name.startswith("CIRCUIT_FORMAT_") and isinstance(enum_value, int) and int(enum_value) == int(value):
+            return name
+    return str(value)
+
+
+def _normalize_counts(counts: dict[str, int]) -> dict[str, int]:
+    return {str(bitstring): int(value) for bitstring, value in sorted(counts.items(), key=lambda item: str(item[0]))}
+
+
+def _normalize_metadata(metadata: dict[str, str]) -> dict[str, str]:
+    return {str(key): str(value) for key, value in sorted(metadata.items(), key=lambda item: str(item[0]))}
+
+
+def _normalize_execution_time_sec(execution_time_sec: float) -> float:
+    return round(max(0.0, float(execution_time_sec)), 6)
+
+
 class DriverManagerService:
     """Kernel-facing service that delegates to registered drivers."""
 
@@ -81,12 +100,13 @@ class DriverManagerService:
                 provider="driver_registry",
             )
 
-        if request.payload.format != _circuit_format_value(self._types_pb, "CIRCUIT_FORMAT_AQO_JSON", "AQO_JSON"):
+        aqo_json_format = _circuit_format_value(self._types_pb, "CIRCUIT_FORMAT_AQO_JSON", "AQO_JSON")
+        if request.payload.format != aqo_json_format:
             abort_normalized(
                 context,
                 normalized=map_backend_error(
                     grpc.StatusCode.UNIMPLEMENTED,
-                    f"unsupported circuit payload format: {request.payload.format}",
+                    f"unsupported circuit payload format: {_circuit_format_name(self._types_pb, request.payload.format)}",
                 ),
                 job_id=request.job_id,
                 provider="driver_manager",
@@ -108,9 +128,9 @@ class DriverManagerService:
             )
 
         resp = self._drv_pb.ExecuteCircuitResponse(
-            counts=counts,
-            execution_time_sec=execution_time_sec,
-            metadata=metadata,
+            counts=_normalize_counts(counts),
+            execution_time_sec=_normalize_execution_time_sec(execution_time_sec),
+            metadata=_normalize_metadata(metadata),
         )
         _log_end("DriverManagerService.ExecuteCircuit", request.job_id, context)
 
