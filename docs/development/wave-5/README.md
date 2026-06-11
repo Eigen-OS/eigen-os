@@ -38,26 +38,11 @@ Wave 5 depends on:
 
 ## Primary source-of-truth references
 
-### Architecture
-
 - `docs/architecture/contract-map.md`
 - `docs/architecture/components/resource-manager.md`
 - `docs/architecture/components/driver-manager.md`
 - `docs/architecture/components/qrtx.md`
 - `docs/architecture/components/observability.md`
-
-### Reference contracts
-
 - `docs/reference/multi-device-execution-contract.md`
 - `docs/reference/orchestration-observability-contract.md`
 - `docs/reference/intelligent-runtime-observability-contract.md`
-- `docs/reference/error-model.md`
-- `docs/reference/error-mapping.md`
-
-### Governance and evidence
-
-- `rfcs/0053-product-1.0-resource-manager-authority.md`
-- `rfcs/0054-product-1.0-deterministic-scheduling-and-replay.md`
-- `docs/adr/0041-product-1.0-resource-manager-deployment-model.md`
-- `docs/adr/0042-product-1.0-distributed-execution-split-merge-policy.md`
-- `docs/adr/0043-product-1.0-queue-delivery-and-recovery-semantics.md`
