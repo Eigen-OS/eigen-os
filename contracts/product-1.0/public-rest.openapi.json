@@ -89,6 +89,16 @@
             "x-request-id"
           ]
         },
+        "x-deterministic-request-hashing": {
+          "algorithm": "sha256",
+          "canonicalization": [
+            "UTF-8 encoding",
+            "lexicographically sorted JSON object keys",
+            "no insignificant whitespace",
+            "preserve array ordering",
+            "reject NaN/Infinity"
+          ]
+        },
         "security": [
           {
             "bearerAuth": []
