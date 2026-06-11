@@ -17,6 +17,7 @@ Align the kernel-facing driver manager contract with the final QDriver v1 semant
 
 - `docs/architecture/components/driver-manager.md`
 - `docs/reference/api/grpc-internal.md`
+- `docs/reference/api/qdriver.md`
 - `rfcs/0044-phase8d-qdriver-api-v1-final-contract-and-conformance-semantics.md`
 - `docs/adr/0030-phase8d-qdriver-api-v1-final-contract-and-conformance-semantics.md`
 

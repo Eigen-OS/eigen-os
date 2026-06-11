@@ -333,6 +333,19 @@ service DriverManagerService {
 }
 ```
 
+Canonical final-contract reference for this boundary:
+
+- `docs/reference/api/qdriver.md`
+
+`DriverManagerService` is the kernel-facing transport projection of the final QDriver v1 contract. The semantic mapping is intentionally stable:
+
+- `ExecuteCircuit` projects QDriver `Execute`
+- `GetDeviceStatus` projects QDriver `GetStatus`
+- `CalibrateDevice` projects QDriver `Calibrate`
+- cancellation is propagated through the kernel transport layer as the QDriver `Cancel` semantic
+
+Unsupported capability selection and version mismatch MUST remain deterministic and must use the canonical error model defined by the QDriver reference.
+
 #### ExecuteCircuit
 
 Synchronous unary execution.

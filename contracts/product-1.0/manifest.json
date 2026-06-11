@@ -618,5 +618,37 @@
       "implementation_status": "implemented",
       "compatibility_status": "compatible"
     }
+    ,
+    {
+      "name": "Driver Manager and QDriver final contract",
+      "contract_version": "1.0.0",
+      "owner": "Driver Manager; Kernel/QRTX",
+      "sources": [
+        "docs/architecture/components/driver-manager.md",
+        "docs/reference/api/grpc-internal.md",
+        "docs/reference/api/qdriver.md",
+        "rfcs/0044-phase8d-qdriver-api-v1-final-contract-and-conformance-semantics.md",
+        "rfcs/0045-phase8d-provider-driver-matrix-contract-and-tolerance-profiles.md",
+        "docs/adr/0030-phase8d-qdriver-api-v1-final-contract-and-conformance-semantics.md",
+        "docs/adr/0031-phase8d-provider-driver-matrix-contract-and-tolerance-profiles.md"
+      ],
+      "proto_schema_files": [
+        "proto/eigen/internal/v1/driver_manager_service.proto"
+      ],
+      "planned_proto_schema_files": [],
+      "conformance_tests": [
+        "src/services/driver-manager/tests/test_qdriver_v1_conformance.py",
+        "src/services/driver-manager/tests/test_official_driver_matrix_fixture.py",
+        "src/services/driver-manager/tests/test_parity_policy_fixture.py",
+        "src/services/driver-manager/tests/test_parity_tolerance_suite.py",
+        "src/services/driver-manager/tests/test_secret_lifecycle.py"
+      ],
+      "implementation_notes": [
+        "docs/reference/api/qdriver.md is the canonical final-contract reference.",
+        "DriverManagerService remains the kernel-facing transport projection of the final QDriver v1 semantics."
+      ],
+      "implementation_status": "documented",
+      "compatibility_status": "needs-alignment"
+    }
   ]
 }

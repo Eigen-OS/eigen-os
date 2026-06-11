@@ -382,15 +382,16 @@ The concrete Wave 3 mappings are captured in the inventory and closure package:
    - `GetStatus`,
    - `Calibrate`,
    - `Cancel`.
-2. Split Driver Manager responsibilities from provider-specific QDriver implementations.
-3. Implement capability registry with versioned device profiles.
-4. Implement session pooling and lifecycle governance.
-5. Implement normalized result schema and error mapping.
-6. Enforce sandbox/process/container isolation policy.
-7. Ensure provider secrets are accessed only through the security/secrets module.
-8. Implement provider tolerance profiles and parity tests.
-9. Add official simulator as the reference conformance backend.
-10. Add optional provider drivers only behind explicit configuration and test profiles.
+2. Add a canonical reference doc at `docs/reference/api/qdriver.md` so the final transport semantics are frozen in the reference surface.
+3. Split Driver Manager responsibilities from provider-specific QDriver implementations.
+4. Implement capability registry with versioned device profiles.
+5. Implement session pooling and lifecycle governance.
+6. Implement normalized result schema and error mapping.
+7. Enforce sandbox/process/container isolation policy.
+8. Ensure provider secrets are accessed only through the security/secrets module.
+9. Implement provider tolerance profiles and parity tests.
+10. Add official simulator as the reference conformance backend.
+11. Add optional provider drivers only behind explicit configuration and test profiles.
 
 #### Exit criteria
 
