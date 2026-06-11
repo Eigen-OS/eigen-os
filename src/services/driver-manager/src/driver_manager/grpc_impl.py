@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 
 import grpc
 
 from .errors import FieldViolation, abort_invalid_argument, abort_normalized, map_backend_error
-from .main import record_backend_failure, record_driver_request, record_driver_session
 from .registry import DriverRegistry
 from .simulator_driver import DriverExecutionError
 import time
@@ -52,7 +52,9 @@ class DriverManagerService:
         start = time.perf_counter()
         _log_start("DriverManagerService.ListDevices", "", context)
         resp = self._drv_pb.ListDevicesResponse(devices=self._registry.list_devices())
-        record_driver_request("ListDevices", "OK", (time.perf_counter() - start) * 1000.0)
+        from . import main as driver_manager_main
+
+        driver_manager_main.record_driver_request("ListDevices", "OK", (time.perf_counter() - start) * 1000.0)
         _log_end("DriverManagerService.ListDevices", "", context)
         return resp
 
@@ -82,7 +84,9 @@ class DriverManagerService:
             estimated_wait_sec=info.estimated_wait_sec,
             metadata=info.metadata,
         )
-        record_driver_request("GetDeviceStatus", "OK", (time.perf_counter() - start) * 1000.0)
+        from . import main as driver_manager_main
+
+        driver_manager_main.record_driver_request("GetDeviceStatus", "OK", (time.perf_counter() - start) * 1000.0)
         _log_end("DriverManagerService.GetDeviceStatus", request.device_id, context)
         return resp
 
@@ -129,7 +133,9 @@ class DriverManagerService:
                 options=dict(request.options),
             )
         except DriverExecutionError as err:
-            record_backend_failure("driver_manager", err.code.name.lower())
+            from . import main as driver_manager_main
+
+            driver_manager_main.record_backend_failure("driver_manager", err.code.name.lower())
             abort_normalized(
                 context,
                 normalized=map_backend_error(err.code, err.message),
@@ -142,8 +148,10 @@ class DriverManagerService:
             execution_time_sec=_normalize_execution_time_sec(execution_time_sec),
             metadata=_normalize_metadata(metadata),
         )
-        record_driver_session(getattr(driver, "name", "unknown"), "active")
-        record_driver_request("ExecuteCircuit", "OK", (time.perf_counter() - start) * 1000.0)
+        from . import main as driver_manager_main
+
+        driver_manager_main.record_driver_session(getattr(driver, "name", "unknown"), "active")
+        driver_manager_main.record_driver_request("ExecuteCircuit", "OK", (time.perf_counter() - start) * 1000.0)
         _log_end("DriverManagerService.ExecuteCircuit", request.job_id, context)
 
         return resp

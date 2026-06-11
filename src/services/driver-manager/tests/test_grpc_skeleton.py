@@ -81,6 +81,7 @@ def _execute(
     payload: bytes,
     shots: int = 200,
     options: dict[str, str] | None = None,
+    metadata: list[tuple[str, str]] | None = None,
     device_id: str = "sim:local",
     job_id: str = "job-1",
 ):
@@ -94,7 +95,8 @@ def _execute(
             ),
             shots=shots,
             options=options or {},
-        )
+        ),
+        metadata=metadata or (),
     )
 
 
@@ -294,6 +296,7 @@ def test_observability_smoke_and_trace_continuity(grpc_addr: str, caplog: pytest
         payload=_aqo([{"op": "MEASURE", "q": [0], "c": [0]}], qubits=1),
         device_id="norm:0",
         job_id="job-trace",
+        metadata=metadata,
     )
     assert dict(resp.counts)
     assert any(getattr(record, "trace_id", None) == "0123456789abcdef0123456789abcdef" for record in caplog.records)
