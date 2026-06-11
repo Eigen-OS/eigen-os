@@ -184,6 +184,12 @@ def _ts_now() -> Timestamp:
     return ts
 
 
+def _ts_from_unix(seconds: float) -> Timestamp:
+    ts = Timestamp()
+    ts.FromDatetime(datetime.fromtimestamp(seconds, tz=timezone.utc))
+    return ts
+
+
 def _serialize_results_parquet(
     *,
     job_id: str,
@@ -272,12 +278,168 @@ class _IdempotencyRecord:
         }
 
 
+@dataclass
+class _ReservationRecord:
+    reservation_id: str
+    device_id: str
+    purpose: str
+    owner_subject: str
+    owner_tenant: str
+    owner_project: str
+    request_hash: str
+    ttl_seconds: int
+    state: str
+    created_at_unix: float
+    updated_at_unix: float
+    expires_at_unix: float
+
+    @classmethod
+    def from_json(cls, payload: dict[str, object]) -> "_ReservationRecord":
+        return cls(
+            reservation_id=str(payload["reservation_id"]),
+            device_id=str(payload["device_id"]),
+            purpose=str(payload.get("purpose", "unspecified")),
+            owner_subject=str(payload.get("owner_subject", "")),
+            owner_tenant=str(payload.get("owner_tenant", "tenant-default")),
+            owner_project=str(payload.get("owner_project", "project-default")),
+            request_hash=str(payload.get("request_hash", "")),
+            ttl_seconds=int(payload.get("ttl_seconds", 0)),
+            state=str(payload.get("state", "ACTIVE")),
+            created_at_unix=float(payload.get("created_at_unix", 0.0)),
+            updated_at_unix=float(payload.get("updated_at_unix", 0.0)),
+            expires_at_unix=float(payload.get("expires_at_unix", 0.0)),
+        )
+
+    def to_json(self) -> dict[str, object]:
+        return {
+            "reservation_id": self.reservation_id,
+            "device_id": self.device_id,
+            "purpose": self.purpose,
+            "owner_subject": self.owner_subject,
+            "owner_tenant": self.owner_tenant,
+            "owner_project": self.owner_project,
+            "request_hash": self.request_hash,
+            "ttl_seconds": self.ttl_seconds,
+            "state": self.state,
+            "created_at_unix": self.created_at_unix,
+            "updated_at_unix": self.updated_at_unix,
+            "expires_at_unix": self.expires_at_unix,
+        }
+
+
 class JobService:
     """Implementation of eigen.api.v1.JobService."""
 
     def __init__(self, job_pb, types_pb, kb_service: KnowledgeBaseService | None = None):
         self._job_pb = job_pb
         self._types_pb = types_pb
+        self._reservation_store_path = Path(
+            os.getenv("SYSTEM_API_RESERVATION_STORE_PATH", "/tmp/eigen-system-api-reservations.json")
+        )
+        self._reservation_qfs_root = os.getenv("SYSTEM_API_RESERVATION_QFS_ROOT", "qfs://reservations")
+        self._reservations: dict[str, _ReservationRecord] = {}
+        self._load_reservation_records()
+
+    def _reservation_binding_key(
+        self,
+        *,
+        device_id: str,
+        purpose: str,
+        owner_subject: str,
+        owner_tenant: str,
+        owner_project: str,
+    ) -> str:
+        payload = {
+            "device_id": device_id,
+            "purpose": purpose,
+            "owner_subject": owner_subject,
+            "owner_tenant": owner_tenant,
+            "owner_project": owner_project,
+        }
+        return sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+    def _reservation_request_hash(
+        self,
+        *,
+        device_id: str,
+        purpose: str,
+        ttl_seconds: int,
+        owner_subject: str,
+        owner_tenant: str,
+        owner_project: str,
+    ) -> str:
+        payload = {
+            "device_id": device_id,
+            "purpose": purpose,
+            "ttl_seconds": ttl_seconds,
+            "owner_subject": owner_subject,
+            "owner_tenant": owner_tenant,
+            "owner_project": owner_project,
+        }
+        return sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+    def _reservation_id_for(self, binding_key: str) -> str:
+        return f"rsv_{binding_key[:12]}"
+
+    def _reservation_artifact_ref(self, reservation_id: str) -> str:
+        return f"{self._reservation_qfs_root}/{reservation_id}/reservation.json"
+
+    def _write_reservation_artifact(self, record: _ReservationRecord) -> None:
+        QFS_STORE.atomic_write_bytes(
+            self._reservation_artifact_ref(record.reservation_id),
+            json.dumps(
+                {
+                    "version": "1.0.0",
+                    "reservation": record.to_json(),
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8"),
+        )
+
+    def _load_reservation_records(self) -> None:
+        if not self._reservation_store_path.exists():
+            return
+        try:
+            payload = json.loads(self._reservation_store_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
+        records = payload.get("reservations", {}) if isinstance(payload, dict) else {}
+        if not isinstance(records, dict):
+            return
+        for raw in records.values():
+            if not isinstance(raw, dict):
+                continue
+            try:
+                record = _ReservationRecord.from_json(raw)
+            except (KeyError, TypeError, ValueError):
+                continue
+            self._reservations[record.reservation_id] = record
+        self._sweep_expired_reservations(time.time())
+        self._persist_reservation_records()
+
+    def _persist_reservation_records(self) -> None:
+        payload = {
+            "version": "1.0.0",
+            "reservations": {
+                reservation_id: record.to_json()
+                for reservation_id, record in sorted(self._reservations.items())
+            },
+        }
+        self._reservation_store_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self._reservation_store_path.with_suffix(self._reservation_store_path.suffix + ".tmp")
+        tmp.write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")), encoding="utf-8")
+        tmp.replace(self._reservation_store_path)
+
+    def _sweep_expired_reservations(self, now_unix: float) -> None:
+        changed = False
+        for record in self._reservations.values():
+            if record.state == "ACTIVE" and now_unix >= record.expires_at_unix:
+                record.state = "EXPIRED"
+                record.updated_at_unix = now_unix
+                changed = True
+        if changed:
+            self._persist_reservation_records()
         self._kb_service = kb_service
         self._jobs: dict[str, _JobRecord] = {}
         self._idempotency: dict[str, _IdempotencyRecord] = {}
@@ -1822,9 +1984,94 @@ class DeviceService:
         if violations:
             abort_invalid_argument(context, "validation failed", violations)
 
+        owner_subject, _, owner_tenant = auth_context(context)
+        owner_project = envelope.project_id or "project-default"
+        purpose = (request.purpose or "unspecified").strip() or "unspecified"
+        now_unix = time.time()
+        ttl_seconds = int(request.ttl_seconds)
+        device_id = request.device_id.strip()
+        binding_key = self._reservation_binding_key(
+            device_id=device_id,
+            purpose=purpose,
+            owner_subject=owner_subject,
+            owner_tenant=owner_tenant or "tenant-default",
+            owner_project=owner_project,
+        )
+        request_hash = self._reservation_request_hash(
+            device_id=device_id,
+            purpose=purpose,
+            ttl_seconds=ttl_seconds,
+            owner_subject=owner_subject,
+            owner_tenant=owner_tenant or "tenant-default",
+            owner_project=owner_project,
+        )
+
+        with self._lock:
+            self._sweep_expired_reservations(now_unix)
+            active = next(
+                (
+                    record
+                    for record in self._reservations.values()
+                    if record.device_id == device_id and record.state == "ACTIVE"
+                ),
+                None,
+            )
+
+            if active is not None and active.reservation_id != self._reservation_id_for(binding_key):
+                abort_public(
+                    context,
+                    PublicErrorSpec(
+                        grpc_code=grpc.StatusCode.FAILED_PRECONDITION,
+                        message="device already has an active reservation",
+                        reason="EIGEN_PUBLIC_RESERVATION_CONFLICT",
+                        retryable=False,
+                        metadata={
+                            "device_id": device_id,
+                            "active_reservation_id": active.reservation_id,
+                            "active_purpose": active.purpose,
+                        },
+                        precondition_type="RESERVATION_CONFLICT",
+                        precondition_subject=device_id,
+                        detail="Release or let the active reservation expire before reserving the device again.",
+                    ),
+                )
+
+            reservation_id = self._reservation_id_for(binding_key)
+            record = self._reservations.get(reservation_id)
+            if record is None:
+                record = _ReservationRecord(
+                    reservation_id=reservation_id,
+                    device_id=device_id,
+                    purpose=purpose,
+                    owner_subject=owner_subject,
+                    owner_tenant=owner_tenant or "tenant-default",
+                    owner_project=owner_project,
+                    request_hash=request_hash,
+                    ttl_seconds=ttl_seconds,
+                    state="ACTIVE",
+                    created_at_unix=now_unix,
+                    updated_at_unix=now_unix,
+                    expires_at_unix=now_unix + ttl_seconds,
+                )
+                self._reservations[reservation_id] = record
+            else:
+                record.device_id = device_id
+                record.purpose = purpose
+                record.owner_subject = owner_subject
+                record.owner_tenant = owner_tenant or "tenant-default"
+                record.owner_project = owner_project
+                record.request_hash = request_hash
+                record.ttl_seconds = ttl_seconds
+                record.state = "ACTIVE"
+                record.updated_at_unix = now_unix
+                record.expires_at_unix = now_unix + ttl_seconds
+
+            self._persist_reservation_records()
+            self._write_reservation_artifact(record)
+
         resp = self._dev_pb.ReserveDeviceResponse(
-            reservation_id=f"rsv_{uuid.uuid4().hex[:12]}",
-            expires_at=_ts_now(),
+            reservation_id=record.reservation_id,
+            expires_at=_ts_from_unix(record.expires_at_unix),
         )
 
         log_request_end("DeviceService.ReserveDevice", rc)

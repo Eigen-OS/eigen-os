@@ -94,8 +94,21 @@ service DeviceService {
   rpc GetDeviceDetails(GetDeviceDetailsRequest) returns (GetDeviceDetailsResponse);
   rpc GetDeviceStatus(GetDeviceStatusRequest) returns (GetDeviceStatusResponse);
   rpc ReserveDevice(ReserveDeviceRequest) returns (ReserveDeviceResponse);
-}
+ }
 ```
+
+#### ReserveDevice compatibility semantics
+
+- `purpose` is the stable replay-safe binding handle for the reservation.
+- Identical normalized reservation inputs SHOULD renew the same reservation
+
+- lineage instead of creating a new one.
+  - Active reservations on the same device MUST reject double booking.
+  - Expired reservations MAY be recreated after expiry or restart using the same
+- normalized inputs.
+  - The reservation surface remains compatibility-preserving until the full
+- kernel-owned Resource Manager authority is wired through the internal
+- boundary.
 
 ---
 
