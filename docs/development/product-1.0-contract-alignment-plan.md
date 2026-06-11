@@ -383,6 +383,7 @@ The concrete Wave 3 mappings are captured in the inventory and closure package:
    - `Calibrate`,
    - `Cancel`.
 2. Add a canonical reference doc at `docs/reference/api/qdriver.md` so the final transport semantics are frozen in the reference surface.
+3. Add a canonical device capability registry and device-profile negotiation slice for Driver Manager.
 3. Split Driver Manager responsibilities from provider-specific QDriver implementations.
 4. Implement capability registry with versioned device profiles.
 5. Implement session pooling and lifecycle governance.

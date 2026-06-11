@@ -66,6 +66,9 @@ Wave 6 is a **major internal contract alignment wave**. It may change driver-man
 ### 4.2 Provider capability registry and device profiles
 
 - Make device capabilities and profile metadata versioned and queryable.
+- Keep snapshot ordering deterministic by device_id and driver name.
+- Separate profile snapshot state from live session state.
+- Define profile negotiation fallback behavior for unsupported profiles and simulator parity entries.
 - Separate capability snapshot concerns from session/connection concerns.
 - Treat simulator and official providers as matrix entries with explicit tolerance policy hooks.
 

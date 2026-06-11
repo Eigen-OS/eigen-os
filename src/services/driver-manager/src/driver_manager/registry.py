@@ -46,12 +46,23 @@ class OfficialDriverMatrixEntry:
     manifest_digest: str
 
 
+@dataclass(frozen=True)
+class DeviceProfileSnapshot:
+    profile_name: str
+    profile_version: str
+    device_id: str
+    driver_name: str
+    backend_type: str
+    capability_descriptors: dict[str, str]
+
+
 class DriverRegistry:
     """Manage registered drivers and reverse index device_id -> driver."""
 
     def __init__(self) -> None:
         self._drivers: dict[str, RegisteredDriver] = {}
         self._device_to_driver: dict[str, str] = {}
+        self._device_profiles: dict[str, DeviceProfileSnapshot] = {}
         self._policy_reject_counters: dict[str, int] = {
             "plugin_runtime_boundary_reject_total": 0,
             "plugin_in_process_reject_total": 0,
@@ -112,6 +123,7 @@ class DriverRegistry:
             raise ValueError(f"driver {name} capability handshake missing driver_api_version")
 
         device_ids = []
+        device_records: dict[str, object] = {}
         for device in driver.get_devices():
             device_id = getattr(device, "device_id", "")
             if not device_id:
@@ -122,9 +134,16 @@ class DriverRegistry:
                     f"device_id '{device_id}' already owned by driver '{existing}'"
                 )
             device_ids.append(device_id)
+            device_records[device_id] = device
 
         for device_id in device_ids:
             self._device_to_driver[device_id] = name
+        for device_id, device in device_records.items():
+            self._device_profiles[device_id] = self._build_device_profile(
+                driver_name=name,
+                capabilities=capabilities,
+                device=device,
+            )
 
         self._drivers[name] = RegisteredDriver(
             name=name,
@@ -161,6 +180,7 @@ class DriverRegistry:
 
         for device_id in registered.device_ids:
             self._device_to_driver.pop(device_id, None)
+            self._device_profiles.pop(device_id, None)
 
         return True
 
@@ -174,17 +194,95 @@ class DriverRegistry:
             return None
         return self._drivers[driver_name].driver
 
+    def get_device_profile(self, device_id: str) -> DeviceProfileSnapshot | None:
+        return self._device_profiles.get(device_id)
+
+    def device_profile_snapshot(self) -> list[DeviceProfileSnapshot]:
+        return [self._device_profiles[device_id] for device_id in sorted(self._device_profiles)]
+
+    def resolve_device_profile(
+        self,
+        device_id: str,
+        requested_profile: str | None = None,
+    ) -> DeviceProfileSnapshot:
+        profile = self._device_profiles.get(device_id)
+        if profile is None:
+            raise ValueError(f"unknown device_id: {device_id}")
+
+        requested = (requested_profile or "").strip()
+        if not requested:
+            return profile
+        if requested in {profile.profile_name, profile.driver_name, profile.backend_type, profile.profile_version, profile.device_id}:
+            return profile
+
+        simulator_profile = next(
+            (
+                candidate
+                for candidate in self.device_profile_snapshot()
+                if candidate.profile_name == "simulator"
+                or candidate.driver_name == "simulator"
+                or candidate.backend_type == "simulator"
+            ),
+            None,
+        )
+        if simulator_profile is not None:
+            return simulator_profile
+
+        raise ValueError(f"unsupported device profile '{requested}' for device_id '{device_id}'")
+
+    def negotiate_device_profile(
+        self,
+        device_id: str,
+        requested_profile: str | None = None,
+    ) -> DeviceProfileSnapshot:
+        return self.resolve_device_profile(device_id, requested_profile=requested_profile)
+
     def list_devices(self) -> list[object]:
         devices: list[object] = []
         for registered in self._drivers.values():
             devices.extend(registered.driver.get_devices())
-        return devices
+        return sorted(devices, key=lambda device: getattr(device, "device_id", ""))
 
     def health_snapshot(self) -> dict[str, DriverHealth]:
-        return {name: registered.driver.healthcheck() for name, registered in self._drivers.items()}
+        return {name: self._drivers[name].driver.healthcheck() for name in sorted(self._drivers)}
 
     def capability_snapshot(self) -> dict[str, DriverCapabilities]:
-        return {name: registered.capabilities for name, registered in self._drivers.items()}
+        return {name: self._drivers[name].capabilities for name in sorted(self._drivers)}
 
     def policy_reject_snapshot(self) -> dict[str, int]:
         return dict(self._policy_reject_counters)
+
+    def _build_device_profile(
+        self,
+        *,
+        driver_name: str,
+        capabilities: DriverCapabilities,
+        device: object,
+    ) -> DeviceProfileSnapshot:
+        raw_descriptors = getattr(device, "capabilities", {}) or {}
+        if isinstance(raw_descriptors, dict):
+            capability_descriptors = {str(k): str(v) for k, v in raw_descriptors.items()}
+        else:
+            capability_descriptors = {}
+
+        profile_name = (
+            capability_descriptors.get("provider")
+            or capability_descriptors.get("profile")
+            or getattr(device, "name", "")
+            or driver_name
+        )
+        backend_type = str(
+            getattr(device, "backend_type", "")
+            or capability_descriptors.get("backend_type", "")
+            or capability_descriptors.get("provider", "")
+            or profile_name
+        )
+
+        return DeviceProfileSnapshot(
+            profile_name=str(profile_name),
+            profile_version=str(capabilities.driver_api_version),
+            device_id=str(getattr(device, "device_id", "")),
+            driver_name=driver_name,
+            backend_type=backend_type,
+            capability_descriptors=dict(sorted(capability_descriptors.items())),
+        )
