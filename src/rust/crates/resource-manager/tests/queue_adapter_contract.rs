@@ -128,6 +128,69 @@ fn run_contract_suite(name: &str, mut adapter: impl QueueAdapter) {
 }
 
 #[test]
+fn queue_lease_expiry_redelivery_and_dead_letter_are_deterministic_under_replay() {
+    fn snapshot(mut adapter: InMemoryQueueAdapter, name: &str) -> (Vec<String>, Vec<String>, resource_manager::QueueAdapterMetrics) {
+        let queue = "priority-50";
+
+        adapter
+            .enqueue(task(&format!("{name}-a"), 3))
+            .expect("enqueue must succeed");
+        adapter
+            .enqueue(task(&format!("{name}-b"), 1))
+            .expect("enqueue must succeed");
+
+        let first = adapter
+            .lease(queue, "worker-1", 2_000)
+            .expect("lease must succeed")
+            .expect("first task must be leaseable");
+        let second = adapter
+            .lease(queue, "worker-2", 13_000)
+            .expect("lease must succeed")
+            .expect("second task must be leaseable");
+
+        assert_eq!(first.task_id, format!("{name}-a"));
+        assert_eq!(second.task_id, format!("{name}-b"));
+
+        let requeued = adapter
+            .requeue(&second.lease_id, "worker-2", "execution-failed", 13_100)
+            .expect("requeue must succeed");
+        assert!(requeued);
+
+        let redelivery = adapter
+            .lease(queue, "worker-3", 13_200)
+            .expect("lease must succeed")
+            .expect("redelivered task must be leaseable");
+        assert_eq!(redelivery.task_id, format!("{name}-a"));
+        assert_eq!(redelivery.attempt, 2);
+
+        let acked = adapter
+            .ack(&redelivery.lease_id, "worker-3", 13_250)
+            .expect("ack must succeed");
+        assert!(acked);
+
+        let dead_letter_reasons = adapter
+            .dead_letters()
+            .iter()
+            .map(|entry| format!("{}:{}:{}", entry.task_id, entry.reason, entry.dead_letter_version))
+            .collect::<Vec<_>>();
+
+        let metrics = adapter.metrics();
+        let observed_order = vec![first.task_id, second.task_id, redelivery.task_id];
+        (observed_order, dead_letter_reasons, metrics)
+    }
+
+    let left = snapshot(InMemoryQueueAdapter::new(), "replay");
+    let right = snapshot(InMemoryQueueAdapter::new(), "replay");
+
+    assert_eq!(left, right);
+    assert_eq!(left.2.queue_enqueued_total, 2);
+    assert_eq!(left.2.queue_lease_acquired_total, 3);
+    assert_eq!(left.2.queue_redelivery_total, 1);
+    assert_eq!(left.2.queue_dead_letter_total, 1);
+    assert_eq!(left.1, vec!["replay-b:execution-failed:1.0.1".to_string()]);
+}
+
+#[test]
 fn in_memory_adapter_satisfies_queue_contract_suite() {
     run_contract_suite("mem", InMemoryQueueAdapter::new());
 }

@@ -233,6 +233,29 @@
       "compatibility_status": "compatible"
     },
     {
+      "name": "Distributed queue delivery and dead-letter semantics",
+      "contract_version": "1.0.1",
+      "owner": "Resource Manager; QRTX; worker runtimes",
+      "sources": [
+        "docs/architecture/components/resource-manager.md",
+        "docs/reference/multi-device-execution-contract.md",
+        "docs/reference/orchestration-observability-contract.md"
+      ],
+      "proto_schema_files": [],
+      "planned_proto_schema_files": [],
+      "conformance_tests": [
+        "src/rust/crates/resource-manager/src/lib.rs",
+        "src/rust/crates/resource-manager/tests/queue_adapter_contract.rs",
+        "src/rust/crates/resource-manager/tests/deterministic_replay_gate.rs"
+      ],
+      "implementation_notes": [
+        "Lease acquisition, ack, requeue, redelivery, and dead-letter transitions are deterministic.",
+        "Queue ordering remains replay-safe for equivalent inputs."
+      ],
+      "implementation_status": "implemented",
+      "compatibility_status": "compatible"
+    },
+    {
       "name": "Error mapping matrix",
       "contract_version": "1.0.0",
       "owner": "All public/internal services",

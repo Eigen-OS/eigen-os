@@ -210,7 +210,32 @@ with structured details indicating “reservations not enforced in this deployme
 - Device inventory and status are partially sourced from `driver-manager`.
 - Kernel does not currently own reservation lifecycle or slot accounting.
 
-### 5.5 Deterministic device/resource inventory snapshots
+---
+
+### 5.5 Queue delivery semantics (Wave 5 target)
+
+Resource Manager queue delivery SHALL be deterministic and replay-safe.
+
+Queue semantics SHALL provide:
+
+- queue ownership by task envelope,
+- lease acquisition with bounded visibility timeout,
+- explicit worker-owned acknowledgement,
+- explicit worker-owned requeue/redelivery,
+- dead-letter terminalization when retry budget is exhausted,
+- deterministic ordering for equivalent replay inputs,
+- bounded metrics for lease, redelivery, and dead-letter outcomes.
+
+Compatibility-only queue paths MAY remain during migration, but they MUST NOT be
+documented as the canonical queue authority once the Wave 5 boundary is in use.
+
+Queue transitions MUST be consistent with scheduling and reservation lifecycle
+state so that lease expiry and retry behavior can be reconstructed from replay
+artifacts.
+
+---
+
+### 5.6 Deterministic device/resource inventory snapshots
 
 Resource Manager inventory snapshots SHALL be built from Driver Manager topology
 metadata and capability snapshots using stable canonical ordering.
@@ -226,7 +251,7 @@ Snapshot requirements:
 - snapshot materialization MUST be replay-safe and suitable for QRTX scheduling
   decisions.
 
-### 5.6 Reservation compatibility surface
+### 5.7 Reservation compatibility surface
 
 The current MVP reservation API surface MAY remain exposed as a compatibility
 layer while the kernel-owned Resource Manager boundary is introduced. That
@@ -235,10 +260,14 @@ capacity or allocation decisions.
 
 ---
 
-### 5.5 Observability baseline (implemented)
+### 5.8 Observability baseline (implemented)
 
 - Structured request logging exists in service handlers.
 - Trace context propagation exists across the runtime (see `observability.md`).
+
+Queue delivery and dead-letter transitions MUST emit observability evidence that
+is bounded, deterministic, and compatible with the orchestration observability
+contract.
 
 ---
 
