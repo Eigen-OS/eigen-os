@@ -1,7 +1,7 @@
 # Product 1.0 Wave 5 Documentation Index
 
-**Wave:** Product 1.0 Wave 5 — Resource Manager and multi-device execution
-**Status:** Planning baseline
+**Wave:** Product 1.0 Wave 5 — Resource Manager and multi-device execution  
+**Status:** Complete  
 **Parent execution plan:** `docs/development/product-1.0-contract-alignment-plan.md`
 
 ---
@@ -12,11 +12,7 @@
 - `product-1.0-wave-5-issue-pack.md`
 - `product-1.0-wave-5-rfc-adr-gap-analysis.md`
 
----
-
 ## Closure artifacts
-
-The following documents complete the Wave 5 closure set:
 
 - `product-1.0-wave-5-compatibility-report.md`
 - `product-1.0-wave-5-release-readiness-checklist.md`
@@ -24,19 +20,9 @@ The following documents complete the Wave 5 closure set:
 - `product-1.0-wave-5-scheduling-determinism-matrix.md`
 - `product-1.0-wave-5-multi-device-parity-matrix.md`
 
----
-
 ## Governance dependencies
 
-Wave 5 depends on:
-
-- Wave 2 Kernel/QRTX lifecycle authority closure
-- Wave 4 QFS reservation and lineage closure
-- Product 1.0 contract inventory and manifest synchronization
-
----
-
-## Primary source-of-truth references
+Wave 5 is closed and feeds Wave 6 planning. The authoritative references remain:
 
 - `docs/architecture/contract-map.md`
 - `docs/architecture/components/resource-manager.md`

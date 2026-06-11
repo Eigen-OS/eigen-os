@@ -218,10 +218,10 @@
         "docs/reference/orchestration-observability-contract.md",
         "docs/reference/intelligent-runtime-observability-contract.md"
       ],
-      "proto_schema_files": [],
-    "planned_proto_schema_files": [
-      "Not applicable (internal Rust contract surface)"
-    ],
+      "proto_schema_files": [
+        "src/rust/crates/resource-manager/src/lib.rs"
+      ],
+      "planned_proto_schema_files": [],
       "conformance_tests": [
         "src/rust/crates/resource-manager/src/lib.rs",
         "src/rust/crates/resource-manager/tests/scheduler_contract_compatibility.rs",
@@ -244,11 +244,9 @@
         "docs/reference/orchestration-observability-contract.md"
       ],
       "proto_schema_files": [
-      "src/rust/crates/resource-manager/src/lib.rs"
-    ],
-      "planned_proto_schema_files": [
-      "Not applicable (internal Rust contract surface)"
-    ],
+        "src/rust/crates/resource-manager/src/lib.rs"
+      ],
+      "planned_proto_schema_files": [],
       "conformance_tests": [
         "src/rust/crates/resource-manager/src/lib.rs",
         "src/rust/crates/resource-manager/tests/queue_adapter_contract.rs",
@@ -365,29 +363,6 @@
       "compatibility_status": "compatible"
     },
     {
-      "name": "Deterministic replay and audit lineage",
-    "contract_version": "1.0.0",
-    "owner": "Kernel/QRTX; Resource Manager; QFS; Observability",
-    "sources": [
-      "docs/architecture/components/observability.md",
-      "docs/architecture/components/qfs.md",
-      "docs/reference/orchestration-observability-contract.md",
-      "docs/reference/multi-device-execution-contract.md",
-      "docs/reference/error-model.md"
-    ],
-    "proto_schema_files": [],
-    "planned_proto_schema_files": [
-      "QFS audit snapshots and append-only event logs"
-    ],
-    "conformance_tests": [
-      "src/rust/crates/eigen-kernel/tests/",
-      "src/rust/crates/eigen-kernel/src/durable_job_store.rs",
-      "src/rust/crates/qrtx/src/event_log.rs"
-    ],
-    "implementation_status": "implemented",
-    "compatibility_status": "compatible"
-  },
-  {
       "name": "Intelligent runtime observability",
       "contract_version": "2.1.0",
       "owner": "Observability; scheduler; policy engine; driver-manager",
@@ -406,27 +381,6 @@
       "compatibility_status": "needs-alignment"
     },
     {
-      "name": "Wave 5 observability conformance",
-    "contract_version": "3.1.0 / 2.1.0 / 1.0.0",
-    "owner": "Observability; Kernel/QRTX; Resource Manager; multi-device execution",
-    "sources": [
-      "docs/architecture/components/observability.md",
-      "docs/architecture/components/qfs.md",
-      "docs/reference/orchestration-observability-contract.md",
-      "docs/reference/intelligent-runtime-observability-contract.md",
-      "docs/reference/multi-device-execution-contract.md"
-    ],
-    "proto_schema_files": [
-      "monitoring/metrics/prometheus/exporter.py"
-    ],
-    "planned_proto_schema_files": [],
-    "conformance_tests": [
-      "planned monitoring/metrics/tests/test_wave5_observability_conformance.py"
-    ],
-    "implementation_status": "implemented",
-    "compatibility_status": "compatible"
-  },
-  {
       "name": "Cluster runtime observability",
       "contract_version": "1.0.0",
       "owner": "Distributed runtime; Kernel/QRTX; Resource Manager",
@@ -537,7 +491,6 @@
         "docs/reference/api/rest-public.md"
       ],
       "proto_schema_files": [
-
         "contracts/product-1.0/public-rest.openapi.json"
       ],
       "planned_proto_schema_files": [],
@@ -619,6 +572,51 @@
       ],
       "implementation_status": "documented",
       "compatibility_status": "frozen-for-wave-0"
+    },
+    {
+      "name": "Deterministic replay and audit lineage",
+      "contract_version": "1.0.0",
+      "owner": "Kernel/QRTX; Resource Manager; QFS; Observability",
+      "sources": [
+        "docs/architecture/components/observability.md",
+        "docs/architecture/components/qfs.md",
+        "docs/reference/orchestration-observability-contract.md",
+        "docs/reference/multi-device-execution-contract.md",
+        "docs/reference/error-model.md"
+      ],
+      "proto_schema_files": [
+        "src/rust/crates/eigen-kernel/src/durable_job_store.rs",
+        "src/rust/crates/qrtx/src/event_log.rs"
+      ],
+      "planned_proto_schema_files": [],
+      "conformance_tests": [
+        "src/rust/crates/eigen-kernel/tests/",
+        "src/rust/crates/eigen-kernel/src/durable_job_store.rs",
+        "src/rust/crates/qrtx/src/event_log.rs"
+      ],
+      "implementation_status": "implemented",
+      "compatibility_status": "compatible"
+    },
+    {
+      "name": "Wave 5 observability conformance",
+      "contract_version": "3.1.0 / 2.1.0 / 1.0.0",
+      "owner": "Observability; Kernel/QRTX; Resource Manager; multi-device execution",
+      "sources": [
+        "docs/architecture/components/observability.md",
+        "docs/architecture/components/qfs.md",
+        "docs/reference/orchestration-observability-contract.md",
+        "docs/reference/intelligent-runtime-observability-contract.md",
+        "docs/reference/multi-device-execution-contract.md"
+      ],
+      "proto_schema_files": [
+        "monitoring/metrics/prometheus/exporter.py"
+      ],
+      "planned_proto_schema_files": [],
+      "conformance_tests": [
+        "planned monitoring/metrics/tests/test_wave5_observability_conformance.py"
+      ],
+      "implementation_status": "implemented",
+      "compatibility_status": "compatible"
     }
   ]
 }
