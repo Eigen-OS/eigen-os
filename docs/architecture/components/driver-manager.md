@@ -60,6 +60,9 @@ DM acts as:
 
 DM MUST maintain a consistent, queryable view of:
 
+Driver Manager is the canonical source of device topology and capability truth
+for Resource Manager inventory snapshots and Kernel scheduling decisions.
+
 - available devices,
 - device identity and stable `device_id`,
 - device capabilities (`max_qubits`, supported gate sets, dynamic circuit - support, mid-circuit measurement, etc.),
@@ -116,6 +119,7 @@ DM MUST:
 
 DM MUST expose device topology and calibration/health snapshots to QRTX so QRTX can:
 
+- provide deterministic inventory material to Resource Manager,
 - request topology via `GetDeviceStatus` / `GetDeviceDetails`,
 - feed topology into hardware-aware optimization (e.g., GNN placement/routing).
 

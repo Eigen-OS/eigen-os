@@ -255,6 +255,36 @@
       "wave_1_status": "implemented-public-boundary-slice"
     },
     {
+      "name": "Resource Manager boundary (kernel-owned internal authority)",
+      "contract_version": "1.0.0",
+      "owner": "Kernel/QRTX; Resource Manager; Driver Manager",
+      "sources": [
+        "docs/architecture/components/resource-manager.md",
+        "docs/architecture/components/qrtx.md",
+        "docs/architecture/components/driver-manager.md",
+        "docs/architecture/contract-map.md",
+        "docs/reference/multi-device-execution-contract.md"
+      ],
+      "proto_schema_files": [
+        "proto/eigen/internal/v1/kernel_gateway.proto",
+        "proto/eigen/internal/v1/driver_manager_service.proto"
+      ],
+      "planned_proto_schema_files": [
+        "Resource Manager inventory snapshots materialized through Driver Manager topology/capability payloads"
+      ],
+      "conformance_tests": [
+        "src/rust/crates/eigen-kernel/tests/",
+        "src/services/system-api/tests/test_security_baseline.py",
+        "docs/development/wave-5/product-1.0-wave-5-issue-pack.md"
+      ],
+      "implementation_notes": [
+        "Resource Manager is a kernel-owned internal authority in Product 1.0, not a separate public service.",
+        "Deterministic inventory snapshots are sourced from Driver Manager topology metadata."
+      ],
+      "implementation_status": "documented",
+      "compatibility_status": "needs-alignment"
+    },
+    {
       "name": "Intelligent runtime observability",
       "contract_version": "2.1.0",
       "owner": "Observability; scheduler; policy engine; driver-manager",

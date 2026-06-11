@@ -181,14 +181,17 @@ It serves as:
 - durable artifact persistence,
 - deterministic lineage and provenance,
 - checkpoint/restore for eligible modes,
-- live reservation lease metadata for Kernel/QRTX replay,
+- live reservation lease metadata for Kernel/QRTX replay where compatibility surfaces still exist,
 - qubit reservation/isolation evidence,
 - retention policy enforcement.
 
 #### Boundary note
-- Kernel/QRTX is the Product 1.0 runtime owner for live reservation tokens and
-  lease TTL enforcement.
-- Resource Manager remains the target owner of device-capacity reservations.
+
+- Kernel/QRTX is the Product 1.0 runtime owner for job lifecycle and replay.
+- Resource Manager is the kernel-owned internal authority for device inventory,
+  capacity, reservations, and scheduling inputs.
+- Driver Manager remains the canonical source of device topology and capability
+  truth that Resource Manager snapshots consume.
 
 ---
 

@@ -60,6 +60,7 @@ QRTX is the authoritative coordinator for a job’s runtime lifecycle. It:
 - enforces lifecycle transitions,
 - persists artifacts and durable failure evidence to QFS,
 - propagates trace/auth correlation context across services,
+- consumes Resource Manager inventory/reservation decisions for scheduling,
 - surfaces status/results consistently through internal APIs (and therefore public APIs).
 
 QRTX MUST NOT:
@@ -82,6 +83,7 @@ It integrates with:
 - `eigen-compiler` (CompilationService)
 - `driver-manager` (DriverManagerService)
 - `qfs` (CircuitFS / QFSStore facade)
+- `resource-manager` (internal allocation and reservation authority)
 - future: `hwe`, `gnn-optimizer`, `knowledge-base`, `neuro-symbolic-core`
 
 Canonical runtime pipeline:
@@ -174,8 +176,9 @@ QRTX orchestrates Product 1.0 as a deterministic control-plane flow:
 `validate/enqueue → compile → optimize → schedule → execute → persist  record knowledge/observability → finalize`
 
 Stage boundaries are observable, replay-safe, and carry stable stage IDs so cancellation and deadline fan-out can be reconstructed deterministically.
+Scheduling and resource decisions are expected to be sourced from the Resource Manager boundary, not from ad hoc kernel-local placeholders.
 
-mplemented the Product 1.0 orchestration DAG control-plane skeleton in Kernel/QRTX with deterministic stage IDs, replay-safe stage records, explicit downstream adapters, and submit-to-results integration coverage.
+Implemented the Product 1.0 orchestration DAG control-plane skeleton in Kernel/QRTX with deterministic stage IDs, replay-safe stage records, explicit downstream adapters, and submit-to-results integration coverage.
 
 Coordinates with:
 
