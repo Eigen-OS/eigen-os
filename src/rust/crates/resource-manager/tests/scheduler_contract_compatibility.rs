@@ -85,6 +85,8 @@ fn split_plan_manifest_contract_matches_golden_fixture() {
             },
         ],
         4,
+        1_746_200_000_000,
+        "trace-compat-01",
     )
     .expect("split plan fixture scenario must be valid");
 
@@ -98,6 +100,11 @@ fn split_plan_manifest_contract_matches_golden_fixture() {
                 "shard_id": shard.shard_id,
                 "backend_id": shard.backend_id,
                 "task_ids": shard.task_ids,
+                "attempt": shard.attempt,
+                "lease_timeout_ms": shard.lease_timeout_ms,
+                "resource_profile": shard.resource_profile,
+                "trace_id": shard.trace_id,
+                "lineage_ref": shard.lineage_ref,
             })
         })
         .collect();
@@ -106,10 +113,12 @@ fn split_plan_manifest_contract_matches_golden_fixture() {
         "version": manifest.version,
         "parent_job_id": manifest.parent_job_id,
         "scheduler_decision_version": manifest.scheduler_decision_version,
+        "created_at_ms": manifest.created_at_ms,
+        "trace_id": manifest.trace_id,
         "shard_plans": shard_plans,
     });
 
-    assert_eq!(snapshot, fixture("split_plan_manifest_v2_0_0.json"));
+    assert_eq!(snapshot, fixture("split_plan_manifest_v3_1_0.json"));
 }
 
 #[test]

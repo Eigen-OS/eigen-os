@@ -57,6 +57,8 @@ QRTX is the authoritative coordinator for a job’s runtime lifecycle. It:
 
 - validates/normalizes internal execution requests (after System API validation),
 - orchestrates the Product 1.0 DAG and all downstream handoff points,
+- materializes split-plan manifests for multi-device execution using caller-supplied replay metadata,
+- validates partial shard outcomes and merge decisions using canonical Resource Manager contracts,
 - enforces lifecycle transitions,
 - persists artifacts and durable failure evidence to QFS,
 - propagates trace/auth correlation context across services,
@@ -85,6 +87,7 @@ It integrates with:
 - `qfs` (CircuitFS / QFSStore facade)
 - `resource-manager` (internal allocation and reservation authority)
 - future: `hwe`, `gnn-optimizer`, `knowledge-base`, `neuro-symbolic-core`
+- multi-device merge coordination and replay-safe lineage refs are persisted to QFS using the same deterministic parent/shard identity model as the split-plan manifest
 
 Canonical runtime pipeline:
 

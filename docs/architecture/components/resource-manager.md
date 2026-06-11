@@ -212,7 +212,42 @@ with structured details indicating “reservations not enforced in this deployme
 
 ---
 
-### 5.5 Queue delivery semantics (Wave 5 target)
+### 5.5 Multi-device split / merge coordination
+
+Resource Manager SHALL own the deterministic split-plan and merge-validation
+surface used by Product 1.0 multi-device execution.
+
+The canonical Product 1.0 split-plan record MUST include:
+
+- `version`
+- `parent_job_id`
+- `scheduler_decision_version`
+- `created_at_ms`
+- `trace_id`
+- deterministic `shard_plans[]`
+
+Each shard plan MUST include:
+
+- `version`
+- `parent_job_id`
+- `shard_id`
+- `backend_id`
+- `task_ids[]`
+- `attempt`
+- optional `lease_timeout_ms`
+- optional `resource_profile`
+- `trace_id`
+- optional `lineage_ref`
+
+Merge validation SHALL preserve replay-safe lineage by sorting equivalent
+results/failures deterministically and surfacing canonical merge reason codes.
+Single-device compatibility paths MAY be represented as a single shard, but
+they MUST still use the same manifest and merge semantics rather than a
+separate placeholder contract.
+
+---
+
+### 5.6 Queue delivery semantics (Wave 5 target)
 
 Resource Manager queue delivery SHALL be deterministic and replay-safe.
 
@@ -235,7 +270,7 @@ artifacts.
 
 ---
 
-### 5.6 Deterministic device/resource inventory snapshots
+### 5.7 Deterministic device/resource inventory snapshots
 
 Resource Manager inventory snapshots SHALL be built from Driver Manager topology
 metadata and capability snapshots using stable canonical ordering.
@@ -251,7 +286,7 @@ Snapshot requirements:
 - snapshot materialization MUST be replay-safe and suitable for QRTX scheduling
   decisions.
 
-### 5.7 Reservation compatibility surface
+### 5.8 Reservation compatibility surface
 
 The current MVP reservation API surface MAY remain exposed as a compatibility
 layer while the kernel-owned Resource Manager boundary is introduced. That
@@ -260,7 +295,7 @@ capacity or allocation decisions.
 
 ---
 
-### 5.8 Observability baseline (implemented)
+### 5.9 Observability baseline (implemented)
 
 - Structured request logging exists in service handlers.
 - Trace context propagation exists across the runtime (see `observability.md`).

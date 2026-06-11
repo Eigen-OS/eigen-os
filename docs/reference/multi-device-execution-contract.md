@@ -261,11 +261,17 @@ trace_id: trace-xyz
 
 shard_plans:
   - version: "3.1.0"
+    parent_job_id: job-123
     shard_id: job-123-shard-001
     backend_id: qpu-ionq
     task_ids:
       - task-a
       - task-b
+    attempt: 1
+    lease_timeout_ms: null
+    resource_profile: null
+    trace_id: trace-xyz
+    lineage_ref: qfs://jobs/job-123/lineage/job-123-shard-001.json
 ```
 
 ---
@@ -472,9 +478,34 @@ Failure envelopes MUST:
 
 ---
 
-# 14. Standard Failure Reason Codes
+# 16. Compatibility Guidance
 
-## 14.1 Stable Reason Taxonomy
+## 16.1 Single-device compatibility path
+
+Implementations MAY represent a single-device or placeholder execution path as a
+single-shard split plan, but that path MUST still emit the same versioned split
+manifest, shard lineage, and merge validation metadata as multi-shard runs.
+
+## 16.2 Replay-safe manifest rules
+
+- `created_at_ms` MUST be provided by the caller that creates the plan and MUST
+
+  - be treated as part of the replayed manifest identity.
+  - `trace_id` MUST be preserved across split, partial result, and merge records.
+  - `attempt` MUST begin at 1 for the initial shard execution record.
+  - `lineage_ref` SHOULD point at a QFS path or equivalent durable lineage ref.
+
+## 16.3 Final aggregation
+
+`MergeDecision` is the canonical merge-validation record. Final result material
+must be written through the runtime persistence layer using the same shard
+ordering and lineage references that produced the merge decision.
+
+---
+
+# 17. Standard Failure Reason Codes
+
+## 17.1 Stable Reason Taxonomy
 
 | **Reason code** | **Meaning** |
 |---|---|
@@ -493,7 +524,7 @@ Reason codes MUST remain stable within MAJOR versions.
 
 ---
 
-# 15. Canonical Error Mapping
+# 18. Canonical Error Mapping
 
 | **Condition** | **Canonical Status** |
 |---|---|
@@ -517,17 +548,17 @@ google.rpc.RetryInfo
 
 ---
 
-# 16. Envelope Invariants
+# 19. Envelope Invariants
 
 The runtime MUST enforce:
 
-## 16.1 Parent Consistency
+## 19.1 Parent Consistency
 
 All envelopes MUST match target `parent_job_id`.
 
 ---
 
-## 16.2 Uniqueness
+## 19.2 Uniqueness
 
 `shard_id` MUST be unique across:
 
@@ -537,13 +568,13 @@ All envelopes MUST match target `parent_job_id`.
 
 ---
 
-## 16.3 Version Consistency
+## 19.3 Version Consistency
 
 All envelopes MUST share identical contract version.
 
 ---
 
-## 16.4 Membership Consistency
+## 19.4 Membership Consistency
 
 All shard IDs MUST belong to the expected manifest set.
 
@@ -551,13 +582,13 @@ Unexpected shard IDs MUST be rejected.
 
 ---
 
-## 16.5 Payload Integrity
+## 19.5 Payload Integrity
 
 Checksums MUST match referenced payload artifacts.
 
 ---
 
-## 16.6 Trace Continuity
+## 19.6 Trace Continuity
 
 Distributed trace propagation MUST remain continuous across:
 
@@ -569,9 +600,9 @@ Distributed trace propagation MUST remain continuous across:
 
 ---
 
-# 17. Merge Semantics
+# 20. Merge Semantics
 
-## 17.1 Function Signature
+## 20.1 Function Signature
 
 ```text
 merge_partial_results(
@@ -585,7 +616,7 @@ merge_partial_results(
 
 ---
 
-# 18. Merge Validation Stages
+# 21. Merge Validation Stages
 
 Before merge evaluation, the coordinator MUST validate:
 
@@ -628,9 +659,9 @@ Verify:
 
 ---
 
-# 19. Merge Policies
+# 22. Merge Policies
 
-## 19.1 AllShardsRequired
+## 22.1 AllShardsRequired
 
 Success requires:
 
@@ -652,7 +683,7 @@ Failure reasons:
 
 ---
 
-## 19.2 Quorum
+## 22.2 Quorum
 
 Example:
 
@@ -676,7 +707,7 @@ QuorumNotReached
 
 ---
 
-## 19.3 WeightedQuorum
+## 22.3 WeightedQuorum
 
 Optional advanced policy:
 
@@ -690,7 +721,7 @@ Supports cost/priority-aware merges.
 
 ---
 
-## 19.4 BestEffort
+## 22.4 BestEffort
 
 Allows merge with partial success.
 
@@ -702,7 +733,7 @@ PartialMergeCompleted
 
 ---
 
-# 20. Merge Decision Artifact
+# 23. Merge Decision Artifact
 
 `MergeDecision`
 
@@ -734,7 +765,7 @@ correlation_id: corr-123
 
 ---
 
-# 21. Merge Decision Invariants
+# 24. Merge Decision Invariants
 
 The merge coordinator MUST guarantee:
 
@@ -749,9 +780,9 @@ The merge coordinator MUST guarantee:
 
 ---
 
-# 22. Retry and Replay Semantics
+# 25. Retry and Replay Semantics
 
-## 22.1 Retry Behavior
+## 25.1 Retry Behavior
 
 Retries MUST preserve:
 
@@ -764,7 +795,7 @@ Only `attempt` increments.
 
 ---
 
-## 22.2 Replay Guarantees
+## 25.2 Replay Guarantees
 
 Replay MUST produce equivalent:
 
@@ -779,7 +810,7 @@ under identical scheduler conditions.
 
 ---
 
-# 23. QFS Lineage Integration
+# 26. QFS Lineage Integration
 
 The runtime MUST persist:
 
@@ -810,7 +841,7 @@ Artifacts SHOULD remain durable after runtime completion.
 
 ---
 
-# 24. Observability Integration
+# 27. Observability Integration
 
 The distributed runtime SHOULD export:
 
@@ -844,7 +875,7 @@ Labels MUST NOT include:
 
 ---
 
-# 25. Explainability Integration
+# 28. Explainability Integration
 
 Distributed execution SHOULD expose explainability artifacts for:
 
@@ -866,7 +897,7 @@ Explainability semantics MUST remain aligned with runtime behavior.
 
 ---
 
-# 26. Security and Integrity
+# 29. Security and Integrity
 
 The runtime MUST support:
 
@@ -886,7 +917,7 @@ Future versions MAY add:
 
 ---
 
-# 27. Conformance Requirements
+# 30. Conformance Requirements
 
 An implementation is conformant only if it:
 
@@ -903,7 +934,7 @@ An implementation is conformant only if it:
 
 ---
 
-# 28. Required Test Coverage
+# 31. Required Test Coverage
 
 Conformance suites MUST validate:
 
@@ -924,7 +955,7 @@ Conformance suites MUST validate:
 
 ---
 
-# 29. Compatibility Guarantees
+# 32. Compatibility Guarantees
 
 The following are stable public contract surfaces:
 
@@ -939,7 +970,7 @@ The following are stable public contract surfaces:
 
 ---
 
-# 30. Future Evolution
+# 33. Future Evolution
 
 Planned extensions include:
 
@@ -955,7 +986,7 @@ Planned extensions include:
 
 ---
 
-# 31. Operational Invariants
+# 34. Operational Invariants
 
 The following invariants are mandatory:
 
