@@ -1,6 +1,6 @@
 # Product 1.0 Wave 7 Execution Plan
 
-- **Status:** In progress
+- **Status:** Complete
 - Wave: 7
 - Scope: Neuro-Symbolic Compiler + GNN Optimizer
 
@@ -33,6 +33,11 @@ QFS Artifacts
 7. Publish a planning-time compatibility story for existing MVP-style driver-manager behavior.
 8. Keep observability and audit evidence bounded, structured, and replay-friendly.
 
+## Closure
+
+Wave 7 is complete. The compiler boundary is frozen, the GNN optimizer contract is frozen,
+the compiler↔optimizer handoff is versioned, and release evidence is synchronized with the
+inventory/manifest set.
 
 ### Wave 7 compiler/optimizer integration
 

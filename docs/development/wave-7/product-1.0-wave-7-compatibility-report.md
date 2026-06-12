@@ -1,7 +1,7 @@
 # Product 1.0 Wave 7 Compatibility Report
 
 **Wave:** Product 1.0 Wave 7 — Neuro-Symbolic Compiler and GNN Optimizer
-**Status:** Planning baseline
+- **Status:** Complete
 
 ## Summary
 
@@ -44,3 +44,9 @@ The expected compatibility outcome is deterministic replay across the compiler-t
 - RFCs accepted,
 - ADRs accepted,
 - evidence bundle published.
+
+## Closure
+
+Wave 7 compatibility is backward-compatible across the compiler-to-optimizer boundary.
+Identical inputs produce identical normalized outputs, unsupported inputs fail deterministically,
+and observability metadata does not alter execution semantics.

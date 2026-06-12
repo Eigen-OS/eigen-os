@@ -12,3 +12,5 @@
 6. Deterministic handoff tests
 7. Compatibility report
 8. Observability test report
+
+Wave 7 exit evidence is complete and synchronized with the inventory/manifest closure set.
