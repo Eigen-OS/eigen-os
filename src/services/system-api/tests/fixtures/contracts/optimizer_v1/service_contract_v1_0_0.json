@@ -70,6 +70,11 @@
       "forbidden_edges": [
         "q2-q3"
       ]
+    },
+    "trace_context": {
+      "request_id": "req_optimizer_0001",
+      "trace_id": "trace-11111111111111111111111111111111111111111111",
+      "traceparent": "00-11111111111111111111111111111111-2222222222222222-01"
     }
   },
   "response": {
@@ -107,6 +112,43 @@
       "score": 0.92,
       "band": "high",
       "explainability_ref": "qfs://jobs/job-42/optimizer/explain.json"
+    },
+    "decision_lineage": {
+      "compiler": {
+        "contract_version": "1.0.0",
+        "source_precedence": "source",
+        "source_sha256": "sha256:compiler-source-0001",
+        "aqo_sha256": "sha256:aqo-0001"
+      },
+      "trace_context": {
+        "request_id": "req_optimizer_0001",
+        "trace_id": "trace-11111111111111111111111111111111111111111111",
+        "traceparent": "00-11111111111111111111111111111111-2222222222222222-01"
+      },
+      "optimizer": {
+        "contract_version": "1.0.0",
+        "selected_candidate_id": "candidate-0",
+        "fallback_used": false,
+        "fallback_reason_code": "EIGEN_OPT_UNSPECIFIED"
+      }
+    },
+    "metric_bounds": {
+      "confidence_score": {
+        "min": 0.0,
+        "max": 1.0
+      },
+      "optimizer_latency_ms": {
+        "min": 0,
+        "max": 100
+      },
+      "scoring_latency_ms": {
+        "min": 0,
+        "max": 100
+      },
+      "mapping_latency_ms": {
+        "min": 0,
+        "max": 100
+      }
     },
     "selected_candidate": {
       "candidate_id": "candidate-0",
@@ -154,6 +196,8 @@
         "candidate_budget": 2,
         "timeout_ms": 100,
         "trace_context": {
+          "request_id": "req_optimizer_0001",
+          "trace_id": "trace-11111111111111111111111111111111111111111111",
           "traceparent": "00-11111111111111111111111111111111-2222222222222222-01"
         },
         "graph_encoding": {
@@ -215,7 +259,44 @@
         "scoring_latency_ms": 7,
         "mapping_latency_ms": 9,
         "confidence_score": 0.92,
-        "explanation_ref": "qfs://jobs/job-42/optimizer/explain.json",
+        "decision_lineage": {
+          "compiler": {
+            "contract_version": "1.0.0",
+            "source_precedence": "source_ref",
+            "source_sha256": "sha256:compiler-source-fallback-0001",
+            "aqo_sha256": "sha256:aqo-fallback-0001"
+          },
+          "trace_context": {
+            "request_id": "req_optimizer_0001",
+            "trace_id": "trace-11111111111111111111111111111111111111111111",
+            "traceparent": "00-11111111111111111111111111111111-2222222222222222-01"
+          },
+          "optimizer": {
+            "contract_version": "1.0.0",
+            "selected_candidate_id": "fallback-0",
+            "fallback_used": true,
+            "fallback_reason_code": "EIGEN_OPT_FEATURE_EXTRACTION_FAILED"
+          }
+        },
+        "metric_bounds": {
+          "confidence_score": {
+            "min": 0.0,
+            "max": 1.0
+          },
+          "optimizer_latency_ms": {
+            "min": 0,
+            "max": 100
+          },
+          "scoring_latency_ms": {
+            "min": 0,
+            "max": 100
+          },
+          "mapping_latency_ms": {
+            "min": 0,
+            "max": 100
+          }
+        },
+        "explanation_ref": "qfs://jobs/job-99/optimizer/explain.json",
         "candidates": [
           {
             "candidate_id": "candidate-0",
@@ -259,7 +340,7 @@
           }
         ],
         "selected_candidate_id": "candidate-0",
-        "optimizer_digest": "06e0333fee55350c316dec96fbf1009a2447bc428ad58556544d2061af1a1dbb"
+        "optimizer_digest": "683a6fb57c91be70834899ed847f2b91eefbc66d29445d5314531deef1b9f04d"
       }
     },
     "fallback": {
@@ -284,7 +365,11 @@
         "deterministic_seed": 11,
         "candidate_budget": 1,
         "timeout_ms": 100,
-        "trace_context": {},
+        "trace_context": {
+          "request_id": "req_optimizer_fallback_0001",
+          "trace_id": "trace-fallback-0001",
+          "traceparent": "00-33333333333333333333333333333333-4444444444444444-01"
+        },
         "graph_encoding": {
           "encoding_version": "aqo-graph-v1",
           "canonical_format": "aqo-json",
@@ -315,8 +400,45 @@
         "optimizer_latency_ms": 6,
         "scoring_latency_ms": 0,
         "mapping_latency_ms": 4,
-        "confidence_score": 0.71,
-        "explanation_ref": "qfs://jobs/job-99/optimizer/explain.json",
+        "confidence_score": 0.92,
+        "decision_lineage": {
+          "compiler": {
+            "contract_version": "1.0.0",
+            "source_precedence": "source",
+            "source_sha256": "sha256:compiler-source-0001",
+            "aqo_sha256": "sha256:aqo-0001"
+          },
+          "trace_context": {
+            "request_id": "req_optimizer_fallback_0001",
+            "trace_id": "trace-fallback-0001",
+            "traceparent": "00-33333333333333333333333333333333-4444444444444444-01"
+          },
+          "optimizer": {
+            "contract_version": "1.0.0",
+            "selected_candidate_id": "fallback-0",
+            "fallback_used": true,
+            "fallback_reason_code": "EIGEN_OPT_UNSPECIFIED"
+          }
+        },
+        "metric_bounds": {
+          "confidence_score": {
+            "min": 0.0,
+            "max": 1.0
+          },
+          "optimizer_latency_ms": {
+            "min": 0,
+            "max": 100
+          },
+          "scoring_latency_ms": {
+            "min": 0,
+            "max": 100
+          },
+          "mapping_latency_ms": {
+            "min": 0,
+            "max": 100
+          }
+        },
+        "explanation_ref": "qfs://jobs/job-42/optimizer/explain.json",
         "candidates": [
           {
             "candidate_id": "fallback-0",

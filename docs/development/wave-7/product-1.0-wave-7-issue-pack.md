@@ -244,7 +244,7 @@ Make optimization decisions explainable, traceable, and bounded for release evid
 ### Exit evidence
 
 - Observability contract note.
-- Explainability sample bundle.
+- Explainability sample bundle with compiler decision lineage, optimizer trace continuity, and fallback metadata.
 - Bounded metrics report.
 
 ### Required issue completion block MUST retain and complete this block before closure:

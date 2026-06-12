@@ -230,6 +230,7 @@ The compiler is stage-oriented. The pipeline MUST include the following stages, 
 - Metric labels MUST NOT include request IDs, trace IDs, tenant IDs, or project IDs.
 - Duplicate/replay compiles MUST be observable via a bounded replay counter.
 - Compiler observability MUST conform to `docs/reference/compiler-observability-contract.md`.
+- Compiler metadata MUST include deterministic explainability lineage for the optimizer handoff, including bounded trace fields and stable digests.
 
 The compiler MUST surface stage timing and failures in structured logs and traces (see section 11).
 

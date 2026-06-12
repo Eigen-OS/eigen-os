@@ -86,6 +86,9 @@ def _build_handoff_bundle(result, *, optimizer_contract_version: str = "1.0.0") 
         "source_sha256": result.metadata["source_sha256"],
         "aqo_sha256": result.metadata["aqo_sha256"],
         "request_sha256": result.metadata["request_sha256"],
+        "decision_lineage_json": result.metadata["decision_lineage_json"],
+        "observability_json": result.metadata["observability_json"],
+        "explainability_json": result.metadata["explainability_json"],
     }
     return {"envelope": envelope, "input_aqo": aqo_json, "compiler_metadata": compiler_metadata}
 
@@ -129,6 +132,36 @@ def test_handoff_schema_is_versioned_and_bounded() -> None:
     assert handoff["input_aqo"]["version"] == "1.0.0"
     assert handoff["input_aqo"]["operations"]
 
+    decision_lineage = json.loads(handoff["compiler_metadata"]["decision_lineage_json"])
+    observability = json.loads(handoff["compiler_metadata"]["observability_json"])
+    explainability = json.loads(handoff["compiler_metadata"]["explainability_json"])
+
+    assert decision_lineage["contract_version"] == "1.0.0"
+    assert decision_lineage["compiler_contract_version"] == "1.0.0"
+    assert decision_lineage["optimizer_contract_version"] == "1.0.0"
+    assert decision_lineage["stage_order"] == [
+        "parse",
+        "validate_ast",
+        "annotate",
+        "lower_to_ir",
+        "eigen_dpda",
+        "canonicalize_aqo",
+        "emit",
+    ]
+    assert decision_lineage["trace_id"] == REQUEST_CONTEXT["trace_id"]
+    assert observability["trace_fields"] == ["request_id", "trace_id", "traceparent"]
+    assert observability["metric_bounds"]["labels_bounded"] is True
+    assert observability["metric_bounds"]["request_ids_in_metrics"] is False
+    assert explainability["decision"] == "compiler_to_optimizer_handoff"
+    assert explainability["bounded_fields"] == [
+        "request_id",
+        "trace_id",
+        "traceparent",
+        "source_sha256",
+        "aqo_sha256",
+        "request_sha256",
+    ]
+
 
 def test_stable_identifier_propagation_across_boundary_is_deterministic() -> None:
     first = _compile_sample()
@@ -140,6 +173,10 @@ def test_stable_identifier_propagation_across_boundary_is_deterministic() -> Non
     for key in ("request_id", "source_sha256", "aqo_sha256", "request_sha256", "source_precedence"):
         assert first.metadata[key] == second.metadata[key]
         assert first_handoff["envelope"][key] == second_handoff["envelope"][key]
+
+    for key in ("decision_lineage_json", "observability_json", "explainability_json"):
+        assert first.metadata[key] == second.metadata[key]
+        assert first_handoff["compiler_metadata"][key] == second_handoff["compiler_metadata"][key]
 
     assert first_handoff == second_handoff
     assert _canonical_handoff_digest(first_handoff) == _canonical_handoff_digest(second_handoff)

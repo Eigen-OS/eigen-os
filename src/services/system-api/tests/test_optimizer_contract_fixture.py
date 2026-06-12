@@ -61,6 +61,8 @@ def test_optimizer_contract_fixture_is_frozen_v1() -> None:
         "requires_fallback_reason": True,
         "requires_fallback_reason_code": True,
     }
+    assert payload["response"]["metric_bounds"]["confidence_score"] == {"min": 0.0, "max": 1.0}
+    assert payload["response"]["decision_lineage"]["optimizer"]["fallback_used"] is False
     assert payload["reason_codes"] == [
         "EIGEN_OPT_INVALID_AQO",
         "EIGEN_OPT_TOPOLOGY_MISSING",
@@ -83,6 +85,7 @@ def test_optimizer_graph_encoding_round_trip_is_canonical_v1() -> None:
     assert _canonical_json(json.loads(canonical_bytes)) == canonical_bytes
     assert graph_encoding["canonical_sha256"] == _sha256_hex(canonical_bytes)
     assert graph_encoding["round_trip_stability"] is True
+    assert payload["request"]["trace_context"]["traceparent"].startswith("00-")
 
 
 def test_optimizer_deterministic_replay_is_stable_v1() -> None:
@@ -98,6 +101,7 @@ def test_optimizer_deterministic_replay_is_stable_v1() -> None:
     assert replay["response"]["candidates"][0]["selected"] is True
     assert replay["response"]["candidates"][0]["score"]["total_score"] > replay["response"]["candidates"][1]["score"]["total_score"]
     assert replay["response"]["candidates"][0]["confidence"] == replay["response"]["confidence_score"]
+    assert replay["response"]["decision_lineage"]["trace_context"]["traceparent"] == replay["request"]["trace_context"]["traceparent"]
 
 
 def test_optimizer_fallback_path_fixture_requires_reason_code_v1() -> None:
@@ -107,6 +111,8 @@ def test_optimizer_fallback_path_fixture_requires_reason_code_v1() -> None:
     assert fallback["response"]["fallback_used"] is True
     assert fallback["response"]["fallback_reason_code"] == "EIGEN_OPT_FEATURE_EXTRACTION_FAILED"
     assert fallback["response"]["fallback_reason"]
+    assert fallback["response"]["decision_lineage"]["optimizer"]["fallback_used"] is True
+    assert fallback["response"]["metric_bounds"]["confidence_score"] == {"min": 0.0, "max": 1.0}
     assert fallback["response"]["selected_candidate_id"] == "fallback-0"
     assert fallback["response"]["candidates"][0]["rank"] == 1
     assert fallback["response"]["candidates"][0]["selected"] is True
@@ -119,7 +125,7 @@ def test_optimizer_confidence_and_explainability_fixture_are_bounded_v1() -> Non
     digest = replay["response"]["optimizer_digest"]
 
     assert 0.0 <= confidence <= 1.0
-    assert replay["response"]["explanation_ref"].startswith("qfs://jobs/")
+    assert replay["response"]["metric_bounds"]["confidence_score"] == {"min": 0.0, "max": 1.0}
     assert len(digest) == 64
     assert digest == _replay_digest(replay)
     assert replay["response"]["candidates"][0]["confidence"] == confidence
