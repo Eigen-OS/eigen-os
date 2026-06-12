@@ -9,11 +9,10 @@
 2. GNN Optimizer contract RFC
 3. Compiler ADR
 4. GNN Optimizer ADR
-5. Handoff contract doc
-6. Explainability contract doc
-7. Deterministic replay test report
-8. Observability test report
-9. QFS artifact provenance sample
+5. Handoff schema note
+6. Deterministic handoff tests
+7. Observability test report
+8. QFS artifact provenance sample
 
 ## Evidence rules
 
