@@ -64,6 +64,11 @@
     "min_shadow_samples": 50
   },
   "observed_shadow_samples": 12,
+  "trace_context": {
+    "request_id": "req-benchmark-0001",
+    "trace_id": "11111111111111111111111111111111",
+    "traceparent": "00-11111111111111111111111111111111-2222222222222222-01"
+  },
   "cohort_filters": {
     "backend_class": "simulator"
   },

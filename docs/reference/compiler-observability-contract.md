@@ -96,7 +96,33 @@ Compiler logs MUST include stable correlation fields:
 
 ---
 
-## 5. Replay evidence
+## 5. Explainability and lineage payloads
+
+The compiler MUST emit bounded explainability metadata that can be copied into the optimizer handoff without introducing hidden state.
+
+Required payload fields:
+
+- `decision_lineage_json`
+- `observability_json`
+- `explainability_json`
+
+Those payloads MUST remain deterministic for identical inputs and MUST include only bounded trace and metric fields:
+
+- trace fields: `request_id`, `trace_id`, `traceparent`
+- metric fields: `rpc`, `stage`, `outcome`, `elapsed_ms`
+- label-family bounds: no request, trace, tenant, or project identifiers in metric labels
+
+The lineage payload MUST preserve the compiler-to-optimizer boundary contract:
+
+- contract versions,
+- source precedence,
+- source and AQO digests,
+- request digest,
+- stable stage order.
+
+---
+
+## 6. Replay evidence
 
 Repeated compilation of identical inputs MUST be observable as:
 
@@ -107,7 +133,7 @@ Repeated compilation of identical inputs MUST be observable as:
 
 ---
 
-## 6. Deferred telemetry
+## 7. Deferred telemetry
 
 Intentionally deferred telemetry MUST be documented rather than introduced as ad-hoc labels. Deferred items include:
 

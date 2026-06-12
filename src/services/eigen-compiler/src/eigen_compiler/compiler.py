@@ -200,6 +200,10 @@ def _canonical_json_bytes(payload: dict[str, object]) -> bytes:
     return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
+def _canonical_json_text(payload: dict[str, object]) -> str:
+    return _canonical_json_bytes(payload).decode("utf-8")
+
+
 def _normalize_options(options: dict[str, str] | None) -> dict[str, str]:
     normalized: dict[str, str] = {}
     for key, value in sorted((options or {}).items()):
@@ -581,6 +585,55 @@ def compile_eigen_lang(
     options_json = _canonical_json_bytes(normalized_options).decode("utf-8")
     request_context_json = _canonical_json_bytes(asdict(normalized_request_context)).decode("utf-8")
 
+    decision_lineage = {
+        "contract_version": "1.0.0",
+        "compiler_contract_version": "1.0.0",
+        "optimizer_contract_version": "1.0.0",
+        "source_precedence": source_precedence,
+        "stage_order": [
+            "parse",
+            "validate_ast",
+            "annotate",
+            "lower_to_ir",
+            "eigen_dpda",
+            "canonicalize_aqo",
+            "emit",
+        ],
+        "request_id": normalized_request_context.request_id,
+        "trace_id": normalized_request_context.trace_id,
+        "traceparent": normalized_request_context.traceparent,
+        "source_sha256": source_digest,
+        "aqo_sha256": aqo_digest,
+        "request_sha256": request_digest,
+    }
+    observability = {
+        "contract_version": "1.0.0",
+        "trace_fields": ["request_id", "trace_id", "traceparent"],
+        "metric_fields": ["rpc", "stage", "outcome", "elapsed_ms"],
+        "metric_bounds": {
+            "labels_bounded": True,
+            "request_ids_in_metrics": False,
+            "trace_ids_in_metrics": False,
+            "tenant_ids_in_metrics": False,
+            "project_ids_in_metrics": False,
+        },
+        "lineage_sha256": request_digest,
+    }
+    explainability = {
+        "contract_version": "1.0.0",
+        "decision": "compiler_to_optimizer_handoff",
+        "trace_fields": ["request_id", "trace_id", "traceparent"],
+        "lineage": decision_lineage,
+        "bounded_fields": [
+            "request_id",
+            "trace_id",
+            "traceparent",
+            "source_sha256",
+            "aqo_sha256",
+            "request_sha256",
+        ],
+    }
+
     metadata = {
         "compiler": "eigen-compiler",
         "compiler_contract_version": "1.0.0",
@@ -616,5 +669,9 @@ def compile_eigen_lang(
         metadata["distributed.topology_hint"] = distributed.topology_hint or "data_parallel"
         if distributed.queue_provider:
             metadata["distributed.queue_provider"] = distributed.queue_provider
+
+    metadata["decision_lineage_json"] = _canonical_json_text(decision_lineage)
+    metadata["observability_json"] = _canonical_json_text(observability)
+    metadata["explainability_json"] = _canonical_json_text(explainability)
 
     return CompilationResult(aqo_json=aqo_bytes, metadata=metadata)

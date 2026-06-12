@@ -28,6 +28,10 @@ def test_offline_harness_is_reproducible_for_frozen_fixture() -> None:
     assert first["quality_signal"]["schema_version"] == "1.0.0"
     assert first["quality_signal"]["swap_count"] == 2
     assert "confidence" in first["quality_signal"]
+    assert first["explainability"]["trace_context"]["traceparent"] == fixture["trace_context"]["traceparent"]
+    assert first["explainability"]["confidence_metadata"]["score"] == first["quality_signal"]["confidence"]
+    assert first["quality_signal"]["metric_bounds"]["confidence_score"]["min"] == 0.0
+    assert first["quality_signal"]["metric_bounds"]["confidence_score"]["max"] == 1.0
 
 
 def test_shadow_harness_emits_block_recommendation_with_gate_reasons() -> None:
@@ -39,6 +43,25 @@ def test_shadow_harness_emits_block_recommendation_with_gate_reasons() -> None:
     assert result["recommendation"] == "BLOCK_PROMOTION"
     assert "REGRESSION_VS_BASELINE_HEURISTIC" in result["gate_reasons"]
     assert "INSUFFICIENT_SHADOW_SAMPLES" in result["gate_reasons"]
+    assert result["offline_bundle"]["explainability"]["fallback_metadata"]["used"] is True
+    assert result["offline_bundle"]["explainability"]["fallback_metadata"]["reason_code"] == "EIGEN_OPT_CONFIDENCE_TOO_LOW"
+
+def test_offline_harness_trace_and_metric_bounds_are_bounded() -> None:
+    harness = OptimizerEvaluationHarness()
+    fixture = _fixture()
+
+    result = harness.evaluate_offline(fixture)
+
+    explainability = result["explainability"]
+    metric_bounds = result["quality_signal"]["metric_bounds"]
+
+    assert explainability["trace_fields"] == ["request_id", "trace_id", "traceparent"]
+    assert explainability["decision_lineage"]["dataset_ref"] == fixture["dataset_ref"]
+    assert explainability["decision_lineage"]["topology_hash"].startswith("sha256:")
+    assert metric_bounds["confidence_score"] == {"min": 0.0, "max": 1.0}
+    assert metric_bounds["predicted_error"] == {"min": 0.0, "max": 1.0}
+    assert metric_bounds["observed_shadow_samples"]["min"] == 0
+    assert metric_bounds["observed_shadow_samples"]["max"] >= fixture["observed_shadow_samples"]
 
 def test_pipeline_generates_artifact_and_rollback_reason_codes_when_regression_detected() -> None:
     pipeline = ContinuousLearningPipeline()

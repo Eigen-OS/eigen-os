@@ -436,7 +436,8 @@ To support deterministic replay and audits, the system SHOULD persist:
 - timeline artifacts,
 - error artifacts,
 - decision/explainability artifacts (where enabled),
-- optimizer/neuro-symbolic decision traces (where enabled).
+- optimizer/neuro-symbolic decision traces (where enabled),
+- bounded explainability bundles for compiler/optimizer handoff evidence,
 - bounded audit lineage for schedule, reservation, split, merge, and terminalization decisions,
 - replay snapshots for restart recovery and evidence inspection.
 

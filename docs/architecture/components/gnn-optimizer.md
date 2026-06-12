@@ -525,7 +525,7 @@ Recommended budgets (not guaranteed SLAs):
 | Model registry + signatures | Not implemented |
 | QFS artifacts layout | Not implemented |
 | Optimizer observability metrics | Defined here (implementation pending) |
-| Explainability payloads | Not implemented |
+| Explainability payloads | Defined as bounded, deterministic payloads that preserve trace continuity and confidence/fallback metadata |
 | Fallback chain (deterministic) | Partially present via heuristics elsewhere; formal chain pending |
 
 ---
