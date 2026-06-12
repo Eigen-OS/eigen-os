@@ -184,6 +184,94 @@
       "compatibility_status": "needs-alignment"
     },
     {
+      "name": "Neuro-Symbolic Compiler final contract",
+      "contract_version": "1.0.0",
+      "owner": "Compiler; Neuro-Symbolic Core",
+      "sources": [
+        "docs/architecture/components/compiler.md",
+        "docs/architecture/components/neuro-symbolic-core.md",
+        "docs/reference/eigen-lang.md",
+        "docs/reference/formats/aqo.md",
+        "docs/reference/error-model.md"
+      ],
+      "proto_schema_files": [
+        "proto/eigen/internal/v1/compilation_service.proto"
+      ],
+      "planned_proto_schema_files": [],
+      "conformance_tests": [
+        "src/services/eigen-compiler/tests/test_conformance_suite.py",
+        "src/services/eigen-compiler/tests/test_compilation_rpc.py",
+        "buf lint",
+        "buf breaking"
+      ],
+      "implementation_status": "implemented",
+      "compatibility_status": "compatible"
+    },
+    {
+      "name": "GNN Optimizer final contract",
+      "contract_version": "1.0.0",
+      "owner": "GNN Optimizer; Neuro-Symbolic Core",
+      "sources": [
+        "docs/architecture/components/gnn-optimizer.md",
+        "docs/architecture/components/neuro-symbolic-core.md",
+        "docs/reference/api/grpc-internal.md",
+        "docs/reference/compiler-observability-contract.md"
+      ],
+      "proto_schema_files": [
+        "proto/eigen/internal/v1/optimizer_service.proto"
+      ],
+      "planned_proto_schema_files": [],
+      "conformance_tests": [
+        "src/services/system-api/tests/test_optimizer_contract_fixture.py",
+        "src/services/benchmark-service/tests/test_optimizer_evaluation_harness.py",
+        "src/services/benchmark-service/src/benchmark_service/optimizer_evaluation.py",
+        "src/services/benchmark-service/tests/fixtures/optimizer_evaluation/offline_online_fixture.json"
+      ],
+      "implementation_status": "implemented",
+      "compatibility_status": "compatible"
+    },
+    {
+      "name": "Compiler ↔ Optimizer deterministic handoff",
+      "contract_version": "1.0.0",
+      "owner": "Compiler; GNN Optimizer",
+      "sources": [
+        "docs/architecture/components/compiler.md",
+        "docs/architecture/components/gnn-optimizer.md",
+        "docs/architecture/components/neuro-symbolic-core.md",
+        "docs/reference/formats/aqo.md"
+      ],
+      "proto_schema_files": [],
+      "planned_proto_schema_files": [
+        "AQO / IR payload boundary"
+      ],
+      "conformance_tests": [
+        "src/services/eigen-compiler/tests/test_handoff_contract.py",
+        "src/services/system-api/tests/test_optimizer_contract_fixture.py",
+        "src/services/benchmark-service/tests/test_optimizer_evaluation_harness.py"
+      ],
+      "implementation_status": "implemented",
+      "compatibility_status": "compatible"
+    },
+    {
+      "name": "Optimization explainability and confidence contract",
+      "contract_version": "1.0.0",
+      "owner": "GNN Optimizer; Observability",
+      "sources": [
+        "docs/reference/compiler-observability-contract.md",
+        "docs/architecture/components/observability.md"
+      ],
+      "proto_schema_files": [],
+      "planned_proto_schema_files": [
+        "optimization trace schema"
+      ],
+      "conformance_tests": [
+        "src/services/system-api/tests/test_optimizer_contract_fixture.py",
+        "src/services/benchmark-service/tests/test_optimizer_evaluation_harness.py"
+      ],
+      "implementation_status": "implemented",
+      "compatibility_status": "compatible"
+    },
+    {
       "name": "Canonical error model",
       "contract_version": "1.0.0",
       "owner": "All public/internal services",
@@ -617,8 +705,7 @@
       ],
       "implementation_status": "implemented",
       "compatibility_status": "compatible"
-    }
-    ,
+    },
     {
       "name": "Driver Manager and QDriver final contract",
       "contract_version": "1.0.0",
