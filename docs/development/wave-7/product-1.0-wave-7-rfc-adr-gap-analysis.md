@@ -1,7 +1,7 @@
 # Product 1.0 Wave 7 RFC / ADR Gap Analysis
 
 **Wave:** Product 1.0 Wave 7 — Neuro-Symbolic Compiler and GNN Optimizer
-**Status:** Planning baseline
+**Status:** In progress
 
 ---
 
@@ -15,7 +15,7 @@ This document identifies the RFC and ADR updates required to close Wave 7.
 
 ### 2.1 Compiler contract gap
 
-Current architecture docs describe the compiler boundary, but Wave 7 requires a frozen Product 1.0 compiler contract with:
+The current architecture and MVP surfaces already describe the compiler boundary, but Wave 7 requires a frozen Product 1.0 compiler contract with:
 
 - deterministic Eigen-Lang lowering,
 - normalized AQO emission,
@@ -34,15 +34,15 @@ The optimizer architecture exists, but Product 1.0 needs a contract that freezes
 
 ### 2.3 Handoff gap
 
-The boundary between compiler output and optimizer input must be versioned explicitly.
+The boundary between compiler output and optimizer input must be versioned explicitly and backed by a deterministic AQO / IR handoff.
 
 ### 2.4 Observability gap
 
-The optimizer path needs explicit explainability and bounded metrics so release evidence can be generated deterministically.
+The optimizer path needs explicit explainability and bounded metrics so release evidence can be generated deterministically and reviewed against the same Product 1.0 evidence chain as the compiler.
 
 ### 2.5 Persistence / evidence gap
 
-Compiler and optimizer outputs need a release-evidence shape aligned with QFS artifact persistence and provenance.
+Compiler and optimizer outputs need a release-evidence shape aligned with QFS artifact persistence, provenance, and replay validation.
 
 ---
 
@@ -73,3 +73,5 @@ Compiler and optimizer outputs need a release-evidence shape aligned with QFS ar
 - evidence bundle frozen,
 - inventory synchronized,
 - manifest synchronized.
+- existing MVP compiler path integrated with the GNN optimizer contract,
+- release notes updated for any compatibility-breaking behavior.
