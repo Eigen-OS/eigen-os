@@ -6,11 +6,7 @@
 ## Summary
 
 Wave 7 is a contract-freeze wave for compiler and optimizer semantics.
-The expected compatibility outcome is:
-
-- backward-compatible within the current Product 1.0 release target,
-- breaking changes only if explicitly approved by major contract review,
-- deterministic replay preserved across all accepted inputs.
+The expected compatibility outcome is deterministic replay across the compiler-to-optimizer boundary.
 
 ## Contract areas
 
