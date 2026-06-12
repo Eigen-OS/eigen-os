@@ -8,12 +8,68 @@
       "input_aqo",
       "topology.topology_ref",
       "objective.preset",
-      "deterministic_seed"
+      "deterministic_seed",
+      "graph_encoding.canonical_sha256",
+      "policy.mode"
     ],
     "deterministic_defaults": {
       "candidate_budget": 1,
       "timeout_ms": 100,
       "trace_context": {}
+    },
+    "graph_encoding": {
+      "encoding_version": "aqo-graph-v1",
+      "canonical_format": "aqo-json",
+      "canonical_graph": {
+        "nodes": [
+          {
+            "id": "q0",
+            "type": "logical_qubit",
+            "features": {
+              "degree": 2,
+              "readout_error": 0.001
+            }
+          },
+          {
+            "id": "q1",
+            "type": "logical_qubit",
+            "features": {
+              "degree": 1,
+              "readout_error": 0.002
+            }
+          }
+        ],
+        "edges": [
+          {
+            "id": "q0-q1",
+            "source": "q0",
+            "target": "q1",
+            "coupling": 1.0
+          }
+        ]
+      },
+      "canonical_sha256": "2f78f4f9355f2ed2f81b9aa2fdaacb3392dae722d4bd751eafb2cf7e3eff562f",
+      "round_trip_stability": true
+    },
+    "ranking_semantics": {
+      "sort_order": [
+        "score.total_score desc",
+        "confidence desc",
+        "candidate_id asc"
+      ],
+      "selected_candidate_is_first": true
+    },
+    "policy": {
+      "mode": "deterministic",
+      "minimum_confidence": 0.8,
+      "max_depth": 12,
+      "max_swaps": 3,
+      "forbidden_qubits": [
+        "q5"
+      ],
+      "forbidden_edges": [
+        "q2-q3"
+      ]
     }
   },
   "response": {
@@ -23,27 +79,292 @@
       "selected_candidate_id",
       "model_version",
       "fallback_used",
+      "fallback_reason_code",
       "deterministic_seed",
-      "optimizer_latency_ms"
+      "optimizer_latency_ms",
+      "confidence_score",
+      "explanation_ref",
+      "optimizer_digest"
     ],
     "fallback_contract": {
       "fallback_used": true,
-      "requires_fallback_reason": true
+      "requires_fallback_reason": true,
+      "requires_fallback_reason_code": true
+    },
+    "ranking": {
+      "selected_candidate_id": "candidate-0",
+      "ordered_candidate_ids": [
+        "candidate-0",
+        "candidate-1"
+      ],
+      "tie_breakers": [
+        "score.total_score",
+        "confidence",
+        "candidate_id"
+      ]
+    },
+    "confidence": {
+      "score": 0.92,
+      "band": "high",
+      "explainability_ref": "qfs://jobs/job-42/optimizer/explain.json"
+    },
+    "selected_candidate": {
+      "candidate_id": "candidate-0",
+      "rank": 1,
+      "selected": true,
+      "mapped_aqo": {
+        "sha256": "mapped-0001"
+      },
+      "score": {
+        "total_score": 0.94,
+        "latency_score": 0.92,
+        "fidelity_score": 0.96,
+        "resource_score": 0.91,
+        "risk_score": 0.08
+      },
+      "confidence": 0.92,
+      "explainability_summary": "Deterministic heuristic baseline matched topology constraints.",
+      "metadata": {
+        "policy_mode": "deterministic"
+      }
+    }
+  },
+  "examples": {
+    "replay": {
+      "request": {
+        "contract_version": "1.0.0",
+        "request_id": "req_optimizer_0001",
+        "input_aqo": {
+          "sha256": "aqo-0001"
+        },
+        "topology": {
+          "topology_ref": "qfs://jobs/job-42/topology.json",
+          "topology_digest_sha256": "topology-0001",
+          "noise_snapshot_ref": "qfs://jobs/job-42/calibration.json",
+          "backend_profile": "ibm_eagle"
+        },
+        "objective": {
+          "preset": "balanced",
+          "weights": {
+            "latency": 0.5,
+            "fidelity": 0.5
+          }
+        },
+        "deterministic_seed": 7,
+        "candidate_budget": 2,
+        "timeout_ms": 100,
+        "trace_context": {
+          "traceparent": "00-11111111111111111111111111111111-2222222222222222-01"
+        },
+        "graph_encoding": {
+          "encoding_version": "aqo-graph-v1",
+          "canonical_format": "aqo-json",
+          "canonical_graph": {
+            "nodes": [
+              {
+                "id": "q0",
+                "type": "logical_qubit",
+                "features": {
+                  "degree": 2,
+                  "readout_error": 0.001
+                }
+              },
+              {
+                "id": "q1",
+                "type": "logical_qubit",
+                "features": {
+                  "degree": 1,
+                  "readout_error": 0.002
+                }
+              }
+            ],
+            "edges": [
+              {
+                "id": "q0-q1",
+                "source": "q0",
+                "target": "q1",
+                "coupling": 1.0
+              }
+            ]
+          },
+          "canonical_sha256": "2f78f4f9355f2ed2f81b9aa2fdaacb3392dae722d4bd751eafb2cf7e3eff562f",
+          "round_trip_stability": true
+        },
+        "policy": {
+          "mode": "deterministic",
+          "minimum_confidence": 0.8,
+          "max_depth": 12,
+          "max_swaps": 3,
+          "forbidden_qubits": [
+            "q5"
+          ],
+          "forbidden_edges": [
+            "q2-q3"
+          ]
+        }
+      },
+      "response": {
+        "request_id": "req_optimizer_0001",
+        "model_version": "optimizer-model-v1",
+        "fallback_used": false,
+        "fallback_reason": "",
+        "fallback_reason_code": "EIGEN_OPT_UNSPECIFIED",
+        "deterministic_seed": 7,
+        "trace_id": "trace-11111111111111111111111111111111111111111111",
+        "optimizer_latency_ms": 18,
+        "scoring_latency_ms": 7,
+        "mapping_latency_ms": 9,
+        "confidence_score": 0.92,
+        "explanation_ref": "qfs://jobs/job-42/optimizer/explain.json",
+        "candidates": [
+          {
+            "candidate_id": "candidate-0",
+            "rank": 1,
+            "selected": true,
+            "mapped_aqo": {
+              "sha256": "mapped-0001"
+            },
+            "score": {
+              "total_score": 0.94,
+              "latency_score": 0.92,
+              "fidelity_score": 0.96,
+              "resource_score": 0.91,
+              "risk_score": 0.08
+            },
+            "confidence": 0.92,
+            "explainability_summary": "Deterministic heuristic baseline matched topology constraints.",
+            "metadata": {
+              "policy_mode": "deterministic"
+            }
+          },
+          {
+            "candidate_id": "candidate-1",
+            "rank": 2,
+            "selected": false,
+            "mapped_aqo": {
+              "sha256": "mapped-0002"
+            },
+            "score": {
+              "total_score": 0.89,
+              "latency_score": 0.88,
+              "fidelity_score": 0.91,
+              "resource_score": 0.9,
+              "risk_score": 0.11
+            },
+            "confidence": 0.81,
+            "explainability_summary": "Alternative route with additional SWAPs.",
+            "metadata": {
+              "policy_mode": "deterministic"
+            }
+          }
+        ],
+        "selected_candidate_id": "candidate-0",
+        "optimizer_digest": "06e0333fee55350c316dec96fbf1009a2447bc428ad58556544d2061af1a1dbb"
+      }
+    },
+    "fallback": {
+      "request": {
+        "contract_version": "1.0.0",
+        "request_id": "req_optimizer_fallback_0001",
+        "input_aqo": {
+          "sha256": "aqo-fallback-0001"
+        },
+        "topology": {
+          "topology_ref": "qfs://jobs/job-99/topology.json",
+          "topology_digest_sha256": "topology-fallback-0001",
+          "noise_snapshot_ref": "",
+          "backend_profile": "ionq_aria"
+        },
+        "objective": {
+          "preset": "fidelity",
+          "weights": {
+            "fidelity": 1.0
+          }
+        },
+        "deterministic_seed": 11,
+        "candidate_budget": 1,
+        "timeout_ms": 100,
+        "trace_context": {},
+        "graph_encoding": {
+          "encoding_version": "aqo-graph-v1",
+          "canonical_format": "aqo-json",
+          "canonical_graph": {
+            "nodes": [],
+            "edges": []
+          },
+          "canonical_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5c46c1f1f4cf2a0c3eb0a6a0e8f6f4c54",
+          "round_trip_stability": true
+        },
+        "policy": {
+          "mode": "deterministic",
+          "minimum_confidence": 0.95,
+          "max_depth": 8,
+          "max_swaps": 1,
+          "forbidden_qubits": [],
+          "forbidden_edges": []
+        }
+      },
+      "response": {
+        "request_id": "req_optimizer_fallback_0001",
+        "model_version": "heuristic-fallback-v1",
+        "fallback_used": true,
+        "fallback_reason": "Graph features incomplete; deterministic heuristic fallback selected.",
+        "fallback_reason_code": "EIGEN_OPT_FEATURE_EXTRACTION_FAILED",
+        "deterministic_seed": 11,
+        "trace_id": "trace-fallback-0001",
+        "optimizer_latency_ms": 6,
+        "scoring_latency_ms": 0,
+        "mapping_latency_ms": 4,
+        "confidence_score": 0.71,
+        "explanation_ref": "qfs://jobs/job-99/optimizer/explain.json",
+        "candidates": [
+          {
+            "candidate_id": "fallback-0",
+            "rank": 1,
+            "selected": true,
+            "mapped_aqo": {
+              "sha256": "mapped-fallback-0001"
+            },
+            "score": {
+              "total_score": 0.71,
+              "latency_score": 0.83,
+              "fidelity_score": 0.66,
+              "resource_score": 0.88,
+              "risk_score": 0.22
+            },
+            "confidence": 0.71,
+            "explainability_summary": "Fallback path preserved determinism with bounded graph input.",
+            "metadata": {
+              "fallback": "heuristic"
+            }
+          }
+        ],
+        "selected_candidate_id": "fallback-0",
+        "optimizer_digest": "649e54a887a9a129c94e60cc01af12d9e339e8e2a7bfebd0cb01c26fa5a8f705"
+      }
     }
   },
   "reason_codes": [
-    "OPT_INVALID_AQO",
-    "OPT_TOPOLOGY_MISSING",
-    "OPT_MODEL_UNAVAILABLE",
-    "OPT_TIMEOUT",
-    "OPT_INTERNAL"
+    "EIGEN_OPT_INVALID_AQO",
+    "EIGEN_OPT_TOPOLOGY_MISSING",
+    "EIGEN_OPT_MODEL_UNAVAILABLE",
+    "EIGEN_OPT_TIMEOUT",
+    "EIGEN_OPT_INTERNAL",
+    "EIGEN_OPT_FEATURE_EXTRACTION_FAILED",
+    "EIGEN_OPT_CONFIDENCE_TOO_LOW",
+    "EIGEN_OPT_UNSUPPORTED_BACKEND",
+    "EIGEN_OPT_POLICY_REJECTED"
   ],
   "retry_semantics": {
-    "OPT_INVALID_AQO": "NEVER",
-    "OPT_TOPOLOGY_MISSING": "NEVER",
-    "OPT_MODEL_UNAVAILABLE": "RETRY_WITH_BACKOFF",
-    "OPT_TIMEOUT": "SAFE_RETRY",
-    "OPT_INTERNAL": "SAFE_RETRY"
+    "EIGEN_OPT_INVALID_AQO": "NEVER",
+    "EIGEN_OPT_TOPOLOGY_MISSING": "NEVER",
+    "EIGEN_OPT_MODEL_UNAVAILABLE": "RETRY_WITH_BACKOFF",
+    "EIGEN_OPT_TIMEOUT": "SAFE_RETRY",
+    "EIGEN_OPT_INTERNAL": "SAFE_RETRY",
+    "EIGEN_OPT_FEATURE_EXTRACTION_FAILED": "NEVER",
+    "EIGEN_OPT_CONFIDENCE_TOO_LOW": "SAFE_RETRY",
+    "EIGEN_OPT_UNSUPPORTED_BACKEND": "NEVER",
+    "EIGEN_OPT_POLICY_REJECTED": "NEVER"
   },
   "deprecation_policy": {
     "min_supported_minor_releases": 2,
