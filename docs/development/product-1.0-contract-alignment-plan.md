@@ -427,6 +427,10 @@ The concrete Wave 3 mappings are captured in the inventory and closure package:
 
 **Goal:** promote optimizer/intelligent-runtime contracts from fixtures to production path.
 
+**Planning package:** `docs/development/wave-7a/product-1.0-wave-7a-execution-plan.md`, `docs/development/wave-7a/product-1.0-wave-7a-issue-pack.md`, `docs/development/wave-7a/product-1.0-wave-7a-rfc-adr-gap-analysis.md`, `docs/development/wave-7a/product-1.0-wave-7a-compatibility-report.md`, `docs/development/wave-7a/product-1.0-wave-7a-release-readiness-checklist.md`, and `docs/development/wave-7a/product-1.0-wave-7a-exit-evidence-bundle.md`.
+
+**Governance baseline:** `rfcs/0051-product-1.0-optimizer-production-path.md` and `docs/adr/0037-product-1.0-optimizer-production-path.md`.
+
 #### Work items
 
 1. Implement Optimizer Service server and client wiring from Kernel/QRTX.
