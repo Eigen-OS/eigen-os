@@ -394,6 +394,27 @@ The concrete Wave 3 mappings are captured in the inventory and closure package:
 10. Add official simulator as the reference conformance backend.
 11. Add optional provider drivers only behind explicit configuration and test profiles.
 
+### Wave 7 — Neuro-Symbolic Compiler and GNN Optimizer
+
+**Goal:** freeze the compiler/optimizer boundary and integrate the existing MVP compiler path with the GNN optimizer contract for Product 1.0.
+
+#### Work items
+
+1. Freeze Eigen-Lang lowering and AQO normalization semantics in the compiler contract.
+2. Freeze deterministic scoring, fallback, and confidence semantics in the GNN optimizer contract.
+3. Define the compiler → optimizer handoff envelope and stable identifiers.
+4. Align observability and release-evidence artifacts with the integrated pipeline.
+5. Keep the compiler and optimizer contracts synchronized with inventory and manifest rows.
+
+#### Exit criteria
+
+- compiler contract accepted,
+- optimizer contract accepted,
+- handoff contract accepted,
+- deterministic replay validated,
+- observability and explainability documented,
+- inventory and manifest synchronized.
+
 #### Exit criteria
 
 - Kernel can execute through any conformant QDriver without provider-specific code.
