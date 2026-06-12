@@ -99,7 +99,6 @@ Invalid `job_id` values MUST be rejected before filesystem access.
 │   ├── circuit.aqo.pb
 │   ├── circuit.qasm
 │   ├── compile_report.json
-│   ├── compile_report.json
 │   └── metadata.json
 ├── execution/
 │   ├── execution_plan.json
@@ -128,7 +127,11 @@ Invalid `job_id` values MUST be rejected before filesystem access.
 │   ├── job.json
 │   ├── retention.json
 │   ├── lineage.json
-│   └── tags.json
+│   ├── tags.json
+│   └── release_evidence/
+│       ├── bundle.json
+│       ├── manifest.json
+│       └── provenance.json
 ├── traces/
 │   ├── spans.json
 │   └── events.json
@@ -313,7 +316,7 @@ Logs are optional unless explicitly required by deployment policy.
 
 ### 6.7 `meta/`
 
-Contains metadata and indexing structures.
+Contains metadata, indexing structures, and release evidence.
 
 #### Files
 
@@ -323,6 +326,14 @@ Contains metadata and indexing structures.
 | `retention.json` | Retention policy state |
 | `lineage.json` | Parent/child relationships |
 | `tags.json` | Search/index metadata |
+| `release_evidence/bundle.json` | Release evidence bundle |
+| `release_evidence/manifest.json` | Release evidence artifact manifest |
+| `release_evidence/provenance.json` | Provenance report tying compiler and optimizer runs |
+
+#### Notes
+
+- Release evidence artifacts MUST be written with replay-safe job-scoped references.
+- Release evidence bundles are immutable within a job scope and MUST be treated as release evidence, not mutable runtime state.
 
 ---
 
@@ -462,7 +473,24 @@ Supplementary artifacts:
 ```text
 results/result.json
 results/manifest.json
+meta/release_evidence/bundle.json
+meta/release_evidence/manifest.json
+meta/release_evidence/provenance.json
 ```
+
+---
+
+### 9.5 Release Evidence Persistence Phase
+
+Writes:
+
+```text
+meta/release_evidence/bundle.json
+meta/release_evidence/manifest.json
+meta/release_evidence/provenance.json
+```
+
+Release evidence is emitted from the job persistence path after compiler and optimizer runs complete. The evidence bundle MUST remain immutable and job-scoped.
 
 ---
 

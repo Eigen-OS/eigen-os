@@ -205,7 +205,7 @@ Checkpoint restore behavior MUST remain deterministic across:
 - distributed replay,
 - multi-device merge recovery flows.
 
-The current L3 implementation now enforces immutable writes for `compiled/` and `results/` artifacts, persists lineage and retention metadata, and verifies digests on read for compiled and result bundles.
+The current L3 implementation now enforces immutable writes for `compiled/`, `results/`, and `meta/release_evidence/` artifacts, persists lineage and retention metadata, and verifies digests on read for compiled, result, and release-evidence bundles.
 
 ---
 

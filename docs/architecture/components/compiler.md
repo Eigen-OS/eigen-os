@@ -499,7 +499,7 @@ graph LR
 **Normative notes:**
 
 - Only **Kernel/QRTX** (or internal orchestrator) calls the compiler; there is **no public compiler API**.
-- QFS is the **canonical persistence** for compilation artifacts and metadata.
+- QFS is the **canonical persistence** for compilation artifacts, metadata, and job-scoped release evidence bundles.
 
 ---
 

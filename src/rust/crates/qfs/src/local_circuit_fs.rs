@@ -39,6 +39,9 @@ pub enum CircuitFsError {
     #[error("artifact not found: {path}")]
     NotFound { path: PathBuf },
 
+    #[error("invalid job id: {job_id}")]
+    InvalidJobId { job_id: String },
+
     #[error(transparent)]
     Io(#[from] io::Error),
 }
@@ -58,11 +61,13 @@ impl CircuitFsLocal {
     }
 
     pub fn ensure_job_layout(&self, job_id: &str) -> Result<(), CircuitFsError> {
-        fs::create_dir_all(self.job_root_path(job_id))?;
+        fs::create_dir_all(self.job_root_path(job_id)?)?;
         fs::create_dir_all(self.compiled_dir_path(job_id)?)?;
         fs::create_dir_all(self.results_dir_path(job_id)?)?;
         fs::create_dir_all(self.observability_dir_path(job_id)?)?;
         fs::create_dir_all(self.logs_dir_path(job_id)?)?;
+        fs::create_dir_all(self.meta_dir_path(job_id)?)?;
+        fs::create_dir_all(self.release_evidence_dir_path(job_id)?)?;
         Ok(())
     }
 
@@ -141,12 +146,35 @@ impl CircuitFsLocal {
         atomic_write_bytes(&path, metrics)
     }
 
+    fn validate_job_id(job_id: &str) -> Result<(), CircuitFsError> {
+        let valid_chars = job_id
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-'));
+        let forbidden_segments = job_id.is_empty()
+            || job_id == "."
+            || job_id == ".."
+            || job_id.contains("..")
+            || job_id.as_bytes().contains(&0);
+        if !valid_chars || forbidden_segments {
+            return Err(CircuitFsError::InvalidJobId { job_id: job_id.to_string() });
+        }
+        Ok(())
+    }
+
     fn observability_dir_path(&self, job_id: &str) -> Result<PathBuf, CircuitFsError> {
-        Ok(self.job_root_path(job_id).join("observability"))
+        Ok(self.job_root_path(job_id)?.join("observability"))
     }
 
     fn logs_dir_path(&self, job_id: &str) -> Result<PathBuf, CircuitFsError> {
-        Ok(self.job_root_path(job_id).join("logs"))
+        Ok(self.job_root_path(job_id)?.join("logs"))
+    }
+
+    fn meta_dir_path(&self, job_id: &str) -> Result<PathBuf, CircuitFsError> {
+        Ok(self.job_root_path(job_id)?.join("meta"))
+    }
+
+    fn release_evidence_dir_path(&self, job_id: &str) -> Result<PathBuf, CircuitFsError> {
+        Ok(self.meta_dir_path(job_id)?.join("release_evidence"))
     }
 
     fn result_json_path(&self, job_id: &str) -> Result<PathBuf, CircuitFsError> {
@@ -161,6 +189,18 @@ impl CircuitFsLocal {
         Ok(self.results_dir_path(job_id)?.join("envelope.json"))
     }
 
+    fn release_evidence_bundle_path(&self, job_id: &str) -> Result<PathBuf, CircuitFsError> {
+        Ok(self.release_evidence_dir_path(job_id)?.join("bundle.json"))
+    }
+
+    fn release_evidence_manifest_path(&self, job_id: &str) -> Result<PathBuf, CircuitFsError> {
+        Ok(self.release_evidence_dir_path(job_id)?.join("manifest.json"))
+    }
+
+    fn release_evidence_provenance_path(&self, job_id: &str) -> Result<PathBuf, CircuitFsError> {
+        Ok(self.release_evidence_dir_path(job_id)?.join("provenance.json"))
+    }
+
     fn metrics_json_path(&self, job_id: &str) -> Result<PathBuf, CircuitFsError> {
         Ok(self.observability_dir_path(job_id)?.join("metrics.json"))
     }
@@ -169,16 +209,17 @@ impl CircuitFsLocal {
         Ok(self.logs_dir_path(job_id)?.join(format!("{stream}.jsonl")))
     }
 
-    fn job_root_path(&self, job_id: &str) -> PathBuf {
-        self.root.join("jobs").join(job_id)
+    fn job_root_path(&self, job_id: &str) -> Result<PathBuf, CircuitFsError> {
+        Self::validate_job_id(job_id)?;
+        Ok(self.root.join("jobs").join(job_id))
     }
 
     fn compiled_dir_path(&self, job_id: &str) -> Result<PathBuf, CircuitFsError> {
-        Ok(self.job_root_path(job_id).join("compiled"))
+        Ok(self.job_root_path(job_id)?.join("compiled"))
     }
 
     fn compiled_aqo_json_path(&self, job_id: &str) -> Result<PathBuf, CircuitFsError> {
-        Ok(self.compiled_dir_path(job_id)?.join("compiled.aqo"))
+        Ok(self.compiled_dir_path(job_id)?.join("circuit.aqo.json"))
     }
 
     fn compiled_metadata_path(&self, job_id: &str) -> Result<PathBuf, CircuitFsError> {
@@ -190,11 +231,11 @@ impl CircuitFsLocal {
     }
 
     fn compiled_report_path(&self, job_id: &str) -> Result<PathBuf, CircuitFsError> {
-        Ok(self.compiled_dir_path(job_id)?.join("compile-report.json"))
+        Ok(self.compiled_dir_path(job_id)?.join("compile_report.json"))
     }
 
     fn results_dir_path(&self, job_id: &str) -> Result<PathBuf, CircuitFsError> {
-        Ok(self.job_root_path(job_id).join("results"))
+        Ok(self.job_root_path(job_id)?.join("results"))
     }
 }
 
@@ -302,7 +343,63 @@ pub struct ResultManifest {
     pub artifacts: Vec<ResultArtifactDescriptor>,
 }
 
-/// ... existing content omitted for brevity ...
+/// Release-evidence bundle persisted under `meta/release_evidence/`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReleaseEvidenceBundle {
+    pub artifact_version: String,
+    pub schema_version: String,
+    pub producer_version: String,
+    pub job_id: String,
+    pub compiler_contract_version: String,
+    pub optimizer_contract_version: String,
+    pub request_id: String,
+    pub trace_id: String,
+    pub traceparent: String,
+    pub source_sha256: String,
+    pub aqo_sha256: String,
+    #[serde(default)]
+    pub optimized_aqo_sha256: Option<String>,
+    pub compiled_artifact_ref: String,
+    pub optimized_artifact_ref: String,
+    pub manifest_ref: String,
+    pub provenance_report_ref: String,
+    #[serde(default)]
+    pub created_at_epoch_ms: u64,
+}
+
+/// Artifact manifest for release evidence bundles.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReleaseEvidenceManifest {
+    pub artifact_version: String,
+    pub producer_version: String,
+    pub schema_version: String,
+    #[serde(default)]
+    pub created_at_epoch_ms: u64,
+    #[serde(default)]
+    pub retention_policy: String,
+    #[serde(default)]
+    pub artifacts: Vec<ResultArtifactDescriptor>,
+}
+
+/// Provenance report tying release evidence back to compile and optimization runs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReleaseEvidenceProvenanceReport {
+    pub artifact_version: String,
+    pub schema_version: String,
+    pub job_id: String,
+    pub request_id: String,
+    pub trace_id: String,
+    pub traceparent: String,
+    pub compiler_stage_id: String,
+    pub optimizer_stage_id: String,
+    pub compiler_run_id: String,
+    pub optimizer_run_id: String,
+    pub compiler_artifact_ref: String,
+    pub optimized_artifact_ref: String,
+    pub compiler_lineage: CompiledArtifactLineage,
+    #[serde(default)]
+    pub optimized_aqo_sha256: Option<String>,
+}
 
 impl CircuitFsLocal {
     pub fn store_compiled_artifacts_v1(
@@ -361,6 +458,35 @@ impl CircuitFsLocal {
 
         let bytes = serde_json::to_vec_pretty(&metadata).map_err(to_io_error)?;
         atomic_write_bytes(&compiled_metadata_path, &bytes)?;
+        Ok(())
+    }
+
+    pub fn store_release_evidence_bundle_v1(
+        &self,
+        job_id: &str,
+        bundle: &ReleaseEvidenceBundle,
+        manifest: &ReleaseEvidenceManifest,
+        provenance_report: &ReleaseEvidenceProvenanceReport,
+    ) -> Result<(), CircuitFsError> {
+        self.ensure_job_layout(job_id)?;
+
+        let bundle_path = self.release_evidence_bundle_path(job_id)?;
+        let manifest_path = self.release_evidence_manifest_path(job_id)?;
+        let provenance_path = self.release_evidence_provenance_path(job_id)?;
+
+        for path in [bundle_path.clone(), manifest_path.clone(), provenance_path.clone()] {
+            if path.exists() {
+                return Err(CircuitFsError::AlreadyExists { path });
+            }
+        }
+
+        let bundle_bytes = serde_json::to_vec_pretty(bundle).map_err(to_io_error)?;
+        let manifest_bytes = serde_json::to_vec_pretty(manifest).map_err(to_io_error)?;
+        let provenance_bytes = serde_json::to_vec_pretty(provenance_report).map_err(to_io_error)?;
+
+        atomic_write_bytes(&bundle_path, &bundle_bytes)?;
+        atomic_write_bytes(&manifest_path, &manifest_bytes)?;
+        atomic_write_bytes(&provenance_path, &provenance_bytes)?;
         Ok(())
     }
 }
@@ -438,6 +564,174 @@ fn unix_epoch_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    fn read_json(path: &Path) -> serde_json::Value {
+        let bytes = fs::read(path).expect("read json");
+        serde_json::from_slice(&bytes).expect("parse json")
+    }
+
+    #[test]
+    fn store_compiled_artifacts_uses_canonical_paths_and_metadata() {
+        let tempdir = tempdir().expect("tempdir");
+        let fs = CircuitFsLocal::new(tempdir.path());
+
+        let provenance = CompiledArtifactProvenance {
+            producer_identity: "compiler-service".to_string(),
+            contract_version: "1.0.0".to_string(),
+            compiler_version: "1.0.0".to_string(),
+            created_at: "2026-06-12T00:00:00Z".to_string(),
+            lineage: CompiledArtifactLineage {
+                request_id: Some("req-123".to_string()),
+                source_ref: Some("qfs://jobs/job-123/input/program.eigen.py".to_string()),
+                source_sha256: Some("deadbeef".to_string()),
+            },
+        };
+
+        fs.store_compiled_artifacts_v1(
+            "job-123",
+            br#"{"aqo":"ok"}"#,
+            Some(b"OPENQASM 3;"),
+            Some(br#"{"status":"ok"}"#),
+            provenance,
+        )
+        .expect("store compiled artifacts");
+
+        let job_root = tempdir.path().join("jobs").join("job-123");
+        assert!(job_root.join("compiled/circuit.aqo.json").exists());
+        assert!(job_root.join("compiled/circuit.qasm").exists());
+        assert!(job_root.join("compiled/compile_report.json").exists());
+        assert!(job_root.join("compiled/metadata.json").exists());
+
+        let metadata = read_json(&job_root.join("compiled/metadata.json"));
+        assert_eq!(metadata["version"], "1.0.0");
+        assert_eq!(metadata["schema_version"], "compiled_artifacts.v1");
+        assert_eq!(metadata["compiler_version"], "1.0.0");
+        assert_eq!(metadata["producer_identity"], "compiler-service");
+        assert_eq!(metadata["contract_version"], "1.0.0");
+        assert_eq!(metadata["lineage"]["request_id"], "req-123");
+        assert_eq!(metadata["lineage"]["source_ref"], "qfs://jobs/job-123/input/program.eigen.py");
+    }
+
+    #[test]
+    fn store_release_evidence_bundle_writes_bundle_manifest_and_provenance() {
+        let tempdir = tempdir().expect("tempdir");
+        let fs = CircuitFsLocal::new(tempdir.path());
+
+        let bundle = ReleaseEvidenceBundle {
+            artifact_version: "1.0.0".to_string(),
+            schema_version: "release_evidence_bundle.v1".to_string(),
+            producer_version: "1.0.0".to_string(),
+            job_id: "job-456".to_string(),
+            compiler_contract_version: "1.0.0".to_string(),
+            optimizer_contract_version: "1.0.0".to_string(),
+            request_id: "req-456".to_string(),
+            trace_id: "trace-456".to_string(),
+            traceparent: "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01".to_string(),
+            source_sha256: "sha256:1111".to_string(),
+            aqo_sha256: "sha256:2222".to_string(),
+            optimized_aqo_sha256: Some("sha256:3333".to_string()),
+            compiled_artifact_ref: "qfs://jobs/job-456/compiled/circuit.aqo.json".to_string(),
+            optimized_artifact_ref: "qfs://jobs/job-456/optimizer/optimized_aqo.json".to_string(),
+            manifest_ref: "qfs://jobs/job-456/meta/release_evidence/manifest.json".to_string(),
+            provenance_report_ref: "qfs://jobs/job-456/meta/release_evidence/provenance.json".to_string(),
+            created_at_epoch_ms: 1_717_000_000_000,
+        };
+        let manifest = ReleaseEvidenceManifest {
+            artifact_version: "1.0.0".to_string(),
+            producer_version: "1.0.0".to_string(),
+            schema_version: "release_evidence_manifest.v1".to_string(),
+            created_at_epoch_ms: 1_717_000_000_001,
+            retention_policy: "pinned".to_string(),
+            artifacts: vec![
+                ResultArtifactDescriptor {
+                    path: "meta/release_evidence/bundle.json".to_string(),
+                    content_hash: "sha256:aaaa".to_string(),
+                    size_bytes: 123,
+                },
+                ResultArtifactDescriptor {
+                    path: "meta/release_evidence/provenance.json".to_string(),
+                    content_hash: "sha256:bbbb".to_string(),
+                    size_bytes: 456,
+                },
+            ],
+        };
+        let provenance = ReleaseEvidenceProvenanceReport {
+            artifact_version: "1.0.0".to_string(),
+            schema_version: "release_evidence_provenance.v1".to_string(),
+            job_id: "job-456".to_string(),
+            request_id: "req-456".to_string(),
+            trace_id: "trace-456".to_string(),
+            traceparent: "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01".to_string(),
+            compiler_stage_id: "stage-compile".to_string(),
+            optimizer_stage_id: "stage-optimize".to_string(),
+            compiler_run_id: "run-compile".to_string(),
+            optimizer_run_id: "run-optimize".to_string(),
+            compiler_artifact_ref: "qfs://jobs/job-456/compiled/circuit.aqo.json".to_string(),
+            optimized_artifact_ref: "qfs://jobs/job-456/optimizer/optimized_aqo.json".to_string(),
+            compiler_lineage: CompiledArtifactLineage {
+                request_id: Some("req-456".to_string()),
+                source_ref: Some("qfs://jobs/job-456/input/program.eigen.py".to_string()),
+                source_sha256: Some("deadbeef".to_string()),
+            },
+            optimized_aqo_sha256: Some("sha256:3333".to_string()),
+        };
+
+        fs.store_release_evidence_bundle_v1("job-456", &bundle, &manifest, &provenance)
+            .expect("store release evidence bundle");
+
+        let job_root = tempdir.path().join("jobs").join("job-456");
+        assert!(job_root.join("meta/release_evidence/bundle.json").exists());
+        assert!(job_root.join("meta/release_evidence/manifest.json").exists());
+        assert!(job_root.join("meta/release_evidence/provenance.json").exists());
+
+        let bundle_json = read_json(&job_root.join("meta/release_evidence/bundle.json"));
+        assert_eq!(
+            bundle_json["compiled_artifact_ref"],
+            "qfs://jobs/job-456/compiled/circuit.aqo.json"
+        );
+        assert_eq!(
+            bundle_json["manifest_ref"],
+            "qfs://jobs/job-456/meta/release_evidence/manifest.json"
+        );
+        assert_eq!(
+            bundle_json["provenance_report_ref"],
+            "qfs://jobs/job-456/meta/release_evidence/provenance.json"
+        );
+
+        let provenance_json = read_json(&job_root.join("meta/release_evidence/provenance.json"));
+        assert_eq!(provenance_json["compiler_stage_id"], "stage-compile");
+        assert_eq!(provenance_json["optimizer_stage_id"], "stage-optimize");
+        assert_eq!(provenance_json["compiler_lineage"]["request_id"], "req-456");
+    }
+
+    #[test]
+    fn replay_safe_job_ids_reject_path_traversal_and_invalid_segments() {
+        let tempdir = tempdir().expect("tempdir");
+        let fs = CircuitFsLocal::new(tempdir.path());
+
+        for job_id in ["", ".", "..", "bad/segment", "bad..segment", "bad\\segment"] {
+            let err = fs.ensure_job_layout(job_id).expect_err("invalid job id must fail");
+            match err {
+                CircuitFsError::InvalidJobId { job_id: rejected } => assert_eq!(rejected, job_id),
+                other => panic!("unexpected error: {other:?}"),
+            }
+        }
+
+        let err = fs
+            .ensure_job_layout("bad\0segment")
+            .expect_err("invalid null byte job id must fail");
+        match err {
+            CircuitFsError::InvalidJobId { job_id: rejected } => assert_eq!(rejected, "bad\0segment"),
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]

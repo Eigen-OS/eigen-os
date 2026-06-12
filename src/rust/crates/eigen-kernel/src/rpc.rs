@@ -21,8 +21,12 @@ use tokio_stream::iter;
 use tokio_stream::Stream;
 use tonic::{Code, Request, Response, Status};
 use tracing::Instrument;
+use sha2::{Digest, Sha256};
 
-use qfs::CircuitFsLocal;
+use qfs::{
+    CircuitFsLocal, ReleaseEvidenceBundle, ReleaseEvidenceManifest,
+    ReleaseEvidenceProvenanceReport, ResultArtifactDescriptor,
+};
 use resource_manager::{
     SCHEDULER_DECISION_VERSION, SCHEDULING_POLICY_BUNDLE_ID, SCHEDULING_POLICY_BUNDLE_VERSION,
 };
@@ -1392,6 +1396,12 @@ impl FixtureAdapters {
             tokio::time::sleep(self.hold_for).await;
         }
     }
+
+    fn sha256_hex(&self, payload: &[u8]) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(payload);
+        format!("{:x}", hasher.finalize())
+    }
 }
 
 #[tonic::async_trait]
@@ -1434,7 +1444,7 @@ impl OrchestrationAdapters for FixtureAdapters {
             ("message".to_string(), "compile stage completed".to_string()),
             (
                 "compiled_artifact_ref".to_string(),
-                format!("qfs://jobs/{}/artifacts/compiled.aqo", submission.job_id),
+                format!("qfs://jobs/{}/compiled/circuit.aqo.json", submission.job_id),
             ),
             (
                 "compiler_version".to_string(),
@@ -1458,7 +1468,7 @@ impl OrchestrationAdapters for FixtureAdapters {
             ("message".to_string(), "optimization stage completed".to_string()),
             (
                 "optimized_artifact_ref".to_string(),
-                format!("qfs://jobs/{}/artifacts/optimized.aqo", submission.job_id),
+                format!("qfs://jobs/{}/optimizer/optimized_aqo.json", submission.job_id),
             ),
             (
                 "optimizer_version".to_string(),
@@ -1611,6 +1621,95 @@ impl OrchestrationAdapters for FixtureAdapters {
             .qfs
             .store_results_bundle(&submission.job_id, &payload, env!("CARGO_PKG_VERSION"));
 
+        let compile_stage = stage_records.iter().find(|stage| stage.stage_key == "compile");
+        let optimize_stage = stage_records.iter().find(|stage| stage.stage_key == "optimize");
+
+        let compiled_artifact_ref = compile_stage
+            .and_then(|stage| stage.output.get("compiled_artifact_ref"))
+            .cloned()
+            .unwrap_or_else(|| format!("qfs://jobs/{}/compiled/circuit.aqo.json", submission.job_id));
+        let optimized_artifact_ref = optimize_stage
+            .and_then(|stage| stage.output.get("optimized_artifact_ref"))
+            .cloned()
+            .unwrap_or_else(|| format!("qfs://jobs/{}/optimizer/optimized_aqo.json", submission.job_id));
+        let compiler_version = compile_stage
+            .and_then(|stage| stage.output.get("compiler_version"))
+            .cloned()
+            .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
+        let optimizer_version = optimize_stage
+            .and_then(|stage| stage.output.get("optimizer_version"))
+            .cloned()
+            .unwrap_or_else(|| "fixture-optimizer/1".to_string());
+        let optimizer_policy = optimize_stage
+            .and_then(|stage| stage.output.get("optimizer_policy"))
+            .cloned()
+            .unwrap_or_else(|| "deterministic".to_string());
+
+        let bundle = ReleaseEvidenceBundle {
+            artifact_version: "1.0.0".to_string(),
+            schema_version: "release_evidence_bundle.v1".to_string(),
+            producer_version: env!("CARGO_PKG_VERSION").to_string(),
+            job_id: submission.job_id.clone(),
+            compiler_contract_version: "1.0.0".to_string(),
+            optimizer_contract_version: "1.0.0".to_string(),
+            request_id: submission.request_id.clone(),
+            trace_id: submission.trace_id.clone(),
+            traceparent: submission.traceparent.clone(),
+            source_sha256: submission.program_hash.clone(),
+            aqo_sha256: submission.fingerprint.clone(),
+            optimized_aqo_sha256: Some(format!(
+                "sha256:{}",
+                self.sha256_hex(optimized_artifact_ref.as_bytes())
+            )),
+            compiled_artifact_ref: compiled_artifact_ref.clone(),
+            optimized_artifact_ref: optimized_artifact_ref.clone(),
+            manifest_ref: format!("qfs://jobs/{}/meta/release_evidence/manifest.json", submission.job_id),
+            provenance_report_ref: format!("qfs://jobs/{}/meta/release_evidence/provenance.json", submission.job_id),
+            created_at_epoch_ms: unix_epoch_ms_u64(),
+        };
+        let bundle_bytes = serde_json::to_vec_pretty(&bundle).unwrap_or_default();
+        let provenance_report = ReleaseEvidenceProvenanceReport {
+            artifact_version: "1.0.0".to_string(),
+            schema_version: "release_evidence_provenance.v1".to_string(),
+            job_id: submission.job_id.clone(),
+            request_id: submission.request_id.clone(),
+            trace_id: submission.trace_id.clone(),
+            traceparent: submission.traceparent.clone(),
+            compiler_stage_id: compile_stage.map(|stage| stage.stage_id.clone()).unwrap_or_default(),
+            optimizer_stage_id: optimize_stage.map(|stage| stage.stage_id.clone()).unwrap_or_default(),
+            compiler_run_id: compile_stage.map(|stage| stage.replay_token.clone()).unwrap_or_default(),
+            optimizer_run_id: optimize_stage.map(|stage| stage.replay_token.clone()).unwrap_or_default(),
+            compiler_artifact_ref: compiled_artifact_ref.clone(),
+            optimized_artifact_ref: optimized_artifact_ref.clone(),
+            compiler_lineage: qfs::CompiledArtifactLineage {
+                request_id: Some(submission.request_id.clone()),
+                source_ref: None,
+                source_sha256: Some(submission.program_hash.clone()),
+            },
+            optimized_aqo_sha256: Some(format!("sha256:{}", self.sha256_hex(bundle_bytes.as_slice()))),
+        };
+        let provenance_bytes = serde_json::to_vec_pretty(&provenance_report).unwrap_or_default();
+        let manifest = ReleaseEvidenceManifest {
+            artifact_version: "1.0.0".to_string(),
+            producer_version: env!("CARGO_PKG_VERSION").to_string(),
+            schema_version: "release_evidence_manifest.v1".to_string(),
+            created_at_epoch_ms: unix_epoch_ms_u64(),
+            retention_policy: "pinned".to_string(),
+            artifacts: vec![
+                ResultArtifactDescriptor {
+                    path: format!("meta/release_evidence/bundle.json"),
+                    content_hash: format!("sha256:{}", self.sha256_hex(&bundle_bytes)),
+                    size_bytes: bundle_bytes.len() as u64,
+                },
+                ResultArtifactDescriptor {
+                    path: format!("meta/release_evidence/provenance.json"),
+                    content_hash: format!("sha256:{}", self.sha256_hex(&provenance_bytes)),
+                    size_bytes: provenance_bytes.len() as u64,
+                },
+            ],
+        };
+        let _ = self.qfs.store_release_evidence_bundle_v1(&submission.job_id, &bundle, &manifest, &provenance_report);
+
         Ok(BTreeMap::from([
             ("message".to_string(), "results persisted to qfs".to_string()),
             (
@@ -1622,9 +1721,24 @@ impl OrchestrationAdapters for FixtureAdapters {
                 format!("qfs://jobs/{}/results/manifest.json", submission.job_id),
             ),
             (
+                "release_evidence_bundle_ref".to_string(),
+                format!("qfs://jobs/{}/meta/release_evidence/bundle.json", submission.job_id),
+            ),
+            (
+                "release_evidence_manifest_ref".to_string(),
+                format!("qfs://jobs/{}/meta/release_evidence/manifest.json", submission.job_id),
+            ),
+            (
+                "release_provenance_ref".to_string(),
+                format!("qfs://jobs/{}/meta/release_evidence/provenance.json", submission.job_id),
+            ),
+            (
                 "artifact_version".to_string(),
                 env!("CARGO_PKG_VERSION").to_string(),
             ),
+            ("optimizer_policy".to_string(), optimizer_policy),
+            ("compiler_version".to_string(), compiler_version),
+            ("optimizer_version".to_string(), optimizer_version),
         ]))
     }
 
@@ -3512,4 +3626,11 @@ mod tests {
             job_id: job_id.to_string(),
         }
     }
+}
+
+fn unix_epoch_ms_u64() -> u64 {
+    SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or_default()
 }
