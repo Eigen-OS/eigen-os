@@ -1,5 +1,4 @@
 {
-  "manifest_version": "1.6.0",
   "artifacts": [
     {
       "path": "proto/eigen/api/v1/device_service.proto",
@@ -51,11 +50,11 @@
     },
     {
       "path": "proto/eigen/internal/v1/optimizer_service.proto",
-      "sha256": "6ea2f2ef03ca1ff0919105b7f253b0aad699a558dd6b000d4bea1303732e079f"
+      "sha256": "6205ff539d0c5e7a92730ad5507ec4f870497350445d4dc6b85800d93cc3c05f"
     },
     {
       "path": "src/services/system-api/tests/fixtures/contracts/optimizer_v1/service_contract_v1_0_0.json",
-      "sha256": "cd2a6582c2c816c48841fc64fa72bd3427505e8f005133b4f95f0f2bf0cfa7fa"
+      "sha256": "7ef76e61bb4f6325947d5f8ae4f8881976e2f0dfa911c1a8af509954932ff0c8"
     },
     {
       "path": "src/services/system-api/tests/fixtures/contracts/learning_control_plane_v1/control_plane_contract_v1_0_0.json",
