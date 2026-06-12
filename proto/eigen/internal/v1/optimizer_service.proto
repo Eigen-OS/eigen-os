@@ -10,7 +10,7 @@ option java_outer_classname = "OptimizerServiceProto";
 option java_package = "com.eigen.api.internal.v1";
 
 // Internal optimizer service contract v1.
-// Source of truth: RFC 0035.
+// Source of truth: RFC 0056.
 service OptimizerService {
   rpc OptimizeCircuit(OptimizerServiceOptimizeCircuitRequest) returns (OptimizerServiceOptimizeCircuitResponse);
 }
@@ -34,6 +34,41 @@ message TopologyContext {
   string backend_profile = 4;
 }
 
+message GraphEncodingContext {
+  // Versioned canonical graph encoding shape.
+  string encoding_version = 1;
+  // Canonical serialization format name.
+  string canonical_format = 2;
+  // Canonicalized graph payload encoded as deterministic JSON.
+  string canonical_graph_json = 3;
+  // SHA-256 of the canonical graph payload.
+  string canonical_sha256 = 4;
+  // True when the canonical payload round-trips without loss.
+  bool round_trip_stability = 5;
+}
+
+message OptimizerPolicy {
+  // Policy mode freeze for deterministic ranking semantics.
+  string mode = 1;
+  // Minimum acceptable confidence for non-fallback results.
+  double minimum_confidence = 2;
+  // Maximum optimization depth permitted by policy.
+  uint32 max_depth = 3;
+  // Maximum number of swaps permitted by policy.
+  uint32 max_swaps = 4;
+  repeated string forbidden_qubits = 5;
+  repeated string forbidden_edges = 6;
+}
+
+message OptimizerRankingSemantics {
+  // Deterministic ranking order used for stable replay.
+  repeated string sort_order = 1;
+  // True when the selected candidate must be the first entry in the ordered list.
+  bool selected_candidate_is_first = 2;
+  // Stable tie-breakers applied after score ordering.
+  repeated string tie_breakers = 3;
+}
+
 message OptimizerServiceOptimizeCircuitRequest {
   OptimizerContractEnvelope envelope = 1;
   string request_id = 2;
@@ -44,6 +79,9 @@ message OptimizerServiceOptimizeCircuitRequest {
   uint32 candidate_budget = 7;
   uint32 timeout_ms = 8;
   map<string, string> trace_context = 9;
+  GraphEncodingContext graph_encoding = 10;
+  OptimizerPolicy policy = 11;
+  OptimizerRankingSemantics ranking_semantics = 12;
 }
 
 message ScoreBreakdown {
@@ -70,6 +108,10 @@ enum OptimizerReasonCode {
   OPTIMIZER_REASON_CODE_MODEL_UNAVAILABLE = 3;
   OPTIMIZER_REASON_CODE_TIMEOUT = 4;
   OPTIMIZER_REASON_CODE_INTERNAL = 5;
+  OPTIMIZER_REASON_CODE_FEATURE_EXTRACTION_FAILED = 6;
+  OPTIMIZER_REASON_CODE_CONFIDENCE_TOO_LOW = 7;
+  OPTIMIZER_REASON_CODE_UNSUPPORTED_BACKEND = 8;
+  OPTIMIZER_REASON_CODE_POLICY_REJECTED = 9;
 }
 
 message OptimizerError {
@@ -92,4 +134,8 @@ message OptimizerServiceOptimizeCircuitResponse {
   uint32 scoring_latency_ms = 10;
   uint32 mapping_latency_ms = 11;
   OptimizerError error = 12;
+  string fallback_reason_code = 13;
+  double confidence_score = 14;
+  string explanation_ref = 15;
+  string optimizer_digest = 16;
 }
