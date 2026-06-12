@@ -1,7 +1,7 @@
 # Product 1.0 Wave 7 RFC / ADR Gap Analysis
 
 **Wave:** Product 1.0 Wave 7 — Neuro-Symbolic Compiler and GNN Optimizer
-**Status:** In progress
+- **Status:** Complete
 
 ---
 
@@ -75,3 +75,8 @@ Compiler and optimizer outputs need a release-evidence shape aligned with QFS ar
 - manifest synchronized.
 - existing MVP compiler path integrated with the GNN optimizer contract,
 - release notes updated for any compatibility-breaking behavior.
+
+## 6. Closure
+
+All required RFCs and ADRs for Wave 7 are accepted, the compiler and optimizer contracts are
+frozen, the handoff boundary is versioned, and the inventory/manifest are synchronized.
