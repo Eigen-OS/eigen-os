@@ -423,7 +423,7 @@ The concrete Wave 3 mappings are captured in the inventory and closure package:
 
 ---
 
-### Wave 7 — GNN Optimizer and intelligent runtime
+### Wave 7a — GNN Optimizer and intelligent runtime
 
 **Goal:** promote optimizer/intelligent-runtime contracts from fixtures to production path.
 
