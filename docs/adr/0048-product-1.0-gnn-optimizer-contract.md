@@ -10,7 +10,7 @@ Product 1.0 requires a stable optimizer contract for graph-based optimization de
 
 ## Decision
 
-The optimizer contract is frozen with deterministic scoring, explicit fallback behavior, and explainability metadata.
+The optimizer contract is frozen with deterministic scoring, explicit fallback behavior, frozen graph encoding, and explainability metadata.
 
 ## Consequences
 
