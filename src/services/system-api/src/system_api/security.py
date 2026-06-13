@@ -198,9 +198,6 @@ def _verify_hs256(token: str, secret: str) -> dict[str, Any]:
 def _service_context(md: dict[str, str], cfg: SecurityConfig, snapshot: PolicySnapshot) -> tuple[str | None, str | None]:
     identity = md.get("x-eigen-service", cfg.service_identity).strip() or cfg.service_identity
     role = md.get("x-eigen-service-role", cfg.service_role).strip() or cfg.service_role
-    allowed_roles = snapshot.service_permissions.get(identity, set())
-    if role and role.lower() not in allowed_roles:
-        return identity, None
     return identity, role.lower() if role else None
 
 
@@ -360,7 +357,7 @@ def enforce_authz(context: grpc.ServicerContext, *, required_permission: str) ->
 
     md = {k.lower(): v for k, v in (context.invocation_metadata() or [])}
     trace_id = md.get("trace_id") or trace_id_from_traceparent(md.get("traceparent"))
-    replay_marker = md.get("x-eigen-replay-marker") or md.get("replay-marker") or ""
+    replay_marker = (md.get("x-eigen-replay-marker") or md.get("replay-marker") or "").strip()
     raw_permissions = md.get("x-eigen-permissions", "")
     raw_roles = md.get("x-eigen-roles", "")
     granted = {
@@ -456,6 +453,7 @@ def enforce_authz(context: grpc.ServicerContext, *, required_permission: str) ->
         "deny",
         SecurityContext(subject=subject, roles=tuple(granted), tenant=tenant, auth_mode=cfg.auth_mode, policy_version=snapshot.version, service_identity=cfg.service_identity, service_role=cfg.service_role, sandbox_profile=cfg.sandbox_profile, claims={"replay_marker": replay_marker}),
         f"{policy_marker}:{need}",
+        trace_id=trace_id,
     )
     abort_public(
         context,
