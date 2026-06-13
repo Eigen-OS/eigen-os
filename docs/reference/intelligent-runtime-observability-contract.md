@@ -302,6 +302,14 @@ Definition:
 
 - failed runtime decision attempts.
 
+Fallback routing telemetry MUST include bounded, deterministic metadata for:
+
+- fallback_reason
+- fallback_reason_code
+- model_version where a concrete model selection exists
+
+These fields MUST remain stable within the same MAJOR contract version and MUST NOT be promoted into unbounded metric labels.
+
 ---
 
 # 6.2 Backend Scoring Metrics
