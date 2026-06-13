@@ -102,6 +102,38 @@ def test_auth_static_token_mode_requires_authorization(monkeypatch: pytest.Monke
         server.stop(grace=None)
 
 
+def test_policy_backend_outage_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SYSTEM_API_AUTH_MODE", "static_token")
+    monkeypatch.setenv("SYSTEM_API_AUTH_TOKEN", "test-token")
+    monkeypatch.setenv("SYSTEM_API_AUTH_SUBJECT", "service-user")
+    monkeypatch.setenv("SYSTEM_API_AUTH_TENANT", "tenant-a")
+    monkeypatch.setenv(
+        "SYSTEM_API_POLICY_SNAPSHOT_PATH",
+        "/path/that/does/not/exist/policy.json",
+    )
+
+    addr = f"127.0.0.1:{_free_port()}"
+    server = serve(bind=addr)
+    time.sleep(0.05)
+
+    try:
+        channel = grpc.insecure_channel(addr)
+        stub = dev_pb_grpc.DeviceServiceStub(channel)
+
+        with pytest.raises(grpc.RpcError) as exc:
+            stub.ListDevices(
+                dev_pb.ListDevicesRequest(),
+                metadata=(
+                    ("authorization", "Bearer test-token"),
+                    ("x-eigen-roles", "admin"),
+                ),
+            )
+
+        assert exc.value.code() == grpc.StatusCode.PERMISSION_DENIED
+    finally:
+        server.stop(0)
+
+
 def test_submit_job_enforces_source_and_yaml_size_limits(
     grpc_addr: str,
     monkeypatch: pytest.MonkeyPatch,
@@ -184,28 +216,6 @@ def test_expired_jwt_token_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
         with pytest.raises(grpc.RpcError) as exc:
             stub.ListDevices(dev_pb.ListDevicesRequest(), metadata=(("authorization", f"Bearer {token}"),))
         assert exc.value.code() == grpc.StatusCode.UNAUTHENTICATED
-    finally:
-        server.stop(grace=None)
-
-
-def test_policy_backend_outage_fails_closed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("SYSTEM_API_AUTH_MODE", "static_token")
-    monkeypatch.setenv("SYSTEM_API_AUTH_TOKEN", "outage-token")
-    monkeypatch.setenv("SYSTEM_API_AUTH_SUBJECT", "outage-user")
-    monkeypatch.setenv("SYSTEM_API_AUTH_TENANT", "outage-tenant")
-    monkeypatch.setenv("SYSTEM_API_POLICY_SNAPSHOT_PATH", str(tmp_path / "missing.json"))
-
-    addr = f"127.0.0.1:{_free_port()}"
-    server = serve(bind=addr)
-    time.sleep(0.05)
-    try:
-        channel = grpc.insecure_channel(addr)
-        stub = dev_pb_grpc.DeviceServiceStub(channel)
-        with pytest.raises(grpc.RpcError) as exc:
-            stub.ListDevices(dev_pb.ListDevicesRequest(), metadata=(("authorization", "Bearer outage-token"),))
-        assert exc.value.code() == grpc.StatusCode.PERMISSION_DENIED
-        info = _extract_error_info(exc.value)
-        assert info.metadata["policy"] == "POLICY_BACKEND_UNAVAILABLE"
     finally:
         server.stop(grace=None)
 

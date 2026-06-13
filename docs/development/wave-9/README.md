@@ -28,6 +28,13 @@ These documents are produced as the Wave 9 implementation package is executed an
 
 Wave 9 turns security from MVP helpers into a fail-closed platform boundary. It hardens authentication, authorization, service identity, policy snapshots, sandbox isolation, secrets handling, and auditability while preserving deterministic replay and bounded telemetry.
 
+W9-02 completion requirements:
+
+- service identity propagation is explicit for internal calls;
+- authorization decisions include policy snapshot metadata;
+- replay evidence includes deterministic decision markers;
+- policy backend failures fail closed.
+
 ---
 
 ## Primary source-of-truth references
