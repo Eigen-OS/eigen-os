@@ -1,0 +1,266 @@
+{
+  "title": "Eigen Knowledge Base — Learning Loop, Trace Continuity, Privacy",
+  "uid": "eigen-knowledge-base-v10",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "KB Query Pressure (15m)",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "increase(eigen_kb_queries_total{kind=\"decision_logs\"}[15m])",
+          "legendFormat": "decision logs / 15m"
+        },
+        {
+          "expr": "increase(eigen_kb_queries_total{kind=\"learning_evidence\"}[15m])",
+          "legendFormat": "learning evidence / 15m"
+        },
+        {
+          "expr": "increase(eigen_kb_queries_total{kind=\"learning_datasets\"}[15m])",
+          "legendFormat": "learning datasets / 15m"
+        },
+        {
+          "expr": "increase(eigen_kb_queries_total{kind=\"learning_models\"}[15m])",
+          "legendFormat": "learning models / 15m"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "KB Hits vs Misses (15m)",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "increase(eigen_kb_hits_total[15m])",
+          "legendFormat": "hits / 15m"
+        },
+        {
+          "expr": "increase(eigen_kb_misses_total[15m])",
+          "legendFormat": "misses / 15m"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Learning Failures and Quarantine Events (15m)",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "increase(eigen_kb_learning_failures_total[15m])",
+          "legendFormat": "learning failures / 15m"
+        },
+        {
+          "expr": "increase(eigen_kb_quarantine_total[15m])",
+          "legendFormat": "quarantine events / 15m"
+        },
+        {
+          "expr": "increase(eigen_kb_fallbacks_total[15m])",
+          "legendFormat": "fallbacks / 15m"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "orange",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 5
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "KB Trace Continuity and Replay Failures (15m)",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "increase(eigen_kb_contract_requests_total{outcome=\"accepted\"}[15m])",
+          "legendFormat": "accepted / 15m"
+        },
+        {
+          "expr": "increase(eigen_kb_contract_requests_total{outcome=\"error\"}[15m])",
+          "legendFormat": "contract errors / 15m"
+        },
+        {
+          "expr": "increase(eigen_kb_replay_failures_total[15m])",
+          "legendFormat": "replay failures / 15m"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "orange",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 5
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "title": "KB Contract Version",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 0,
+        "y": 16
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "eigen_kb_contract_info",
+          "legendFormat": "contract"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "KB Query Hit Ratio (15m)",
+      "gridPos": {
+        "h": 6,
+        "w": 18,
+        "x": 6,
+        "y": 16
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "100 * increase(eigen_kb_hits_total[15m]) / clamp_min(increase(eigen_kb_queries_total[15m]), 1)",
+          "legendFormat": "hit ratio %"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "orange",
+                "value": 75
+              },
+              {
+                "color": "red",
+                "value": 50
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    }
+  ]
+}
