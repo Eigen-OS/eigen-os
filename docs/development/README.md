@@ -191,6 +191,16 @@ git fetch origin main:main
 - Phase 9C RFC/ADR gap analysis: [`phase-9c/phase-9c-rfc-adr-gap-analysis.md`](phase-9c/phase-9c-rfc-adr-gap-analysis.md)
 - Phase 9C release readiness checklist: [`phase-9c/phase-9c-release-readiness-checklist.md`](phase-9c/phase-9c-release-readiness-checklist.md)
 - Phase 9C compatibility report: [`phase-9c/phase-9c-compatibility-report.md`](phase-9c/phase-9c-compatibility-report.md)
+## Product 1.0 Wave 9 security package
+
+- Product 1.0 Wave 9 documentation index: [`wave-9/README.md`](wave-9/README.md)
+- Product 1.0 Wave 9 execution plan: [`wave-9/product-1.0-wave-9-execution-plan.md`](wave-9/product-1.0-wave-9-execution-plan.md)
+- Product 1.0 Wave 9 issue pack: [`wave-9/product-1.0-wave-9-issue-pack.md`](wave-9/product-1.0-wave-9-issue-pack.md)
+- Product 1.0 Wave 9 RFC/ADR gap analysis: [`wave-9/product-1.0-wave-9-rfc-adr-gap-analysis.md`](wave-9/product-1.0-wave-9-rfc-adr-gap-analysis.md)
+- Product 1.0 Wave 9 compatibility report: [`wave-9/product-1.0-wave-9-compatibility-report.md`](wave-9/product-1.0-wave-9-compatibility-report.md)
+- Product 1.0 Wave 9 release readiness checklist: [`wave-9/product-1.0-wave-9-release-readiness-checklist.md`](wave-9/product-1.0-wave-9-release-readiness-checklist.md)
+- Product 1.0 Wave 9 exit evidence bundle: [`wave-9/product-1.0-wave-9-exit-evidence-bundle.md`](wave-9/product-1.0-wave-9-exit-evidence-bundle.md)
+
 - Phase 9C exit evidence bundle: [`phase-9c/phase-9c-exit-evidence-bundle.md`](phase-9c/phase-9c-exit-evidence-bundle.md)
 - Phase 9C compatibility matrix fixture v1.1.0: [`fixtures/phase9c/policy_capability_matrix_v1_1_0.json`](fixtures/phase9c/policy_capability_matrix_v1_1_0.json)
 - Phase 9C RFC 0048: [`../../rfcs/0048-phase9c-multitenant-plugin-boundary-contract-v1.md`](../../rfcs/0048-phase9c-multitenant-plugin-boundary-contract-v1.md)
