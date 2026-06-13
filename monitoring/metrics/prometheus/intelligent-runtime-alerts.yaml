@@ -50,7 +50,7 @@ groups:
         labels: { severity: critical, team: sre }
         annotations:
           summary: "Explain L3_FORENSIC p95 latency above 500ms"
-          
+
       - alert: EigenRuntimeOptimizerFallbackRateHigh
         expr: sum(increase(eigen_runtime_optimizer_fallbacks_total[15m])) / clamp_min(sum(increase(eigen_runtime_optimizer_candidate_traces_total[15m])), 1) > 0.25
         for: 15m
@@ -65,11 +65,37 @@ groups:
         annotations:
           summary: "Optimizer confidence is below the policy threshold"
 
-
       - alert: EigenRuntimeOptimizerTraceContinuityMismatch
         expr: sum(increase(eigen_runtime_optimizer_trace_handoff_total[15m])) < (2 * sum(increase(eigen_runtime_optimizer_candidate_traces_total[15m])))
         for: 15m
         labels: { severity: warning, team: runtime }
         annotations:
           summary: "Optimizer trace handoff continuity is below the expected 2:1 rate"
-          
+
+      - alert: EigenKBDecisionLogPressureHigh
+        expr: increase(eigen_kb_queries_total{kind="decision_logs"}[15m]) > 100
+        for: 15m
+        labels: { severity: warning, team: runtime }
+        annotations:
+          summary: "KB decision-log query pressure is elevated over 15m"
+
+      - alert: EigenKBLearningFailureRateHigh
+        expr: increase(eigen_kb_learning_failures_total[15m]) / clamp_min(increase(eigen_kb_queries_total[15m]), 1) > 0.05
+        for: 15m
+        labels: { severity: critical, team: runtime }
+        annotations:
+          summary: "KB learning-loop failures exceed the safe ratio over 15m"
+
+      - alert: EigenKBQuarantineEventsDetected
+        expr: increase(eigen_kb_quarantine_total[15m]) > 0
+        for: 15m
+        labels: { severity: warning, team: runtime }
+        annotations:
+          summary: "KB quarantine events were observed in the last 15m"
+
+      - alert: EigenKBTraceContinuityMismatch
+        expr: increase(eigen_kb_contract_requests_total{outcome="error"}[15m]) > 0
+        for: 15m
+        labels: { severity: warning, team: runtime }
+        annotations:
+          summary: "KB trace-contract continuity has drifted or failed validation in the last 15m"
