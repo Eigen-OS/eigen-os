@@ -232,3 +232,11 @@ def test_submit_job_marker_and_traceparent_correlation_from_public_envelope(capl
         and record.trace_id == "4bf92f3577b34da6a3ce929d0e0e4736"
         for record in caplog.records
     )
+    assert any(
+        record.message == "rpc_end"
+        and record.request_id == "req-observability-smoke"
+        and record.traceparent == traceparent
+        and record.trace_id == "4bf92f3577b34da6a3ce929d0e4736"
+        for record in caplog.records
+    )
+    

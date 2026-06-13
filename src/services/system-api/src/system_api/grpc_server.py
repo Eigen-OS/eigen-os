@@ -19,6 +19,7 @@ _LOG = logging.getLogger("system_api")
 
 # Thread-safe context storage for distributed tracing and logging
 ctx_trace_id: contextvars.ContextVar[str] = contextvars.ContextVar("trace_id", default="N/A")
+ctx_traceparent: contextvars.ContextVar[str] = contextvars.ContextVar("traceparent", default="N/A")
 ctx_request_id: contextvars.ContextVar[str] = contextvars.ContextVar("request_id", default="N/A")
 
 
@@ -49,12 +50,14 @@ class TracingAndLoggingInterceptor(grpc.ServerInterceptor):
         
         # Bind tokens to the async execution context
         token_trace = ctx_trace_id.set(traceparent)
+        token_traceparent = ctx_traceparent.set(metadata.get("traceparent") or traceparent)
         token_req = ctx_request_id.set(request_id)
         
         try:
             return continuation(handler_call_details)
         finally:
             # Reset context back to clean state post-call
+            ctx_traceparent.reset(token_traceparent)
             ctx_trace_id.reset(token_trace)
             ctx_request_id.reset(token_req)
 
@@ -137,6 +140,8 @@ class StructuredTraceFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         if not getattr(record, "trace_id", None):
             record.trace_id = ctx_trace_id.get()
+        if not getattr(record, "traceparent", None):
+            record.traceparent = ctx_traceparent.get()
         if not getattr(record, "request_id", None):
             record.request_id = ctx_request_id.get()
         return True
@@ -152,7 +157,7 @@ def configure_logging():
     
     # Modern scannable format including trace parameters
     formatter = logging.Formatter(
-        "[%(asctime)s] [%(levelname)s] [TraceID: %(trace_id)s | ReqID: %(request_id)s] %(name)s: %(message)s"
+        "[%(asctime)s] [%(levelname)s] [TraceID: %(trace_id)s | TraceParent: %(traceparent)s | ReqID: %(request_id)s] %(name)s: %(message)s"
     )
     handler.setFormatter(formatter)
     

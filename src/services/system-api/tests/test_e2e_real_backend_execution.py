@@ -162,6 +162,7 @@ def test_trace_context_continuity_across_status_results_and_rationale(grpc_addr:
 
     results = stub.GetJobResults(job_pb.GetJobResultsRequest(job_id=job_id))
     assert results.metadata["trace_id"] == trace_id
+    assert results.metadata["traceparent"] == traceparent
     assert results.metadata["trace_ref"] == f"trace://{trace_id}"
     assert results.metadata["topology_cluster_id"] == "cluster-e2e"
     assert results.metadata["topology_worker_id"] == "worker-e2e-01"
@@ -171,4 +172,5 @@ def test_trace_context_continuity_across_status_results_and_rationale(grpc_addr:
     rationale = stub.GetDispatchRationale(job_pb.GetDispatchRationaleRequest(job_id=job_id)).rationale
     assert rationale.trace_id == trace_id
     assert rationale.trace_ref == f"trace://{trace_id}"
+    assert rationale.attributes["traceparent"] == traceparent
     

@@ -359,12 +359,21 @@ def log_request_end(method: str, rc: RequestContext) -> None:
             "method": method,
             "request_id": rc.request_id,
             "trace_id": rc.trace_id,
+            "traceparent": rc.traceparent,
             "job_id": rc.job_id,
         },
     )
 
 
-def log_authz_denied(*, method: str, subject: str, permission: str, job_id: str | None = None) -> None:
+def log_authz_denied(
+    *,
+    method: str,
+    subject: str,
+    permission: str,
+    job_id: str | None = None,
+    trace_id: str | None = None,
+    traceparent: str | None = None,
+) -> None:
     with _MetricsState.lock:
         _MetricsState.authz_denied_total += 1
     _LOG.warning(
@@ -374,6 +383,8 @@ def log_authz_denied(*, method: str, subject: str, permission: str, job_id: str 
             "subject": subject,
             "permission": permission,
             "job_id": job_id,
+            "trace_id": trace_id,
+            "traceparent": traceparent,
         },
     )
 
