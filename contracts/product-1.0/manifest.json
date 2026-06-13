@@ -215,7 +215,8 @@
         "docs/architecture/components/gnn-optimizer.md",
         "docs/architecture/components/neuro-symbolic-core.md",
         "docs/reference/api/grpc-internal.md",
-        "docs/reference/compiler-observability-contract.md"
+        "docs/reference/compiler-observability-contract.md",
+        "docs/reference/intelligent-runtime-observability-contract.md"
       ],
       "proto_schema_files": [
         "proto/eigen/internal/v1/optimizer_service.proto"
@@ -228,7 +229,11 @@
         "src/services/benchmark-service/tests/fixtures/optimizer_evaluation/offline_online_fixture.json"
       ],
       "implementation_status": "implemented",
-      "compatibility_status": "compatible"
+      "compatibility_status": "compatible",
+      "implementation_notes": [
+        "Kernel/QRTX production handoff is exercised through src/rust/crates/eigen-kernel/src/rpc.rs",
+        "Deterministic fallback and confidence visibility are covered by benchmark and optimizer fixture tests"
+      ]
     },
     {
       "name": "Compiler ↔ Optimizer deterministic handoff",
@@ -250,7 +255,10 @@
         "src/services/benchmark-service/tests/test_optimizer_evaluation_harness.py"
       ],
       "implementation_status": "implemented",
-      "compatibility_status": "compatible"
+      "compatibility_status": "compatible",
+      "implementation_notes": [
+        "Kernel/QRTX request shaping keeps request_id, trace_id, traceparent, and AQO boundary evidence stable."
+      ]
     },
     {
       "name": "Optimization explainability and confidence contract",
@@ -258,7 +266,8 @@
       "owner": "GNN Optimizer; Observability",
       "sources": [
         "docs/reference/compiler-observability-contract.md",
-        "docs/architecture/components/observability.md"
+        "docs/architecture/components/observability.md",
+        "docs/reference/intelligent-runtime-observability-contract.md"
       ],
       "proto_schema_files": [],
       "planned_proto_schema_files": [
@@ -266,10 +275,15 @@
       ],
       "conformance_tests": [
         "src/services/system-api/tests/test_optimizer_contract_fixture.py",
-        "src/services/benchmark-service/tests/test_optimizer_evaluation_harness.py"
+        "src/services/benchmark-service/tests/test_optimizer_evaluation_harness.py",
+        "monitoring/metrics/tests/test_wave5_observability_conformance.py",
+        "docs/development/wave-7a/product-1.0-wave-7a-exit-evidence-bundle.md"
       ],
       "implementation_status": "implemented",
-      "compatibility_status": "compatible"
+      "compatibility_status": "compatible",
+      "implementation_notes": [
+        "Optimization traces and bounded observability evidence stay aligned with the intelligent-runtime contract."
+      ]
     },
     {
       "name": "Canonical error model",
@@ -455,18 +469,25 @@
       "contract_version": "2.1.0",
       "owner": "Observability; scheduler; policy engine; driver-manager",
       "sources": [
-        "docs/reference/intelligent-runtime-observability-contract.md"
+        "docs/reference/intelligent-runtime-observability-contract.md",
+        "docs/howto/intelligent-runtime-observability-runbook.md"
       ],
       "proto_schema_files": [],
       "planned_proto_schema_files": [
         "Prometheus/OpenTelemetry metric contract fixtures"
       ],
       "conformance_tests": [
-        "scripts/ci/check-phase9a-gates.sh",
-        "Product 1.0 exporter conformance suite"
+        "monitoring/metrics/tests/test_wave5_observability_conformance.py",
+        "src/services/system-api/tests/test_observability_smoke.py",
+        "monitoring/dashboards/intelligent_runtime_dashboard.json",
+        "monitoring/metrics/prometheus/intelligent-runtime-alerts.yaml"
       ],
-      "implementation_status": "documented",
-      "compatibility_status": "needs-alignment"
+      "implementation_status": "partial",
+      "compatibility_status": "needs-alignment",
+      "implementation_notes": [
+        "Trace continuity is preserved in logs, traces, dashboards, and release artifacts rather than metric labels.",
+        "Bounded dashboard and alert fixtures are part of the Wave 7a observability surface."
+      ]
     },
     {
       "name": "Cluster runtime observability",
@@ -701,10 +722,13 @@
       ],
       "planned_proto_schema_files": [],
       "conformance_tests": [
-        "planned monitoring/metrics/tests/test_wave5_observability_conformance.py"
+        "monitoring/metrics/tests/test_wave5_observability_conformance.py"
       ],
       "implementation_status": "implemented",
-      "compatibility_status": "compatible"
+      "compatibility_status": "compatible",
+      "implementation_notes": [
+        "Wave 5 observability conformance is the fixture-backed regression gate for bounded metrics and contract markers."
+      ]
     },
     {
       "name": "Driver Manager and QDriver final contract",
