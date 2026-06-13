@@ -52,6 +52,14 @@ Product 1.0 authorization decisions are evaluated for these principal classes:
 - Security decisions MUST be written to an immutable audit sink.
 - Sandbox profile selection MUST be denied when not listed in the active policy snapshot.
 
+## 4.1 Wave 9 policy decision requirements
+
+- Every authorization decision MUST include the active policy snapshot version.
+- Internal calls MUST carry a normalized service identity.
+- Replay-sensitive security decisions MUST preserve deterministic replay markers.
+- Policy backend unavailability MUST result in deny behavior.
+- Missing policy snapshots MUST NOT fall back to allow behavior.
+
 ---
 
 ## 5. Internal service scopes

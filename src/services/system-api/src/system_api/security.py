@@ -306,6 +306,13 @@ def security_context(context: grpc.ServicerContext, *, method_name: str) -> Secu
     subject, roles, tenant = auth_context(context)
     md = _metadata(context)
     service_identity, service_role = _service_context(md, cfg, snapshot)
+
+    replay_marker = (
+        md.get("x-eigen-replay-marker")
+        or md.get("replay-marker")
+        or ""
+    ).strip()
+    
     return SecurityContext(
         subject=subject,
         roles=roles,
@@ -315,7 +322,11 @@ def security_context(context: grpc.ServicerContext, *, method_name: str) -> Secu
         service_identity=service_identity,
         service_role=service_role,
         sandbox_profile=md.get("x-eigen-sandbox-profile", cfg.sandbox_profile).strip() or cfg.sandbox_profile,
-        claims={"method": method_name},
+        claims={
+            "method": method_name,
+            "replay_marker": replay_marker,
+            "policy_snapshot": snapshot.version,
+        },
     )
 
 
