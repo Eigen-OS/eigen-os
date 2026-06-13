@@ -408,6 +408,7 @@ Device profile negotiation failures MUST use the same canonical model:
   - metrics labels.
 - Provider configuration MUST be versioned and explicit; secret material MUST be referenced only by secret refs and fetched through the security/secrets path.
 - Drivers may receive credentials **only on demand** and only for the duration required.
+- Secret lifecycle audit records SHOULD use redacted references or digests instead of raw secret refs.
 - Provider code MUST respect the declared isolation profile (sandbox or dedicated process) and fail closed when the configured profile is unsupported.
 
 ---

@@ -162,6 +162,7 @@ def _request_context_from_rpc(request, context: grpc.ServicerContext) -> dict[st
         "deadline": deadline,
         "retry_policy": pick("retry_policy", "x-eigen-retry-policy"),
         "security_context": pick("security_context", "authorization"),
+        "sandbox_profile": pick("sandbox_profile", "x-eigen-sandbox-profile"),
         "tenant_id": pick("tenant_id", "x-eigen-tenant-id"),
         "project_id": pick("project_id", "x-eigen-project-id"),
     }

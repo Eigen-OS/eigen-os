@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import hashlib
 import json
 import logging
 import os
@@ -71,30 +72,32 @@ class SecretLifecycleStore:
 
         if record is None:
             self._emit("lookup_denied", secret_ref, actor, workload_id, consumer, "not_found")
-            raise ValueError(f"missing secret for ref '{secret_ref}'")
+            raise ValueError("missing secret")
 
         if record.expires_at and now >= record.expires_at:
             self._emit("expire", secret_ref, actor, workload_id, consumer, "expired")
-            raise ValueError(f"expired secret for ref '{secret_ref}'")
+            raise ValueError("expired secret")
 
         if record.state == "revoked":
             self._emit("revoke", secret_ref, actor, workload_id, consumer, "revoked")
-            raise ValueError(f"revoked secret for ref '{secret_ref}'")
+            raise ValueError("revoked secret")
 
         if record.state not in self._ACTIVE_STATES:
             self._emit("lookup_denied", secret_ref, actor, workload_id, consumer, f"invalid_state:{record.state}")
-            raise ValueError(f"inactive secret for ref '{secret_ref}'")
+            raise ValueError("inactive secret")
 
         action = "issue" if record.state == "issued" else "rotate"
         self._emit(action, secret_ref, actor, workload_id, consumer, "ok")
         return record.value
 
     def _emit(self, event: str, secret_ref: str, actor: str, workload_id: str, consumer: str, outcome: str) -> None:
+        secret_ref_digest = hashlib.sha256(secret_ref.encode("utf-8")).hexdigest()[:16]
         _AUDIT_LOG.info(
             "secret_lifecycle_event",
             extra={
                 "event": event,
-                "secret_ref": secret_ref,
+                "secret_ref_digest": secret_ref_digest,
+                "secret_ref_redacted": "<redacted>",
                 "actor": actor,
                 "workload_id": workload_id,
                 "consumer": consumer,

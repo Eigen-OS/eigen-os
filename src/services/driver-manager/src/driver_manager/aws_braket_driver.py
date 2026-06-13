@@ -150,13 +150,17 @@ class AwsBraketDriver:
         secret_ref = str(config.get("credentials_secret_ref", "")).strip()
         if secret_ref:
             secrets = SecretLifecycleStore()
-            raw = secrets.get(secret_ref, actor=self.name, workload_id=config.get("workload_id", "driver-init"), consumer=self.name)
+            try:
+                raw = secrets.get(secret_ref, actor=self.name, workload_id=config.get("workload_id", "driver-init"), consumer=self.name)
+            except ValueError as exc:
+                self._init_error = "missing AWS credentials for configured secret ref"
+                raise ValueError(self._init_error) from exc
             if isinstance(raw, dict):
                 access_key_id = str(raw.get("access_key_id", "")).strip()
                 secret_access_key = str(raw.get("secret_access_key", "")).strip()
                 if access_key_id and secret_access_key:
                     return _AwsAuthConfig(f"secret_ref:{secret_ref}", access_key_id, secret_access_key)
-            self._init_error = f"missing AWS credentials for secret ref '{secret_ref}'"
+            self._init_error = "missing AWS credentials for configured secret ref"
             raise ValueError(self._init_error)
 
         self._init_error = "aws braket auth missing: set credentials_secret_ref"

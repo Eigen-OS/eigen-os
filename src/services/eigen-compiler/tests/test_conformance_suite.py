@@ -195,12 +195,13 @@ def test_compile_job_request_metadata_is_propagated(grpc_addr: str) -> None:
         ),
     )
 
-    response = stub.CompileJob(request)
+    response = stub.CompileJob(request, metadata=(("x-eigen-sandbox-profile", "restricted"),))
 
     assert response.metadata["request_id"] == "req-123"
     assert response.metadata["trace_id"] == "trace-456"
     assert response.metadata["tenant_id"] == "tenant-a"
     assert response.metadata["project_id"] == "project-x"
+    assert response.metadata["sandbox_profile"] == "restricted"
     assert response.metadata["source_precedence"] == "source"
     assert response.metadata["options_json"] == '{"alpha":"1","beta":"2"}'
 
@@ -213,6 +214,7 @@ def test_compile_job_request_metadata_is_propagated(grpc_addr: str) -> None:
                     "project_id": "project-x",
                     "request_id": "req-123",
                     "retry_policy": "idempotent",
+                    "sandbox_profile": "restricted",
                     "security_context": "mTLS",
                     "tenant_id": "tenant-a",
                     "trace_id": "trace-456",
@@ -228,6 +230,32 @@ def test_compile_job_request_metadata_is_propagated(grpc_addr: str) -> None:
     ).hexdigest()
 
     assert response.metadata["request_sha256"] == expected_request_digest
+
+
+def test_compile_job_rejects_invalid_sandbox_profile(grpc_addr: str) -> None:
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = comp_pb_grpc.CompilationServiceStub(channel)
+    source = (
+        b"from eigen_lang import hybrid_program\n\n"
+        b"@hybrid_program(target=\"sim\", shots=1000)\n"
+        b"def main():\n"
+        b"    ry(0, theta=1.0)\n"
+    )
+
+    with pytest.raises(grpc.RpcError) as exc:
+        stub.CompileJob(
+            comp_pb.CompileJobRequest(
+                job_id="job-invalid-sandbox",
+                language="eigen-lang",
+                source=source,
+                options={},
+            ),
+            metadata=(("x-eigen-sandbox-profile", "host-network"),),
+        )
+
+    assert exc.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+    bad_request = _extract_bad_request(exc.value)
+    assert any(v.field == "request_context.sandbox_profile" for v in bad_request.field_violations)
 
 
 def test_source_ref_is_resolved_from_qfs_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

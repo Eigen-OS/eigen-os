@@ -205,6 +205,7 @@ The compiler MUST run in an isolated container / sandbox profile:
 - strict CPU/memory/time limits,
 - no access to host credentials or secrets,
 - explicit allowlisted environment variables only.
+- the active sandbox profile MUST be selected explicitly via request/deployment context and rejected if it is not one of the documented profiles.
 
 ---
 
