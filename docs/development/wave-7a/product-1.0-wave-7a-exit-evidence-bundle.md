@@ -11,7 +11,7 @@
 | Evidence ID | Requirement | Command / artifact | Expected result | Actual result | Owner | Link |
 |---|---|---|---|---|---|---|
 | W7A-E01 | Optimizer service wiring through Kernel/QRTX | Integration tests for optimizer handoff | Production path exists and is deterministic | Pending | GNN Optimizer + Kernel/QRTX | TBD |
-| W7A-E02 | Model registry and promotion policy | Registry/policy fixture tests | Promotion is versioned and explicit | Pending | GNN Optimizer + Architecture | TBD |
+| W7A-E02 | Model registry and promotion policy | Registry/policy fixture tests | Promotion is versioned and explicit | Completed | GNN Optimizer + Architecture | `docs/development/wave-7a/product-1.0-wave-7a-compatibility-report.md` |
 | W7A-E03 | Deterministic fallback and confidence threshold behavior | Fallback tests | Unavailable/low-confidence paths use the documented fallback | Pending | GNN Optimizer + Reliability | TBD |
 | W7A-E04 | Optimization candidate traces and observability | Scrape/trace snapshot tests | Candidate telemetry is present with bounded labels | Pending | Observability | TBD |
 | W7A-E05 | Quality regression gates | Fixed fixture regressions | Release is blocked on regression failure | Pending | GNN Optimizer | TBD |
