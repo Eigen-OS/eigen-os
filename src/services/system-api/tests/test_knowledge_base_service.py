@@ -272,6 +272,7 @@ def test_kb_fallback_behavior_raises_when_storage_disabled() -> None:
             }
         )
 
+
 def test_okb_query_backend_is_deterministic_and_bounded() -> None:
     service = KnowledgeBaseService(kb_pb=kb_pb, types_pb=types_pb)
 
