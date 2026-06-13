@@ -276,7 +276,7 @@
       "conformance_tests": [
         "src/services/system-api/tests/test_optimizer_contract_fixture.py",
         "src/services/benchmark-service/tests/test_optimizer_evaluation_harness.py",
-        "monitoring/metrics/tests/test_wave5_observability_conformance.py",
+        "src/services/system-api/tests/test_observability_smoke.py",
         "docs/development/wave-7a/product-1.0-wave-7a-exit-evidence-bundle.md"
       ],
       "implementation_status": "implemented",
@@ -284,6 +284,76 @@
       "implementation_notes": [
         "Optimization traces and bounded observability evidence stay aligned with the intelligent-runtime contract."
       ]
+    },
+    {
+      "name": "Knowledge Base decision lineage and continuous learning loop",
+      "contract_version": "1.0.0",
+      "owner": "Knowledge Base; Compiler; GNN Optimizer; Benchmark service; Kernel/QRTX",
+      "sources": [
+        "docs/architecture/components/knowledge-base.md",
+        "docs/architecture/components/compiler.md",
+        "docs/architecture/components/observability.md",
+        "docs/reference/intelligent-runtime-observability-contract.md",
+        "docs/reference/orchestration-observability-contract.md",
+        "docs/reference/benchmark-observability-contract.md"
+      ],
+      "proto_schema_files": [
+        "proto/eigen/api/v1/knowledge_base_service.proto",
+        "proto/eigen/internal/v1/kernel_gateway.proto",
+        "proto/eigen/internal/v1/optimizer_service.proto"
+      ],
+      "planned_proto_schema_files": [],
+      "conformance_tests": [
+        "src/services/system-api/tests/test_knowledge_base_service.py",
+        "src/services/system-api/tests/test_knowledge_base_contract_fixture.py",
+        "src/services/benchmark-service/tests/test_optimizer_evaluation_harness.py",
+        "src/services/system-api/tests/test_observability_smoke.py"
+      ],
+      "implementation_status": "partial",
+      "compatibility_status": "needs-alignment"
+    },
+    {
+      "name": "Continuous learning control plane and dataset assembly governance",
+      "contract_version": "1.0.0",
+      "owner": "Knowledge Base; Benchmark service; System API; Architecture/Governance",
+      "sources": [
+        "docs/architecture/components/knowledge-base.md",
+        "docs/development/wave-8/product-1.0-wave-8-execution-plan.md",
+        "docs/development/wave-8/product-1.0-wave-8-issue-pack.md"
+      ],
+      "proto_schema_files": [
+        "src/services/system-api/src/system_api/knowledge_base.py",
+        "src/services/system-api/src/system_api/observability.py"
+      ],
+      "planned_proto_schema_files": [],
+      "conformance_tests": [
+        "src/services/system-api/tests/test_knowledge_base_service.py",
+        "src/services/system-api/tests/test_learning_control_plane_contract_fixture.py",
+        "src/services/system-api/tests/test_knowledge_base_contract_fixture.py"
+      ],
+      "implementation_status": "implemented",
+      "compatibility_status": "compatible"
+    },
+    {
+      "name": "OKB deterministic reuse and query backend",
+      "contract_version": "1.0.0",
+      "owner": "Knowledge Base; Compiler; GNN Optimizer",
+      "sources": [
+        "docs/architecture/components/knowledge-base.md",
+        "docs/reference/api/explain-backend-selection.md"
+      ],
+      "proto_schema_files": [
+        "src/services/system-api/src/system_api/knowledge_base.py",
+        "proto/eigen/internal/v1/optimizer_service.proto"
+      ],
+      "planned_proto_schema_files": [],
+      "conformance_tests": [
+        "src/services/system-api/tests/test_knowledge_base_service.py",
+        "src/services/system-api/tests/test_optimizer_contract_fixture.py",
+        "src/services/benchmark-service/tests/test_optimizer_evaluation_harness.py"
+      ],
+      "implementation_status": "implemented",
+      "compatibility_status": "compatible"
     },
     {
       "name": "Canonical error model",
@@ -477,10 +547,10 @@
         "Prometheus/OpenTelemetry metric contract fixtures"
       ],
       "conformance_tests": [
-        "monitoring/metrics/tests/test_wave5_observability_conformance.py",
         "src/services/system-api/tests/test_observability_smoke.py",
-        "monitoring/dashboards/intelligent_runtime_dashboard.json",
-        "monitoring/metrics/prometheus/intelligent-runtime-alerts.yaml"
+        "src/services/system-api/tests/test_optimizer_contract_fixture.py",
+        "src/services/benchmark-service/tests/test_optimizer_evaluation_harness.py",
+        "docs/development/wave-7a/product-1.0-wave-7a-exit-evidence-bundle.md"
       ],
       "implementation_status": "partial",
       "compatibility_status": "needs-alignment",
@@ -722,7 +792,10 @@
       ],
       "planned_proto_schema_files": [],
       "conformance_tests": [
-        "monitoring/metrics/tests/test_wave5_observability_conformance.py"
+        "src/services/system-api/tests/test_observability_smoke.py",
+        "src/rust/crates/eigen-kernel/tests/",
+        "buf lint",
+        "buf breaking"
       ],
       "implementation_status": "implemented",
       "compatibility_status": "compatible",
