@@ -3,7 +3,7 @@
 **Wave:** Product 1.0 Wave 8 — Knowledge Base and continuous learning loop  
 **Date:** 2026-06-13  
 **Scope checked:** `rfcs/`, `docs/adr/`, `docs/rfcs-pointer.md`, `docs/development/README.md`, `docs/development/product-1.0-contract-alignment-plan.md`  
-**Result:** ✅ **Wave 8 planning is covered by the accepted Knowledge Base / optimizer / learning-loop governance package.**
+**Result:** ✅ **Wave 8 planning and closure evidence are covered by the accepted Knowledge Base / optimizer / learning-loop governance package.**
 
 ## Executive summary
 
@@ -41,8 +41,8 @@ Wave 8 is a planning and implementation-alignment wave. The repository already c
 | Continuous learning governance | Accepted RFC + mirrored ADR + implementation plan | RFC 0036 + ADR 0022 + Wave 8 execution plan | Closed for planning |
 | QFS-L2 lineage / evidence envelope | Accepted RFC + mirrored ADR | RFC 0037 + ADR 0023 | Closed for planning |
 | Trace continuity and observability | Contract docs + Wave 8 issue pack | `docs/reference/intelligent-runtime-observability-contract.md`, `docs/reference/orchestration-observability-contract.md`, Wave 8 issue pack | Closed for planning |
-| Exit review bundle | Compatibility report + readiness checklist + exit evidence bundle | Wave 8 closure docs | Planned |
-| Docs navigation sync | Development index + alignment plan + inventory | `docs/development/README.md`, `docs/development/product-1.0-contract-alignment-plan.md`, `docs/development/product-1.0-contract-inventory.md` | Planned |
+| Exit review bundle | Compatibility report + readiness checklist + exit evidence bundle | Wave 8 closure docs | Closed |
+| Docs navigation sync | Development index + alignment plan + inventory | `docs/development/README.md`, `docs/development/product-1.0-contract-alignment-plan.md`, `docs/development/product-1.0-contract-inventory.md` | Closed |
 
 ## Minimum package required for Wave 8 implementation
 

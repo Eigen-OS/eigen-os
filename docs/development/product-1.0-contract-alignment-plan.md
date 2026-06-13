@@ -459,7 +459,7 @@ The concrete Wave 3 mappings are captured in the inventory and closure package:
 
 **Goal:** make operational learning and decision lineage first-class while preserving privacy and immutability.
 
-**Planning package:** `docs/development/wave-8/product-1.0-wave-8-execution-plan.md`, `docs/development/wave-8/product-1.0-wave-8-issue-pack.md`, `docs/development/wave-8/product-1.0-wave-8-rfc-adr-gap-analysis.md`, `docs/development/wave-8/product-1.0-wave-8-compatibility-report.md`, `docs/development/wave-8/product-1.0-wave-8-release-readiness-checklist.md`, and `docs/development/wave-8/product-1.0-wave-8-exit-evidence-bundle.md`.
+**Wave 8 package:** `docs/development/wave-8/product-1.0-wave-8-execution-plan.md`, `docs/development/wave-8/product-1.0-wave-8-issue-pack.md`, `docs/development/wave-8/product-1.0-wave-8-rfc-adr-gap-analysis.md`, `docs/development/wave-8/product-1.0-wave-8-compatibility-report.md`, `docs/development/wave-8/product-1.0-wave-8-release-readiness-checklist.md`, and `docs/development/wave-8/product-1.0-wave-8-exit-evidence-bundle.md`.
 
 #### Work items
 

@@ -1,7 +1,7 @@
 # Product 1.0 Wave 8 Documentation Index
 
 **Wave:** Product 1.0 Wave 8 — Knowledge Base and continuous learning loop  
-**Status:** Planned for execution planning  
+**Status:** Closure package complete 
 **Parent execution plan:** `docs/development/product-1.0-contract-alignment-plan.md`
 
 ---
@@ -16,7 +16,7 @@
 
 ## Closure-target documents
 
-These documents should be completed when Wave 8 is ready to close:
+These documents are completed and retained as Wave 8 closure evidence:
 
 - `product-1.0-wave-8-compatibility-report.md`
 - `product-1.0-wave-8-release-readiness-checklist.md`
@@ -50,3 +50,5 @@ Wave 8 makes the Knowledge Base and continuous-learning loop first-class while p
 - `docs/adr/0022-phase8a-continuous-learning-control-plane-contract-v1.md`
 - `docs/adr/0023-phase8a-qfs-l2-checkpoint-envelope-contract-v1.md`
 - `docs/development/product-1.0-version-policy.md`
+
+Wave 8 closure evidence is synchronized with the release-readiness checklist, compatibility report, and exit evidence bundle.
