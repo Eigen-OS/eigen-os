@@ -228,7 +228,7 @@ class KnowledgeBaseService:
         page_size = self._page_size(request.page_size)
         with self._lock:
             self._gc_locked()
-            filtered = [entry.record for entry in self._records.values() if self._record_visible_to_tenant(entry, envelope["tenant_id"], context) and self._record_matches_filter(entry.record, request.filter)]
+            filtered = [entry.record for entry in self._records.values() if self._record_visible_to_tenant(entry, envelope["tenant_id"], envelope["project_id"], context) and self._record_matches_filter(entry.record, request.filter)]
             filtered.sort(key=lambda item: (self._ts_signature(item.created_at), item.record_id))
             offset, query_sig = self._decode_cursor(request.page_token, envelope, self._filter_signature(request.filter), kind="records", context=context)
             next_offset = offset + page_size
@@ -243,7 +243,7 @@ class KnowledgeBaseService:
         with self._lock:
             self._gc_locked()
             entry = self._records.get(request.record_id)
-            if entry is None or not self._record_visible_to_tenant(entry, envelope["tenant_id"], context):
+            if entry is None or not self._record_visible_to_tenant(entry, envelope["tenant_id"], envelope["project_id"], context):
                 record_kb_query("records", hit=False)
                 self._abort_not_found(context, request.record_id)
                 return self._kb_pb.GetRecordResponse()
@@ -266,7 +266,7 @@ class KnowledgeBaseService:
         page_size = self._page_size(request.page_size)
         with self._lock:
             self._gc_locked()
-            filtered = [entry.decision_log for entry in self._decision_logs if self._decision_visible_to_tenant(entry, envelope["tenant_id"], context) and self._decision_matches_filter(entry.decision_log, trace_id=request.trace_id, model_version=request.model_version)]
+            filtered = [entry.decision_log for entry in self._decision_logs if self._decision_visible_to_tenant(entry, envelope["tenant_id"], envelope["project_id"], context) and self._decision_matches_filter(entry.decision_log, trace_id=request.trace_id, model_version=request.model_version)]
             filtered.sort(key=lambda item: (self._ts_signature(item.decided_at), item.decision_id))
             offset, query_sig = self._decode_cursor(request.page_token, envelope, {"trace_id": request.trace_id, "model_version": request.model_version}, kind="decision_logs", context=context)
             next_offset = offset + page_size
@@ -495,13 +495,13 @@ class KnowledgeBaseService:
     def _ts_signature(self, ts: Timestamp | None) -> str:
         return _ts_to_dt(ts).isoformat() if ts is not None else ""
 
-    def _record_visible_to_tenant(self, entry: _StoredRecord, tenant_id: str, context: grpc.ServicerContext) -> bool:
+    def _record_visible_to_tenant(self, entry: _StoredRecord, tenant_id: str, project_id: str, context: grpc.ServicerContext) -> bool:
         _, roles, _ = auth_context(context)
-        return True if ("*" in roles or "admin" in roles) else entry.tenant_id == tenant_id
+        return True if ("*" in roles or "admin" in roles) else entry.tenant_id == tenant_id and entry.project_id == project_id
 
-    def _decision_visible_to_tenant(self, entry: _StoredDecisionLog, tenant_id: str, context: grpc.ServicerContext) -> bool:
+    def _decision_visible_to_tenant(self, entry: _StoredDecisionLog, tenant_id: str, project_id: str, context: grpc.ServicerContext) -> bool:
         _, roles, _ = auth_context(context)
-        return True if ("*" in roles or "admin" in roles) else entry.tenant_id == tenant_id
+        return True if ("*" in roles or "admin" in roles) else entry.tenant_id == tenant_id and entry.project_id == project_id
 
     def _record_matches_filter(self, record: Any, query_filter: Any) -> bool:
         if query_filter is None:

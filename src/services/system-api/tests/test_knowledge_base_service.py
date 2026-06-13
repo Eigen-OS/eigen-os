@@ -183,6 +183,66 @@ def test_decision_log_lineage_validation_and_ordering(grpc_addr: str) -> None:
     assert [item.selected_action for item in query.decision_logs] == ["backend-alpha", "backend-beta"]
 
 
+def test_kb_records_and_decision_logs_are_project_scoped(grpc_addr: str) -> None:
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = kb_pb_grpc.KnowledgeBaseServiceStub(channel)
+
+    project_a = _envelope(request_id="kb-project-a")
+    project_b = kb_pb.ApiContractEnvelope(
+        contract_version="1.0.0",
+        request=types_pb.ApiRequestEnvelope(
+            contract_version="1.0.0",
+            request_id="kb-project-b",
+            tenant_id="tenant-a",
+            project_id="project-b",
+            client_version="cli-1.0.0",
+            traceparent="00-0123456789abcdef0123456789abcdef-0123456789abcdef-01",
+        ),
+    )
+
+    stub.UpsertRecord(
+        kb_pb.UpsertRecordRequest(
+            envelope=project_a,
+            record=_record("kb-project-a-record", created_at="2026-06-11T11:00:00+00:00", trace_id="trace-scope", user_id="alice"),
+        )
+    )
+    stub.AppendDecisionLog(
+        kb_pb.AppendDecisionLogRequest(
+            envelope=project_a,
+            decision_log=kb_pb.DecisionLog(
+                decision_id="decision-project-a",
+                trace_id="trace-scope",
+                model_version="m1",
+                component="runtime",
+                policy_branch="baseline",
+                selected_action="backend-alpha",
+                fallback_used=False,
+                feature_snapshot={"queue_depth": "2"},
+                decided_at=_ts("2026-06-11T11:01:00+00:00"),
+            ),
+        )
+    )
+
+    project_b_records = stub.QueryRecords(
+        kb_pb.QueryRecordsRequest(
+            envelope=project_b,
+            filter=kb_pb.QueryFilter(trace_id="trace-scope"),
+            page_size=10,
+        )
+    )
+    project_b_decisions = stub.QueryDecisionLogs(
+        kb_pb.QueryDecisionLogsRequest(
+            envelope=project_b,
+            trace_id="trace-scope",
+            model_version="m1",
+            page_size=10,
+        )
+    )
+
+    assert project_b_records.records == []
+    assert project_b_decisions.decision_logs == []
+
+
 def test_kb_fallback_behavior_raises_when_storage_disabled() -> None:
     service = KnowledgeBaseService(kb_pb=kb_pb, types_pb=types_pb, storage_mode="disabled")
     with pytest.raises(KnowledgeBaseUnavailable):
