@@ -30,7 +30,7 @@ The project follows the **Product 1.0 Contract Alignment Plan** – a service‑
 | **Wave 7** – GNN Optimizer and intelligent runtime | ✅ Completed |
 | **Wave 8** – Knowledge Base and continuous learning loop | ✅ Completed |
 | **Wave 9** – Security, identity, policy, and isolation | ✅ Completed |
-| **Waves 10** – Observability, operations, and release evidence | 🔄 In progress |
+| **Waves 10** – Observability, operations, and release evidence | ✅ Completed |
 | **Release** | ⏳ Planned |
 
 All normative contracts described in `docs/reference/` are being implemented as versioned wire representations with conformance tests, canonical errors, and observability markers. The **target release** is **Product `1.0.0`** – a mature, contract‑first platform.
