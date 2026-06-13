@@ -23,6 +23,17 @@ def test_learning_control_plane_fixture_is_frozen_v1() -> None:
         "same_key_same_payload": "return_previous_result",
         "same_key_different_payload": "LEARN_IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD",
     }
+    assert payload["audit_required_fields"] == ["command_id", "requested_by", "requested_at", "trace_id", "from_state", "to_state", "decision", "gate_results"]
+    assert payload["observability"]["metrics"] == [
+        "learning_control_plane_transition_total",
+        "learning_control_plane_gate_failures_total",
+        "learning_control_plane_promotion_lead_time_seconds",
+        "learning_control_plane_rollback_total",
+    ]
+    assert payload["deprecation_policy"] == {
+        "min_supported_minor_releases": 2,
+        "min_supported_days": 90,
+    }
     assert payload["deprecation_policy"] == {
         "min_supported_minor_releases": 2,
         "min_supported_days": 90,

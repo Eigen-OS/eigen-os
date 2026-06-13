@@ -80,18 +80,33 @@ class _MetricsState:
         "decision_logs": 0,
         "benchmark_runs": 0,
         "runtime_decisions": 0,
+        "learning_evidence": 0,
+        "learning_datasets": 0,
+        "learning_models": 0,
+        "learning_promotions": 0,
+        "learning_rollbacks": 0,
     }
     kb_hits_total: dict[str, int] = {
         "records": 0,
         "decision_logs": 0,
         "benchmark_runs": 0,
         "runtime_decisions": 0,
+        "learning_evidence": 0,
+        "learning_datasets": 0,
+        "learning_models": 0,
+        "learning_promotions": 0,
+        "learning_rollbacks": 0,
     }
     kb_misses_total: dict[str, int] = {
         "records": 0,
         "decision_logs": 0,
         "benchmark_runs": 0,
         "runtime_decisions": 0,
+        "learning_evidence": 0,
+        "learning_datasets": 0,
+        "learning_models": 0,
+        "learning_promotions": 0,
+        "learning_rollbacks": 0,
     }
     kb_fallbacks_total: dict[str, int] = {
         "storage_unavailable": 0,

@@ -47,6 +47,22 @@ _DEFAULT_ANON_SALT = "eigen-kb-anon-salt"
 _DEFAULT_ANON_EPOCH = "1"
 _OKB_QUERY_MODES = {"structural", "vector"}
 _OKB_MAX_CANDIDATES = 8
+_LEARNING_DEFAULT_TRIGGER_MIN_RECORDS = 1000
+_LEARNING_DEFAULT_TRIGGER_MIN_RUNTIME_DECISIONS = 10
+_LEARNING_DEFAULT_TRIGGER_MIN_BENCHMARK_RUNS = 3
+_LEARNING_DEFAULT_RETENTION_DAYS = 90
+_LEARNING_ALLOWED_STATES = ("DRAFT", "TRAINED", "VALIDATED", "SHADOW", "CANARY", "PROMOTED", "RETIRED")
+_LEARNING_ALLOWED_TRANSITIONS = {
+    "DRAFT": ("TRAINED", "RETIRED"),
+    "TRAINED": ("VALIDATED", "RETIRED"),
+    "VALIDATED": ("SHADOW", "RETIRED"),
+    "SHADOW": ("CANARY", "RETIRED"),
+    "CANARY": ("PROMOTED", "ROLLBACK_TO_VALIDATED", "RETIRED"),
+    "PROMOTED": ("ROLLBACK_TO_VALIDATED", "RETIRED"),
+    "RETIRED": (),
+}
+_LEARNING_QUARANTINE_KEYS = {"user_id", "client_ip", "email", "subject", "raw_payload", "unredacted_payload"}
+_LEARNING_QUERY_KINDS = {"optimizer", "runtime", "benchmark", "control_plane_command"}
 
 
 class KnowledgeBaseUnavailable(RuntimeError):
@@ -72,6 +88,28 @@ class _StoredDecisionLog:
     decided_at: datetime
     fingerprint: str
     sequence: int
+
+
+@dataclass(slots=True)
+class _StoredLearningEvidence:
+    evidence_id: str
+    tenant_id: str
+    project_id: str
+    evidence_kind: str
+    evidence_hash: str
+    model_version: str
+    training_set_hash: str
+    evaluation_bundle_hash: str
+    promotion_policy_version: str
+    lifecycle_state: str
+    quarantine_state: str
+    source: str
+    command: str
+    decision: str
+    gate_results: dict[str, Any]
+    metadata: dict[str, Any]
+    created_at: datetime
+    queryable_ref: str
 
 
 @dataclass(slots=True)
@@ -165,6 +203,16 @@ def _contract_version_from_envelope(envelope: Any) -> str:
     return contract_version if _SEMVER_RE.match(contract_version) else ""
 
 
+def _parse_iso_datetime(value: str) -> datetime:
+    try:
+        dt = datetime.fromisoformat(value)
+    except Exception:
+        return datetime.now(timezone.utc)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
 class KnowledgeBaseService:
     """Deterministic in-memory KnowledgeBaseService implementation."""
 
@@ -186,6 +234,10 @@ class KnowledgeBaseService:
         self._lock = threading.RLock()
         self._records: dict[str, _StoredRecord] = {}
         self._decision_logs: list[_StoredDecisionLog] = []
+        self._learning_evidence: list[dict[str, Any]] = []
+        self._learning_models: dict[tuple[str, str, str], dict[str, Any]] = {}
+        self._learning_datasets: dict[str, dict[str, Any]] = {}
+        self._learning_command_index: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
         self._sequence = 0
 
     # Public RPC methods -------------------------------------------------
@@ -386,6 +438,41 @@ class KnowledgeBaseService:
         with self._lock:
             self._gc_locked()
             self._store_decision_log(decision_log=decision_log, envelope=envelope, context=None)
+            self._learning_store_evidence(
+                source="runtime",
+                evidence_kind="runtime",
+                envelope=envelope,
+                evidence_payload={
+                    "decision_id": decision_log.decision_id,
+                    "trace_id": decision_log.trace_id,
+                    "model_version": decision_log.model_version,
+                    "component": decision_log.component,
+                    "policy_branch": decision_log.policy_branch,
+                    "selected_action": decision_log.selected_action,
+                    "fallback_used": decision_log.fallback_used,
+                    "feature_snapshot": dict(decision_log.feature_snapshot),
+                    "decided_at": decision_log.decided_at,
+                    "training_set_hash": str(payload.get("training_set_hash", "")).strip(),
+                    "evaluation_bundle_hash": str(payload.get("evaluation_bundle_hash", "")).strip(),
+                    "promotion_policy_version": str(payload.get("promotion_policy_version", "")).strip(),
+                },
+                model_version=decision_log.model_version,
+                training_set_hash=str(payload.get("training_set_hash", "")).strip(),
+                evaluation_bundle_hash=str(payload.get("evaluation_bundle_hash", "")).strip(),
+                promotion_policy_version=str(payload.get("promotion_policy_version", "")).strip(),
+                lifecycle_state="VALIDATED",
+                quarantine_state="quarantine" if self._learning_payload_contains_quarantine_fields(payload) else "none",
+                gate_results={
+                    "fallback_used": bool(decision_log.fallback_used),
+                    "trace_id": decision_log.trace_id,
+                },
+                metadata={
+                    "component": decision_log.component,
+                    "policy_branch": decision_log.policy_branch,
+                },
+                command="runtime_decision",
+                decision=decision_log.selected_action,
+            )
         record_kb_query("runtime_decisions", hit=True)
         return decision_log.decision_id
 
@@ -444,8 +531,314 @@ class KnowledgeBaseService:
         with self._lock:
             self._gc_locked()
             self._upsert_record(record=record, envelope=envelope, allow_overwrite=True, anonymize_attributes=False, source="benchmark", replay_bundle_ref=attrs["replay_bundle_ref"], context=None)
+        
+            self._learning_store_evidence(
+                source="benchmark",
+                evidence_kind="benchmark",
+                envelope=envelope,
+                evidence_payload={
+                    "record_id": record.record_id,
+                    "job_id": record.job_id,
+                    "circuit_id": record.circuit_id,
+                    "artifact_ref": record.artifact_ref,
+                    "dataset_ref": record.dataset_ref,
+                    "backend_profile": record.backend_profile,
+                    "optimizer_version": record.optimizer_version,
+                    "qubit_count": record.qubit_count,
+                    "entanglement_score": record.entanglement_score,
+                    "noise_profile_id": record.noise_profile_id,
+                    "backend_class": record.backend_class,
+                    "provenance": {
+                        "compiler_ref": record.provenance.compiler_ref,
+                        "optimizer_ref": record.provenance.optimizer_ref,
+                        "runtime_ref": record.provenance.runtime_ref,
+                        "checkpoint_ref": record.provenance.checkpoint_ref,
+                    },
+                    "lineage": {
+                        "model_version": record.lineage.model_version,
+                        "training_set_hash": record.lineage.training_set_hash,
+                        "evaluation_bundle_hash": record.lineage.evaluation_bundle_hash,
+                        "promotion_policy_version": record.lineage.promotion_policy_version,
+                        "promotion_outcome": record.lineage.promotion_outcome,
+                    },
+                    "created_at": record.created_at,
+                },
+                model_version=record.lineage.model_version,
+                training_set_hash=record.lineage.training_set_hash,
+                evaluation_bundle_hash=record.lineage.evaluation_bundle_hash,
+                promotion_policy_version=record.lineage.promotion_policy_version,
+                lifecycle_state="VALIDATED",
+                quarantine_state="none",
+                gate_results={
+                    "promotion_outcome": record.lineage.promotion_outcome,
+                    "optimizer_version": record.optimizer_version,
+                },
+                metadata={
+                    "backend_profile": record.backend_profile,
+                    "backend_class": record.backend_class,
+                    "noise_profile_id": record.noise_profile_id,
+                },
+                command="benchmark_ingest",
+                decision="validated",
+            )
         record_kb_query("benchmark_runs", hit=True)
         return record.record_id
+
+
+    def ingest_learning_evidence(self, payload: dict[str, Any]) -> str:
+        if self._storage_mode == "disabled":
+            raise KnowledgeBaseUnavailable("knowledge base storage unavailable")
+        envelope = self._payload_envelope(payload)
+        with self._lock:
+            self._gc_locked()
+            evidence = self._learning_store_evidence(
+                source=str(payload.get("source", "manual")).strip() or "manual",
+                evidence_kind=str(payload.get("evidence_kind", "learning")).strip() or "learning",
+                envelope=envelope,
+                evidence_payload=dict(payload),
+                model_version=str(payload.get("model_version", "")).strip(),
+                training_set_hash=str(payload.get("training_set_hash", "")).strip(),
+                evaluation_bundle_hash=str(payload.get("evaluation_bundle_hash", "")).strip(),
+                promotion_policy_version=str(payload.get("promotion_policy_version", "")).strip(),
+                lifecycle_state=str(payload.get("lifecycle_state", "DRAFT")).strip() or "DRAFT",
+                quarantine_state="quarantine" if self._learning_payload_contains_quarantine_fields(payload) else "none",
+                gate_results=dict(payload.get("gate_results") or {}),
+                metadata=dict(payload.get("metadata") or {}),
+                command=str(payload.get("command", "")).strip(),
+                decision=str(payload.get("decision", "")).strip(),
+            )
+        record_kb_query("learning_evidence", hit=True)
+        return evidence["evidence_id"]
+
+    def query_learning_evidence(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if self._storage_mode == "disabled":
+            raise KnowledgeBaseUnavailable("knowledge base storage unavailable")
+        envelope = self._payload_envelope(payload)
+        page_size = self._page_size(int(payload.get("page_size", 50) or 50))
+        kind_filter = str(payload.get("evidence_kind", "")).strip().lower()
+        model_version = str(payload.get("model_version", "")).strip()
+        lifecycle_state = str(payload.get("lifecycle_state", "")).strip().upper()
+        page_token = str(payload.get("page_token", "")).strip()
+        try:
+            offset = max(int(page_token), 0) if page_token else 0
+        except ValueError:
+            offset = 0
+        with self._lock:
+            self._gc_locked()
+            filtered = [
+                item
+                for item in self._learning_evidence
+                if item["tenant_id"] == envelope["tenant_id"]
+                and item["project_id"] == envelope["project_id"]
+                and (not kind_filter or item["evidence_kind"] == kind_filter)
+                and (not model_version or item["model_version"] == model_version)
+                and (not lifecycle_state or item["lifecycle_state"] == lifecycle_state)
+            ]
+            filtered.sort(key=lambda item: (item["created_at"], item["evidence_id"]))
+            window = filtered[offset : offset + page_size]
+            next_page_token = str(offset + page_size) if (offset + page_size) < len(filtered) else ""
+        record_kb_query("learning_evidence", hit=bool(window))
+        return {
+            "evidence": [self._learning_public_view(item) for item in window],
+            "next_page_token": next_page_token,
+            "total_count": len(filtered),
+        }
+
+    def assemble_learning_dataset(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if self._storage_mode == "disabled":
+            raise KnowledgeBaseUnavailable("knowledge base storage unavailable")
+        envelope = self._payload_envelope(payload)
+        policy = self._normalize_learning_policy(payload)
+        target_model_version = str(payload.get("model_version", "")).strip()
+        with self._lock:
+            self._gc_locked()
+            scoped = [
+                item
+                for item in self._learning_evidence
+                if item["tenant_id"] == envelope["tenant_id"]
+                and item["project_id"] == envelope["project_id"]
+                and (not target_model_version or item["model_version"] == target_model_version)
+            ]
+            runtime_decisions = [item for item in scoped if item["evidence_kind"] == "runtime"]
+            benchmark_runs = [item for item in scoped if item["evidence_kind"] == "benchmark"]
+            learning_evidence = [item for item in scoped if item["evidence_kind"] in {"learning", "optimizer", "runtime", "benchmark"}]
+            triggered = (
+                len(learning_evidence) >= policy["trigger_min_records"]
+                and len(runtime_decisions) >= policy["trigger_min_runtime_decisions"]
+                and len(benchmark_runs) >= policy["trigger_min_benchmark_runs"]
+            )
+            sorted_evidence = sorted(learning_evidence, key=lambda item: (item["created_at"], item["evidence_id"]))
+            dataset_id = str(
+                payload.get("dataset_id")
+                or f"ds_{hashlib.sha256(_stable_json({'tenant_id': envelope['tenant_id'], 'project_id': envelope['project_id'], 'policy': policy, 'model_version': target_model_version, 'evidence_ids': [item['evidence_id'] for item in sorted_evidence]}).encode('utf-8')).hexdigest()[:24]}"
+            )
+            summary = {
+                "dataset_id": dataset_id,
+                "tenant_id": envelope["tenant_id"],
+                "project_id": envelope["project_id"],
+                "policy_version": policy["policy_version"],
+                "model_version": target_model_version,
+                "triggered": triggered,
+                "assembly_state": "assembled" if triggered else "held",
+                "quarantine_state": "quarantine" if any(item["quarantine_state"] != "none" for item in scoped) else "none",
+                "retention_days": policy["retention_days"],
+                "evidence_ids": [item["evidence_id"] for item in sorted_evidence],
+                "runtime_decision_ids": [item["command"] or item["decision"] or item["evidence_id"] for item in runtime_decisions],
+                "benchmark_record_ids": [item["metadata"].get("record_id", item["evidence_id"]) for item in benchmark_runs],
+                "model_lineage": [
+                    {
+                        "model_version": item["model_version"],
+                        "training_set_hash": item["training_set_hash"],
+                        "evaluation_bundle_hash": item["evaluation_bundle_hash"],
+                        "promotion_policy_version": item["promotion_policy_version"],
+                        "lifecycle_state": item["lifecycle_state"],
+                        "quarantine_state": item["quarantine_state"],
+                    }
+                    for item in sorted_evidence
+                    if item["model_version"]
+                ],
+                "policy": policy,
+                "queryable_ref": f"kb://datasets/{dataset_id}",
+            }
+            summary["dataset_hash"] = _stable_hash(summary)
+            summary["evidence_hashes"] = [item["evidence_hash"] for item in sorted_evidence]
+            self._learning_datasets[dataset_id] = summary
+        record_kb_query("learning_datasets", hit=bool(scoped))
+        return summary
+
+    def start_training(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if self._storage_mode == "disabled":
+            raise KnowledgeBaseUnavailable("knowledge base storage unavailable")
+        envelope = self._payload_envelope(payload)
+        model_version = str(payload.get("model_version", "")).strip()
+        dataset_id = str(payload.get("dataset_id", "")).strip()
+        policy = self._normalize_learning_policy(payload)
+        if not model_version or not dataset_id:
+            raise ValueError("model_version and dataset_id are required")
+        with self._lock:
+            self._gc_locked()
+            dataset = self._learning_datasets.get(dataset_id)
+            if dataset is None or dataset["tenant_id"] != envelope["tenant_id"] or dataset["project_id"] != envelope["project_id"]:
+                raise KnowledgeBaseUnavailable("dataset unavailable")
+            result = self._learning_transition_result(
+                tenant_id=envelope["tenant_id"],
+                project_id=envelope["project_id"],
+                model_version=model_version,
+                from_state="DRAFT",
+                to_state="TRAINED",
+                policy=policy,
+                gate_results={"dataset_hash": dataset["dataset_hash"]},
+                queryable_ref=f"kb://models/{model_version}",
+                evidence_ref=dataset["queryable_ref"],
+            )
+        record_kb_query("learning_models", hit=True)
+        return result
+
+    def run_evaluation(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if self._storage_mode == "disabled":
+            raise KnowledgeBaseUnavailable("knowledge base storage unavailable")
+        envelope = self._payload_envelope(payload)
+        model_version = str(payload.get("model_version", "")).strip()
+        dataset_id = str(payload.get("dataset_id", "")).strip()
+        policy = self._normalize_learning_policy(payload)
+        gate_results = dict(payload.get("gate_results") or {})
+        if not model_version or not dataset_id:
+            raise ValueError("model_version and dataset_id are required")
+        with self._lock:
+            self._gc_locked()
+            dataset = self._learning_datasets.get(dataset_id)
+            if dataset is None or dataset["tenant_id"] != envelope["tenant_id"] or dataset["project_id"] != envelope["project_id"]:
+                raise KnowledgeBaseUnavailable("dataset unavailable")
+            result = self._learning_transition_result(
+                tenant_id=envelope["tenant_id"],
+                project_id=envelope["project_id"],
+                model_version=model_version,
+                from_state="TRAINED",
+                to_state="VALIDATED",
+                policy=policy,
+                gate_results=gate_results,
+                queryable_ref=f"kb://models/{model_version}",
+                evidence_ref=dataset["queryable_ref"],
+            )
+            result["shadow_validated"] = bool(payload.get("shadow_validated", False))
+            result["canary_passed"] = bool(payload.get("canary_passed", False))
+        record_kb_query("learning_models", hit=True)
+        return result
+
+    def promote_model(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if self._storage_mode == "disabled":
+            raise KnowledgeBaseUnavailable("knowledge base storage unavailable")
+        envelope = self._payload_envelope(payload)
+        model_version = str(payload.get("model_version", "")).strip()
+        policy = self._normalize_learning_policy(payload)
+        gate_results = dict(payload.get("gate_results") or {})
+        if not model_version:
+            raise ValueError("model_version is required")
+        with self._lock:
+            self._gc_locked()
+            model = self._learning_models.get((envelope["tenant_id"], envelope["project_id"], model_version))
+            if model is None:
+                raise KnowledgeBaseUnavailable("model unavailable")
+            if not bool(payload.get("shadow_validated", False)) or not bool(payload.get("canary_passed", False)):
+                raise PermissionError("promotion requires shadow validation and canary pass")
+            result = self._learning_transition_result(
+                tenant_id=envelope["tenant_id"],
+                project_id=envelope["project_id"],
+                model_version=model_version,
+                from_state=model["lifecycle_state"],
+                to_state="PROMOTED",
+                policy=policy,
+                gate_results=gate_results,
+                queryable_ref=model["queryable_ref"],
+                evidence_ref=model["evidence_ref"],
+            )
+        record_kb_query("learning_models", hit=True)
+        return result
+
+    def rollback_model(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if self._storage_mode == "disabled":
+            raise KnowledgeBaseUnavailable("knowledge base storage unavailable")
+        envelope = self._payload_envelope(payload)
+        model_version = str(payload.get("model_version", "")).strip()
+        policy = self._normalize_learning_policy(payload)
+        gate_results = dict(payload.get("gate_results") or {})
+        if not model_version:
+            raise ValueError("model_version is required")
+        with self._lock:
+            self._gc_locked()
+            model = self._learning_models.get((envelope["tenant_id"], envelope["project_id"], model_version))
+            if model is None:
+                raise KnowledgeBaseUnavailable("model unavailable")
+            result = self._learning_transition_result(
+                tenant_id=envelope["tenant_id"],
+                project_id=envelope["project_id"],
+                model_version=model_version,
+                from_state=model["lifecycle_state"],
+                to_state="VALIDATED",
+                policy=policy,
+                gate_results=gate_results,
+                queryable_ref=model["queryable_ref"],
+                evidence_ref=model["evidence_ref"],
+                command="ROLLBACK",
+            )
+            result["rollback_enabled"] = True
+        record_kb_query("learning_models", hit=True)
+        return result
+
+    def get_model_lifecycle(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if self._storage_mode == "disabled":
+            raise KnowledgeBaseUnavailable("knowledge base storage unavailable")
+        scope = self._payload_envelope(payload)
+        model_version = str(payload.get("model_version", "")).strip()
+        if not model_version:
+            raise ValueError("model_version is required")
+        with self._lock:
+            self._gc_locked()
+            model = self._learning_models.get((scope["tenant_id"], scope["project_id"], model_version))
+            if model is None:
+                raise KnowledgeBaseUnavailable("model unavailable")
+        record_kb_query("learning_models", hit=bool(model))
+        return self._learning_model_view(scope, model)
 
 
     def _normalize_okb_query(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -928,18 +1321,7 @@ class KnowledgeBaseService:
         self._decision_logs.append(stored)
         return stored
 
-    def _gc_locked(self) -> None:
-        now = datetime.now(timezone.utc)
-        cutoff = now - timedelta(seconds=self._retention_seconds)
-        
-        # Evict expired records
-        expired_records = [k for k, v in self._records.items() if v.created_at < cutoff]
-        for k in expired_records:
-            del self._records[k]
-            
-        # Evict expired decision logs
-        self._decision_logs = [log for log in self._decision_logs if log.decided_at >= cutoff]
-
+    
     def _abort_not_found(self, context: grpc.ServicerContext, record_id: str) -> None:
         abort_with_error_info(
             context,
@@ -961,3 +1343,229 @@ class KnowledgeBaseService:
             "trace_id": str(payload.get("trace_id", "")),
         }
     
+    def _normalize_learning_policy(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "policy_version": str(payload.get("policy_version", "learning-policy-v1")).strip() or "learning-policy-v1",
+            "trigger_min_records": max(int(payload.get("trigger_min_records", _LEARNING_DEFAULT_TRIGGER_MIN_RECORDS) or _LEARNING_DEFAULT_TRIGGER_MIN_RECORDS), 1),
+            "trigger_min_runtime_decisions": max(int(payload.get("trigger_min_runtime_decisions", _LEARNING_DEFAULT_TRIGGER_MIN_RUNTIME_DECISIONS) or _LEARNING_DEFAULT_TRIGGER_MIN_RUNTIME_DECISIONS), 1),
+            "trigger_min_benchmark_runs": max(int(payload.get("trigger_min_benchmark_runs", _LEARNING_DEFAULT_TRIGGER_MIN_BENCHMARK_RUNS) or _LEARNING_DEFAULT_TRIGGER_MIN_BENCHMARK_RUNS), 1),
+            "retention_days": max(int(payload.get("retention_days", _LEARNING_DEFAULT_RETENTION_DAYS) or _LEARNING_DEFAULT_RETENTION_DAYS), 1),
+            "quarantine_on_invalid": bool(payload.get("quarantine_on_invalid", True)),
+        }
+
+
+    def _gc_locked(self) -> None:
+        now = datetime.now(timezone.utc)
+        cutoff = now - timedelta(seconds=self._retention_seconds)
+        self._records = {
+            key: value
+            for key, value in self._records.items()
+            if value.created_at >= cutoff
+        }
+        self._decision_logs = [
+            item for item in self._decision_logs if item.decided_at >= cutoff
+        ]
+        self._learning_evidence = [
+            item
+            for item in self._learning_evidence
+            if _parse_iso_datetime(item["created_at"]) >= cutoff
+        ]
+        self._learning_models = {
+            key: value
+            for key, value in self._learning_models.items()
+            if _parse_iso_datetime(value["updated_at"]) >= cutoff
+        }
+
+    def _learning_store_evidence(
+        self,
+        *,
+        source: str,
+        evidence_kind: str,
+        envelope: dict[str, Any],
+        evidence_payload: dict[str, Any],
+        model_version: str,
+        training_set_hash: str,
+        evaluation_bundle_hash: str,
+        promotion_policy_version: str,
+        lifecycle_state: str,
+        quarantine_state: str,
+        gate_results: dict[str, Any],
+        metadata: dict[str, Any],
+        command: str,
+        decision: str,
+    ) -> dict[str, Any]:
+        normalized_kind = evidence_kind.strip().lower() or "learning"
+        evidence = {
+            "tenant_id": envelope["tenant_id"],
+            "project_id": envelope["project_id"],
+            "source": source,
+            "evidence_kind": normalized_kind,
+            "model_version": model_version,
+            "training_set_hash": training_set_hash,
+            "evaluation_bundle_hash": evaluation_bundle_hash,
+            "promotion_policy_version": promotion_policy_version,
+            "lifecycle_state": lifecycle_state.upper() if lifecycle_state else "DRAFT",
+            "quarantine_state": quarantine_state,
+            "gate_results": dict(gate_results or {}),
+            "metadata": _anonymize_mapping(dict(metadata or {}), salt=self._anon_salt, epoch=self._anon_epoch),
+            "command": command,
+            "decision": decision,
+            "payload": _anonymize_mapping(dict(evidence_payload or {}), salt=self._anon_salt, epoch=self._anon_epoch),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        evidence["evidence_hash"] = _stable_hash(evidence)
+        evidence["evidence_id"] = str(
+            evidence_payload.get("evidence_id")
+            or f"evid_{hashlib.sha256(_stable_json(evidence).encode('utf-8')).hexdigest()[:24]}"
+        )
+        evidence["queryable_ref"] = f"kb://learning/{evidence['evidence_id']}"
+        self._learning_evidence.append(
+            {
+                "evidence_id": evidence["evidence_id"],
+                "tenant_id": evidence["tenant_id"],
+                "project_id": evidence["project_id"],
+                "evidence_kind": evidence["evidence_kind"],
+                "evidence_hash": evidence["evidence_hash"],
+                "model_version": evidence["model_version"],
+                "training_set_hash": evidence["training_set_hash"],
+                "evaluation_bundle_hash": evidence["evaluation_bundle_hash"],
+                "promotion_policy_version": evidence["promotion_policy_version"],
+                "lifecycle_state": evidence["lifecycle_state"],
+                "quarantine_state": evidence["quarantine_state"],
+                "source": evidence["source"],
+                "command": evidence["command"],
+                "decision": evidence["decision"],
+                "gate_results": evidence["gate_results"],
+                "metadata": evidence["metadata"],
+                "payload": evidence["payload"],
+                "created_at": evidence["created_at"],
+                "queryable_ref": evidence["queryable_ref"],
+            }
+        )
+        if evidence["model_version"]:
+            self._learning_models[(envelope["tenant_id"], envelope["project_id"], evidence["model_version"])] = {
+                "tenant_id": envelope["tenant_id"],
+                "project_id": envelope["project_id"],
+                "model_version": evidence["model_version"],
+                "training_set_hash": evidence["training_set_hash"],
+                "evaluation_bundle_hash": evidence["evaluation_bundle_hash"],
+                "promotion_policy_version": evidence["promotion_policy_version"],
+                "lifecycle_state": evidence["lifecycle_state"],
+                "gate_results": dict(gate_results or {}),
+                "updated_at": evidence["created_at"],
+                "queryable_ref": f"kb://models/{evidence['model_version']}",
+                "evidence_ref": evidence["queryable_ref"],
+                "quarantine_state": evidence["quarantine_state"],
+            }
+        return evidence
+
+    def _learning_collect_lineage(self, *, envelope: dict[str, Any], model_version: str) -> list[dict[str, Any]]:
+        lineage: list[dict[str, Any]] = []
+        for item in self._learning_evidence:
+            if item["tenant_id"] != envelope["tenant_id"] or item["project_id"] != envelope["project_id"]:
+                continue
+            if model_version and item["model_version"] != model_version:
+                continue
+            lineage.append(self._learning_public_view(item))
+        lineage.sort(key=lambda item: (item["model_version"], item["evidence_id"]))
+        return lineage
+
+    def _learning_transition_result(
+        self,
+        *,
+        tenant_id: str,
+        project_id: str,
+        model_version: str,
+        from_state: str,
+        to_state: str,
+        policy: dict[str, Any],
+        gate_results: dict[str, Any],
+        queryable_ref: str,
+        evidence_ref: str,
+        command: str = "",
+    ) -> dict[str, Any]:
+        current = from_state.upper() if from_state else "DRAFT"
+        target = to_state.upper() if to_state else "DRAFT"
+        if target not in _LEARNING_ALLOWED_STATES:
+            target = "DRAFT"
+        if current not in _LEARNING_ALLOWED_STATES:
+            current = "DRAFT"
+        if target != current and target not in _LEARNING_ALLOWED_TRANSITIONS.get(current, ()):
+            raise PermissionError(f"transition {current} -> {target} is not allowed")
+        result = {
+            "tenant_id": tenant_id,
+            "project_id": project_id,
+            "model_version": model_version,
+            "previous_state": current,
+            "current_state": target,
+            "allowed_transitions": list(_LEARNING_ALLOWED_TRANSITIONS.get(target, ())),
+            "policy_version": policy["policy_version"],
+            "retention_days": policy["retention_days"],
+            "gate_results": dict(gate_results or {}),
+            "queryable_ref": queryable_ref,
+            "evidence_ref": evidence_ref,
+            "command": command or target,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self._learning_models[(tenant_id, project_id, model_version)] = {
+            "tenant_id": tenant_id,
+            "project_id": project_id,
+            "model_version": model_version,
+            "training_set_hash": self._learning_models.get((tenant_id, project_id, model_version), {}).get("training_set_hash", ""),
+            "evaluation_bundle_hash": self._learning_models.get((tenant_id, project_id, model_version), {}).get("evaluation_bundle_hash", ""),
+            "promotion_policy_version": policy["policy_version"],
+            "lifecycle_state": target,
+            "gate_results": dict(gate_results or {}),
+            "updated_at": result["updated_at"],
+            "queryable_ref": queryable_ref,
+            "evidence_ref": evidence_ref,
+            "quarantine_state": "none",
+        }
+        return result
+
+    def _learning_model_view(self, scope: dict[str, Any], model: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "tenant_id": scope["tenant_id"],
+            "project_id": scope["project_id"],
+            "model_version": model["model_version"],
+            "current_state": model["lifecycle_state"],
+            "allowed_transitions": list(_LEARNING_ALLOWED_TRANSITIONS.get(model["lifecycle_state"], ())),
+            "training_set_hash": model["training_set_hash"],
+            "evaluation_bundle_hash": model["evaluation_bundle_hash"],
+            "promotion_policy_version": model["promotion_policy_version"],
+            "gate_results": dict(model.get("gate_results") or {}),
+            "queryable_ref": model["queryable_ref"],
+            "evidence_ref": model["evidence_ref"],
+            "quarantine_state": model["quarantine_state"],
+            "lineage": self._learning_collect_lineage(envelope=scope, model_version=model["model_version"]),
+            "updated_at": model["updated_at"],
+        }
+
+    def _learning_public_view(self, item: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "evidence_id": item["evidence_id"],
+            "tenant_id": item["tenant_id"],
+            "project_id": item["project_id"],
+            "evidence_kind": item["evidence_kind"],
+            "evidence_hash": item["evidence_hash"],
+            "model_version": item["model_version"],
+            "training_set_hash": item["training_set_hash"],
+            "evaluation_bundle_hash": item["evaluation_bundle_hash"],
+            "promotion_policy_version": item["promotion_policy_version"],
+            "lifecycle_state": item["lifecycle_state"],
+            "quarantine_state": item["quarantine_state"],
+            "queryable_ref": item["queryable_ref"],
+            "created_at": item["created_at"],
+        }
+
+    def _learning_payload_contains_quarantine_fields(self, payload: dict[str, Any]) -> bool:
+        for key, value in payload.items():
+            if str(key).strip().lower() in _LEARNING_QUARANTINE_KEYS and value not in ("", None, {}, []):
+                return True
+            if isinstance(value, dict) and self._learning_payload_contains_quarantine_fields(value):
+                return True
+            if isinstance(value, list):
+                for item in value:
+                    if isinstance(item, dict) and self._learning_payload_contains_quarantine_fields(item):
+                        return True
+        return False

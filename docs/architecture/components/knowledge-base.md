@@ -432,6 +432,17 @@ Explainability / replay:
 - `ExplainOptimizationDecision`
 - `ReplayOptimizationSelection`
 
+#### Continuous learning control plane (implemented baseline)
+
+The current KB service also exposes governed learning-loop helpers for deterministic dataset assembly, model lifecycle transitions, promotion freeze, shadow validation, canary, and rollback controls.
+
+These helpers MUST:
+
+- assemble datasets reproducibly from optimizer, runtime, and benchmark evidence;
+- quarantine or reject invalid/sensitive batches before they influence training or promotion;
+- keep model lineage and evaluation evidence queryable through the KB;
+- remain deterministic for identical normalized inputs and policy thresholds.
+
 #### Query semantics (required)
 
 - `deterministic=true` queries MUST be replay-stable for identical normalized inputs.
@@ -498,6 +509,17 @@ Explainability / replay:
 - `rejected_candidates_summary`
 - `historical_performance_summary`
 - `optimizer_origin` (enum)
+
+#### Learning control outputs
+
+- `dataset_id`
+- `dataset_hash`
+- `assembly_state`
+- `quarantine_state`
+- `queryable_ref`
+- `model_lineage`
+- `lifecycle_state`
+- `allowed_transitions`
 
 ---
 
