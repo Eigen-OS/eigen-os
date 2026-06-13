@@ -289,8 +289,8 @@
       },
       "targets": [
         {
-          "expr": "eigen_runtime_contract_info",
-          "legendFormat": "contract"
+          "expr": "max by (contract_version) (eigen_runtime_contract_info)",
+          "legendFormat": "{{contract_version}}"
         }
       ],
       "fieldConfig": {
