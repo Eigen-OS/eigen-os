@@ -51,3 +51,25 @@ groups:
         annotations:
           summary: "Explain L3_FORENSIC p95 latency above 500ms"
           
+      - alert: EigenRuntimeOptimizerFallbackRateHigh
+        expr: sum(increase(eigen_runtime_optimizer_fallbacks_total[15m])) / clamp_min(sum(increase(eigen_runtime_optimizer_candidate_traces_total[15m])), 1) > 0.25
+        for: 15m
+        labels: { severity: warning, team: runtime }
+        annotations:
+          summary: "Optimizer fallback rate above 25% in the last 15m"
+
+      - alert: EigenRuntimeOptimizerConfidenceLow
+        expr: eigen_runtime_optimizer_last_confidence_score < 0.8
+        for: 10m
+        labels: { severity: warning, team: runtime }
+        annotations:
+          summary: "Optimizer confidence is below the policy threshold"
+
+
+      - alert: EigenRuntimeOptimizerTraceContinuityMismatch
+        expr: sum(increase(eigen_runtime_optimizer_trace_handoff_total[15m])) < (2 * sum(increase(eigen_runtime_optimizer_candidate_traces_total[15m])))
+        for: 15m
+        labels: { severity: warning, team: runtime }
+        annotations:
+          summary: "Optimizer trace handoff continuity is below the expected 2:1 rate"
+          

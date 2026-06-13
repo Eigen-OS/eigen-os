@@ -299,6 +299,132 @@
         },
         "overrides": []
       }
+      },
+    {
+      "type": "timeseries",
+      "title": "Optimizer Candidate Traces (15m)",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 29
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "increase(eigen_runtime_optimizer_candidate_traces_total[15m])",
+          "legendFormat": "candidate traces / 15m"
+        },
+        {
+          "expr": "increase(eigen_runtime_optimizer_candidate_traces_total{result=\"selected\"}[15m])",
+          "legendFormat": "selected / 15m"
+        },
+        {
+          "expr": "increase(eigen_runtime_optimizer_candidate_traces_total{result=\"fallback\"}[15m])",
+          "legendFormat": "fallback / 15m"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Optimizer Confidence and Fallbacks (15m)",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 29
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "eigen_runtime_optimizer_last_confidence_score",
+          "legendFormat": "last confidence"
+        },
+        {
+          "expr": "increase(eigen_runtime_optimizer_fallbacks_total[15m])",
+          "legendFormat": "fallbacks / 15m"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "orange",
+                "value": 0.8
+              },
+              {
+                "color": "red",
+                "value": 0.6
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Optimizer Trace Continuity Handoffs (15m)",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 37
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "expr": "increase(eigen_runtime_optimizer_trace_handoff_total{handoff=\"kernel_to_optimizer\"}[15m])",
+          "legendFormat": "kernel \u2192 optimizer"
+        },
+        {
+          "expr": "increase(eigen_runtime_optimizer_trace_handoff_total{handoff=\"optimizer_to_downstream\"}[15m])",
+          "legendFormat": "optimizer \u2192 downstream"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
     }
   ]
 }

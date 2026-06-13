@@ -16,7 +16,11 @@ Metric names below are part of the public Phase-4 observability contract and are
 - `eigen_runtime_explain_requests_total`
 - `eigen_runtime_explain_latency_ms_bucket`
 - `eigen_runtime_explain_errors_total`
-- `eigen_runtime_contract_info{version="1.0.0"}`
+- `eigen_runtime_contract_info{version="2.1.0"}`
+- `eigen_runtime_optimizer_candidate_traces_total`
+- `eigen_runtime_optimizer_fallbacks_total`
+- `eigen_runtime_optimizer_last_confidence_score`
+- `eigen_runtime_optimizer_trace_handoff_total`
 
 ## Dashboard and Alerts
 
@@ -28,6 +32,7 @@ Metric names below are part of the public Phase-4 observability contract and are
 1. **Confirm scoring path health**
    - Check `increase(eigen_runtime_scoring_failures_total[10m])`.
    - If failures are elevated, inspect top `reason` label values and correlate with rollout window.
+   - For Wave 7a optimizer evidence, check `increase(eigen_runtime_optimizer_candidate_traces_total[15m])` and `eigen_runtime_optimizer_last_confidence_score`.
 
 2. **Validate explain endpoint SLO**
    - Error budget breach condition:
