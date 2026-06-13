@@ -1931,8 +1931,19 @@ impl GrpcOptimizerGateway {
             .get("compiled_artifact_ref")
             .cloned()
             .unwrap_or_else(|| format!("qfs://jobs/{}/compiled/circuit.aqo.json", submission.job_id));
-
-        OptimizerServiceOptimizeCircuitRequest {
+        let canonical_graph_json = serde_json::to_string(&serde_json::json!({
+            "canonical_graph_version": "aqo-graph-v1",
+            "compile_digest": compile_digest,
+            "compiled_artifact_ref": compiled_artifact_ref,
+        }))
+        .unwrap_or_else(|_| {
+            format!(
+                r#"{{"canonical_graph_version":"aqo-graph-v1","compile_digest":"{}","compiled_artifact_ref":"{}"}}"#,
+                compile_digest, compiled_artifact_ref
+            )
+        });
+        
+            OptimizerServiceOptimizeCircuitRequest {
             envelope: Some(OptimizerContractEnvelope {
                 contract_version: submission.contract_version.clone(),
             }),
@@ -1959,7 +1970,7 @@ impl GrpcOptimizerGateway {
                 .metadata_kvs
                 .get("optimizer.candidate_budget")
                 .and_then(|s| s.parse::<u32>().ok())
-                .unwrap_or(2),
+                .unwrap_or(1),
             timeout_ms: submission
                 .metadata_kvs
                 .get("optimizer.timeout_ms")
@@ -1973,11 +1984,8 @@ impl GrpcOptimizerGateway {
             graph_encoding: Some(GraphEncodingContext {
                 encoding_version: "aqo-graph-v1".to_string(),
                 canonical_format: "aqo-json".to_string(),
-                canonical_graph_json: compile_digest,
-                canonical_sha256: compile_output
-                    .get("compile_digest")
-                    .cloned()
-                    .unwrap_or_else(|| submission.program_hash.clone()),
+                canonical_graph_json: canonical_graph_json.clone(),
+                canonical_sha256: hash_bytes_hex(canonical_graph_json.as_bytes()),
                 round_trip_stability: true,
             }),
             policy: Some(OptimizerPolicy {
@@ -3689,6 +3697,40 @@ mod tests {
             }),
         };
         NormalizedSubmission::from_request(&req).expect("submission")
+    }
+
+    #[test]
+    fn optimizer_gateway_request_uses_bounded_defaults_and_canonical_graph_json() {
+        let gateway = GrpcOptimizerGateway {
+            endpoint: "http://127.0.0.1:50052".to_string(),
+        };
+        let submission = fixture_submission_with_lease_ms(60_000);
+        let mut compile_output = BTreeMap::new();
+        compile_output.insert("compile_digest".to_string(), "compile-digest-0001".to_string());
+        compile_output.insert(
+            "compiled_artifact_ref".to_string(),
+            "qfs://jobs/job-1/compiled/circuit.aqo.json".to_string(),
+        );
+
+        let request = gateway.build_request(&submission, &compile_output);
+        assert_eq!(request.candidate_budget, 1);
+        assert_eq!(request.timeout_ms, 100);
+        assert_eq!(request.trace_context.get("request_id"), Some(&submission.request_id));
+        assert_eq!(request.trace_context.get("traceparent"), Some(&submission.traceparent));
+
+        let graph_encoding = request.graph_encoding.expect("graph encoding");
+        let graph_json: serde_json::Value = serde_json::from_str(&graph_encoding.canonical_graph_json)
+            .expect("canonical graph json");
+        assert_eq!(graph_json["canonical_graph_version"], "aqo-graph-v1");
+        assert_eq!(graph_json["compile_digest"], "compile-digest-0001");
+        assert_eq!(
+            graph_json["compiled_artifact_ref"],
+            "qfs://jobs/job-1/compiled/circuit.aqo.json"
+        );
+        assert_eq!(
+            graph_encoding.canonical_sha256,
+            hash_bytes_hex(graph_encoding.canonical_graph_json.as_bytes())
+        );
     }
 
     #[tokio::test]
