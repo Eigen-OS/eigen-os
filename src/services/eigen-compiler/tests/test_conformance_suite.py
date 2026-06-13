@@ -176,7 +176,7 @@ def test_aqo_validation_rejects_invalid_measurement_shape() -> None:
     assert any(v.field == "operations[0].c" for v in exc.value.violations)
 
 
-def test_compile_job_request_metadata_is_propagated(grpc_addr: str) -> None:
+def test_compile_job_request_metadata_is_propagated(grpc_addr: str, caplog: pytest.LogCaptureFixture) -> None:
     channel = grpc.insecure_channel(grpc_addr)
     stub = comp_pb_grpc.CompilationServiceStub(channel)
     source = (
@@ -203,6 +203,7 @@ def test_compile_job_request_metadata_is_propagated(grpc_addr: str) -> None:
         ),
     )
 
+    caplog.set_level(logging.INFO, logger="eigen_compiler")
     response = stub.CompileJob(request, metadata=(("x-eigen-sandbox-profile", "restricted"),))
 
     assert response.metadata["request_id"] == "req-123"
@@ -212,6 +213,13 @@ def test_compile_job_request_metadata_is_propagated(grpc_addr: str) -> None:
     assert response.metadata["sandbox_profile"] == "restricted"
     assert response.metadata["source_precedence"] == "source"
     assert response.metadata["options_json"] == '{"alpha":"1","beta":"2"}'
+    assert any(
+        record.message == "compiler_stage"
+        and record.request_id == "req-123"
+        and record.trace_id == "trace-456"
+        and record.traceparent == "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"
+        for record in caplog.records
+    )
 
     expected_request_digest = hashlib.sha256(
         json.dumps(

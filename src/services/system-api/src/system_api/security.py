@@ -201,13 +201,21 @@ def _service_context(md: dict[str, str], cfg: SecurityConfig, snapshot: PolicySn
     return identity, role.lower() if role else None
 
 
-def _security_audit(method_name: str, decision: str, ctx: SecurityContext, reason: str, trace_id: str | None = None) -> None:
+def _security_audit(
+    method_name: str,
+    decision: str,
+    ctx: SecurityContext,
+    reason: str,
+    trace_id: str | None = None,
+    traceparent: str | None = None,
+) -> None:
     append_security_audit_event(
         {
             "method": method_name,
             "decision": decision,
             "reason": reason,
             "trace_id": trace_id or "",
+            "traceparent": traceparent or "",
             **sanitized_security_metadata(
                 subject=ctx.subject,
                 roles=ctx.roles,
@@ -357,6 +365,7 @@ def enforce_authz(context: grpc.ServicerContext, *, required_permission: str) ->
 
     md = {k.lower(): v for k, v in (context.invocation_metadata() or [])}
     trace_id = md.get("trace_id") or trace_id_from_traceparent(md.get("traceparent"))
+    traceparent = md.get("traceparent") or ""
     replay_marker = (md.get("x-eigen-replay-marker") or md.get("replay-marker") or "").strip()
     raw_permissions = md.get("x-eigen-permissions", "")
     raw_roles = md.get("x-eigen-roles", "")
@@ -406,6 +415,8 @@ def enforce_authz(context: grpc.ServicerContext, *, required_permission: str) ->
             method=getattr(context, "_rpc_event_call_details", None).method if hasattr(context, "_rpc_event_call_details") else "unknown",
             subject=subject or "unknown",
             permission="POLICY_DENY_MISSING_AUTH_CONTEXT",
+            trace_id=trace_id,
+            traceparent=traceparent,
         )
         abort_public(
             context,
@@ -439,6 +450,7 @@ def enforce_authz(context: grpc.ServicerContext, *, required_permission: str) ->
             SecurityContext(subject=subject, roles=tuple(sorted(granted)), tenant=tenant, auth_mode=cfg.auth_mode, policy_version=snapshot.version, service_identity=cfg.service_identity, service_role=cfg.service_role, sandbox_profile=cfg.sandbox_profile, claims={"replay_marker": replay_marker}),
             need,
             trace_id=trace_id,
+            traceparent=traceparent,
         )
         return
 
@@ -447,6 +459,8 @@ def enforce_authz(context: grpc.ServicerContext, *, required_permission: str) ->
         method=getattr(context, "_rpc_event_call_details", None).method if hasattr(context, "_rpc_event_call_details") else "unknown",
         subject=subject,
         permission=f"{policy_marker}:{need}",
+        trace_id=trace_id,
+        traceparent=traceparent,
     )
     _security_audit(
         "authz",
@@ -454,6 +468,7 @@ def enforce_authz(context: grpc.ServicerContext, *, required_permission: str) ->
         SecurityContext(subject=subject, roles=tuple(granted), tenant=tenant, auth_mode=cfg.auth_mode, policy_version=snapshot.version, service_identity=cfg.service_identity, service_role=cfg.service_role, sandbox_profile=cfg.sandbox_profile, claims={"replay_marker": replay_marker}),
         f"{policy_marker}:{need}",
         trace_id=trace_id,
+        traceparent=traceparent,
     )
     abort_public(
         context,
