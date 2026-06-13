@@ -28,8 +28,9 @@ The project follows the **Product 1.0 Contract Alignment Plan** – a service‑
 | **Wave 5** – Resource Manager and multi-device execution | ✅ Completed |
 | **Wave 6** – Driver Manager and QDriver final contract | ✅ Completed |
 | **Wave 7** – GNN Optimizer and intelligent runtime | ✅ Completed |
-| **Wave 8** – Knowledge Base and continuous learning loop | 🔄 In progress |
-| **Waves 9–10** – Security, Observability, Release | ⏳ Planned |
+| **Wave 8** – Knowledge Base and continuous learning loop | ✅ Completed |
+| **Wave 9** – Security, identity, policy, and isolation | 🔄 In progress |
+| **Waves 10** – Observability, Release | ⏳ Planned |
 
 All normative contracts described in `docs/reference/` are being implemented as versioned wire representations with conformance tests, canonical errors, and observability markers. The **target release** is **Product `1.0.0`** – a mature, contract‑first platform.
 
