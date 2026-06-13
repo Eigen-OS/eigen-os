@@ -15,7 +15,7 @@
 - [ ] Any manifest references that changed with the inventory are updated in the same change set.
 - [ ] No stale fixture-only wording remains where Wave 9 behavior becomes authoritative.
 - [ ] Security, identity, policy, and isolation evidence paths are linked to the wave package.
-- [ ] Security telemetry and auditability checks remain bounded and secret-free.
+- [ ] Security telemetry and auditability checks remain bounded, secret-free, and replayable.
 
 ## Release gating rule
 

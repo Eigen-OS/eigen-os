@@ -502,6 +502,7 @@ security_auth_attempts_total{mode,result}
 security_auth_failures_total{reason}
 security_policy_denials_total{action,resource_type,reason}
 security_policy_eval_duration_seconds_bucket
+security_audit_write_failures_total{sink}
 ```
 
 #### Validation
@@ -532,6 +533,8 @@ security_replay_verification_failures_total{reason}
 #### Implemented now
 
 - structured JSON logs with `trace_id`, `traceparent`, `method`, `request_id`, optional `job_id`
+- append-only security audit records with `decision`, `reason`, `policy_version`, `service_identity`, `sandbox_profile`, and `replay_marker`
+- bounded audit pipeline health counters for sink write failures
 
 #### Required target
 

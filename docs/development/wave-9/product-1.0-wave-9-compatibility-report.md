@@ -25,7 +25,7 @@ Wave 9 is a planning and execution package for security hardening. It does not c
 | W9-01 | Authentication, authorization, and normalized security context | Planned and documented |
 | W9-02 | Service identity, policy snapshots, and deterministic policy decisions | Planned and documented |
 | W9-03 | Sandbox isolation, secrets lifecycle, and provider boundary hardening | Planned and documented |
-| W9-04 | Audit store, security telemetry, and replayable security evidence | Planned and documented |
+| W9-04 | Audit store, security telemetry, and replayable security evidence | Implemented in current snapshot |
 | W9-05 | Security conformance, fail-closed gating, and release evidence bundle | Planned and documented |
 
 ## Migration notes

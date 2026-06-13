@@ -222,12 +222,32 @@ def test_expired_jwt_token_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_security_audit_sink_persists_and_sanitizes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     audit_path = tmp_path / "audit.jsonl"
+    policy_snapshot = {
+        "version": "1.0.0",
+        "issuer": "eigen-auth",
+        "audience": "eigen-api",
+        "role_permissions": {
+            "readonly": ["devices:list", "jobs:read"],
+            "user": ["devices:list", "jobs:read"],
+        },
+        "service_permissions": {
+            "system-api": ["public-ingress"],
+        },
+        "sandbox_profiles": ["default", "restricted"],
+    }
     monkeypatch.setenv("SYSTEM_API_AUDIT_SINK_PATH", str(audit_path))
     monkeypatch.setenv("SYSTEM_API_AUTH_MODE", "static_token")
     monkeypatch.setenv("SYSTEM_API_AUTH_TOKEN", "audit-token")
     monkeypatch.setenv("SYSTEM_API_AUTH_SUBJECT", "audit-user")
     monkeypatch.setenv("SYSTEM_API_AUTH_TENANT", "audit-tenant")
     monkeypatch.setenv("SYSTEM_API_AUTH_ROLES", "readonly")
+    monkeypatch.setenv("SYSTEM_API_SERVICE_IDENTITY", "system-api")
+    monkeypatch.setenv("SYSTEM_API_SERVICE_ROLE", "public-ingress")
+    monkeypatch.setenv("SYSTEM_API_SANDBOX_PROFILE", "restricted")
+    monkeypatch.setenv("SYSTEM_API_POLICY_SNAPSHOT_JSON", json.dumps(policy_snapshot))
+
+    traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+    replay_marker = "replay-marker-123"
 
     addr = f"127.0.0.1:{_free_port()}"
     server = serve(bind=addr)
@@ -235,16 +255,33 @@ def test_security_audit_sink_persists_and_sanitizes(monkeypatch: pytest.MonkeyPa
     try:
         channel = grpc.insecure_channel(addr)
         job_stub = job_pb_grpc.JobServiceStub(channel)
-        md = (("authorization", "Bearer audit-token"),)
+        dev_stub = dev_pb_grpc.DeviceServiceStub(channel)
+        md = (
+            ("authorization", "Bearer audit-token"),
+            ("traceparent", traceparent),
+            ("x-eigen-replay-marker", replay_marker),
+            ("x-eigen-service", "system-api"),
+            ("x-eigen-service-role", "public-ingress"),
+        )
+
+        dev_stub.ListDevices(dev_pb.ListDevicesRequest(), metadata=md)
         with pytest.raises(grpc.RpcError):
             job_stub.CancelJob(job_pb.CancelJobRequest(job_id="job_123"), metadata=md)
         assert audit_path.exists()
         body = audit_path.read_text(encoding="utf-8").strip().splitlines()
-        assert body
-        audit = json.loads(body[-1])
-        assert audit["decision"] == "deny"
-        assert audit["subject"] == "audit-user"
-        assert audit["trace_id"] == "" or "trace_id" in audit
+        assert len(body) >= 2
+        audits = [json.loads(line) for line in body[-2:]]
+
+        decisions = {entry["decision"] for entry in audits}
+        assert decisions == {"allow", "deny"}
+        for audit in audits:
+            assert audit["subject"] == "audit-user"
+            assert audit["policy_version"] == "1.0.0"
+            assert audit["service_identity"] == "system-api"
+            assert audit["sandbox_profile"] == "restricted"
+            assert audit["replay_marker"] == replay_marker
+            assert audit["trace_id"] == "4bf92f3577b34da6a3ce929d0e0e4736"
+            assert "Bearer audit-token" not in json.dumps(audit)
         assert "Bearer audit-token" not in audit_path.read_text(encoding="utf-8")
     finally:
         server.stop(grace=None)

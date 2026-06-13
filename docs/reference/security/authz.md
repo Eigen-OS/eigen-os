@@ -101,3 +101,11 @@ Wave 9 public ingress handlers MUST normalize and propagate a deterministic secu
 - request and trace correlation metadata where available
 
 The public ingress boundary MUST reject requests by default unless the configured identity and policy checks succeed. Allow-all behavior remains a local/dev compatibility mode only when explicitly configured.
+
+---
+
+### 7.1 Security audit trail and replay evidence
+
+Security decisions MUST be written to the canonical append-only audit sink with bounded, secret-free metadata. Each audit event MUST include the decision outcome, decision reason, policy version, service identity, sandbox profile, replay marker, and request trace correlation where available.
+
+Security telemetry for the audit path MUST remain bounded. Audit sink health is surfaced as counters rather than free-form labels, and audit records MUST NOT embed raw payloads, bearer tokens, or provider secrets.
