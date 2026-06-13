@@ -1493,7 +1493,7 @@ impl OrchestrationAdapters for FixtureAdapters {
     ) -> Result<BTreeMap<String, String>, KernelStageError> {
         self.maybe_hold(DagStageKind::Schedule).await;
         self.maybe_fail(DagStageKind::Schedule)?;
-        Ok(BTreeMap::from([
+        let mut output = BTreeMap::from([
             ("message".to_string(), "resource schedule selected".to_string()),
             (
                 "scheduler_decision_version".to_string(),
@@ -1517,7 +1517,14 @@ impl OrchestrationAdapters for FixtureAdapters {
                 "decision_input_digest".to_string(),
                 submission.fingerprint.clone(),
             ),
-        ]))
+        ]);
+        if let Some(optimize_output) = _optimize_output.get("trace_context") {
+            output.insert("trace_context".to_string(), optimize_output.clone());
+        }
+        if let Some(optimize_output) = _optimize_output.get("model_version") {
+            output.insert("optimizer_model_version".to_string(), optimize_output.clone());
+        }
+        Ok(output)
     }
 
     async fn execute(
@@ -1864,6 +1871,16 @@ impl OptimizerGateway for FixtureOptimizerGateway {
         submission: &NormalizedSubmission,
         compile_output: &BTreeMap<String, String>,
     ) -> Result<OptimizerGatewayResponse, OptimizerGatewayError> {
+        let model_version = "optimizer-model-v1".to_string();
+        let objective = optimizer_objective_preset(submission);
+        let fallback_reason_code = "EIGEN_OPT_UNSPECIFIED".to_string();
+        let fallback_reason = optimizer_fallback_reason_from_code(&fallback_reason_code);
+        let selected_candidate_id = "candidate-0".to_string();
+        let confidence_score = 0.92_f64;
+        let optimizer_digest = compile_output
+            .get("compile_digest")
+            .cloned()
+            .unwrap_or_else(|| submission.fingerprint.clone());
         Ok(OptimizerGatewayResponse {
             output: BTreeMap::from([
                 ("message".to_string(), "optimizer service completed".to_string()),
@@ -1871,25 +1888,18 @@ impl OptimizerGateway for FixtureOptimizerGateway {
                     "optimized_artifact_ref".to_string(),
                     format!("qfs://jobs/{}/optimizer/optimized_aqo.json", submission.job_id),
                 ),
-                (
-                    "optimizer_version".to_string(),
-                    "optimizer-model-v1".to_string(),
-                ),
+                ("optimizer_version".to_string(), model_version.clone()),
                 ("optimizer_policy".to_string(), "deterministic".to_string()),
-                (
-                    "optimizer_digest".to_string(),
-                    compile_output
-                        .get("compile_digest")
-                        .cloned()
-                        .unwrap_or_else(|| submission.fingerprint.clone()),
-                ),
-                (
-                    "selected_candidate_id".to_string(),
-                    "candidate-0".to_string(),
-                ),
+                ("optimizer_digest".to_string(), optimizer_digest),
+                ("selected_candidate_id".to_string(), selected_candidate_id.clone()),
                 ("fallback_used".to_string(), "false".to_string()),
-                ("fallback_reason_code".to_string(), "EIGEN_OPT_UNSPECIFIED".to_string()),
-                ("confidence_score".to_string(), "0.92".to_string()),
+                ("fallback_reason_code".to_string(), fallback_reason_code.clone()),
+                ("fallback_reason".to_string(), fallback_reason.clone()),
+                ("confidence_score".to_string(), confidence_score.to_string()),
+                ("objective".to_string(), objective),
+                ("score_breakdown".to_string(), optimizer_score_breakdown_json(0.94, 0.92, 0.96, 0.91, 0.08)),
+                ("topology_context".to_string(), optimizer_topology_context_json(compile_output, submission)),
+                ("trace_context".to_string(), optimizer_trace_context_json(submission)),
             ]),
         })
     }
@@ -2022,13 +2032,31 @@ impl OptimizerGateway for GrpcOptimizerGateway {
             "optimized_artifact_ref".to_string(),
             format!("qfs://jobs/{}/optimizer/optimized_aqo.json", submission.job_id),
         );
-        output.insert("optimizer_version".to_string(), response.model_version);
+        output.insert("optimizer_version".to_string(), response.model_version.clone());
         output.insert("optimizer_policy".to_string(), "deterministic".to_string());
-        output.insert("optimizer_digest".to_string(), response.optimizer_digest);
-        output.insert("selected_candidate_id".to_string(), response.selected_candidate_id);
+        output.insert("optimizer_digest".to_string(), response.optimizer_digest.clone());
+        output.insert("selected_candidate_id".to_string(), response.selected_candidate_id.clone());
         output.insert("fallback_used".to_string(), response.fallback_used.to_string());
-        output.insert("fallback_reason_code".to_string(), response.fallback_reason_code);
+        output.insert("fallback_reason_code".to_string(), response.fallback_reason_code.clone());
+        output.insert("fallback_reason".to_string(), optimizer_fallback_reason_from_code(&response.fallback_reason_code));
         output.insert("confidence_score".to_string(), response.confidence_score.to_string());
+        output.insert("objective".to_string(), optimizer_objective_preset(submission));
+        let selected_candidate = response.candidates.first();
+        let score_breakdown = selected_candidate
+            .and_then(|candidate| candidate.score.as_ref())
+            .map(|score| {
+                optimizer_score_breakdown_json(
+                    score.total_score,
+                    score.latency_score,
+                    score.fidelity_score,
+                    score.resource_score,
+                    score.risk_score,
+                )
+            })
+            .unwrap_or_else(|| optimizer_score_breakdown_json(0.0, 0.0, 0.0, 0.0, 0.0));
+        output.insert("score_breakdown".to_string(), score_breakdown);
+        output.insert("topology_context".to_string(), optimizer_topology_context_json(compile_output, submission));
+        output.insert("trace_context".to_string(), optimizer_trace_context_json(submission));
 
         Ok(OptimizerGatewayResponse { output })
     }
@@ -3176,6 +3204,71 @@ fn ts_now() -> Timestamp {
         seconds: duration.as_secs() as i64,
         nanos: duration.subsec_nanos() as i32,
     }
+}
+
+fn optimizer_trace_context_json(submission: &NormalizedSubmission) -> String {
+    serde_json::to_string(&serde_json::json!({
+        "request_id": submission.request_id.clone(),
+        "trace_id": submission.trace_id.clone(),
+        "traceparent": submission.traceparent.clone(),
+    }))
+    .unwrap_or_else(|_| "{}".to_string())
+}
+
+fn optimizer_objective_preset(submission: &NormalizedSubmission) -> String {
+    submission
+        .metadata_kvs
+        .get("optimizer.objective")
+        .cloned()
+        .unwrap_or_else(|| "balanced".to_string())
+}
+
+fn optimizer_fallback_reason_from_code(code: &str) -> String {
+    match code {
+        "EIGEN_OPT_FEATURE_EXTRACTION_FAILED" => "feature_extraction_failed".to_string(),
+        "EIGEN_OPT_MODEL_UNAVAILABLE" => "model_unavailable".to_string(),
+        "EIGEN_OPT_TIMEOUT" => "timeout".to_string(),
+        "EIGEN_OPT_INTERNAL" => "internal_error".to_string(),
+        "EIGEN_OPT_CONFIDENCE_TOO_LOW" => "confidence_too_low".to_string(),
+        "EIGEN_OPT_POLICY_REJECTED" => "policy_rejected".to_string(),
+        "EIGEN_OPT_UNSUPPORTED_BACKEND" => "backend_unavailable".to_string(),
+        _ => "none".to_string(),
+    }
+}
+
+fn optimizer_score_breakdown_json(
+    total_score: f64,
+    latency_score: f64,
+    fidelity_score: f64,
+    resource_score: f64,
+    risk_score: f64,
+) -> String {
+    serde_json::to_string(&serde_json::json!({
+        "total_score": total_score,
+        "latency_score": latency_score,
+        "fidelity_score": fidelity_score,
+        "resource_score": resource_score,
+        "risk_score": risk_score,
+    }))
+    .unwrap_or_else(|_| "{}".to_string())
+}
+
+fn optimizer_topology_context_json(compile_output: &BTreeMap<String, String>, submission: &NormalizedSubmission) -> String {
+    let topology_ref = compile_output
+        .get("compiled_artifact_ref")
+        .cloned()
+        .unwrap_or_else(|| format!("qfs://jobs/{}/compiled/circuit.aqo.json", submission.job_id));
+    let topology_digest = compile_output
+        .get("compile_digest")
+        .cloned()
+        .unwrap_or_else(|| submission.program_hash.clone());
+    serde_json::to_string(&serde_json::json!({
+        "topology_ref": topology_ref,
+        "topology_digest_sha256": topology_digest,
+        "noise_snapshot_ref": "",
+        "backend_profile": submission.target.clone(),
+    }))
+    .unwrap_or_else(|_| "{}".to_string())
 }
 
 fn ts_to_json(ts: &Timestamp) -> serde_json::Value {

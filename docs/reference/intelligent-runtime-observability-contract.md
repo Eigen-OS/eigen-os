@@ -423,6 +423,126 @@ Definition:
 
 ---
 
+## 6.3.1 Optimization Candidate Evidence Metrics
+
+Wave 7a optimizer evidence MUST remain bounded and trace-correlated across the Kernel/QRTX → optimizer → downstream handoff path. The following metrics are part of the intelligent-runtime contract surface:
+
+### Optimization Candidate Traces
+
+```text
+eigen_runtime_optimizer_candidate_traces_total
+```
+
+Type:
+
+- counter
+
+Labels:
+
+- `objective`
+- `result`
+
+Allowed `objective` values:
+
+```text
+balanced
+latency_optimized
+cost_optimized
+availability_optimized
+deterministic
+compliance
+emergency
+manual_override
+```
+
+Allowed `result` values:
+
+```text
+selected
+fallback
+```
+
+Definition:
+
+- bounded candidate trace evidence for optimizer selections and deterministic fallbacks.
+
+---
+
+### Optimization Fallback Reasons
+
+```text
+eigen_runtime_optimizer_fallbacks_total
+```
+
+Type:
+
+- counter
+
+Labels:
+
+- `reason`
+
+Allowed `reason` values:
+
+```text
+backend_unavailable
+confidence_too_low
+model_unavailable
+timeout
+internal_error
+policy_rejected
+other
+```
+
+Definition:
+
+- bounded fallback evidence emitted when the optimizer cannot promote a candidate.
+
+---
+
+### Optimizer Confidence
+
+```text
+eigen_runtime_optimizer_last_confidence_score
+```
+
+Type:
+
+- gauge
+
+Definition:
+
+- latest bounded optimizer confidence score used for operator visibility and thresholding.
+
+---
+
+### Optimizer Trace Handoff Continuity
+
+```text
+eigen_runtime_optimizer_trace_handoff_total
+```
+
+Type:
+
+- counter
+
+Labels:
+
+- `handoff`
+
+Allowed `handoff` values:
+
+```text
+kernel_to_optimizer
+optimizer_to_downstream
+```
+
+Definition:
+
+- trace continuity evidence for handoff continuity across the Wave 7a optimizer path.
+
+---
+
 # 6.3 Policy Execution Metrics
 
 ## Policy Branch Traversal
@@ -1062,6 +1182,9 @@ Dashboard MUST include:
 - explain endpoint health,
 - policy branch distribution,
 - degraded mode activation,
+- optimizer candidate traces,
+- optimizer fallback rates,
+- optimizer confidence,
 - runtime divergence,
 - trace continuity,
 - contract marker visibility.
