@@ -12,11 +12,9 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use parking_lot::RwLock;
-use serde_json::json;
 use uuid::Uuid;
 
 use qrtx::event_log::{JobEventLog, StateTransitionEvent};
