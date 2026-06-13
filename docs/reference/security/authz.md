@@ -75,3 +75,21 @@ Authorization failures MUST use canonical error semantics:
 - tenant/project/resource policy denials must include a stable reason code when exposed through structured error details.
 
 All denial behavior must follow `docs/reference/error-model.md` and `docs/reference/error-mapping.md`.
+
+---
+
+## 7. Wave 9 normalized security context
+
+Wave 9 public ingress handlers MUST normalize and propagate a deterministic security context to downstream calls. The canonical context includes:
+
+- `subject`
+- `roles`
+- `tenant`
+- `auth_mode`
+- `policy_version`
+- `service_identity`
+- `service_role`
+- `sandbox_profile`
+- request and trace correlation metadata where available
+
+The public ingress boundary MUST reject requests by default unless the configured identity and policy checks succeed. Allow-all behavior remains a local/dev compatibility mode only when explicitly configured.
