@@ -138,3 +138,35 @@ def test_pipeline_triggers_retrain_on_manual_override() -> None:
 
     assert result["trigger"]["rules"]["manual_override"] is True
     assert result["trigger"]["should_retrain"] is True
+
+
+def test_wave7a_quality_gate_fixture_blocks_release_and_preserves_bounded_evidence() -> None:
+    harness = OptimizerEvaluationHarness()
+    pipeline = ContinuousLearningPipeline()
+    fixture = _fixture()
+
+    offline = harness.evaluate_offline(fixture)
+    shadow = harness.evaluate_shadow(fixture)
+    result = pipeline.evaluate(fixture)
+
+    assert offline["comparison"]["summary"] == {
+        "metric_count": 2,
+        "regression_count": 1,
+        "has_regression": True,
+        "regression_metrics": ["latency_ms"],
+    }
+    assert offline["explainability"]["trace_fields"] == ["request_id", "trace_id", "traceparent"]
+    assert offline["explainability"]["fallback_metadata"] == {
+        "used": True,
+        "reason_code": "EIGEN_OPT_CONFIDENCE_TOO_LOW",
+        "reason": "Confidence below minimum policy threshold",
+    }
+    assert shadow["recommendation"] == "BLOCK_PROMOTION"
+    assert shadow["gate_reasons"] == [
+        "REGRESSION_VS_BASELINE_HEURISTIC",
+        "INSUFFICIENT_SHADOW_SAMPLES",
+    ]
+    assert result["promotion"]["recommendation"] == "BLOCK_PROMOTION"
+    assert result["rollback"]["action"] == "ROLLBACK_TO_STABLE"
+    assert result["rollback"]["target_model_version"] == fixture["stable_model_version"]
+    
