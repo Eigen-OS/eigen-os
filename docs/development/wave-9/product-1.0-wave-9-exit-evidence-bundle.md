@@ -1,6 +1,6 @@
 # Product 1.0 Wave 9 Exit Evidence Bundle
 
-- **Status:** Planning baseline
+- **Status:** Closure evidence bundle
 - **Date:** 2026-06-13
 - **Version:** 1.0.0
 - **Wave:** W9 planning package
@@ -14,9 +14,23 @@
 - `docs/development/wave-9/product-1.0-wave-9-release-readiness-checklist.md`
 - `docs/development/wave-9/product-1.0-wave-9-compatibility-report.md`
 
+## Security, audit, and isolation evidence paths
+
+- Security baseline and fail-closed ingress: `src/services/system-api/tests/test_security_baseline.py`
+- Canonical error normalization: `src/services/system-api/tests/test_public_error_conformance.py`
+- Bounded telemetry and trace continuity: `src/services/system-api/tests/test_observability_smoke.py`
+- Security source-of-truth anchor: `docs/architecture/components/security-isolation.md`
+- Authorization and policy source-of-truth anchor: `docs/reference/security/authz.md`
+- Error semantics source-of-truth anchor: `docs/reference/error-model.md`
+- Wave 9 navigation index: `docs/development/wave-9/README.md`
+
 ## Recorded validation commands
 
 - `python3 scripts/ci/check-product-1-0-manifest.py`
+- `python3 scripts/ci/check-docs-links.py`
+- `python -m pytest src/services/system-api/tests/test_security_baseline.py -q`
+- `python -m pytest src/services/system-api/tests/test_public_error_conformance.py -q`
+- `python -m pytest src/services/system-api/tests/test_observability_smoke.py -q`
 - `python -m pytest src/services/system-api/tests/test_security_baseline.py -q`
 - `python -m pytest src/services/system-api/tests/test_public_error_conformance.py -q`
 - `python -m pytest src/services/system-api/tests/test_observability_smoke.py -q`
@@ -24,8 +38,12 @@
 ## Release evidence artifacts
 
 - Wave 9 docs package in `docs/development/wave-9/`
+- Wave 9 docs package in `docs/development/wave-9/`
+- Wave 9 closure navigation in `docs/development/README.md`
 - Security source-of-truth anchors in `docs/architecture/components/security-isolation.md`
 - Authz and error semantics in `docs/reference/security/authz.md` and `docs/reference/error-model.md`
+- Authz and error semantics in `docs/reference/security/authz.md` and `docs/reference/error-model.md`
+- Fixed-fixture security regression gates in `src/services/system-api/tests/test_security_baseline.py`
 
 ## Commit SHAs recorded for the planning trail
 
@@ -38,12 +56,13 @@
 
 ## Limitations
 
-- Planning baseline only.
+- Release evidence is documentation-only for this wave closure.
 - Live index navigation updates may need to be retried from a normal git checkout.
+- No new RFC/ADR is required unless implementation expands the documented security boundary.
 
 ## Compatibility impact statement
 
-Wave 9 is non-breaking planning material and remains backward-compatible with Product 1.0.
+Wave 9 is non-breaking closure material and remains backward-compatible with Product 1.0.
 
 ## RFC/ADR decision record
 

@@ -6,22 +6,25 @@
 
 ## Readiness checklist
 
-- [ ] Wave 9 execution plan is published and linked from `docs/development/README.md`.
-- [ ] Wave 9 issue pack is published with retain-and-complete completion blocks.
-- [ ] Wave 9 RFC/ADR gap analysis confirms whether a new normative artifact is required.
-- [ ] Wave 9 compatibility report records the planning-package compatibility posture.
-- [ ] Wave 9 exit evidence bundle records the closure artifacts, limitations, and commit SHAs.
-- [ ] Inventory rows are synchronized with the security/identity/policy/isolation scope.
-- [ ] Any manifest references that changed with the inventory are updated in the same change set.
-- [ ] No stale fixture-only wording remains where Wave 9 behavior becomes authoritative.
-- [ ] Security, identity, policy, and isolation evidence paths are linked to the wave package.
-- [ ] Security telemetry and auditability checks remain bounded, secret-free, and replayable.
+- [x] Wave 9 execution plan is published and linked from `docs/development/README.md`.
+- [x] Wave 9 issue pack is published with retain-and-complete completion blocks.
+- [x] Wave 9 RFC/ADR gap analysis confirms whether a new normative artifact is required.
+- [x] Wave 9 compatibility report records the release-package compatibility posture.
+- [x] Wave 9 exit evidence bundle records the closure artifacts, limitations, and commit SHAs.
+- [x] Inventory rows are synchronized with the security/identity/policy/isolation scope.
+- [x] Any manifest references that changed with the inventory are updated in the same change set.
+- [x] No stale fixture-only wording remains where Wave 9 behavior becomes authoritative.
+- [x] Security, identity, policy, and isolation evidence paths are linked to the wave package.
+- [x] Security telemetry and auditability checks remain bounded, secret-free, and replayable.
 
 ## Release gating rule
 
 Blocking failures:
 
-- any unresolved fixture regression in the security conformance suite or CI equivalent;
+- any unresolved fixture regression in the security conformance suite or CI equivalent, including
+  `src/services/system-api/tests/test_security_baseline.py`,
+  `src/services/system-api/tests/test_public_error_conformance.py`, and
+  `src/services/system-api/tests/test_observability_smoke.py`;
 - any incomplete compatibility-report entry on a completed issue;
 - any missing evidence bundle item for commands, artifacts, limitations, or commit SHAs;
 - any authentication, authorization, or policy fail-open path;
