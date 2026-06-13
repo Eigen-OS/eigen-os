@@ -87,9 +87,6 @@ class IntelligentRuntimeTelemetryExporter:
         objective_label = _bounded_objective(objective)
         result_label = _bounded_result("selected" if selected else "fallback")
         fallback_label = _bounded_fallback_reason(fallback_reason)
-        kernel_handoff_label = _bounded_handoff("kernel_to_optimizer")
-        downstream_handoff_label = _bounded_handoff("optimizer_to_downstream")
-
         with self._lock:
             snapshot = self._snapshot
             candidate_counts = dict(snapshot.candidate_trace_counts)
@@ -103,9 +100,9 @@ class IntelligentRuntimeTelemetryExporter:
                 fallback_counts[fallback_label] = fallback_counts.get(fallback_label, 0) + 1
 
             if kernel_to_optimizer_handoff:
-                handoff_counts[kernel_handoff_label] = handoff_counts.get(kernel_handoff_label, 0) + 1
+                handoff_counts["kernel_to_optimizer"] = handoff_counts.get("kernel_to_optimizer", 0) + 1
             if optimizer_to_downstream_handoff:
-                handoff_counts[downstream_handoff_label] = handoff_counts.get(downstream_handoff_label, 0) + 1
+                handoff_counts["optimizer_to_downstream"] = handoff_counts.get("optimizer_to_downstream", 0) + 1
 
             self._snapshot = IntelligentRuntimeMetricsSnapshot(
                 contract_version=snapshot.contract_version,
