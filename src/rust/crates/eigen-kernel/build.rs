@@ -16,6 +16,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         proto_root.join("eigen/internal/v1/types.proto"),
         proto_root.join("eigen/internal/v1/kernel_gateway.proto"),
         proto_root.join("eigen/internal/v1/compilation_service.proto"),
+        proto_root.join("eigen/internal/v1/optimizer_service.proto"),
         proto_root.join("eigen/internal/v1/driver_manager_service.proto"),
     ];
 

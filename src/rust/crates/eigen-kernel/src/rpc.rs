@@ -4,7 +4,7 @@
 //! Product 1.0 Wave 2:
 //! - stage-by-stage orchestration DAG
 //! - stable stage IDs for tracing and replay
-//! - explicit fixture adapters for downstream handoff points
+//! - explicit downstream adapters for handoff points
 //! - canonical terminal state / error metadata propagation
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
@@ -19,6 +19,7 @@ use parking_lot::Mutex;
 use prost_types::Timestamp;
 use tokio_stream::iter;
 use tokio_stream::Stream;
+use tonic::transport::{Channel, Endpoint};
 use tonic::{Code, Request, Response, Status};
 use tracing::Instrument;
 use sha2::{Digest, Sha256};
@@ -34,8 +35,12 @@ use resource_manager::{
 use crate::proto::kernel_gateway_service_server::{
     KernelGatewayService, KernelGatewayServiceServer,
 };
+use crate::proto::optimizer_service_client::OptimizerServiceClient;
 use crate::proto::stream_job_updates_response::JobUpdateEnvelope;
 use crate::proto::{
+    CircuitPayload, GraphEncodingContext, OptimizationObjective, OptimizerContractEnvelope,
+    OptimizerPolicy, OptimizerRankingSemantics, OptimizerServiceOptimizeCircuitRequest,
+    TopologyContext,
     CancelJobRequest, CancelJobResponse, DispatchRationale, EnqueueJobRequest,
     EnqueueJobResponse, GetDispatchRationaleRequest, GetDispatchRationaleResponse,
     GetJobResultsRequest, GetJobResultsResponse, GetJobStatusRequest, GetJobStatusResponse,
@@ -1286,6 +1291,7 @@ struct FixtureAdapters {
     hold_stage: Option<DagStageKind>,
     hold_for: Duration,
     execute_script: Arc<Mutex<VecDeque<ExecuteScriptStep>>>,
+    optimizer_gateway: Arc<dyn OptimizerGateway>,
 }
 
 #[derive(Debug, Clone)]
@@ -1316,6 +1322,7 @@ impl FixtureAdapters {
             hold_stage,
             hold_for,
             execute_script: Arc::new(Mutex::new(VecDeque::new())),
+            optimizer_gateway: Arc::new(GrpcOptimizerGateway::from_env()),
         }
     }
 
@@ -1326,6 +1333,7 @@ impl FixtureAdapters {
             hold_stage: None,
             hold_for: Duration::from_millis(0),
             execute_script: Arc::new(Mutex::new(VecDeque::new())),
+            optimizer_gateway: Arc::new(FixtureOptimizerGateway::default()),
         }
     }
 
@@ -1341,6 +1349,7 @@ impl FixtureAdapters {
             hold_stage,
             hold_for,
             execute_script: Arc::new(Mutex::new(VecDeque::new())),
+            optimizer_gateway: Arc::new(FixtureOptimizerGateway::default()),
         }
     }
 
@@ -1355,6 +1364,7 @@ impl FixtureAdapters {
             hold_stage: None,
             hold_for: Duration::from_millis(0),
             execute_script: Arc::new(Mutex::new(execute_script.into_iter().collect())),
+            optimizer_gateway: Arc::new(FixtureOptimizerGateway::default()),
         }
     }
 
@@ -1460,22 +1470,20 @@ impl OrchestrationAdapters for FixtureAdapters {
     async fn optimize(
         &self,
         submission: &NormalizedSubmission,
-        _compile_output: &BTreeMap<String, String>,
+        compile_output: &BTreeMap<String, String>,
     ) -> Result<BTreeMap<String, String>, KernelStageError> {
         self.maybe_hold(DagStageKind::Optimize).await;
         self.maybe_fail(DagStageKind::Optimize)?;
-        Ok(BTreeMap::from([
-            ("message".to_string(), "optimization stage completed".to_string()),
-            (
-                "optimized_artifact_ref".to_string(),
-                format!("qfs://jobs/{}/optimizer/optimized_aqo.json", submission.job_id),
-            ),
-            (
-                "optimizer_version".to_string(),
-                "fixture-optimizer/1".to_string(),
-            ),
-            ("optimizer_policy".to_string(), "deterministic".to_string()),
-        ]))
+        self.optimizer_gateway
+            .optimize(submission, compile_output)
+            .await
+            .map_err(|err| match err.grpc_code {
+                Code::Unavailable => KernelStageError::unavailable(err.summary, err.details_ref),
+                Code::DeadlineExceeded => KernelStageError::deadline_exceeded(err.summary, err.details_ref),
+                Code::ResourceExhausted => KernelStageError::resource_exhausted(err.summary, err.details_ref),
+                Code::InvalidArgument => KernelStageError::invalid_argument(err.summary, err.details_ref),
+                _ => KernelStageError::optimize(err.summary, err.details_ref),
+            })
     }
 
     async fn schedule(
@@ -1823,6 +1831,221 @@ impl OrchestrationAdapters for FixtureAdapters {
             ),
         ]))
     }
+}
+
+#[derive(Debug, Clone)]
+struct OptimizerGatewayResponse {
+    output: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone)]
+struct OptimizerGatewayError {
+    grpc_code: Code,
+    summary: String,
+    details_ref: String,
+}
+
+#[tonic::async_trait]
+trait OptimizerGateway: Send + Sync {
+    async fn optimize(
+        &self,
+        submission: &NormalizedSubmission,
+        compile_output: &BTreeMap<String, String>,
+    ) -> Result<OptimizerGatewayResponse, OptimizerGatewayError>;
+}
+
+#[derive(Debug, Default)]
+struct FixtureOptimizerGateway;
+
+#[tonic::async_trait]
+impl OptimizerGateway for FixtureOptimizerGateway {
+    async fn optimize(
+        &self,
+        submission: &NormalizedSubmission,
+        compile_output: &BTreeMap<String, String>,
+    ) -> Result<OptimizerGatewayResponse, OptimizerGatewayError> {
+        Ok(OptimizerGatewayResponse {
+            output: BTreeMap::from([
+                ("message".to_string(), "optimizer service completed".to_string()),
+                (
+                    "optimized_artifact_ref".to_string(),
+                    format!("qfs://jobs/{}/optimizer/optimized_aqo.json", submission.job_id),
+                ),
+                (
+                    "optimizer_version".to_string(),
+                    "optimizer-model-v1".to_string(),
+                ),
+                ("optimizer_policy".to_string(), "deterministic".to_string()),
+                (
+                    "optimizer_digest".to_string(),
+                    compile_output
+                        .get("compile_digest")
+                        .cloned()
+                        .unwrap_or_else(|| submission.fingerprint.clone()),
+                ),
+                (
+                    "selected_candidate_id".to_string(),
+                    "candidate-0".to_string(),
+                ),
+                ("fallback_used".to_string(), "false".to_string()),
+                ("fallback_reason_code".to_string(), "EIGEN_OPT_UNSPECIFIED".to_string()),
+                ("confidence_score".to_string(), "0.92".to_string()),
+            ]),
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+struct GrpcOptimizerGateway {
+    endpoint: String,
+}
+
+impl GrpcOptimizerGateway {
+    fn from_env() -> Self {
+        let endpoint = std::env::var("EIGEN_OPTIMIZER_SERVICE_URL")
+            .or_else(|_| std::env::var("EIGEN_OPTIMIZER_SERVICE_ADDR"))
+            .unwrap_or_else(|_| "http://127.0.0.1:50052".to_string());
+        Self { endpoint }
+    }
+
+    fn build_request(
+        &self,
+        submission: &NormalizedSubmission,
+        compile_output: &BTreeMap<String, String>,
+    ) -> OptimizerServiceOptimizeCircuitRequest {
+        let compile_digest = compile_output
+            .get("compile_digest")
+            .cloned()
+            .unwrap_or_else(|| submission.program_hash.clone());
+        let compiled_artifact_ref = compile_output
+            .get("compiled_artifact_ref")
+            .cloned()
+            .unwrap_or_else(|| format!("qfs://jobs/{}/compiled/circuit.aqo.json", submission.job_id));
+
+        OptimizerServiceOptimizeCircuitRequest {
+            envelope: Some(OptimizerContractEnvelope {
+                contract_version: submission.contract_version.clone(),
+            }),
+            request_id: submission.request_id.clone(),
+            input_aqo: Some(CircuitPayload {
+                sha256: compile_digest.clone(),
+            }),
+            topology: Some(TopologyContext {
+                topology_ref: compiled_artifact_ref,
+                topology_digest_sha256: compile_digest.clone(),
+                noise_snapshot_ref: String::new(),
+                backend_profile: submission.target.clone(),
+            }),
+            objective: Some(OptimizationObjective {
+                preset: submission
+                    .metadata_kvs
+                    .get("optimizer.objective")
+                    .cloned()
+                    .unwrap_or_else(|| "balanced".to_string()),
+                weights: HashMap::new(),
+            }),
+            deterministic_seed: stable_seed_from_submission(submission),
+            candidate_budget: submission
+                .metadata_kvs
+                .get("optimizer.candidate_budget")
+                .and_then(|s| s.parse::<u32>().ok())
+                .unwrap_or(2),
+            timeout_ms: submission
+                .metadata_kvs
+                .get("optimizer.timeout_ms")
+                .and_then(|s| s.parse::<u32>().ok())
+                .unwrap_or(100),
+            trace_context: HashMap::from([
+                ("request_id".to_string(), submission.request_id.clone()),
+                ("trace_id".to_string(), submission.trace_id.clone()),
+                ("traceparent".to_string(), submission.traceparent.clone()),
+            ]),
+            graph_encoding: Some(GraphEncodingContext {
+                encoding_version: "aqo-graph-v1".to_string(),
+                canonical_format: "aqo-json".to_string(),
+                canonical_graph_json: compile_digest,
+                canonical_sha256: compile_output
+                    .get("compile_digest")
+                    .cloned()
+                    .unwrap_or_else(|| submission.program_hash.clone()),
+                round_trip_stability: true,
+            }),
+            policy: Some(OptimizerPolicy {
+                mode: "deterministic".to_string(),
+                minimum_confidence: 0.8,
+                max_depth: 12,
+                max_swaps: 3,
+                forbidden_qubits: Vec::new(),
+                forbidden_edges: Vec::new(),
+            }),
+            ranking_semantics: Some(OptimizerRankingSemantics {
+                sort_order: vec![
+                    "score.total_score desc".to_string(),
+                    "confidence desc".to_string(),
+                    "candidate_id asc".to_string(),
+                ],
+                selected_candidate_is_first: true,
+                tie_breakers: vec![
+                    "score.total_score".to_string(),
+                    "confidence".to_string(),
+                    "candidate_id".to_string(),
+                ],
+            }),
+        }
+    }
+}
+
+#[tonic::async_trait]
+impl OptimizerGateway for GrpcOptimizerGateway {
+    async fn optimize(
+        &self,
+        submission: &NormalizedSubmission,
+        compile_output: &BTreeMap<String, String>,
+    ) -> Result<OptimizerGatewayResponse, OptimizerGatewayError> {
+        let endpoint = Endpoint::from_shared(self.endpoint.clone()).map_err(|err| OptimizerGatewayError {
+            grpc_code: Code::InvalidArgument,
+            summary: format!("invalid optimizer endpoint: {err}"),
+            details_ref: "qfs://jobs/optimizer/config/error.json".to_string(),
+        })?;
+        let channel = endpoint.connect_lazy();
+        let mut client = OptimizerServiceClient::new(channel);
+        let request = Request::new(self.build_request(submission, compile_output));
+        let response = client.optimize_circuit(request).await.map_err(|status| OptimizerGatewayError {
+            grpc_code: status.code(),
+            summary: format!("optimizer service call failed: {}", status.message()),
+            details_ref: format!("status::{:?}", status.code()),
+        })?.into_inner();
+
+        let mut output = BTreeMap::new();
+        output.insert("message".to_string(), "optimizer service completed".to_string());
+        output.insert(
+            "optimized_artifact_ref".to_string(),
+            format!("qfs://jobs/{}/optimizer/optimized_aqo.json", submission.job_id),
+        );
+        output.insert("optimizer_version".to_string(), response.model_version);
+        output.insert("optimizer_policy".to_string(), "deterministic".to_string());
+        output.insert("optimizer_digest".to_string(), response.optimizer_digest);
+        output.insert("selected_candidate_id".to_string(), response.selected_candidate_id);
+        output.insert("fallback_used".to_string(), response.fallback_used.to_string());
+        output.insert("fallback_reason_code".to_string(), response.fallback_reason_code);
+        output.insert("confidence_score".to_string(), response.confidence_score.to_string());
+
+        Ok(OptimizerGatewayResponse { output })
+    }
+}
+
+fn stable_seed_from_submission(submission: &NormalizedSubmission) -> u64 {
+    fnv1a64(
+        format!(
+            "{}:{}:{}:{}:{}",
+            submission.contract_version,
+            submission.request_id,
+            submission.traceparent,
+            submission.program_hash,
+            submission.target
+        )
+        .as_bytes(),
+    )
 }
 
 #[tonic::async_trait]

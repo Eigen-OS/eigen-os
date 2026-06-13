@@ -24,7 +24,7 @@
 
 | Issue | Version Impact | Affected Interfaces | Compatibility | Breaking Marker | Migration Notes | Release Notes Draft | Evidence |
 |---|---|---|---|---|---|---|---|
-| W7A-01 Optimizer service server/client wiring and Kernel/QRTX handoff | TBD | Internal API; Kernel orchestration | TBD | TBD | TBD | TBD | W7A-E01 |
+| W7A-01 Optimizer service server/client wiring and Kernel/QRTX handoff | MINOR | Internal API; Kernel orchestration; Trace context | Backward-compatible | false | None | Added: real OptimizerService wiring through Kernel/QRTX | W7A-E01 |
 | W7A-02 Model registry and version promotion policy | TBD | Registry policy; Internal API | TBD | TBD | TBD | TBD | W7A-E02 |
 | W7A-03 Deterministic fallback and confidence thresholds | TBD | Internal API; Trace context; Metrics | TBD | TBD | TBD | TBD | W7A-E03 |
 | W7A-04 Optimization candidate traces, metrics, and dashboards | TBD | Metrics; Trace context; Dashboard compatibility | TBD | TBD | TBD | TBD | W7A-E04 |
