@@ -16,6 +16,7 @@ import grpc
 
 _LOG = logging.getLogger("system_api")
 _AUDIT_LOG = logging.getLogger("system_api.security_audit")
+_OBSERVABILITY_CONTRACT_VERSION = "1.0.0"
 _AUDIT_LOCK = threading.Lock()
 
 _TRACEPARENT_RE = re.compile(
@@ -217,6 +218,8 @@ class _MetricsHandler(BaseHTTPRequestHandler):
             for version, value in sorted(kb_contract_info.items())
         )
         body = (
+            "# TYPE eigen_observability_contract_info gauge\n"
+            f'eigen_observability_contract_info{{version="{_OBSERVABILITY_CONTRACT_VERSION}"}} 1\n'
             "# TYPE eigen_api_requests_total counter\n"
             f"eigen_api_requests_total {req_total}\n"
             "# TYPE eigen_api_request_duration_seconds counter\n"

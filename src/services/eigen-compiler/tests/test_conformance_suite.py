@@ -13,6 +13,7 @@ from google.rpc import error_details_pb2
 from grpc_status import rpc_status
 
 from eigen_compiler.compiler import CompilerValidationError, compile_eigen_lang, _encode_aqo_payload
+from eigen_compiler.grpc_impl import render_metrics_text
 from eigen_compiler.proto_gen import ensure_generated
 
 ensure_generated()
@@ -142,6 +143,13 @@ def test_distributed_metadata_contract_is_deterministic() -> None:
     }
     assert first.metadata["distributed.execution_metadata_version"] == "1.0.0"
     assert first.metadata["distributed.topology_hints_version"] == "1.0.0"
+
+
+def test_compiler_observability_metrics_expose_global_contract_marker() -> None:
+    text = render_metrics_text()
+
+    assert 'eigen_observability_contract_info{version="1.0.0"} 1' in text
+    assert 'eigen_compiler_contract_info{version="1.0.0"} 1' in text
 
 
 def test_aqo_validation_rejects_unknown_opcode() -> None:

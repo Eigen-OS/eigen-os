@@ -26,6 +26,7 @@ _VALIDATION_FAILURE_TOTALS: Counter[tuple[tuple[str, str], ...]] = Counter()
 _AQO_DIGEST_TOTALS: Counter[tuple[tuple[str, str], ...]] = Counter()
 _REPLAY_TOTALS: Counter[tuple[tuple[str, str], ...]] = Counter()
 _SEEN_AQO_DIGESTS: set[str] = set()
+_OBSERVABILITY_CONTRACT_VERSION = "1.0.0"
 
 _STAGE_LABELS = {
     "request_validation",
@@ -112,6 +113,8 @@ def _render_counter_family(name: str, counter: Counter[tuple[tuple[str, str], ..
 def render_metrics_text() -> str:
     with _METRIC_LOCK:
         lines = [
+            "# TYPE eigen_observability_contract_info gauge",
+            f'eigen_observability_contract_info{{version="{_OBSERVABILITY_CONTRACT_VERSION}"}} 1',
             "# TYPE eigen_compiler_contract_info gauge",
             'eigen_compiler_contract_info{version="1.0.0"} 1',
         ]
