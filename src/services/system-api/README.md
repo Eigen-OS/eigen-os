@@ -23,11 +23,14 @@ errors using `google.rpc.BadRequest` field violations.
 
 System API exposes an explicit auth mode:
 
-- `SYSTEM_API_AUTH_MODE=allow_all` (default, local/dev MVP)
+- `SYSTEM_API_AUTH_MODE=allow_all` (local/dev compatibility mode only)
 - `SYSTEM_API_AUTH_MODE=static_token` (requires `Authorization: Bearer <token>`)
+- `SYSTEM_API_AUTH_MODE=jwt_oauth2` (requires a validated JWT bearer token)
 - `SYSTEM_API_AUTH_TOKEN=...` (used only in `static_token` mode)
 - `SYSTEM_API_AUTH_ROLES=admin|user|readonly` (used in `static_token` mode, default `admin`)
 - `SYSTEM_API_AUTH_SUBJECT=...` and `SYSTEM_API_AUTH_TENANT=...` (audit/auth context fields)
+
+Wave 9 hardening keeps the ingress boundary fail-closed unless an identity and policy path is explicitly configured. Normalized security context is propagated through requests as subject, roles, tenant, policy version, service identity, sandbox profile, and trace correlation metadata.
 
 Role permissions (MVP):
 

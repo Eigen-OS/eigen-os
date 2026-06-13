@@ -7,15 +7,19 @@ import base64
 import hashlib
 import hmac
 import json
+from datetime import datetime, timezone
 
 import grpc
 import pytest
+from google.protobuf.timestamp_pb2 import Timestamp
 from google.rpc import error_details_pb2
 from grpc_status import rpc_status
 
+from system_api.grpc_impl import JobService
 from system_api.grpc_server import serve
 from system_api.observability import start_metrics_server
 from system_api.proto_gen import ensure_generated
+from system_api.security import security_context
 
 ensure_generated()
 
@@ -316,3 +320,71 @@ def test_cross_tenant_access_denied(monkeypatch: pytest.MonkeyPatch) -> None:
         assert info.metadata["policy"] == "POLICY_DENY_TENANT_MISMATCH"
     finally:
         server.stop(grace=None)
+
+
+def test_submit_job_stamps_normalized_security_context_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SYSTEM_API_AUTH_MODE", "static_token")
+    monkeypatch.setenv("SYSTEM_API_AUTH_TOKEN", "context-token")
+    monkeypatch.setenv("SYSTEM_API_AUTH_SUBJECT", "ingress-user")
+    monkeypatch.setenv("SYSTEM_API_AUTH_ROLES", "user,readonly")
+    monkeypatch.setenv("SYSTEM_API_AUTH_TENANT", "tenant-a")
+    monkeypatch.setenv("SYSTEM_API_SERVICE_IDENTITY", "system-api")
+    monkeypatch.setenv("SYSTEM_API_SERVICE_ROLE", "public-ingress")
+    monkeypatch.setenv("SYSTEM_API_SANDBOX_PROFILE", "restricted")
+
+    traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+    request = job_pb.SubmitJobRequest(
+        name="normalized-security-context",
+        target="sim:local",
+        metadata={"client_request_id": "client-123"},
+        envelope=types_pb.ApiRequestEnvelope(
+            contract_version="1.0.0",
+            request_id="req-normalized-security-context",
+            traceparent=traceparent,
+        ),
+        eigen_lang=types_pb.EigenLangSource(source=b"def main():\n    return 0", entrypoint="main"),
+    )
+
+    class _Context:
+        def invocation_metadata(self):
+            return (
+                ("authorization", "Bearer context-token"),
+                ("x-eigen-service", "system-api"),
+                ("x-eigen-service-role", "public-ingress"),
+                ("x-eigen-sandbox-profile", "restricted"),
+            )
+
+        def abort(self, code, details):
+            raise RuntimeError(f"{code}: {details}")
+
+    service = JobService(job_pb=job_pb, types_pb=types_pb)
+    sec = security_context(_Context(), method_name="JobService.SubmitJob")
+    created_at = Timestamp()
+    created_at.FromDatetime(datetime.now(timezone.utc))
+    record = service._build_job_record(
+        request,
+        job_id="job-normalized-security",
+        created_at=created_at,
+        trace_id="trace-ctx-123",
+        request_id="req-normalized-security-context",
+        traceparent=traceparent,
+        security=sec,
+        owner_subject=sec.subject,
+        owner_tenant=sec.tenant or "tenant-a",
+        owner_project="project-b",
+    )
+
+    metadata = record.results_metadata
+    assert metadata["security_subject"] == "ingress-user"
+    assert metadata["security_roles"] == "readonly,user"
+    assert metadata["security_tenant"] == "tenant-a"
+    assert metadata["security_policy_version"] == sec.policy_version
+    assert metadata["security_service_identity"] == "system-api"
+    assert metadata["security_service_role"] == "public-ingress"
+    assert metadata["request_id"] == "req-normalized-security-context"
+    assert metadata["traceparent"] == traceparent
+    normalized = json.loads(metadata["security_context"])
+    assert normalized["subject"] == "ingress-user"
+    assert normalized["tenant"] == "tenant-a"
+    assert normalized["request_id"] == "req-normalized-security-context"
+    assert normalized["traceparent"] == traceparent

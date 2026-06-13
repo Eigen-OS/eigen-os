@@ -198,6 +198,7 @@ git fetch origin main:main
 - Product 1.0 contract alignment plan: [`product-1.0-contract-alignment-plan.md`](product-1.0-contract-alignment-plan.md)
 - Product 1.0 contract inventory: [`product-1.0-contract-inventory.md`](product-1.0-contract-inventory.md)
 - Product 1.0 version policy: [`product-1.0-version-policy.md`](product-1.0-version-policy.md)
+- Product 1.0 Wave 9 documentation index: [`wave-9/README.md`](wave-9/README.md)
 - Product 1.0 Wave 0 execution plan: [`product-1.0-wave-0-execution-plan.md`](product-1.0-wave-0-execution-plan.md)
 - Product 1.0 Wave 1 execution plan: [`product-1.0-wave-1-execution-plan.md`](product-1.0-wave-1-execution-plan.md)
 - Product 1.0 Wave 1 issue pack: [`product-1.0-wave-1-issue-pack.md`](product-1.0-wave-1-issue-pack.md)

@@ -35,7 +35,7 @@ from .observability import (
 )
 from .knowledge_base import KnowledgeBaseService, KnowledgeBaseUnavailable
 from .qfs_store import QFS_STORE
-from .security import auth_context, enforce_authn, enforce_authz, enforce_sandbox_policy, security_context
+from .security import SecurityContext, auth_context, enforce_authn, enforce_authz, enforce_sandbox_policy, security_context
 from .validation import (
     validate_device_id,
     validate_job_id,
@@ -971,6 +971,9 @@ class JobService:
         job_id: str,
         created_at: Timestamp,
         trace_id: str | None,
+        request_id: str,
+        traceparent: str,
+        security: SecurityContext,
         owner_subject: str,
         owner_tenant: str,
         owner_project: str,
@@ -984,8 +987,7 @@ class JobService:
             or owner_project
             or "project-default"
         ).strip() or "project-default"
-        sandbox_profile = metadata.get("sandbox_profile", "default").strip() or "default"
-        sec = security_context(context=_DummyContext(metadata), method_name="JobService.SubmitJob") if False else None
+        sandbox_profile = metadata.get("sandbox_profile", security.sandbox_profile or "default").strip() or (security.sandbox_profile or "default")
         tenant_quota_limit = int(tenant_envelope.tenant_max_queued_jobs or os.getenv("EIGEN_SCHED_TENANT_QUOTA_MAX_QUEUED", "16"))
         project_quota_limit = int(tenant_envelope.project_max_queued_jobs or os.getenv("EIGEN_SCHED_PROJECT_QUOTA_MAX_QUEUED", "8"))
         created_at_dt = created_at.ToDatetime().replace(tzinfo=timezone.utc)
@@ -1027,16 +1029,36 @@ class JobService:
         except ValueError:
             run_duration_sec = default_runtime_sec
 
+        security_roles = ",".join(sorted(security.roles))
+        normalized_security_context = {
+            "subject": security.subject,
+            "roles": sorted(security.roles),
+            "tenant": security.tenant or owner_tenant,
+            "auth_mode": security.auth_mode,
+            "policy_version": security.policy_version,
+            "service_identity": security.service_identity or "system-api",
+            "service_role": security.service_role or "",
+            "sandbox_profile": security.sandbox_profile or sandbox_profile,
+            "request_id": request_id,
+            "traceparent": traceparent,
+            "trace_id": trace_id or "",
+        }
+        
         results_metadata = {
             "version": "0.3",
             "backend": request.target or "sim:local",
             "qfs_compiled_aqo": f"qfs://jobs/{job_id}/compiled/circuit.aqo.json",
-            "security_subject": owner_subject,
-            "security_tenant": owner_tenant,
+            "security_subject": security.subject,
+            "security_roles": security_roles,
+            "security_tenant": security.tenant or owner_tenant,
             "security_project": owner_project,
-            "security_sandbox_profile": sandbox_profile,
-            "security_policy_version": "1.0.0",
-            "security_service_identity": "system-api",
+            "security_sandbox_profile": security.sandbox_profile or sandbox_profile,
+            "security_policy_version": security.policy_version,
+            "security_service_identity": security.service_identity or "system-api",
+            "security_service_role": security.service_role or "",
+            "security_context": json.dumps(normalized_security_context, sort_keys=True, separators=(",", ":")),
+            "request_id": request_id,
+            "traceparent": traceparent,
             "qfs_results_parquet": f"qfs://jobs/{job_id}/results.parquet",
             "qfs_metrics": f"qfs://jobs/{job_id}/results/metrics.json",
             "qfs_results_stream_prefix": f"qfs://jobs/{job_id}/results/streams/",
@@ -1514,14 +1536,16 @@ class JobService:
             rc.job_id = job_id
             now = _ts_now()
             trace_id = rc.trace_id or request.metadata.get("trace_id", "").strip() or None
-            owner_subject, _, _owner_tenant = auth_context(context)
             record = self._build_job_record(
                 request,
                 job_id=job_id,
                 created_at=now,
                 trace_id=trace_id,
-                owner_subject=owner_subject,
-                owner_tenant=envelope.tenant_id,
+                request_id=rc.request_id,
+                traceparent=rc.traceparent or envelope.traceparent or "",
+                security=sec,
+                owner_subject=sec.subject,
+                owner_tenant=sec.tenant or envelope.tenant_id,
                 owner_project=envelope.project_id,
             )
             self._jobs[job_id] = record
