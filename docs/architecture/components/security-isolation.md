@@ -181,6 +181,7 @@ Implemented:
 
 - secret redaction
 - secure telemetry policies (no sensitive identifiers in labels)
+- secret lifecycle audit entries MUST carry redacted references or digests only
 - encrypted artifact handling (at rest and in transit)
 - retention enforcement
 - export provenance tracking

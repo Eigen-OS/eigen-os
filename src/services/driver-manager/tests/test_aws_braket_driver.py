@@ -40,6 +40,19 @@ def test_initialize_requires_provider_config_version() -> None:
         )
 
 
+def test_initialize_missing_secret_ref_message_is_redacted() -> None:
+    driver = AwsBraketDriver(types_pb=types_pb)
+
+    with pytest.raises(ValueError, match="configured secret ref"):
+        driver.initialize(
+            {
+                "provider_config_version": "1.0",
+                "runtime_isolation": "process",
+                "credentials_secret_ref": "aws/braket/creds",
+            }
+        )
+
+
 def test_retry_maps_throttling(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(
         "DRIVER_MANAGER_SECRETS_JSON",

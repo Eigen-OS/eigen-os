@@ -29,6 +29,7 @@ _AQO_ROTATION_OPS = {"RX", "RY", "RZ"}
 _AQO_MEASUREMENT_BASIS = {"X", "Y", "Z"}
 _AQO_NON_PARAMETERIZED_OPS = {"CX", "CZ", "SWAP", "CCX", "CCZ", "X", "Y", "Z", "H", "S", "T", "RESET"}
 _AQO_ARITY = {"RX": 1, "RY": 1, "RZ": 1, "CX": 2, "CZ": 2, "SWAP": 2, "CCX": 3, "CCZ": 3, "X": 1, "Y": 1, "Z": 1, "H": 1, "S": 1, "T": 1, "MEASURE": 1, "RESET": 1}
+_ALLOWED_SANDBOX_PROFILES = {"default", "restricted", "strict"}
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,7 @@ class CompileRequestContext:
     deadline: str = ""
     retry_policy: str = ""
     security_context: str = ""
+    sandbox_profile: str = "strict"
     tenant_id: str = ""
     project_id: str = ""
 
@@ -213,6 +215,16 @@ def _normalize_options(options: dict[str, str] | None) -> dict[str, str]:
 
 def _normalize_request_context(request_context: dict[str, str] | None) -> CompileRequestContext:
     context = request_context or {}
+    sandbox_profile = str(context.get("sandbox_profile", "")).strip().lower() or "strict"
+    if sandbox_profile not in _ALLOWED_SANDBOX_PROFILES:
+        raise CompilerValidationError(
+            violations=(
+                FieldViolation(
+                    field="request_context.sandbox_profile",
+                    description=f"sandbox profile must be one of {', '.join(sorted(_ALLOWED_SANDBOX_PROFILES))}",
+                ),
+            )
+        )
     return CompileRequestContext(
         request_id=str(context.get("request_id", "")),
         trace_id=str(context.get("trace_id", "")),
@@ -220,6 +232,7 @@ def _normalize_request_context(request_context: dict[str, str] | None) -> Compil
         deadline=str(context.get("deadline", "")),
         retry_policy=str(context.get("retry_policy", "")),
         security_context=str(context.get("security_context", "")),
+        sandbox_profile=sandbox_profile,
         tenant_id=str(context.get("tenant_id", "")),
         project_id=str(context.get("project_id", "")),
     )
@@ -653,6 +666,7 @@ def compile_eigen_lang(
         "deadline": normalized_request_context.deadline,
         "retry_policy": normalized_request_context.retry_policy,
         "security_context": normalized_request_context.security_context,
+        "sandbox_profile": normalized_request_context.sandbox_profile,
         "tenant_id": normalized_request_context.tenant_id,
         "project_id": normalized_request_context.project_id,
     }

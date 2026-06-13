@@ -43,4 +43,6 @@ def test_secret_lifecycle_emits_audit_events(monkeypatch: pytest.MonkeyPatch, ca
     events = [record for record in caplog.records if record.message == "secret_lifecycle_event"]
     assert any(getattr(record, "event", "") == "issue" and getattr(record, "outcome", "") == "ok" for record in events)
     assert any(getattr(record, "event", "") == "revoke" and getattr(record, "outcome", "") == "revoked" for record in events)
+    assert all("secret_ref" not in record.__dict__ or record.__dict__.get("secret_ref") != "a" for record in events)
+    assert any(getattr(record, "secret_ref_digest", "") for record in events)
     

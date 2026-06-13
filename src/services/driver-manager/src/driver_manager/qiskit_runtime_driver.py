@@ -157,10 +157,14 @@ class QiskitRuntimeDriver:
         token_secret_ref = str(config.get("token_secret_ref", "")).strip()
         if token_secret_ref:
             secrets = SecretLifecycleStore()
-            token = str(secrets.get(token_secret_ref, actor=self.name, workload_id=config.get("workload_id", "driver-init"), consumer=self.name)).strip()
+            try:
+                token = str(secrets.get(token_secret_ref, actor=self.name, workload_id=config.get("workload_id", "driver-init"), consumer=self.name)).strip()
+            except ValueError as exc:
+                self._init_error = "missing token for configured secret ref"
+                raise ValueError(self._init_error) from exc
             if token:
                 return _AuthConfig(source=f"secret_ref:{token_secret_ref}", token=token)
-            self._init_error = f"missing token for secret ref '{token_secret_ref}'"
+            self._init_error = "missing token for configured secret ref"
             raise ValueError(self._init_error)
 
         self._init_error = "qiskit runtime auth missing: set token_secret_ref"

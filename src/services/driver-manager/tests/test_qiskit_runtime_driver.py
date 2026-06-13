@@ -71,6 +71,19 @@ def test_initialize_rejects_insecure_runtime_isolation(monkeypatch: pytest.Monke
         )
 
 
+def test_initialize_missing_secret_ref_message_is_redacted() -> None:
+    driver = QiskitRuntimeDriver(types_pb=types_pb)
+
+    with pytest.raises(ValueError, match="configured secret ref"):
+        driver.initialize(
+            {
+                "provider_config_version": "1.0",
+                "runtime_isolation": "process",
+                "token_secret_ref": "ibm/runtime/token",
+            }
+        )
+
+
 def test_execute_retries_resource_exhausted_then_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DRIVER_MANAGER_SECRETS_JSON", '{"ibm/runtime/token":{"value":"from-secret","state":"issued"}}')
     driver = QiskitRuntimeDriver(types_pb=types_pb)
