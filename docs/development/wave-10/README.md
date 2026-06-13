@@ -1,7 +1,7 @@
 # Product 1.0 Wave 10 Documentation Index
 
 **Wave:** Product 1.0 Wave 10 — Observability, trace continuity, and bounded telemetry  
-**Status:** Planning package published  
+**Status:** Closure package complete  
 **Parent execution plan:** `docs/development/product-1.0-contract-alignment-plan.md`
 
 ---
@@ -16,7 +16,7 @@
 
 ## Closure-target documents
 
-These documents are produced as the Wave 10 implementation package is executed and closed:
+These documents make up the Wave 10 closure package and must stay synchronized with the release-governance evidence:
 
 - `product-1.0-wave-10-compatibility-report.md`
 - `product-1.0-wave-10-release-readiness-checklist.md`
@@ -55,4 +55,4 @@ Wave 10 completion requirements:
 
 ---
 
-Wave 10 planning stays synchronized with the Product 1.0 alignment plan, contract inventory, and version policy. Any new telemetry boundary that changes the accepted contract surface still requires an RFC/ADR before merge.
+Wave 10 closure is evidenced by the compatibility report, readiness checklist, and exit evidence bundle.
