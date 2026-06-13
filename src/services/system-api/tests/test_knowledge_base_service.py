@@ -271,3 +271,90 @@ def test_kb_fallback_behavior_raises_when_storage_disabled() -> None:
                 "request_hash": "sha256:abc",
             }
         )
+
+def test_okb_query_backend_is_deterministic_and_bounded() -> None:
+    service = KnowledgeBaseService(kb_pb=kb_pb, types_pb=types_pb)
+
+    service.ingest_benchmark_run(
+        {
+            "record_id": "okb-record-1",
+            "run_id": "run-1",
+            "job_id": "job-1",
+            "trace_id": "trace-okb",
+            "tenant_id": "tenant-a",
+            "project_id": "project-a",
+            "request_hash": "sha256:record-1",
+            "backend_profile": "backend-alpha",
+            "optimizer_version": "opt-1.0",
+            "circuit_id": "circuit-1",
+            "artifact_ref": "qfs://artifacts/okb-record-1",
+            "dataset_ref": "dataset-v1",
+            "qubit_count": 12,
+            "entanglement_score": 0.44,
+            "noise_profile_id": "noise-1",
+            "backend_class": "simulator",
+            "provenance": {
+                "compiler_ref": "compiler://v1",
+                "optimizer_ref": "optimizer://v1",
+                "runtime_ref": "runtime://v1",
+                "checkpoint_ref": "checkpoint://v1",
+            },
+            "lineage": {
+                "model_version": "m1",
+                "training_set_hash": "train-hash",
+                "evaluation_bundle_hash": "eval-hash",
+                "promotion_policy_version": "policy-v1",
+                "promotion_outcome": "PROMOTED",
+            },
+        }
+    )
+    service.ingest_runtime_decision(
+        {
+            "decision_id": "okb-decision-1",
+            "trace_id": "trace-okb",
+            "model_version": "m1",
+            "component": "runtime",
+            "policy_branch": "baseline",
+            "selected_action": "backend-alpha",
+            "feature_snapshot": {"queue_depth": "2"},
+            "backend_profile_id": "backend-alpha",
+            "optimizer_version": "opt-1.0",
+        }
+    )
+
+    query = {
+        "job_id": "job-1",
+        "semantic_hash": "sha256:semantic-1",
+        "aqo_hash": "sha256:aqo-1",
+        "backend_profile_id": "backend-alpha",
+        "topology_snapshot_digest": "topology-1",
+        "policy_envelope_digest": "policy-1",
+        "kb_schema_version": "1.0.0",
+        "compiler_version": "compiler-1.0",
+        "optimizer_version": "opt-1.0",
+        "seed": 7,
+        "deterministic": True,
+        "query_mode": "structural",
+        "candidate_budget": 2,
+    }
+
+    first = service.query_optimization_candidates(query)
+    second = service.query_optimization_candidates(query)
+
+    assert first == second
+    assert first["query_mode"] == "structural"
+    assert first["candidate_budget"] == 2
+    assert first["selected_candidate_id"] == first["candidates"][0]["candidate_id"]
+    assert len(first["candidates"]) <= 2
+    assert 0.0 <= first["candidates"][0]["confidence"] <= 1.0
+    assert 0.0 <= first["candidates"][0]["score_total"] <= 1.0
+    assert first["candidates"][0]["deterministic_digest"].startswith("sha256:")
+    assert first["okb_selection_digest"].startswith("sha256:")
+    assert first["explanation_ref"] == "qfs://jobs/job-1/kb/explain.json"
+
+    vector = service.query_optimization_candidates({**query, "query_mode": "vector"})
+    assert vector["query_mode"] == "vector"
+    assert vector["selected_candidate_id"] == vector["candidates"][0]["candidate_id"]
+    assert len(vector["candidates"]) <= 2
+    assert vector["okb_selection_digest"].startswith("sha256:")
+    

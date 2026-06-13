@@ -2,14 +2,14 @@
 
 **Contract version:** 1.0.0
 **Status:** Stable target-architecture contract with documented implemented baseline
-**Last synchronized:** 2026-05-25
+**Last synchronized:** 2026-06-13
 **Applies to:** KnowledgeBaseService (public record store), (future) Optimization Knowledge Base (OKB) services, Compiler (Neuro-DPDA path), GNN Optimizer, HWE, Kernel/QRTX, QFS lineage layer, Telemetry exporters
 
 > **Important scope clarification (to avoid contract ambiguity):**
 > 
 > Eigen OS currently uses the name **KnowledgeBaseService** for a **public record store** API (CRUD/query over KB records).
-> This document also specifies the **Optimization Knowledge Base (OKB):** a future, deterministic optimization-memory subsystem used by compiler/runtime/optimizers.
-> The OKB is not a generic vector DB and is not yet on the production critical path by default.
+> This document also specifies the **Optimization Knowledge Base (OKB):** a deterministic optimization-memory subsystem used by compiler/runtime/optimizers.
+> The OKB is not a generic vector DB. It is exposed through a documented pluggable query backend interface and remains off the production critical path unless explicitly wired by the runtime owner.
 
 ---
 
@@ -197,12 +197,16 @@ These operations provide a stable, queryable record store used by tooling and fu
 
 Not implemented as production components:
 
-- OKB candidate retrieval engine for compiler/runtime optimization
-- deterministic ranking/selection with replay bundles
-- optimization artifact store with compatibility windows
-- feedback ingestion tied to optimization reuse
-- OKB explainability and replay-selection APIs
-- OKB-aware compiler/runtime integration (beyond metadata scaffolding)
+- OKB candidate retrieval engine for compiler/runtime optimization on the request path
+- externally served OKB explainability / replay APIs
+- OKB-aware compiler/runtime integration beyond metadata scaffolding
+
+Implemented baseline components:
+
+- documented pluggable OKB query backend interface;
+- deterministic structural/vector candidate selection under bounded query semantics;
+- replay-safe selection digests and bounded explainability references;
+- version-pinned candidate metadata for repeatable queries.
 
 Current runtime operates in:
 
@@ -428,6 +432,14 @@ Explainability / replay:
 - `ExplainOptimizationDecision`
 - `ReplayOptimizationSelection`
 
+#### Query semantics (required)
+
+- `deterministic=true` queries MUST be replay-stable for identical normalized inputs.
+- `query_mode` MUST be one of `structural` or `vector`.
+- Candidate ordering MUST be bounded and deterministic with stable tie-breakers.
+- Returned candidates MUST include bounded provenance, compatibility, confidence, and replay digest metadata.
+- Raw payloads MUST NOT be emitted in candidate metadata, logs, or metric labels.
+
 ---
 
 ## 13. Input and Output Contracts (OKB Target)
@@ -470,6 +482,14 @@ Explainability / replay:
 - `provenance_ref`
 - `compatibility_window`
 - `deterministic_digest`
+
+#### Query envelope / replay outputs
+
+- `selected_candidate_id`
+- `candidate_budget`
+- `okb_selection_digest`
+- `explanation_ref`
+- `query_mode`
 
 #### Explainability payload (bounded)
 
