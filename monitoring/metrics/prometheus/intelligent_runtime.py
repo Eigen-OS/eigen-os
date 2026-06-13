@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from threading import Lock
 
+_OBSERVABILITY_CONTRACT_VERSION = "1.0.0"
+
 _ALLOWED_OBJECTIVES = {
     "balanced",
     "latency_optimized",
@@ -124,6 +126,8 @@ class IntelligentRuntimeTelemetryExporter:
             "# TYPE eigen_runtime_optimizer_fallbacks_total counter",
             "# TYPE eigen_runtime_optimizer_last_confidence_score gauge",
             "# TYPE eigen_runtime_optimizer_trace_handoff_total counter",
+            "# TYPE eigen_observability_contract_info gauge",
+            f'eigen_observability_contract_info{{version="{_OBSERVABILITY_CONTRACT_VERSION}"}} 1',
             f'eigen_runtime_contract_info{{version="{snapshot.contract_version}"}} 1',
         ]
 

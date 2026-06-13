@@ -34,7 +34,9 @@ def test_wave5_contract_markers_and_bounded_metrics_are_present() -> None:
 
     text = exporter.render_prometheus_text()
 
+    assert 'eigen_observability_contract_info{version="1.0.0"} 1' in text
     assert 'eigen_orch_contract_info{version="3.1.0"} 1' in text
+    assert 'eigen_observability_contract_info{version="1.0.0"} 1' in text
     assert 'eigen_runtime_contract_info{version="2.1.0"} 1' in text
     assert 'eigen_cluster_contract_info{version="1.0.0"} 1' in text
     assert 'eigen_multidevice_contract_info{version="3.1.0"} 1' in text
@@ -44,7 +46,7 @@ def test_wave5_contract_markers_and_bounded_metrics_are_present() -> None:
 
 
 def test_stage_labels_are_bounded_and_deterministic() -> None:
-    exporter = StageTelemetryExporter(max_samples_per_stage=8)
+    exporter = StageTelemetryExporter(max_samples_per_stage=128)
     exporter.observe_stage(stage="Execute", latency_seconds=0.50)
     exporter.observe_stage(stage="execute", latency_seconds=0.75)
     exporter.observe_stage(stage="traceparent::evil", latency_seconds=1.25)

@@ -129,6 +129,7 @@ def test_metrics_endpoint_exposes_prometheus_payload():
         server.shutdown()
         server.server_close()
 
+    assert 'eigen_observability_contract_info{version="1.0.0"} 1' in body
     assert "eigen_api_requests_total 3" in body
     assert "eigen_api_request_duration_seconds 0.750000" in body
     assert 'eigen_api_submit_job_outcomes_total{outcome="accepted"} 2' in body

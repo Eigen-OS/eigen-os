@@ -29,6 +29,7 @@ def test_slo_alerts_trigger_for_degraded_stage():
         exporter.observe_stage(stage="execute", latency_seconds=13.0, is_error=True)
 
     text = exporter.render_prometheus_text()
+    assert 'eigen_observability_contract_info{version="1.0.0"} 1' in text
     assert 'eigen_stage_slo_violations_total 3' in text
     assert 'eigen_stage_slo_violation{stage="execute",metric="p99_seconds",severity="critical"} 1' in text
     assert 'eigen_stage_slo_violation{stage="execute",metric="error_rate",severity="critical"} 1' in text
@@ -59,6 +60,7 @@ def test_orchestration_metrics_exporter_renders_stable_contract_metrics():
 
     text = exporter.render_prometheus_text()
 
+    assert 'eigen_observability_contract_info{version="1.0.0"} 1' in text
     assert 'eigen_orch_contract_info{version="2.3.0"} 1' in text
     assert "eigen_orch_queue_depth 42" in text
     assert "eigen_orch_queue_oldest_age_seconds 18.500000" in text
@@ -78,6 +80,7 @@ def test_orchestration_metrics_exporter_contract_marker_and_labels_are_bounded()
     exporter = OrchestrationTelemetryExporter()
     text = exporter.render_prometheus_text()
 
+    assert 'eigen_observability_contract_info{version="1.0.0"} 1' in text
     assert 'eigen_orch_contract_info{version="2.3.0"} 1' in text
     assert 'eigen_orch_queue_depth{job_id=' not in text
     assert 'eigen_orch_queue_depth{trace_id=' not in text
@@ -100,6 +103,7 @@ def test_benchmark_metrics_exporter_renders_stable_contract_metrics():
 
     text = exporter.render_prometheus_text()
 
+    assert 'eigen_observability_contract_info{version="1.0.0"} 1' in text
     assert 'eigen_bench_contract_info{version="1.0.0"} 1' in text
     assert "eigen_bench_queue_depth 9" in text
     assert "eigen_bench_run_duration_seconds 97.125000" in text

@@ -34,6 +34,16 @@ _SENSITIVE_LOG_KEYS = {
 }
 
 
+_OBSERVABILITY_CONTRACT_VERSION = "1.0.0"
+
+
+def _observability_contract_marker_lines() -> list[str]:
+    return [
+        "# TYPE eigen_observability_contract_info gauge",
+        f'eigen_observability_contract_info{{version="{_OBSERVABILITY_CONTRACT_VERSION}"}} 1',
+    ]
+
+
 @dataclass(frozen=True)
 class OrchestrationMetricsSnapshot:
     """Stable orchestration metrics contract (version 2.3.0, bounded-label baseline)."""
@@ -91,6 +101,7 @@ class StageTelemetryExporter:
                 "# TYPE eigen_stage_error_rate gauge",
                 "# TYPE eigen_stage_slo_violations_total gauge",
             ]
+            lines.extend(_observability_contract_marker_lines())
 
             for stage, stats in sorted(stats_by_stage.items()):
                 lines.extend(_encode_stage_stats(stage, stats))
@@ -134,6 +145,9 @@ class BenchmarkTelemetryExporter:
             "# TYPE eigen_bench_runs_failed_total counter",
             "# TYPE eigen_bench_ingestion_failures_total counter",
             "# TYPE eigen_bench_stalled_runs gauge",
+        ]
+        lines.extend(_observability_contract_marker_lines())
+        lines.extend([
             f'eigen_bench_contract_info{{version="{snapshot.contract_version}"}} 1',
             f"eigen_bench_queue_depth {snapshot.queue_depth}",
             f"eigen_bench_run_duration_seconds {snapshot.run_duration_seconds:.6f}",
@@ -141,7 +155,7 @@ class BenchmarkTelemetryExporter:
             f"eigen_bench_runs_failed_total {snapshot.runs_failed_total}",
             f"eigen_bench_ingestion_failures_total {snapshot.ingestion_failures_total}",
             f"eigen_bench_stalled_runs {snapshot.stalled_runs}",
-        ]
+        ])
         return "\n".join(lines) + "\n"
     
     
@@ -183,18 +197,20 @@ class OrchestrationTelemetryExporter:
             "# TYPE eigen_orch_fairness_lag_millis_total counter",
             "# TYPE eigen_orch_fairness_lag_millis_max gauge",
             "# TYPE eigen_orch_quota_denied_tenant_total counter",
+            "# TYPE eigen_orch_quota_denied_project_total counter",
             "# TYPE eigen_orch_schedule_decisions_total counter",
             "# TYPE eigen_orch_reservation_events_total counter",
             "# TYPE eigen_orch_split_merge_events_total counter",
             "# TYPE eigen_orch_replay_events_total counter",
+            "# TYPE eigen_orch_rebalance_trigger_total counter",
+            "# TYPE eigen_orch_starvation_prevention_total counter",
+            ]
+        lines.extend(_observability_contract_marker_lines())
+        lines.extend([
             f'eigen_orch_contract_info{{version="{snapshot.contract_version}"}} 1',
             f'eigen_runtime_contract_info{{version="{snapshot.runtime_contract_version}"}} 1',
             f'eigen_cluster_contract_info{{version="{snapshot.cluster_contract_version}"}} 1',
             f'eigen_multidevice_contract_info{{version="{snapshot.multidevice_contract_version}"}} 1',
-            "# TYPE eigen_orch_quota_denied_project_total counter",
-            "# TYPE eigen_orch_rebalance_trigger_total counter",
-            "# TYPE eigen_orch_starvation_prevention_total counter",
-            f'eigen_orch_contract_info{{version="{snapshot.contract_version}"}} 1',
             f"eigen_orch_queue_depth {snapshot.queue_depth}",
             f"eigen_orch_queue_oldest_age_seconds {snapshot.queue_oldest_age_seconds:.6f}",
             f"eigen_orch_queue_avg_age_seconds {snapshot.queue_avg_age_seconds:.6f}",
@@ -208,7 +224,7 @@ class OrchestrationTelemetryExporter:
             f"eigen_orch_reservation_events_total {snapshot.reservation_events_total}",
             f"eigen_orch_split_merge_events_total {snapshot.split_merge_events_total}",
             f"eigen_orch_replay_events_total {snapshot.replay_events_total}",
-        ]
+        ])
         return "\n".join(lines) + "\n"
     
     
@@ -379,6 +395,8 @@ class IntelligentRuntimeTelemetryExporter:
             "# TYPE eigen_runtime_optimizer_fallbacks_total counter",
             "# TYPE eigen_runtime_optimizer_last_confidence_score gauge",
             "# TYPE eigen_runtime_optimizer_trace_handoff_total counter",
+            "# TYPE eigen_observability_contract_info gauge",
+            f'eigen_observability_contract_info{{version="{_OBSERVABILITY_CONTRACT_VERSION}"}} 1',
             f'eigen_runtime_contract_info{{version="{snapshot.contract_version}"}} 1',
         ]
 
