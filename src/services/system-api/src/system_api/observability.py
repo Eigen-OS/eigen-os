@@ -113,6 +113,7 @@ class _MetricsState:
     requests_total = 0
     request_duration_seconds_sum = 0.0
     authz_denied_total = 0
+    security_audit_write_failures_total = 0
     submit_job_outcomes_total: dict[str, int] = {
         "accepted": 0,
         "replayed": 0,
@@ -149,6 +150,7 @@ class _MetricsHandler(BaseHTTPRequestHandler):
             req_total = _MetricsState.requests_total
             req_sum = _MetricsState.request_duration_seconds_sum
             authz_denied = _MetricsState.authz_denied_total
+            security_audit_write_failures = _MetricsState.security_audit_write_failures_total
             submit_outcomes = dict(_MetricsState.submit_job_outcomes_total)
             public_contract_outcomes = dict(_MetricsState.public_api_contract_requests_total)
             kb_contract_info = dict(_MetricsState.kb_contract_info)
@@ -221,6 +223,8 @@ class _MetricsHandler(BaseHTTPRequestHandler):
             f"eigen_api_request_duration_seconds {req_sum:.6f}\n"
             "# TYPE eigen_api_authz_denied_total counter\n"
             f"eigen_api_authz_denied_total {authz_denied}\n"
+            "# TYPE eigen_security_audit_write_failures_total counter\n"
+            f"eigen_security_audit_write_failures_total{{sink=\"file\"}} {security_audit_write_failures}\n"
             "# TYPE eigen_api_submit_job_outcomes_total counter\n"
             f"{outcome_lines}"
             "# TYPE eigen_api_public_contract_requests_total counter\n"
@@ -279,12 +283,16 @@ def append_security_audit_event(event: dict[str, object]) -> None:
     record = json.dumps(event, sort_keys=True, separators=(",", ":"))
     line = record + "\n"
     sink_path = _audit_sink_path()
-    with _AUDIT_LOCK:
-        os.makedirs(os.path.dirname(sink_path), exist_ok=True)
-        with open(sink_path, "a", encoding="utf-8") as fh:
-            fh.write(line)
-            fh.flush()
-            os.fsync(fh.fileno())
+    try:
+        with _AUDIT_LOCK:
+            os.makedirs(os.path.dirname(sink_path), exist_ok=True)
+            with open(sink_path, "a", encoding="utf-8") as fh:
+                fh.write(line)
+                fh.flush()
+                os.fsync(fh.fileno())
+    except Exception:
+        record_security_audit_write_failure()
+        raise
     _AUDIT_LOG.info("security_audit", extra=event)
 
 
@@ -365,6 +373,11 @@ def log_authz_denied(*, method: str, subject: str, permission: str, job_id: str 
             "job_id": job_id,
         },
     )
+
+
+def record_security_audit_write_failure() -> None:
+    with _MetricsState.lock:
+        _MetricsState.security_audit_write_failures_total += 1
 
 
 def record_submit_job_outcome(outcome: str) -> None:

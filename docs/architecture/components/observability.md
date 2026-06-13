@@ -601,6 +601,7 @@ Observability pipelines MUST:
 - enforce RBAC for any query/export endpoints,
 - support retention controls,
 - maintain an immutable audit trail for security-relevant events,
+- expose bounded audit-pipeline health counters for security sinks,
 - avoid multi-tenant leakage (no unsafe labels; redaction in logs).
 
 ---

@@ -3,9 +3,12 @@ from __future__ import annotations
 import socket
 import urllib.request
 
+import pytest
+
 from system_api.grpc_impl import JobService
 from system_api.observability import (
     _MetricsState,
+    append_security_audit_event,
     record_kb_contract_marker,
     record_kb_fallback,
     record_kb_learning_failure,
@@ -83,6 +86,10 @@ def _reset_kb_metrics() -> None:
     }
 
 
+def _reset_security_audit_metrics() -> None:
+    _MetricsState.security_audit_write_failures_total = 0
+
+
 def test_metrics_endpoint_exposes_prometheus_payload():
     port = _free_port()
     _MetricsState.requests_total = 3
@@ -106,6 +113,7 @@ def test_metrics_endpoint_exposes_prometheus_payload():
         ("unsupported", "error"): 0,
     }
     _reset_kb_metrics()
+    _reset_security_audit_metrics()
     record_kb_query("records", hit=True)
     record_kb_query("decision_logs", hit=False)
     record_kb_fallback("storage_unavailable")
@@ -113,6 +121,7 @@ def test_metrics_endpoint_exposes_prometheus_payload():
     record_kb_learning_failure("dataset_assembly")
     record_kb_replay_failure()
     record_kb_contract_marker("1.0.0", "accepted")
+    _MetricsState.security_audit_write_failures_total = 2
     server = start_metrics_server(port)
     try:
         body = urllib.request.urlopen(f"http://127.0.0.1:{port}/metrics", timeout=2).read().decode()
@@ -136,6 +145,36 @@ def test_metrics_endpoint_exposes_prometheus_payload():
     assert 'eigen_kb_learning_failures_total{reason="dataset_assembly"} 1' in body
     assert 'eigen_kb_replay_failures_total 1' in body
     assert 'eigen_kb_contract_requests_total{contract_version="1.0.0",outcome="accepted"} 1' in body
+    assert 'eigen_security_audit_write_failures_total{sink="file"} 2' in body
+
+
+def test_security_audit_write_failures_increment_bounded_metric(monkeypatch: pytest.MonkeyPatch) -> None:
+    _reset_security_audit_metrics()
+
+    def failing_open(*args, **kwargs):
+        raise OSError("audit sink unavailable")
+
+    monkeypatch.setenv("SYSTEM_API_AUDIT_SINK_PATH", "/tmp/system-api/audit.jsonl")
+    monkeypatch.setattr("builtins.open", failing_open)
+
+    with pytest.raises(OSError):
+        append_security_audit_event(
+            {
+                "method": "authz",
+                "decision": "deny",
+                "reason": "POLICY_BACKEND_UNAVAILABLE",
+                "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+                "subject": "audit-user",
+                "roles": "readonly",
+                "auth_mode": "static_token",
+                "policy_version": "1.0.0",
+                "service_identity": "system-api",
+                "sandbox_profile": "restricted",
+                "replay_marker": "replay-marker-123",
+            }
+        )
+
+    assert _MetricsState.security_audit_write_failures_total == 1
 
 
 def test_public_contract_marker_uses_bounded_labels_and_contract_version():
