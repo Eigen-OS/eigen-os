@@ -13,6 +13,7 @@ from grpc_status import rpc_status
 
 from .grpc_impl import DeviceService, JobService, KnowledgeBaseService
 from .knowledge_base import KnowledgeBaseService
+from .observability import trace_id_from_traceparent
 from .proto_gen import ensure_generated
 
 _LOG = logging.getLogger("system_api")
@@ -45,12 +46,15 @@ class TracingAndLoggingInterceptor(grpc.ServerInterceptor):
         metadata = dict(handler_call_details.invocation_metadata)
         
         # Pull traceparent (W3C standard) or fallback to basic trace_id
-        traceparent = metadata.get("traceparent") or metadata.get("trace_id") or f"root-{uuid.uuid4()}"
+        raw_traceparent = metadata.get("traceparent")
+        raw_trace_id = metadata.get("trace_id")
+        traceparent = raw_traceparent or raw_trace_id or f"root-{uuid.uuid4()}"
+        trace_id = raw_trace_id or trace_id_from_traceparent(raw_traceparent) or traceparent
         request_id = metadata.get("x-request-id") or str(uuid.uuid4())
         
         # Bind tokens to the async execution context
-        token_trace = ctx_trace_id.set(traceparent)
-        token_traceparent = ctx_traceparent.set(metadata.get("traceparent") or traceparent)
+        token_trace = ctx_trace_id.set(trace_id)
+        token_traceparent = ctx_traceparent.set(traceparent)
         token_req = ctx_request_id.set(request_id)
         
         try:

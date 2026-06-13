@@ -59,8 +59,7 @@ The intended outcome is an observability posture where every supported surface e
 | 1 | W10-01 Observability contract markers and bounded metric labels | Observability architecture and contract docs | Canonical exporter markers and bounded labels across observability surfaces |
 | 2 | W10-02 Trace continuity, correlation fields, and structured logs | W10-01 | Stable trace/request/job correlation from ingress to execution artifacts |
 | 3 | W10-03 Orchestration and intelligent runtime observability parity | W10-01 and W10-02 | Orchestration/runtime metrics, dashboards, and alerts aligned to contracts |
-| 4 | W10-04 Cluster runtime and benchmark observability parity | W10-01 through W10-03 | Cluster/benchmark telemetry, runbooks, and replay diagnostics aligned to contracts |
-| 5 | W10-05 Conformance gating, release-readiness, and evidence bundle | W10-01 through W10-04 | Closure evidence, readiness proof, and compatibility documentation |
+| 4 | W10-04 Conformance gating, release-readiness, and evidence bundle | W10-01 through W10-03 | Release-quality proof, compatibility report, readiness checklist, and evidence bundle |
 
 ---
 
@@ -70,7 +69,7 @@ The intended outcome is an observability posture where every supported surface e
 2. **Correlation fields:** decide the exact field set that must be present in logs and durable artifacts for trace continuity evidence.
 3. **Dashboard ownership:** decide which dashboard files are canonical for orchestration, runtime, cluster, and benchmark observability.
 4. **Alert ownership:** decide which alert rules are blocking versus informational for each observability contract family.
-5. **Release gating:** decide which observability regressions block release and which are informational only.
+5. **Release gating:** blocking regressions are fixed-fixture failures, missing contract markers, unbounded or secret-bearing labels, trace continuity breaks, and canonical dashboard/alert/runbook drift; informational-only drift is limited to README/index link drift and commentary-only edits.
 
 ---
 
@@ -83,7 +82,7 @@ Wave 10 is 100% complete when:
 - metric labels remain bounded and secret-free;
 - dashboards, alerts, and runbooks are synchronized with the canonical observability contracts;
 - the compatibility report, release-readiness checklist, and exit evidence bundle are complete;
-- the inventory and README navigation are synchronized with the Wave 10 package.
+- the observability fixture gate is enforced in CI or an equivalent release gate;
 
 ---
 

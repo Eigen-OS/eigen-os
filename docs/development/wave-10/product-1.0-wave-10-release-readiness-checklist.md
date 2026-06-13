@@ -1,21 +1,21 @@
 # Product 1.0 Wave 10 Release Readiness Checklist
 
 **Wave:** Product 1.0 Wave 10 — Observability, trace continuity, and bounded telemetry  
-**Status:** Planning package published  
+**Status:** Closure package complete
 **Date:** 2026-06-13
 
 ## Readiness checklist
 
-- [ ] Wave 10 execution plan is published and linked from `docs/development/README.md`.
-- [ ] Wave 10 issue pack is published with retain-and-complete completion blocks.
-- [ ] Wave 10 RFC/ADR gap analysis confirms whether a new normative artifact is required.
-- [ ] Wave 10 compatibility report records the planning-package compatibility posture.
-- [ ] Wave 10 exit evidence bundle records the closure artifacts, limitations, and commit SHAs.
-- [ ] Inventory rows are synchronized with the observability/trace/telemetry scope.
-- [ ] Any manifest references that changed with the inventory are updated in the same change set.
-- [ ] No stale fixture-only wording remains where observability behavior becomes authoritative.
-- [ ] Observability evidence paths are linked to the wave package.
-- [ ] Telemetry remains bounded, secret-free, and traceable.
+- [x] Wave 10 execution plan is published and linked from `docs/development/README.md`.
+- [x] Wave 10 issue pack is published with retain-and-complete completion blocks.
+- [x] Wave 10 RFC/ADR gap analysis confirms whether a new normative artifact is required.
+- [x] Wave 10 compatibility report records the release-governance compatibility posture.
+- [x] Wave 10 exit evidence bundle records the closure artifacts, limitations, and commit SHAs.
+- [x] Inventory rows are synchronized with the observability/trace/telemetry scope.
+- [x] Any manifest references that changed with the inventory are updated in the same change set.
+- [x] No stale fixture-only wording remains where observability behavior becomes authoritative.
+- [x] Observability evidence paths are linked to the wave package.
+- [x] Telemetry remains bounded, secret-free, and traceable.
 
 ## Release gating rule
 

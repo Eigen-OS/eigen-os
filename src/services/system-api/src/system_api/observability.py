@@ -18,6 +18,48 @@ _LOG = logging.getLogger("system_api")
 _AUDIT_LOG = logging.getLogger("system_api.security_audit")
 _OBSERVABILITY_CONTRACT_VERSION = "1.0.0"
 _AUDIT_LOCK = threading.Lock()
+_LOG_RECORD_CONTEXT = threading.local()
+
+
+def _push_log_record_context(
+    *,
+    request_id: str | None = None,
+    trace_id: str | None = None,
+    traceparent: str | None = None,
+    job_id: str | None = None,
+) -> object | None:
+    previous = getattr(_LOG_RECORD_CONTEXT, "value", None)
+    _LOG_RECORD_CONTEXT.value = {
+        "request_id": request_id,
+        "trace_id": trace_id,
+        "traceparent": traceparent,
+        "job_id": job_id,
+    }
+    return previous
+
+
+def _pop_log_record_context(previous: object | None) -> None:
+    if previous is None:
+        if hasattr(_LOG_RECORD_CONTEXT, "value"):
+            delattr(_LOG_RECORD_CONTEXT, "value")
+        return
+    _LOG_RECORD_CONTEXT.value = previous
+
+
+_ORIGINAL_LOG_RECORD_FACTORY = logging.getLogRecordFactory()
+
+
+def _log_record_factory(*args, **kwargs):
+    record = _ORIGINAL_LOG_RECORD_FACTORY(*args, **kwargs)
+    ctx = getattr(_LOG_RECORD_CONTEXT, "value", None)
+    if ctx:
+        for field, value in ctx.items():
+            if value is not None and not getattr(record, field, None):
+                setattr(record, field, value)
+    return record
+
+
+logging.setLogRecordFactory(_log_record_factory)
 
 _TRACEPARENT_RE = re.compile(
     r"^(?P<version>[0-9a-f]{2})-(?P<trace_id>[0-9a-f]{32})-(?P<span_id>[0-9a-f]{16})-(?P<trace_flags>[0-9a-f]{2})$"
@@ -335,34 +377,57 @@ def new_request_context(context: grpc.ServicerContext) -> RequestContext:
 
 
 def log_request_start(method: str, rc: RequestContext) -> None:
-    setattr(rc, "_started_at", time.perf_counter())
-    _LOG.info(
-        "rpc_start",
-        extra={
-            "method": method,
-            "request_id": rc.request_id,
-            "trace_id": rc.trace_id,
-            "traceparent": rc.traceparent,
-            "job_id": rc.job_id,
-        },
+    started_at = time.perf_counter()
+    request_id = rc.request_id
+    trace_id = rc.trace_id
+    traceparent = rc.traceparent
+    job_id = rc.job_id
+    setattr(rc, "_started_at", started_at)
+    previous = _push_log_record_context(
+        request_id=request_id,
+        trace_id=trace_id,
+        traceparent=traceparent,
+        job_id=job_id,
     )
+    try:
+        _LOG.info(
+            "rpc_start",
+            extra={"method": method},
+        )
+    finally:
+        _pop_log_record_context(previous)
 
 
-def log_request_end(method: str, rc: RequestContext) -> None:
+def log_request_end(
+    method: str,
+    rc: RequestContext,
+    *,
+    request_id: str | None = None,
+    trace_id: str | None = None,
+    traceparent: str | None = None,
+    job_id: str | None = None,
+) -> None:
     elapsed = max(time.perf_counter() - getattr(rc, "_started_at", time.perf_counter()), 0.0)
+    request_id = request_id or rc.request_id
+    trace_id = trace_id or rc.trace_id
+    traceparent = traceparent or rc.traceparent
+    job_id = job_id or rc.job_id
     with _MetricsState.lock:
         _MetricsState.requests_total += 1
         _MetricsState.request_duration_seconds_sum += elapsed
-    _LOG.info(
-        "rpc_end",
-        extra={
-            "method": method,
-            "request_id": rc.request_id,
-            "trace_id": rc.trace_id,
-            "traceparent": rc.traceparent,
-            "job_id": rc.job_id,
-        },
+    previous = _push_log_record_context(
+        request_id=request_id,
+        trace_id=trace_id,
+        traceparent=traceparent,
+        job_id=job_id,
     )
+    try:
+        _LOG.info(
+            "rpc_end",
+            extra={"method": method},
+        )
+    finally:
+        _pop_log_record_context(previous)
 
 
 def log_authz_denied(
