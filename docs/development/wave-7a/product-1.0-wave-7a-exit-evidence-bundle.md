@@ -15,7 +15,7 @@
 | W7A-E03 | Deterministic fallback and confidence threshold behavior | `src/services/benchmark-service/tests/test_optimizer_evaluation_harness.py` | Unavailable/low-confidence paths use the documented fallback | Completed | GNN Optimizer + Reliability | `src/services/benchmark-service/tests/test_optimizer_evaluation_harness.py` |
 | W7A-E04 | Optimization candidate traces and observability | `monitoring/metrics/prometheus/exporter.py`; `monitoring/dashboards/intelligent_runtime_dashboard.json`; `monitoring/metrics/prometheus/intelligent-runtime-alerts.yaml`; `monitoring/metrics/tests/test_wave5_observability_conformance.py` | Candidate telemetry is present with bounded labels and trace continuity | Completed | Observability | `docs/development/wave-7a/product-1.0-wave-7a-compatibility-report.md` |
 | W7A-E05 | Quality regression gates | `src/services/benchmark-service/tests/test_optimizer_evaluation_harness.py`; `scripts/ci/check-phase9b-gates.sh` | Fixed fixture regressions block release and preserve bounded evidence | Completed | GNN Optimizer + Release Governance | `docs/development/wave-7a/product-1.0-wave-7a-release-readiness-checklist.md` |
-| W7A-E06 | Inventory/manifest synchronization and closure readiness | Docs review | No unresolved TBD values remain | Pending | Architecture/Governance | TBD |
+| W7A-E06 | Inventory/manifest synchronization and closure readiness | Inventory and manifest row review | No stale wording remains where production behavior is authoritative | Completed | Architecture/Governance | `docs/development/product-1.0-contract-inventory.md`; `contracts/product-1.0/manifest.json` |
 
 ---
 
@@ -32,4 +32,6 @@
 
 ## 3. Wave 8 handoff
 
-Wave 8 may start after the Wave 7a closure commit. The optimizer output is then considered a governed input to the knowledge/learning layer rather than fixture-only output.
+Wave 8 may start after the Wave 7a closure commit. The optimizer output is then considered a governed input to the knowledge/learning layer rather than an ad hoc integration artifact.
+
+Wave 7a inventory/manifest synchronization is complete for the optimizer production path and observability surfaces.

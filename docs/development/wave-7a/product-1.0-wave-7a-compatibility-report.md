@@ -1,7 +1,7 @@
 # Product 1.0 Wave 7a Compatibility Report
 
-**Status:** W7A-05 closure draft; optimizer/intelligent-runtime issue ledger complete for documented implementation slices
-**Scope:** Optimizer service wiring, model registry, deterministic fallback, optimization traces, intelligent-runtime observability, and release evidence
+**Status:** W7A-06 closure draft; inventory/manifest synchronization complete for documented implementation slices
++**Scope:** Optimizer service wiring, model registry, deterministic fallback, optimization traces, intelligent-runtime observability, inventory/manifest synchronization, and release evidence
 **Version policy:** `docs/development/product-1.0-version-policy.md`
 **Issue pack:** `docs/development/wave-7a/product-1.0-wave-7a-issue-pack.md`
 **Evidence bundle:** `docs/development/wave-7a/product-1.0-wave-7a-exit-evidence-bundle.md`

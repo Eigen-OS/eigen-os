@@ -21,7 +21,7 @@ This checklist closes Product 1.0 Wave 7a and must be completed together with:
 - [x] RFC 0051 status is accepted or explicitly approved for implementation.
 - [x] ADR 0037 is synchronized with RFC 0051.
 - [x] Every Wave 7a issue includes the required Summary, Validation, Versioning & Compatibility, and Release Notes Draft blocks.
-- [x] Product 1.0 manifest/inventory are updated for any concrete optimizer or observability mapping changes.
+- [x] Product 1.0 manifest/inventory are updated for the documented optimizer and observability mapping changes.
 - [x] Every MAJOR or breaking change has migration notes and release evidence.
 - [x] Compatibility report has no unresolved `TBD` values for completed issues.
 
