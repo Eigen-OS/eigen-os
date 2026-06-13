@@ -1099,6 +1099,7 @@ class JobService:
                 "priority": str(int(request.priority)),
                 "target": request.target or "sim:local",
                 "job_name": request.name,
+                "traceparent": traceparent,
                 "batch_mode_enabled": str(self._batch_mode_enabled).lower(),
                 "policy_branch": "single_dispatch",
                 "fallback_reason": f"{topology_fallback_reason}|{noise_fallback}",
@@ -1114,6 +1115,7 @@ class JobService:
                 "project_id": project_id,
                 "tenant_quota_limit": str(max(tenant_quota_limit, 1)),
                 "project_quota_limit": str(max(project_quota_limit, 1)),
+                "traceparent": traceparent,
             },
             "lineage": [
                 {
@@ -1499,7 +1501,14 @@ class JobService:
                         rc.job_id = previous.job_id
                         record_submit_job_outcome("replayed")
                         _record_submit_public_marker(envelope, "replayed")
-                        log_request_end("JobService.SubmitJob", rc)
+                        log_request_end(
+                        "JobService.SubmitJob",
+                            rc,
+                            request_id=rc.request_id,
+                            trace_id=rc.trace_id,
+                            traceparent=rc.traceparent or envelope.traceparent or "",
+                            job_id=previous.job_id,
+                    )
                         return self._job_pb.SubmitJobResponse(
                             job_id=previous.job_id,
                             status=self._types_pb.JobStatus(
@@ -1517,7 +1526,14 @@ class JobService:
                     rc.job_id = existing.job_id
                     record_submit_job_outcome("replayed")
                     _record_submit_public_marker(envelope, "replayed")
-                    log_request_end("JobService.SubmitJob", rc)
+                    log_request_end(
+                            "JobService.SubmitJob",
+                            rc,
+                            request_id=rc.request_id,
+                            trace_id=rc.trace_id,
+                            traceparent=rc.traceparent or envelope.traceparent or "",
+                            job_id=previous.job_id,
+                        )
                     return self._job_pb.SubmitJobResponse(
                         job_id=existing.job_id,
                         status=self._types_pb.JobStatus(
@@ -1574,7 +1590,14 @@ class JobService:
             ),
         )
 
-        log_request_end("JobService.SubmitJob", rc)
+        log_request_end(
+            "JobService.SubmitJob",
+            rc,
+            request_id=rc.request_id,
+            trace_id=rc.trace_id,
+            traceparent=rc.traceparent or envelope.traceparent or "",
+            job_id=job_id,
+        )
         return resp
 
     def GetJobStatus(self, request, context: grpc.ServicerContext):

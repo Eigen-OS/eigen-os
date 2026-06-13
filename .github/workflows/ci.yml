@@ -185,6 +185,29 @@ jobs:
       - name: Run metrics persistence integration test
         run: cargo test -p eigen-kernel integration_vqe_loop_persists_metrics_and_results_metadata
 
+  observability-fixture-gate:
+    name: Observability fixture gate (smoke + fixed conformance fixtures)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install system-api with test deps
+        working-directory: src/services/system-api
+        run: pip install -e .[dev]
+
+      - name: Run observability smoke test
+        working-directory: src/services/system-api
+        run: pytest tests/test_observability_smoke.py
+
+      - name: Run Wave 10 fixed observability fixture conformance
+        run: pytest monitoring/metrics/tests/test_wave5_observability_conformance.py
+
   golden-fixture-review-gate:
     name: Golden fixture review gate
     runs-on: ubuntu-latest

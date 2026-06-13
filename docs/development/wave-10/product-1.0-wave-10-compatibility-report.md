@@ -1,20 +1,22 @@
 # Product 1.0 Wave 10 Compatibility Report
 
 **Wave:** Product 1.0 Wave 10 — Observability, trace continuity, and bounded telemetry  
-**Status:** Planning baseline  
-**Date:** 2026-06-13
+**Status:** Closure package complete 
+**Date:** 2026-06-14
 
 **Version impact:** NONE  
-**Compatibility posture:** Backward-compatible planning package
+**Compatibility posture:** Backward-compatible release-governance package
 
 Wave 10 does not change the Product `1.0.0` release number.
 
 ## Current compatibility posture
 
-- Observability contracts stay within the existing Product 1.0 surface.
-- Trace continuity changes are expected to be additive.
-- Metric and label changes are expected to be additive.
-- Dashboards, alerts, and runbooks are expected to be additive.
+- Observability contracts stay within the existing Product `1.0` surface.
+- Trace continuity changes are additive.
+- Metric and label changes are additive.
+- Dashboards, alerts, and runbooks are additive.
+- Regression fixtures are enforced by the Wave 10 observability fixture gate.
+- Blocking regressions are limited to missing markers, unbounded labels, trace breaks, and canonical dashboard/alert/runbook drift.
 
 ## Planned issue coverage
 
@@ -23,7 +25,7 @@ Wave 10 does not change the Product `1.0.0` release number.
 | W10-01 | Observability contract markers and bounded metric labels | Planned and documented |
 | W10-02 | Trace continuity, correlation fields, and structured logs | Planned and documented |
 | W10-03 | Observability parity for orchestration, runtime, cluster, and benchmark | Planned and documented |
-| W10-04 | Conformance gating, release-readiness, and evidence bundle | Planned and documented |
+| W10-04 | Conformance gating, release-readiness, and evidence bundle | Complete and documented |
 
 ## Migration notes
 
