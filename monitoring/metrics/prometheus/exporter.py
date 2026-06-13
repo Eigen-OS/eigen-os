@@ -2,13 +2,23 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Lock, Thread
 from typing import Mapping
 
 from monitoring.metrics.aggregation.aggregator import StageLatencyAggregator, StageLatencyStats
 from monitoring.metrics.aggregation.alerts import StageSLOAlertEvaluator, default_stage_slos
+
+
+_OBSERVABILITY_CONTRACT_VERSION = "1.0.0"
+
+
+def _observability_contract_marker_lines() -> list[str]:
+    return [
+        "# TYPE eigen_observability_contract_info gauge",
+        f'eigen_observability_contract_info{{version="{_OBSERVABILITY_CONTRACT_VERSION}"}} 1',
+    ]
 
 
 _ALLOWED_STAGE_LABELS = {
@@ -188,7 +198,7 @@ class OrchestrationTelemetryExporter:
         lines: list[str] = [
             "# TYPE eigen_orch_contract_info gauge",
             "# TYPE eigen_runtime_contract_info gauge",
-            "# TYPE eigen_cluster_contract_info gauge",
+            "# TYPE eigen_cluster_runtime_contract_info gauge",
             "# TYPE eigen_multidevice_contract_info gauge",
             "# TYPE eigen_orch_contract_info gauge",
             "# TYPE eigen_orch_queue_depth gauge",
@@ -209,7 +219,7 @@ class OrchestrationTelemetryExporter:
         lines.extend([
             f'eigen_orch_contract_info{{version="{snapshot.contract_version}"}} 1',
             f'eigen_runtime_contract_info{{version="{snapshot.runtime_contract_version}"}} 1',
-            f'eigen_cluster_contract_info{{version="{snapshot.cluster_contract_version}"}} 1',
+            f'eigen_cluster_runtime_contract_info{{version="{snapshot.cluster_contract_version}"}} 1',
             f'eigen_multidevice_contract_info{{version="{snapshot.multidevice_contract_version}"}} 1',
             f"eigen_orch_queue_depth {snapshot.queue_depth}",
             f"eigen_orch_queue_oldest_age_seconds {snapshot.queue_oldest_age_seconds:.6f}",

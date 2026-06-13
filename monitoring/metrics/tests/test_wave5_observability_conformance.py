@@ -1,5 +1,6 @@
 from monitoring.metrics.prometheus.exporter import (
     BenchmarkMetricsSnapshot,
+    BenchmarkTelemetryExporter,
     OrchestrationMetricsSnapshot,
     OrchestrationTelemetryExporter,
     IntelligentRuntimeTelemetryExporter,
@@ -38,7 +39,7 @@ def test_wave5_contract_markers_and_bounded_metrics_are_present() -> None:
     assert 'eigen_orch_contract_info{version="3.1.0"} 1' in text
     assert 'eigen_observability_contract_info{version="1.0.0"} 1' in text
     assert 'eigen_runtime_contract_info{version="2.1.0"} 1' in text
-    assert 'eigen_cluster_contract_info{version="1.0.0"} 1' in text
+    assert 'eigen_cluster_runtime_contract_info{version="1.0.0"} 1' in text
     assert 'eigen_multidevice_contract_info{version="3.1.0"} 1' in text
     assert "job_id=" not in text
     assert "trace_id=" not in text

@@ -37,6 +37,16 @@
       }
     },
     {
+      "type": "stat",
+      "title": "Observability Contract Version",
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 24 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "eigen_cluster_runtime_contract_info", "legendFormat": "contract" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none" }, "overrides": [] }
+    },
+    {
       "type": "timeseries",
       "title": "Queue Backlog Depth",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
