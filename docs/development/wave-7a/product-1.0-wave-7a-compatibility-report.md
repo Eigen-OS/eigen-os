@@ -27,7 +27,7 @@
 | W7A-01 Optimizer service server/client wiring and Kernel/QRTX handoff | MINOR | Internal API; Kernel orchestration; Trace context | Backward-compatible | false | None | Added: real OptimizerService wiring through Kernel/QRTX with bounded graph-encoding handoff and deterministic candidate-budget default | W7A-E01 |
 | W7A-02 Model registry and version promotion policy | MINOR | Registry policy; Internal API; Compatibility matrix | Backward-compatible | false | None | Added: deterministic promotion, rollback, quarantine policy | W7A-E02 |
 | W7A-03 Deterministic fallback and confidence thresholds | MINOR | Internal API; Kernel orchestration; Metrics; Trace context | Backward-compatible | false | None | Added: explicit fallback reason and model-version visibility | W7A-E03 |
-| W7A-04 Optimization candidate traces, metrics, and dashboards | 2.1.0 | Metrics; Trace context; Dashboard compatibility | implemented | compatible | low-risk bounded addition | None | W7A-E04 |
+| W7A-04 Optimization candidate traces, metrics, and dashboards | MINOR | Metrics; Trace context; Dashboard compatibility | Backward-compatible | false | None | Added bounded optimizer candidate traces, dashboard fixtures, and alert fixtures | W7A-E04 |
 | W7A-05 Quality regression gates and release evidence bundle | PATCH | Compatibility matrix; Migration docs | Backward-compatible | false | None | Added: release evidence bundle and regression gate records | W7A-E05 |
 | W7A-06 Inventory/manifest synchronization for Wave 7a surfaces | PATCH | Manifest; Inventory; Governance docs | Backward-compatible | false | None | Added: inventory rows and evidence links for Wave 7a | W7A-E06 |
 
