@@ -19,7 +19,7 @@ use parking_lot::Mutex;
 use prost_types::Timestamp;
 use tokio_stream::iter;
 use tokio_stream::Stream;
-use tonic::transport::{Channel, Endpoint};
+use tonic::transport::Endpoint;
 use tonic::{Code, Request, Response, Status};
 use tracing::Instrument;
 use sha2::{Digest, Sha256};
@@ -44,7 +44,7 @@ use crate::proto::{
     CancelJobRequest, CancelJobResponse, DispatchRationale, EnqueueJobRequest,
     EnqueueJobResponse, GetDispatchRationaleRequest, GetDispatchRationaleResponse,
     GetJobResultsRequest, GetJobResultsResponse, GetJobStatusRequest, GetJobStatusResponse,
-    RequestMetadata, StreamJobUpdatesRequest, StreamJobUpdatesResponse, TaskState,
+    StreamJobUpdatesRequest, StreamJobUpdatesResponse, TaskState,
 };
 
 /// Runs the kernel gRPC server on the provided address.
@@ -1841,11 +1841,6 @@ impl OrchestrationAdapters for FixtureAdapters {
 }
 
 #[derive(Debug, Clone)]
-struct OptimizerGatewayResponse {
-    output: BTreeMap<String, String>,
-}
-
-#[derive(Debug, Clone)]
 struct OptimizerGatewayError {
     grpc_code: Code,
     summary: String,
@@ -1858,7 +1853,7 @@ trait OptimizerGateway: Send + Sync {
         &self,
         submission: &NormalizedSubmission,
         compile_output: &BTreeMap<String, String>,
-    ) -> Result<OptimizerGatewayResponse, OptimizerGatewayError>;
+    ) -> Result<BTreeMap<String, String>, OptimizerGatewayError>;
 }
 
 #[derive(Debug, Default)]
@@ -1870,7 +1865,7 @@ impl OptimizerGateway for FixtureOptimizerGateway {
         &self,
         submission: &NormalizedSubmission,
         compile_output: &BTreeMap<String, String>,
-    ) -> Result<OptimizerGatewayResponse, OptimizerGatewayError> {
+    ) -> Result<BTreeMap<String, String>, OptimizerGatewayError> {
         let model_version = "optimizer-model-v1".to_string();
         let objective = optimizer_objective_preset(submission);
         let fallback_reason_code = "EIGEN_OPT_UNSPECIFIED".to_string();
@@ -1881,28 +1876,34 @@ impl OptimizerGateway for FixtureOptimizerGateway {
             .get("compile_digest")
             .cloned()
             .unwrap_or_else(|| submission.fingerprint.clone());
-        Ok(OptimizerGatewayResponse {
-            output: BTreeMap::from([
-                ("message".to_string(), "optimizer service completed".to_string()),
-                (
-                    "optimized_artifact_ref".to_string(),
-                    format!("qfs://jobs/{}/optimizer/optimized_aqo.json", submission.job_id),
-                ),
-                ("optimizer_version".to_string(), model_version.clone()),
-                ("optimizer_policy".to_string(), "deterministic".to_string()),
-                ("optimizer_digest".to_string(), optimizer_digest),
-                ("selected_candidate_id".to_string(), selected_candidate_id.clone()),
-                ("fallback_used".to_string(), "false".to_string()),
-                ("fallback_reason_code".to_string(), fallback_reason_code.clone()),
-                ("fallback_reason".to_string(), fallback_reason.clone()),
-                ("confidence_score".to_string(), confidence_score.to_string()),
-                ("objective".to_string(), objective),
-                ("score_breakdown".to_string(), optimizer_score_breakdown_json(0.94, 0.92, 0.96, 0.91, 0.08)),
-                ("topology_context".to_string(), optimizer_topology_context_json(compile_output, submission)),
-                ("trace_context".to_string(), optimizer_trace_context_json(submission)),
-            ]),
-        })
+
+        Ok(BTreeMap::from([
+            ("message".to_string(), "optimizer service completed".to_string()),
+            (
+                "optimized_artifact_ref".to_string(),
+                format!("qfs://jobs/{}/optimizer/optimized_aqo.json", submission.job_id),
+            ),
+            ("optimizer_version".to_string(), model_version),
+            ("optimizer_policy".to_string(), "deterministic".to_string()),
+            ("optimizer_digest".to_string(), optimizer_digest),
+            ("selected_candidate_id".to_string(), selected_candidate_id),
+            ("fallback_used".to_string(), "false".to_string()),
+            ("fallback_reason_code".to_string(), fallback_reason_code),
+            ("fallback_reason".to_string(), fallback_reason),
+            ("confidence_score".to_string(), confidence_score.to_string()),
+            ("objective".to_string(), objective),
+            (
+                "score_breakdown".to_string(),
+                optimizer_score_breakdown_json(0.94, 0.92, 0.96, 0.91, 0.08),
+            ),
+            (
+                "topology_context".to_string(),
+                optimizer_topology_context_json(compile_output, submission),
+            ),
+            ("trace_context".to_string(), optimizer_trace_context_json(submission)),
+        ]))
     }
+
 }
 
 #[derive(Debug, Clone)]
@@ -1943,13 +1944,14 @@ impl GrpcOptimizerGateway {
             )
         });
         
-            OptimizerServiceOptimizeCircuitRequest {
+        OptimizerServiceOptimizeCircuitRequest {
             envelope: Some(OptimizerContractEnvelope {
                 contract_version: submission.contract_version.clone(),
             }),
             request_id: submission.request_id.clone(),
             input_aqo: Some(CircuitPayload {
-                sha256: compile_digest.clone(),
+                format: 1,
+                data: canonical_graph_json.as_bytes().to_vec(),
             }),
             topology: Some(TopologyContext {
                 topology_ref: compiled_artifact_ref,
@@ -2019,7 +2021,7 @@ impl OptimizerGateway for GrpcOptimizerGateway {
         &self,
         submission: &NormalizedSubmission,
         compile_output: &BTreeMap<String, String>,
-    ) -> Result<OptimizerGatewayResponse, OptimizerGatewayError> {
+    ) -> Result<BTreeMap<String, String>, OptimizerGatewayError> {
         let endpoint = Endpoint::from_shared(self.endpoint.clone()).map_err(|err| OptimizerGatewayError {
             grpc_code: Code::InvalidArgument,
             summary: format!("invalid optimizer endpoint: {err}"),
@@ -2066,7 +2068,7 @@ impl OptimizerGateway for GrpcOptimizerGateway {
         output.insert("topology_context".to_string(), optimizer_topology_context_json(compile_output, submission));
         output.insert("trace_context".to_string(), optimizer_trace_context_json(submission));
 
-        Ok(OptimizerGatewayResponse { output })
+        Ok(output)
     }
 }
 
@@ -2452,7 +2454,7 @@ async fn run_job_dag(
         return Ok(());
     }
 
-    let mut reservation_metadata = BTreeMap::from([
+    let reservation_metadata = BTreeMap::from([
         ("reservation_state".to_string(), "held".to_string()),
         (
             "resource_plan_ref".to_string(),
@@ -3289,8 +3291,9 @@ fn ts_to_json(ts: &Timestamp) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::proto::RequestMetadata;
     use std::collections::BTreeSet;
-    use prost_types::{Duration as ProtoDuration, Timestamp};
+    use prost_types::Duration as ProtoDuration;
     use tokio_stream::StreamExt;
     use tonic::Request;
 
