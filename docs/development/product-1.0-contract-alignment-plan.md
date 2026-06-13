@@ -459,6 +459,8 @@ The concrete Wave 3 mappings are captured in the inventory and closure package:
 
 **Goal:** make operational learning and decision lineage first-class while preserving privacy and immutability.
 
+**Planning package:** `docs/development/wave-8/product-1.0-wave-8-execution-plan.md`, `docs/development/wave-8/product-1.0-wave-8-issue-pack.md`, `docs/development/wave-8/product-1.0-wave-8-rfc-adr-gap-analysis.md`, `docs/development/wave-8/product-1.0-wave-8-compatibility-report.md`, `docs/development/wave-8/product-1.0-wave-8-release-readiness-checklist.md`, and `docs/development/wave-8/product-1.0-wave-8-exit-evidence-bundle.md`.
+
 #### Work items
 
 1. Implement Knowledge Base Service for records and decision logs.
@@ -468,12 +470,14 @@ The concrete Wave 3 mappings are captured in the inventory and closure package:
 5. Implement dataset assembly governance for continuous learning.
 6. Add retention/deletion rules and privacy safeguards.
 7. Add KB conformance fixtures and compatibility tests.
+8. Publish Wave 8 release-readiness, compatibility, and exit-evidence artifacts.
 
 #### Exit criteria
 
 - Runtime decisions can be audited and queried.
 - Training data generation is governed and reproducible.
 - Sensitive data is anonymized or rejected by policy.
+- Wave 8 documentation package is synchronized with inventory and README navigation.
 
 ---
 
