@@ -155,7 +155,19 @@ def _ts_to_dt(ts: Timestamp | None) -> datetime:
 
 
 def _stable_json(payload: Any) -> str:
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    def _normalize(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {str(key): _normalize(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [_normalize(item) for item in value]
+        if isinstance(value, Timestamp):
+            return _ts_to_dt(value).isoformat()
+        if isinstance(value, datetime):
+            dt = value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+            return dt.astimezone(timezone.utc).isoformat()
+        return value
+
+    return json.dumps(_normalize(payload), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
 def _stable_hash(payload: Any) -> str:
@@ -1131,13 +1143,11 @@ class KnowledgeBaseService:
         return _ts_to_dt(ts).isoformat() if ts is not None else ""
 
     def _record_visible_to_tenant(self, entry: _StoredRecord, tenant_id: str, project_id: str, context: grpc.ServicerContext) -> bool:
-        _, roles, _ = auth_context(context)
-        return True if ("*" in roles or "admin" in roles) else entry.tenant_id == tenant_id and entry.project_id == project_id
+        return entry.tenant_id == tenant_id and entry.project_id == project_id
 
     def _decision_visible_to_tenant(self, entry: _StoredDecisionLog, tenant_id: str, project_id: str, context: grpc.ServicerContext) -> bool:
-        _, roles, _ = auth_context(context)
-        return True if ("*" in roles or "admin" in roles) else entry.tenant_id == tenant_id and entry.project_id == project_id
-
+        return entry.tenant_id == tenant_id and entry.project_id == project_id
+    
     def _record_matches_filter(self, record: Any, query_filter: Any) -> bool:
         if query_filter is None:
             return True
