@@ -507,6 +507,39 @@ service KnowledgeBaseService {
 
 ---
 
+#### SearchSimilar semantics
+
+`SearchSimilar` is a deterministic scoped similarity query.
+
+Required request semantics:
+
+- `tenant_id` and `project_id` MUST be present.
+- `query_mode` MUST be one of `structural`, `vector`, or `hybrid`.
+- `candidate_budget` MUST be clamped to the service maximum of `8`.
+- `deterministic=true` MUST replay to the same ordered results.
+
+Ranking semantics:
+
+- `structural`: final rank uses the structural score.
+- `vector`: final rank uses the vector score.
+- `hybrid`: final rank uses the combined score.
+- tie-breakers: `confidence` desc, then `candidate_id` asc.
+
+Scope semantics:
+
+- candidates MUST be filtered by tenant/project before scoring,
+- cross-tenant/project retrieval is forbidden.
+
+Returned responses MUST expose:
+
+- `tenant_id`
+- `project_id`
+- `candidate_budget`
+- `selected_candidate_id`
+- `okb_selection_digest`
+
+---
+
 ## 6. Common Types
 
 Canonical shared types include:

@@ -124,6 +124,8 @@ class _OptimizationCandidate:
     explanation_ref: str
     selection_reason: str
     confidence: float
+    structural_score: float
+    vector_score: float
     score_total: float
     selected: bool
     metadata: dict[str, str]
@@ -361,7 +363,7 @@ class KnowledgeBaseService:
     # Ingestion helpers --------------------------------------------------
 
     def query_optimization_candidates(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """Deterministic OKB query backend for structural/vector reuse selection."""
+        """Deterministic OKB query backend for scoped structural/vector/hybrid reuse selection."""
         if self._storage_mode == "disabled":
             raise KnowledgeBaseUnavailable("knowledge base storage unavailable")
 
@@ -388,6 +390,11 @@ class KnowledgeBaseService:
                 "explanation_ref": item.explanation_ref,
                 "selection_reason": item.selection_reason,
                 "confidence": item.confidence,
+                "score_breakdown": {
+                    "structural_score": item.structural_score,
+                    "vector_score": item.vector_score,
+                    "rank_source": item.metadata["rank_source"],
+                },
                 "score_total": item.score_total,
                 "selected": item.candidate_id == selected_candidate_id,
                 "metadata": item.metadata,
@@ -398,6 +405,8 @@ class KnowledgeBaseService:
         digest = _stable_hash(
             {
                 "query": {
+                    "tenant_id": query["tenant_id"],
+                    "project_id": query["project_id"],
                     "semantic_hash": query["semantic_hash"],
                     "aqo_hash": query["aqo_hash"],
                     "backend_profile_id": query["backend_profile_id"],
@@ -408,6 +417,8 @@ class KnowledgeBaseService:
                     "optimizer_version": query["optimizer_version"],
                     "seed": query["seed"],
                     "query_mode": query["query_mode"],
+                    "candidate_budget": query["candidate_budget"],
+                    "deterministic": query["deterministic"],
                 },
                 "selected_candidate_id": selected_candidate_id,
                 "candidate_ids": [item["candidate_id"] for item in selected_payload],
@@ -415,6 +426,8 @@ class KnowledgeBaseService:
         )
 
         return {
+            "tenant_id": query["tenant_id"],
+            "project_id": query["project_id"],
             "query_mode": query["query_mode"],
             "deterministic": query["deterministic"],
             "candidate_budget": query["candidate_budget"],
@@ -854,14 +867,21 @@ class KnowledgeBaseService:
 
 
     def _normalize_okb_query(self, payload: dict[str, Any]) -> dict[str, Any]:
+        tenant_id = str(payload.get("tenant_id", "")).strip()
+        project_id = str(payload.get("project_id", "")).strip()
+        if not tenant_id or not project_id:
+            raise ValueError("tenant_id and project_id are required")
+
         query_mode = str(payload.get("query_mode", "structural")).strip().lower() or "structural"
-        if query_mode not in _OKB_QUERY_MODES:
-            query_mode = "structural"
+        if query_mode not in {"structural", "vector", "hybrid"}:
+            raise ValueError("query_mode must be structural, vector, or hybrid")
 
         candidate_budget = max(1, min(int(payload.get("candidate_budget", 1) or 1), _OKB_MAX_CANDIDATES))
         seed = int(payload.get("seed", 0) or 0)
 
         return {
+            "tenant_id": tenant_id,
+            "project_id": project_id,
             "job_id": str(payload.get("job_id", "")).strip(),
             "semantic_hash": str(payload.get("semantic_hash", "")).strip(),
             "aqo_hash": str(payload.get("aqo_hash", "")).strip(),
@@ -881,9 +901,13 @@ class KnowledgeBaseService:
         pool: list[_OptimizationCandidate] = []
 
         for entry in self._records.values():
+            if entry.tenant_id != query["tenant_id"] or entry.project_id != query["project_id"]:
+                continue
             pool.append(self._candidate_from_record(entry, query))
 
         for entry in self._decision_logs:
+            if entry.tenant_id != query["tenant_id"] or entry.project_id != query["project_id"]:
+                continue
             pool.append(self._candidate_from_decision_log(entry, query))
 
         return [candidate for candidate in pool if candidate.score_total > 0.0]
@@ -898,12 +922,14 @@ class KnowledgeBaseService:
             "optimizer_version": entry.record.optimizer_version,
             "trace_id": entry.record.attributes.get("trace_id", ""),
             "lineage_model_version": getattr(getattr(entry.record, "lineage", None), "model_version", ""),
+            "artifact_ref": entry.record.artifact_ref,
+            "provenance_ref": entry.record.provenance.compiler_ref,
             "query": query,
         }
         return self._build_candidate(
             candidate_id=candidate_id,
             candidate_source="record",
-            optimization_type="structural-reuse" if query["query_mode"] == "structural" else "vector-reuse",
+            optimization_type="structural-reuse" if query["query_mode"] != "vector" else "vector-reuse",
             transformation_ref=entry.record.artifact_ref or entry.record.record_id,
             provenance_ref=entry.record.provenance.compiler_ref or entry.record.record_id,
             compatibility_window=compatibility_window,
@@ -955,11 +981,12 @@ class KnowledgeBaseService:
     ) -> _OptimizationCandidate:
         signature = _stable_hash(
             {
-                "candidate_id": candidate_id,
                 "candidate_source": candidate_source,
                 "optimization_type": optimization_type,
                 "basis": basis,
                 "query": {
+                    "tenant_id": query["tenant_id"],
+                    "project_id": query["project_id"],
                     "semantic_hash": query["semantic_hash"],
                     "aqo_hash": query["aqo_hash"],
                     "backend_profile_id": query["backend_profile_id"],
@@ -971,13 +998,53 @@ class KnowledgeBaseService:
                 },
             }
         )
-        score_total = self._score_from_signature(signature, query["query_mode"])
-        confidence = self._confidence_from_signature(signature, query["query_mode"])
+        score_basis = {
+            key: value
+            for key, value in basis.items()
+            if key not in {"record_id", "decision_id"}
+        }
+        score_signature = _stable_hash(
+            {
+                "candidate_source": candidate_source,
+                "optimization_type": optimization_type,
+                "basis": score_basis,
+                "query": {
+                    "tenant_id": query["tenant_id"],
+                    "project_id": query["project_id"],
+                    "semantic_hash": query["semantic_hash"],
+                    "aqo_hash": query["aqo_hash"],
+                    "backend_profile_id": query["backend_profile_id"],
+                    "topology_snapshot_digest": query["topology_snapshot_digest"],
+                    "policy_envelope_digest": query["policy_envelope_digest"],
+                    "seed": query["seed"],
+                    "query_mode": query["query_mode"],
+                    "deterministic": query["deterministic"],
+                },
+            }
+        )
+
+        structural_score = self._structural_score(basis, query, compatibility_window)
+        vector_score = self._vector_score(score_signature)
+        if query["query_mode"] == "vector":
+            score_total = vector_score
+            rank_source = "vector"
+        elif query["query_mode"] == "hybrid":
+            score_total = round((structural_score * 0.6) + (vector_score * 0.4), 6)
+            rank_source = "hybrid"
+        else:
+            score_total = structural_score
+            rank_source = "structural"
+
+        confidence = round((structural_score + vector_score) / 2.0, 6)
         metadata = {
             "query_mode": query["query_mode"],
+            "ranking_mode": rank_source,
+            "rank_source": rank_source,
             "kb_schema_version": query["kb_schema_version"],
             "compiler_version": query["compiler_version"],
             "optimizer_version": query["optimizer_version"],
+            "tenant_id": query["tenant_id"],
+            "project_id": query["project_id"],
         }
         return _OptimizationCandidate(
             candidate_id=candidate_id,
@@ -990,17 +1057,33 @@ class KnowledgeBaseService:
             explanation_ref=explanation_ref,
             selection_reason=selection_reason,
             confidence=confidence,
+            structural_score=structural_score,
+            vector_score=vector_score,
             score_total=score_total,
             selected=False,
             metadata=metadata,
         )
 
-    def _score_from_signature(self, signature: str, query_mode: str) -> float:
+    def _structural_score(self, basis: dict[str, Any], query: dict[str, Any], compatibility_window: str) -> float:
+        candidate_backend = str(
+            basis.get("backend_profile")
+            or basis.get("selected_action")
+            or ""
+        ).strip()
+        candidate_optimizer = str(
+            basis.get("optimizer_version")
+            or basis.get("model_version")
+            or ""
+        ).strip()
+        backend_match = 1.0 if candidate_backend and candidate_backend == query["backend_profile_id"] else 0.0
+        optimizer_match = 1.0 if candidate_optimizer and candidate_optimizer == query["optimizer_version"] else 0.0
+        compatibility_match = 1.0 if compatibility_window == f"{query['optimizer_version']}::{query['backend_profile_id']}" else 0.0
+        return round((backend_match * 0.45) + (optimizer_match * 0.35) + (compatibility_match * 0.20), 6)
+
+    def _vector_score(self, signature: str) -> float:
         raw = int(signature.removeprefix("sha256:")[:16], 16)
         base = raw / float(0xFFFFFFFFFFFFFFFF)
-        if query_mode == "structural":
-            return round(0.55 + (base * 0.4), 6)
-        return round(0.45 + (base * 0.5), 6)
+        return round(0.25 + (base * 0.75), 6)
 
     def _confidence_from_signature(self, signature: str, query_mode: str) -> float:
         raw = int(signature.removeprefix("sha256:")[16:32], 16)
