@@ -286,6 +286,8 @@ service NeuroSymbolicService {
 - `ScoreCompilationPlanRequest.envelope.contract_version` is required.
 - `ScoreCompilationPlanRequest.context.feature_schema_version` is required.
 - `ScoreCompilationPlanRequest.context.policy_snapshot_version` is required.
+- The active policy snapshot MUST be frozen at service start and treated as immutable for the lifetime of the service process.
+- `ScoreCompilationPlanRequest.context.policy_snapshot_version` MUST match the active immutable snapshot version or the request MUST fail closed before scoring.
 - `ScoreCompilationPlanRequest.context.tenant_id` is required.
 - `ScoreCompilationPlanRequest.context.project_id` is required.
 - `ScoreCompilationPlanRequest.context.subject_id` is required.
@@ -293,12 +295,13 @@ service NeuroSymbolicService {
 - `ScoreCompilationPlanRequest.context.authz_decision_id` is required.
 - The normalized security context MUST be fully traceable in audit events and replay digests.
 - `ScoreCompilationPlanResponse.contract_version` MUST echo the accepted request contract version.
+- `ScoreCompilationPlanResponse.policy_snapshot_version` MUST echo the active immutable snapshot version used for scoring.
 - Responses SHOULD echo the normalized security context fields for bounded auditability.
 - Responses MUST remain bounded and MUST NOT return raw secrets, bearer tokens, or unredacted payload fragments.
 
 #### Determinism requirements
 
-- The service MUST be deterministic for the same feature vector, contract version, policy snapshot version, and deterministic seed.
+- The service MUST be deterministic for the same feature vector, contract version, active policy snapshot version, and deterministic seed.
 - The response MUST include a replay digest and a bounded confidence value.
 - The service output is advisory only and MUST NOT directly change security-relevant decisions.
 

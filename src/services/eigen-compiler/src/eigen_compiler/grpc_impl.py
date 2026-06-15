@@ -422,6 +422,8 @@ _NEURO_ALLOWED_CALLERS_DEFAULT = "eigen-kernel,eigen-compiler,system-api"
 _NEURO_TOKEN_ENV = "EIGEN_NEURO_SYMBOLIC_SERVICE_TOKEN"
 _NEURO_CALLERS_ENV = "EIGEN_NEURO_SYMBOLIC_ALLOWED_CALLERS"
 _NEURO_MODEL_VERSION_ENV = "EIGEN_NEURO_SYMBOLIC_MODEL_VERSION"
+_NEURO_POLICY_SNAPSHOT_VERSION_ENV = "EIGEN_NEURO_SYMBOLIC_POLICY_SNAPSHOT_VERSION"
+_NEURO_POLICY_SNAPSHOT_DEFAULT = "policy-2026-06-15"
 
 
 def _neuro_service_config() -> dict[str, object]:
@@ -437,6 +439,11 @@ def _neuro_service_config() -> dict[str, object]:
         "token": token,
         "model_version": model_version,
     }
+
+
+def _active_policy_snapshot_version() -> str:
+    snapshot_version = os.getenv(_NEURO_POLICY_SNAPSHOT_VERSION_ENV, _NEURO_POLICY_SNAPSHOT_DEFAULT).strip()
+    return snapshot_version or _NEURO_POLICY_SNAPSHOT_DEFAULT
 
 
 def _neuro_metadata(context: grpc.ServicerContext) -> dict[str, str]:
@@ -499,8 +506,11 @@ def _decision_from_score(score: float):
 class NeuroSymbolicService:
     """Implementation of eigen.internal.v1.NeuroSymbolicService."""
 
-    def __init__(self, nsc_pb):
+    def __init__(self, nsc_pb, *, policy_snapshot_version: str | None = None):
         self._nsc_pb = nsc_pb
+        self._policy_snapshot_version = (policy_snapshot_version or _active_policy_snapshot_version()).strip()
+        if not self._policy_snapshot_version:
+            self._policy_snapshot_version = _NEURO_POLICY_SNAPSHOT_DEFAULT
 
     def ScoreCompilationPlan(self, request, context: grpc.ServicerContext):
         caller_id, cfg = _require_internal_model_identity(context, method_name="ScoreCompilationPlan")
@@ -543,6 +553,12 @@ class NeuroSymbolicService:
             context.abort(grpc.StatusCode.INVALID_ARGUMENT, "context.authz_decision_id is required")
         if not request.feature_vector:
             context.abort(grpc.StatusCode.INVALID_ARGUMENT, "feature_vector is required")
+        active_policy_snapshot_version = self._policy_snapshot_version
+        if req_context.policy_snapshot_version.strip() != active_policy_snapshot_version:
+            context.abort(
+                grpc.StatusCode.FAILED_PRECONDITION,
+                "context.policy_snapshot_version must match the active immutable policy snapshot",
+            )
         feature_digest = request.feature_digest_sha256.strip().lower()
         if not re.fullmatch(r"[0-9a-f]{64}", feature_digest):
             context.abort(grpc.StatusCode.INVALID_ARGUMENT, "feature_digest_sha256 must be a SHA-256 hex digest")
@@ -560,7 +576,7 @@ class NeuroSymbolicService:
                 workload_id.encode("utf-8"),
                 authz_decision_id.encode("utf-8"),
                 feature_schema_version.encode("utf-8"),
-                policy_snapshot_version.encode("utf-8"),
+                active_policy_snapshot_version.encode("utf-8"),
                 feature_digest.encode("utf-8"),
                 str(deterministic_seed).encode("utf-8"),
                 caller_id.encode("utf-8"),
@@ -581,7 +597,7 @@ class NeuroSymbolicService:
             tenant_id=tenant_id,
             project_id=project_id,
             feature_schema_version=feature_schema_version,
-            policy_snapshot_version=policy_snapshot_version,
+            policy_snapshot_version=active_policy_snapshot_version,
             model_version=str(cfg["model_version"]),
             decision=decision,
             score=score,
@@ -608,6 +624,7 @@ class NeuroSymbolicService:
                 "feature_schema_version": feature_schema_version,
                 "service_id": caller_id,
                 "model_version": str(cfg["model_version"]),
+                "policy_snapshot_version": active_policy_snapshot_version,
                 "decision": decision_name,
                 "replay_digest": replay_digest,
                 "trace_id": getattr(req_context, "trace_id", ""),
