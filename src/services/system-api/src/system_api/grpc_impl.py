@@ -1819,6 +1819,14 @@ class JobService:
                 )
             except grpc.RpcError as err:
                 if err.code() == grpc.StatusCode.NOT_FOUND:
+                    record = self._get_local_job_record(request.job_id)
+                    if record is not None:
+                        self._enforce_job_access(context=context, record=record)
+                        resp = self._job_pb.GetJobStatusResponse(
+                            status=self._job_status_from_record(record)
+                        )
+                        log_request_end("JobService.GetJobStatus", rc)
+                        return resp
                     _abort_job_not_found(context, request.job_id)
                 context.abort(err.code(), err.details() or "kernel delegation failed")
 
@@ -1828,21 +1836,14 @@ class JobService:
             log_request_end("JobService.GetJobStatus", rc)
             return resp
 
+        record = self._get_local_job_record(request.job_id)
+        if record is not None:
+            self._enforce_job_access(context=context, record=record)
+            resp = self._job_pb.GetJobStatusResponse(status=self._job_status_from_record(record))
+            log_request_end("JobService.GetJobStatus", rc)
+            return resp
+
         _abort_job_not_found(context, request.job_id)
-
-        try:
-            kernel_response = asyncio.run(self._kernel_client.get_job_status(request.job_id, self._public_envelope_dict(envelope)))
-        except grpc.RpcError as err:
-            if err.code() == grpc.StatusCode.NOT_FOUND:
-                _abort_job_not_found(context, request.job_id)
-            context.abort(err.code(), err.details() or "kernel delegation failed")
-
-        resp = self._job_pb.GetJobStatusResponse(
-            status=self._job_status_from_kernel(job_id=request.job_id, kernel_response=kernel_response)
-        )
-
-        log_request_end("JobService.GetJobStatus", rc)
-        return resp
 
     def CancelJob(self, request, context: grpc.ServicerContext):
         enforce_authn(context, method_name="JobService.CancelJob")
@@ -2042,8 +2043,44 @@ class JobService:
                 )
             except grpc.RpcError as err:
                 if err.code() == grpc.StatusCode.NOT_FOUND:
+                    record = self._get_local_job_record(request.job_id)
+                    if record is not None:
+                        self._enforce_job_access(context=context, record=record)
+                        latest = record.updates[-1]
+                        terminal_state = latest.state in {getattr(self._types_pb, name) for name in TERMINAL_JOB_STATES}
+                        if not terminal_state:
+                            abort_public(
+                                context,
+                                PublicErrorSpec(
+                                    grpc_code=grpc.StatusCode.FAILED_PRECONDITION,
+                                    message="results are not ready yet",
+                                    reason="EIGEN_PUBLIC_RESULTS_NOT_READY",
+                                    retryable=True,
+                                    metadata={"current_state": "TASK_STATE_PENDING"},
+                                    retry_delay_seconds=1,
+                                    precondition_type="JOB_LIFECYCLE",
+                                    precondition_subject=request.job_id,
+                                    detail="Poll GetJobStatus until the job reaches a terminal state before reading results.",
+                                ),
+                            )
+                        metadata = dict(record.results_metadata)
+                        metadata.setdefault("qfs_results_parquet_bytes", str(len(record.results_parquet or b"")))
+                        metadata.setdefault("qfs_result_ref", record.results_metadata.get("qfs_results_parquet", ""))
+                        resp = self._job_pb.GetJobResultsResponse(
+                            job_id=record.job_id,
+                            state=latest.state,
+                            counts=dict(record.counts),
+                            metadata=metadata,
+                            error_code=record.error_code,
+                            error_summary=record.error_summary,
+                            error_details_ref=record.error_details_ref,
+                            completed_at=record.completed_at or latest.timestamp or _ts_now(),
+                        )
+                        log_request_end("JobService.GetJobResults", rc)
+                        return resp
                     _abort_job_not_found(context, request.job_id)
-                context.abort(err.code(), err.details() or "kernel delegation failed")
+                if err.code() == grpc.StatusCode.FAILED_PRECONDITION:
+                    context.abort(err.code(), err.details() or "kernel delegation failed")
 
             resp = self._job_pb.GetJobResultsResponse(
                 job_id=kernel_response.get("job_id", request.job_id),
@@ -2101,13 +2138,9 @@ class JobService:
             log_request_end("JobService.GetJobResults", rc)
             return resp
 
-        _abort_job_not_found(context, request.job_id)
-
-        if not self._kernel_endpoint_configured():
-            _abort_job_not_found(context, request.job_id)
-
         record = self._get_local_job_record(request.job_id)
         if record is not None:
+            self._enforce_job_access(context=context, record=record)
             latest = record.updates[-1]
             terminal_state = latest.state in {getattr(self._types_pb, name) for name in TERMINAL_JOB_STATES}
             if not terminal_state:
@@ -2142,6 +2175,8 @@ class JobService:
             )
             log_request_end("JobService.GetJobResults", rc)
             return resp
+        
+        _abort_job_not_found(context, request.job_id)
 
 
     def GetDispatchRationale(self, request, context: grpc.ServicerContext):
