@@ -96,6 +96,9 @@ def kernel_addr(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
 
 @pytest.fixture(scope="module")
 def grpc_addr(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
+    previous_kernel_addr = os.environ.get("EIGEN_KERNEL_ADDR")
+    previous_kernel_endpoint = os.environ.get("KERNEL_ENDPOINT")
+    previous_kernel_grpc_endpoint = os.environ.get("KERNEL_GRPC_ENDPOINT")
     port = _free_port()
     addr = f"127.0.0.1:{port}"
     previous_store_path = os.environ.get("SYSTEM_API_IDEMPOTENCY_STORE_PATH")
@@ -104,6 +107,9 @@ def grpc_addr(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
         tmp_path_factory.mktemp("system-api") / "idempotency.json"
     )
     os.environ["EIGEN_QFS_LOCAL_ROOT"] = str(tmp_path_factory.mktemp("system-api-qfs") / "qfs")
+    os.environ.pop("EIGEN_KERNEL_ADDR", None)
+    os.environ.pop("KERNEL_ENDPOINT", None)
+    os.environ.pop("KERNEL_GRPC_ENDPOINT", None)
 
     from system_api.grpc_server import serve
 
@@ -125,39 +131,27 @@ def grpc_addr(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
         os.environ["EIGEN_QFS_LOCAL_ROOT"] = previous_qfs_root
 
 
+    if previous_kernel_addr is None:
+        os.environ.pop("EIGEN_KERNEL_ADDR", None)
+    else:
+        os.environ["EIGEN_KERNEL_ADDR"] = previous_kernel_addr
+    if previous_kernel_endpoint is None:
+        os.environ.pop("KERNEL_ENDPOINT", None)
+    else:
+        os.environ["KERNEL_ENDPOINT"] = previous_kernel_endpoint
+    if previous_kernel_grpc_endpoint is None:
+        os.environ.pop("KERNEL_GRPC_ENDPOINT", None)
+    else:
+        os.environ["KERNEL_GRPC_ENDPOINT"] = previous_kernel_grpc_endpoint
+
+
 @pytest.fixture(autouse=True)
 def _clean_qfs_store() -> Iterator[None]:
     QFS_STORE.clear()
     yield
     QFS_STORE.clear()
 
+
 @pytest.fixture
 def anyio_backend() -> str:
     return "asyncio"
-
-
-def _resolve_job(self, job_id: str):
-        with self._lock:
-            record = self._jobs.get(job_id)
-            if record is not None:
-                return self._job_pb.SubmitJobResponse(
-                    job_id=job_id,
-                    status=self._job_status_from_record(record),
-                )
-
-            durable = self._job_store.get(job_id)
-            if durable is None:
-                return None
-
-            return self._job_pb.SubmitJobResponse(
-                job_id=durable.job_id,
-                status=self._types_pb.JobStatus(
-                    job_id=durable.job_id,
-                    state=self._types_pb.JOB_STATE_PENDING,
-                    stage="QUEUED",
-                    progress=0.0,
-                    message="idempotent replay from durable store",
-                    created_at=_ts_from_unix(durable.created_at_unix_ms / 1000.0),
-                    updated_at=_ts_from_unix(durable.updated_at_unix_ms / 1000.0),
-                ),
-            )

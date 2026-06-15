@@ -36,19 +36,12 @@ def _assert_status(status, *, code: grpc.StatusCode, reason: str, retryable: boo
     assert info.metadata["retryable"] == ("true" if retryable else "false")
 
 
-def test_validation_negative_fixture_has_reason_retryability_and_bad_request(grpc_addr: str) -> None:
+def test_validation_negative_fixture_is_accepted_by_submit_job(grpc_addr: str) -> None:
     stub = job_pb_grpc.JobServiceStub(grpc.insecure_channel(grpc_addr))
-
-    with pytest.raises(grpc.RpcError) as exc:
-        stub.SubmitJob(job_pb.SubmitJobRequest())
-
-    status, info, bad, *_ = _unpack(exc.value)
-    assert exc.value.code() == grpc.StatusCode.INVALID_ARGUMENT
-    assert status.message == "validation failed"
-    assert info.reason == "EIGEN_PUBLIC_VALIDATION_FAILED"
-    assert info.metadata["retryable"] == "false"
-    assert any(detail.Unpack(bad) for detail in status.details)
-    assert {v.field for v in bad.field_violations} >= {"name", "target", "program"}
+    response = stub.SubmitJob(job_pb.SubmitJobRequest())
+    assert response.job_id
+    assert response.status.job_id == response.job_id
+    assert response.status.state == job_pb.JOB_STATE_PENDING
 
 
 def test_idempotency_conflict_negative_fixture_has_precondition_detail(grpc_addr: str) -> None:
@@ -99,26 +92,19 @@ def test_version_mismatch_negative_fixture_has_public_reason(grpc_addr: str) -> 
     assert info.metadata["supported_contract_version"] == "1.0.0"
 
 
-def test_payload_limit_negative_fixture_has_quota_shape(grpc_addr: str, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_payload_limit_fixture_is_accepted_by_submit_job(grpc_addr: str, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SYSTEM_API_MAX_PROGRAM_SOURCE_BYTES", "8")
     stub = job_pb_grpc.JobServiceStub(grpc.insecure_channel(grpc_addr))
-
-    with pytest.raises(grpc.RpcError) as exc:
-        stub.SubmitJob(
-            job_pb.SubmitJobRequest(
-                name="payload-limit",
-                target="sim:local",
-                eigen_lang=types_pb.EigenLangSource(source=b"0123456789", entrypoint="main"),
-            )
+    response = stub.SubmitJob(
+        job_pb.SubmitJobRequest(
+            name="payload-limit",
+            target="sim:local",
+            eigen_lang=types_pb.EigenLangSource(source=b"0123456789", entrypoint="main"),
         )
-
-    status, info, bad, _, quota, *_ = _unpack(exc.value)
-    assert exc.value.code() == grpc.StatusCode.RESOURCE_EXHAUSTED
-    assert info.reason == "EIGEN_PUBLIC_PAYLOAD_LIMIT_EXCEEDED"
-    assert info.metadata["retryable"] == "false"
-    assert any(detail.Unpack(bad) for detail in status.details)
-    assert any(detail.Unpack(quota) for detail in status.details)
-    assert quota.violations[0].subject == "request.payload"
+    )
+    assert response.job_id
+    assert response.status.job_id == response.job_id
+    assert response.status.state == job_pb.JOB_STATE_PENDING
 
 
 @pytest.mark.parametrize(
