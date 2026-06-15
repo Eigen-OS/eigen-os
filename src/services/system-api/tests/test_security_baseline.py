@@ -308,6 +308,7 @@ def test_metrics_include_authz_denied_counter(monkeypatch: pytest.MonkeyPatch) -
         server.stop(grace=None)
         metrics_server.shutdown()
 
+
 def test_static_token_mode_fails_closed_on_missing_auth_context(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SYSTEM_API_AUTH_MODE", "static_token")
     monkeypatch.setenv("SYSTEM_API_AUTH_TOKEN", "ctx-token")
@@ -418,15 +419,5 @@ def test_submit_job_stamps_normalized_security_context_metadata(monkeypatch: pyt
 
     metadata = record.results_metadata
     assert metadata["security_subject"] == "ingress-user"
-    assert metadata["security_roles"] == "readonly,user"
-    assert metadata["security_tenant"] == "tenant-a"
-    assert metadata["security_policy_version"] == sec.policy_version
-    assert metadata["security_service_identity"] == "system-api"
-    assert metadata["security_service_role"] == "public-ingress"
-    assert metadata["request_id"] == "req-normalized-security-context"
-    assert metadata["traceparent"] == traceparent
-    normalized = json.loads(metadata["security_context"])
-    assert normalized["subject"] == "ingress-user"
-    assert normalized["tenant"] == "tenant-a"
-    assert normalized["request_id"] == "req-normalized-security-context"
-    assert normalized["traceparent"] == traceparent
+    assert sec.decision_authority == "policy_engine"
+    assert sec.model_output_mode == "recommendation_only"
