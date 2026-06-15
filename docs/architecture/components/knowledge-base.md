@@ -11,6 +11,8 @@ The Knowledge Base exposes two distinct behaviors:
 1. **Public record storage** — CRUD/query for KB records and decision logs.
 2. **Optimization Knowledge Base (OKB) retrieval** — deterministic reuse selection for compiler / AQO workflows.
 
+Runtime decision logs are append-only and MUST preserve the audit trail fields required by the neuro-symbolic compliance contract: caller identity, tenant, policy snapshot version, model version, retrieval sources, and final decision.
+
 This document defines the retrieval semantics for both candidate similarity search and canonical pattern lookup.
 
 ## 2. Retrieval primitives

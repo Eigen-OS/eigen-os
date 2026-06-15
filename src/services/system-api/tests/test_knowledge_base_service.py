@@ -230,7 +230,9 @@ def test_decision_log_lineage_validation_and_ordering(grpc_addr: str) -> None:
     assert [item.selected_action for item in query.decision_logs] == ["backend-alpha", "backend-beta"]
 
 
-def test_runtime_decision_ingest_persists_explainability_envelope() -> None:
+def test_runtime_decision_ingest_persists_explainability_envelope(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    audit_path = tmp_path / "audit.jsonl"
+    monkeypatch.setenv("SYSTEM_API_AUDIT_SINK_PATH", str(audit_path))
     service = KnowledgeBaseService(kb_pb=kb_pb, types_pb=types_pb)
 
     decision_id = service.ingest_runtime_decision(
@@ -238,6 +240,9 @@ def test_runtime_decision_ingest_persists_explainability_envelope() -> None:
             "record_id": "decision-runtime-1",
             "decision_id": "decision-runtime-1",
             "trace_id": "trace-runtime",
+            "tenant_id": "tenant-a",
+            "project_id": "project-a",
+            "caller_identity": "eigen-compiler",
             "model_version": "m1",
             "component": "runtime",
             "policy_branch": "baseline",
@@ -246,7 +251,7 @@ def test_runtime_decision_ingest_persists_explainability_envelope() -> None:
             "feature_snapshot": {"queue_depth": "2"},
             "feature_set": {"schema_version": "features.v1", "signature": "sig-1"},
             "confidence": 0.8125,
-            "retrieval_references": [
+            "retrieval_sources": [
                 "nsc://feature-set/tenant-a/project-a/request-1/feature-digest",
                 "nsc://policy-snapshot/policy-2026-06-15",
                 "nsc://model/dpda-model-unit-test",
@@ -266,11 +271,34 @@ def test_runtime_decision_ingest_persists_explainability_envelope() -> None:
     assert envelope["confidence"] == 0.8125
     assert envelope["retrieval_reference_count"] == 3
     assert envelope["retrieval_references"][1] == "nsc://policy-snapshot/policy-2026-06-15"
-
+    assert snapshot["caller_identity"] == "eigen-compiler"
+    assert snapshot["tenant_id"] == "tenant-a"
+    assert snapshot["project_id"] == "project-a"
+    assert snapshot["policy_snapshot_version"] == "policy-2026-06-15"
+    assert snapshot["final_decision"] == "backend-alpha"
+    assert json.loads(snapshot["retrieval_sources"]) == [
+        "nsc://feature-set/tenant-a/project-a/request-1/feature-digest",
+        "nsc://policy-snapshot/policy-2026-06-15",
+        "nsc://model/dpda-model-unit-test",
+    ]
+    
     evidence = service._learning_evidence[-1]
     assert evidence["payload"]["explainability_envelope"]["model_version"] == "m1"
     assert evidence["payload"]["explainability_envelope"]["confidence"] == 0.8125
     assert evidence["metadata"]["explainability_envelope_json"]
+
+    audit_lines = audit_path.read_text(encoding="utf-8").strip().splitlines()
+    assert len(audit_lines) == 1
+    audit = json.loads(audit_lines[0])
+    assert audit["audit_kind"] == "immutable_decision"
+    assert audit["operation"] == "ingest_runtime_decision"
+    assert audit["caller_identity"] == "eigen-compiler"
+    assert audit["tenant"] == "tenant-a"
+    assert audit["policy_snapshot_version"] == "policy-2026-06-15"
+    assert audit["model_version"] == "m1"
+    assert audit["retrieval_sources"][-1] == "nsc://model/dpda-model-unit-test"
+    assert audit["final_decision"] == "backend-alpha"
+    assert audit["immutable"] is True
 
 
 def test_kb_records_and_decision_logs_are_project_scoped(grpc_addr: str) -> None:

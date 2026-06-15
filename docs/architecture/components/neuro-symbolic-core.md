@@ -231,6 +231,8 @@ The active policy snapshot version used for scoring MUST be included in response
 
 The audit record MUST also retain the explainability envelope with model version, feature set summary, confidence, and retrieval references so the same inference can be replayed deterministically from immutable artifacts.
 
+The immutable audit trail MUST additionally capture caller identity, tenant, policy snapshot version, model version, retrieval sources, and final decision for every scoring operation.
+
 ---
 
 ## 7. Major Internal Subsystems (Target Architecture)

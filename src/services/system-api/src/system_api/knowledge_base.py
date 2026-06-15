@@ -235,7 +235,7 @@ def _explainability_envelope_from_payload(payload: dict[str, Any], *, salt: str,
             "model_version": str(payload.get("model_version", "")).strip(),
             "feature_set": payload.get("feature_set") if isinstance(payload.get("feature_set"), dict) else {},
             "confidence": payload.get("confidence", 0.0),
-            "retrieval_references": payload.get("retrieval_references") or [],
+            "retrieval_references": payload.get("retrieval_references") or payload.get("retrieval_sources") or [],
             "replay_digest": str(payload.get("replay_digest", "")).strip(),
             "decision_digest": str(payload.get("decision_digest", "")).strip(),
             "policy_snapshot_version": str(payload.get("policy_snapshot_version", "")).strip(),
@@ -274,6 +274,29 @@ def _explainability_envelope_from_payload(payload: dict[str, Any], *, salt: str,
         "decision_digest": str(envelope.get("decision_digest") or envelope.get("replay_digest") or "").strip(),
         "policy_snapshot_version": str(envelope.get("policy_snapshot_version", "")).strip(),
     }
+
+
+def _audit_string_list(value: Any) -> list[str]:
+    if value in (None, ""):
+        return []
+    if isinstance(value, (list, tuple, set)):
+        raw_items = value
+    else:
+        raw_items = (value,)
+    items: list[str] = []
+    for raw in raw_items:
+        text = str(raw).strip()
+        if text and text not in items:
+            items.append(text)
+    return items
+
+
+def _caller_identity_from_payload(payload: dict[str, Any]) -> str:
+    for key in ("caller_identity", "caller_id", "service_identity", "subject", "requested_by"):
+        value = str(payload.get(key, "")).strip()
+        if value:
+            return value
+    return ""
 
 
 def _copy_timestamp(ts: Timestamp | None) -> Timestamp:
@@ -558,6 +581,43 @@ class KnowledgeBaseService:
         self._require_write(context, operation="append_decision_log")
         envelope = self._normalize_envelope(request.envelope, context)
         self._validate_decision_log(request.decision_log, context)
+        sec_ctx, policy_version = self._retrieval_security_context(context, operation="append_decision_log")
+        feature_snapshot = dict(getattr(request.decision_log, "feature_snapshot", {}) or {})
+        caller_identity = getattr(sec_ctx, "subject", "") or ""
+        retrieval_sources = _audit_string_list(
+            feature_snapshot.get("retrieval_sources")
+            or feature_snapshot.get("retrieval_references")
+            or feature_snapshot.get("retrieval_source")
+        )
+        policy_snapshot_version = str(
+            feature_snapshot.get("policy_snapshot_version")
+            or feature_snapshot.get("policy_version")
+            or policy_version
+        ).strip()
+        model_version = str(request.decision_log.model_version or feature_snapshot.get("model_version", "")).strip()
+        final_decision = str(request.decision_log.selected_action or feature_snapshot.get("final_decision", "")).strip()
+        confidence_value: float | None = None
+        raw_confidence = feature_snapshot.get("confidence", "")
+        if raw_confidence not in (None, ""):
+            try:
+                confidence_value = float(raw_confidence)
+            except (TypeError, ValueError):
+                confidence_value = None
+        self._audit_decision_event(
+            operation="append_decision_log",
+            decision_id=str(request.decision_log.decision_id).strip(),
+            final_decision=final_decision,
+            tenant_id=envelope["tenant_id"],
+            project_id=envelope["project_id"],
+            policy_snapshot_version=policy_snapshot_version,
+            model_version=model_version,
+            retrieval_sources=retrieval_sources,
+            caller_identity=caller_identity,
+            trace_id=str(request.decision_log.trace_id).strip(),
+            replay_digest=str(feature_snapshot.get("replay_digest", "")).strip(),
+            confidence=confidence_value,
+            sec_ctx=sec_ctx,
+        )
         with self._lock:
             self._gc_locked()
             stored = self._store_decision_log(decision_log=request.decision_log, envelope=envelope, context=context)
@@ -690,13 +750,20 @@ class KnowledgeBaseService:
             epoch=self._anon_epoch,
         )
         snapshot = _anonymize_mapping(dict(payload.get("feature_snapshot") or {}), salt=self._anon_salt, epoch=self._anon_epoch)
+        caller_identity = _caller_identity_from_payload(payload)
+        retrieval_sources = _audit_string_list(payload.get("retrieval_sources") or explainability_envelope["retrieval_references"])
+        snapshot["caller_identity"] = caller_identity
+        snapshot["tenant_id"] = str(payload.get("tenant_id") or self._payload_envelope(payload)["tenant_id"]).strip()
+        snapshot["project_id"] = str(payload.get("project_id") or self._payload_envelope(payload)["project_id"]).strip()
+        snapshot["policy_snapshot_version"] = explainability_envelope["policy_snapshot_version"]
+        snapshot["model_version"] = explainability_envelope["model_version"] or decision_log.model_version
+        snapshot["retrieval_sources"] = _stable_json(retrieval_sources)
+        snapshot["final_decision"] = decision_log.selected_action
         snapshot["explainability_envelope"] = _stable_json(explainability_envelope)
         snapshot["feature_set"] = _stable_json(explainability_envelope["feature_set"])
         snapshot["confidence"] = f"{explainability_envelope['confidence']:.6f}"
         snapshot["retrieval_references"] = _stable_json(explainability_envelope["retrieval_references"])
         snapshot["replay_digest"] = explainability_envelope["replay_digest"]
-        snapshot["policy_snapshot_version"] = explainability_envelope["policy_snapshot_version"]
-        snapshot["model_version"] = explainability_envelope["model_version"] or decision_log.model_version
         for key, value in snapshot.items():
             decision_log.feature_snapshot[key] = str(value)
         decided_at = payload.get("decided_at")
@@ -708,6 +775,20 @@ class KnowledgeBaseService:
             decision_log.decided_at.CopyFrom(_now_ts())
         envelope = self._payload_envelope(payload)
         capability_scope = _capability_scope_tokens(payload)
+        self._audit_decision_event(
+            operation="ingest_runtime_decision",
+            decision_id=decision_log.decision_id,
+            final_decision=decision_log.selected_action,
+            tenant_id=envelope["tenant_id"],
+            project_id=envelope["project_id"],
+            policy_snapshot_version=explainability_envelope["policy_snapshot_version"] or envelope["contract_version"],
+            model_version=decision_log.model_version,
+            retrieval_sources=retrieval_sources,
+            caller_identity=caller_identity,
+            trace_id=decision_log.trace_id,
+            replay_digest=explainability_envelope["replay_digest"],
+            confidence=explainability_envelope["confidence"],
+        )
         with self._lock:
             self._gc_locked()
             self._store_decision_log(
@@ -1247,6 +1328,75 @@ class KnowledgeBaseService:
                 ),
             }
         )
+
+
+    def _audit_decision_event(
+        self,
+        *,
+        operation: str,
+        decision_id: str,
+        final_decision: str,
+        tenant_id: str,
+        project_id: str,
+        policy_snapshot_version: str,
+        model_version: str,
+        retrieval_sources: Sequence[str],
+        caller_identity: str,
+        trace_id: str = "",
+        traceparent: str = "",
+        replay_digest: str = "",
+        confidence: float | None = None,
+        sec_ctx: Any | None = None,
+    ) -> None:
+        subject = ""
+        roles: tuple[str, ...] = ()
+        auth_mode = "allow_all"
+        service_identity = None
+        sandbox_profile = None
+        replay_marker = ""
+        if sec_ctx is not None:
+            subject = getattr(sec_ctx, "subject", "") or ""
+            roles = tuple(getattr(sec_ctx, "roles", ()) or ())
+            auth_mode = getattr(sec_ctx, "auth_mode", "allow_all") or "allow_all"
+            service_identity = getattr(sec_ctx, "service_identity", None)
+            sandbox_profile = getattr(sec_ctx, "sandbox_profile", None)
+            replay_marker = str(getattr(sec_ctx, "claims", {}).get("replay_marker", "") or "")
+        retrieval_sources_list = list(retrieval_sources)
+        audit_event: dict[str, object] = {
+            "audit_kind": "immutable_decision",
+            "operation": operation,
+            "decision": final_decision,
+            "final_decision": final_decision,
+            "decision_id": decision_id,
+            "caller_identity": caller_identity,
+            "tenant": tenant_id,
+            "tenant_id": tenant_id,
+            "project_id": project_id,
+            "policy_version": policy_snapshot_version,
+            "policy_snapshot_version": policy_snapshot_version,
+            "model_version": model_version,
+            "retrieval_sources": retrieval_sources_list,
+            "retrieval_references": retrieval_sources_list,
+            "retrieval_source_count": len(retrieval_sources_list),
+            "trace_id": trace_id,
+            "traceparent": traceparent,
+            "replay_digest": replay_digest,
+            "immutable": True,
+        }
+        if confidence is not None:
+            audit_event["confidence"] = round(float(confidence), 6)
+        audit_event.update(
+            sanitized_security_metadata(
+                subject=subject,
+                roles=roles,
+                auth_mode=auth_mode,
+                policy_version=policy_snapshot_version,
+                service_identity=service_identity,
+                sandbox_profile=sandbox_profile,
+                replay_marker=replay_marker,
+            )
+        )
+        append_security_audit_event(audit_event)
 
 
     def _normalize_okb_query(self, payload: dict[str, Any]) -> dict[str, Any]:
