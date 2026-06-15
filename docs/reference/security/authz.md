@@ -109,3 +109,13 @@ The public ingress boundary MUST reject requests by default unless the configure
 Security decisions MUST be written to the canonical append-only audit sink with bounded, secret-free metadata. Each audit event MUST include the decision outcome, decision reason, policy version, service identity, sandbox profile, replay marker, and request trace correlation where available.
 
 Security telemetry for the audit path MUST remain bounded. Audit sink health is surfaced as counters rather than free-form labels, and audit records MUST NOT embed raw payloads, bearer tokens, or provider secrets.
+
+### 7.2 Knowledge Base retrieval enforcement
+
+Knowledge Base retrieval paths MUST be gated before data is returned. The retrieval decision flow MUST perform, in order:
+
+1. authorization for the caller,
+2. capability validation for the requested scope, and
+3. validation against the active policy snapshot.
+
+Retrieval allow/deny outcomes MUST be written to the audit sink with the active policy version and correlation metadata when available.
