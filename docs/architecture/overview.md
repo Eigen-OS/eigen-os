@@ -225,7 +225,7 @@ The System API is the only public ingress to the runtime.
 Responsibilities:
 
 - authentication and authorization,
-- request validation and normalization,
+- request validation and normalization, including feature-payload minimization before internal service dispatch,
 - routing to internal services,
 - trace propagation and observability boundary,
 - external API compatibility (public contract governance).

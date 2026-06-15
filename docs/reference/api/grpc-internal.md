@@ -289,9 +289,11 @@ service NeuroSymbolicService {
 - The active policy snapshot MUST be frozen at service start and treated as immutable for the lifetime of the service process.
 - `ScoreCompilationPlanRequest.context.policy_snapshot_version` MUST match the active immutable snapshot version or the request MUST fail closed before scoring.
 - The service MUST run a mandatory feature-extraction redaction pass before scoring.
+- The service MUST minimize the inference payload before scoring by deleting raw payloads, full request bodies, unnecessary metadata, and large trace dumps.
 - The redaction pass MUST delete bearer tokens, API keys, tenant-private secrets, credentials, session cookies, and raw auth headers.
 - The redaction pass MUST mask email addresses, phone numbers, and internal identifiers.
-- The redacted feature vector, not the raw payload, MUST be used for model scoring and replay digests.
+- The minimized/redacted feature vector, not the raw payload, MUST be used for model scoring and replay digests.
+- The post-minimization feature payload MUST be bounded by policy, and oversized requests MUST fail closed with `RESOURCE_EXHAUSTED`.
 - Every edited field path MUST be emitted in audit/log metadata as redacted-only evidence.
 - `ScoreCompilationPlanRequest.context.tenant_id` is required.
 - `ScoreCompilationPlanRequest.context.project_id` is required.

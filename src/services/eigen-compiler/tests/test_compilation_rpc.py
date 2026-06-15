@@ -334,7 +334,10 @@ def test_neuro_symbolic_service_scores_internal_requests(grpc_addr: str, monkeyp
     stub = nsc_pb_grpc.NeuroSymbolicServiceStub(channel)
 
     resp = stub.ScoreCompilationPlan(
-        _nsc_request(),
+        _nsc_request(
+            feature_vector=raw_feature_vector,
+            feature_digest_sha256=hashlib.sha256(raw_feature_vector).hexdigest(),
+        ),
         metadata=(
             ("authorization", "Bearer unit-test-token"),
             ("x-eigen-service-id", "eigen-kernel"),
@@ -498,6 +501,137 @@ def test_neuro_symbolic_service_redacts_sensitive_feature_payload(
     assert any(field.endswith(":masked_email") for field in record.feature_redaction_fields)
     assert any(field.endswith(":masked_phone") for field in record.feature_redaction_fields)
     assert any(field.endswith(":masked_identifier") for field in record.feature_redaction_fields)
+
+
+def test_neuro_symbolic_service_minimizes_payload_before_scoring(
+    grpc_addr: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setenv("EIGEN_NEURO_SYMBOLIC_SERVICE_TOKEN", "unit-test-token")
+    monkeypatch.setenv("EIGEN_NEURO_SYMBOLIC_ALLOWED_CALLERS", "eigen-kernel,eigen-compiler")
+    monkeypatch.setenv("EIGEN_NEURO_SYMBOLIC_MODEL_VERSION", "dpda-model-unit-test")
+    monkeypatch.setenv("EIGEN_NEURO_SYMBOLIC_POLICY_SNAPSHOT_VERSION", "policy-2026-06-15")
+    caplog.set_level(logging.INFO, logger="eigen_compiler")
+
+    raw_feature_vector = json.dumps(
+        {
+            "normalized_features": {
+                "candidate_count": 4,
+                "stage_count": 7,
+            },
+            "request_body": {
+                "source": "def main(): pass",
+                "arguments": ["--unsafe", "--debug"],
+            },
+            "trace_dump": "TRACE-" + ("x" * 1024),
+            "stack_trace": "STACK-" + ("y" * 1024),
+            "raw_payload": {
+                "bytes": "z" * 2048,
+            },
+            "signals": [{"label": "ok"}],
+        },
+        sort_keys=True,
+    ).encode("utf-8")
+    minimized = _redact_feature_vector(raw_feature_vector)
+
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = nsc_pb_grpc.NeuroSymbolicServiceStub(channel)
+
+    resp = stub.ScoreCompilationPlan(
+        _nsc_request(
+            feature_vector=raw_feature_vector,
+            feature_digest_sha256=hashlib.sha256(minimized.feature_vector).hexdigest(),
+        ),
+        metadata=(
+            ("authorization", "Bearer unit-test-token"),
+            ("x-eigen-service-id", "eigen-kernel"),
+        ),
+    )
+
+    variant_feature_vector = json.dumps(
+        {
+            "normalized_features": {
+                "candidate_count": 4,
+                "stage_count": 7,
+            },
+            "request_body": {
+                "source": "def main(): pass",
+                "arguments": ["--very-verbose", "--another-debug-flag"],
+            },
+            "trace_dump": "TRACE-" + ("a" * 4096),
+            "stack_trace": "STACK-" + ("b" * 4096),
+            "raw_payload": {
+                "bytes": "c" * 8192,
+            },
+            "signals": [{"label": "ok"}],
+        },
+        sort_keys=True,
+    ).encode("utf-8")
+    variant_minimized = _redact_feature_vector(variant_feature_vector)
+
+    assert variant_minimized.feature_vector == minimized.feature_vector
+
+    repeat = stub.ScoreCompilationPlan(
+        _nsc_request(
+            feature_vector=variant_feature_vector,
+            feature_digest_sha256=hashlib.sha256(variant_minimized.feature_vector).hexdigest(),
+        ),
+        metadata=(
+            ("authorization", "Bearer unit-test-token"),
+            ("x-eigen-service-id", "eigen-kernel"),
+        ),
+    )
+
+    assert repeat.replay_digest == resp.replay_digest
+
+    scoring_logs = [record for record in caplog.records if record.getMessage() == "neuro-symbolic scoring completed"]
+    assert scoring_logs, "expected a scoring log record"
+    record = scoring_logs[-1]
+    assert record.feature_payload_bytes > record.feature_payload_minimized_bytes
+    assert record.feature_payload_limit_bytes >= record.feature_payload_minimized_bytes
+    assert any(field.endswith("request_body:deleted") for field in record.feature_redaction_fields)
+    assert any(field.endswith("trace_dump:deleted") for field in record.feature_redaction_fields)
+    assert any(field.endswith("stack_trace:deleted") for field in record.feature_redaction_fields)
+    assert any(field.endswith("raw_payload:deleted") for field in record.feature_redaction_fields)
+
+
+def test_neuro_symbolic_service_enforces_policy_feature_payload_limit(
+    grpc_addr: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("EIGEN_NEURO_SYMBOLIC_SERVICE_TOKEN", "unit-test-token")
+    monkeypatch.setenv("EIGEN_NEURO_SYMBOLIC_ALLOWED_CALLERS", "eigen-kernel,eigen-compiler")
+    monkeypatch.setenv("EIGEN_NEURO_SYMBOLIC_MAX_FEATURE_VECTOR_BYTES", "64")
+
+    oversized = json.dumps(
+        {
+            "normalized_features": {
+                "feature_a": "x" * 256,
+                "feature_b": "y" * 256,
+            },
+            "signals": [{"label": "ok"}],
+        },
+        sort_keys=True,
+    ).encode("utf-8")
+    oversized_minimized = _redact_feature_vector(oversized)
+
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = nsc_pb_grpc.NeuroSymbolicServiceStub(channel)
+
+    with pytest.raises(grpc.RpcError) as e:
+        stub.ScoreCompilationPlan(
+            _nsc_request(
+                feature_vector=oversized,
+                feature_digest_sha256=hashlib.sha256(oversized_minimized.feature_vector).hexdigest(),
+            ),
+            metadata=(
+                ("authorization", "Bearer unit-test-token"),
+                ("x-eigen-service-id", "eigen-kernel"),
+            ),
+        )
+
+    assert e.value.code() == grpc.StatusCode.RESOURCE_EXHAUSTED
 
 
 def test_neuro_symbolic_service_rejects_digest_mismatch(
