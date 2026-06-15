@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import grpc
 import pytest
 from google.rpc import error_details_pb2
@@ -11,6 +12,8 @@ ensure_generated()
 
 from eigen.internal.v1 import compilation_service_pb2 as comp_pb  # noqa: E402
 from eigen.internal.v1 import compilation_service_pb2_grpc as comp_pb_grpc  # noqa: E402
+from eigen.internal.v1 import neuro_symbolic_service_pb2 as nsc_pb  # noqa: E402
+from eigen.internal.v1 import neuro_symbolic_service_pb2_grpc as nsc_pb_grpc  # noqa: E402
 from eigen.internal.v1 import types_pb2 as types_pb  # noqa: E402
 
 
@@ -256,3 +259,134 @@ def test_compile_circuit_rejects_unsupported_distributed_config(grpc_addr: str) 
         "options.distributed.queue_provider",
         "options.distributed.topology_hint",
     ]
+
+
+def _nsc_request(
+    *,
+    contract_version: str = "1.0.0",
+    request_id: str = "req-nsc-001",
+    tenant_id: str = "tenant-a",
+    project_id: str = "project-a",
+    feature_schema_version: str = "features.v1",
+    policy_snapshot_version: str = "policy-2026-06-15",
+    feature_vector: bytes = b'{"redacted":true,"signals":[1,2,3]}',
+    feature_digest_sha256: str | None = None,
+    deterministic_seed: int = 7,
+    model_hint: str = "dpda",
+) -> nsc_pb.ScoreCompilationPlanRequest:
+    return nsc_pb.ScoreCompilationPlanRequest(
+        envelope=nsc_pb.NeuroSymbolicContractEnvelope(contract_version=contract_version),
+        context=nsc_pb.NeuroSymbolicRequestContext(
+            request_id=request_id,
+            tenant_id=tenant_id,
+            project_id=project_id,
+            feature_schema_version=feature_schema_version,
+            policy_snapshot_version=policy_snapshot_version,
+            trace_id="0123456789abcdef0123456789abcdef",
+            traceparent="00-0123456789abcdef0123456789abcdef-0123456789abcdef-01",
+        ),
+        feature_vector=feature_vector,
+        feature_digest_sha256=feature_digest_sha256 or hashlib.sha256(feature_vector).hexdigest(),
+        deterministic_seed=deterministic_seed,
+        model_hint=model_hint,
+    )
+
+
+def test_neuro_symbolic_service_scores_internal_requests(grpc_addr: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EIGEN_NEURO_SYMBOLIC_SERVICE_TOKEN", "unit-test-token")
+    monkeypatch.setenv("EIGEN_NEURO_SYMBOLIC_ALLOWED_CALLERS", "eigen-kernel,eigen-compiler")
+    monkeypatch.setenv("EIGEN_NEURO_SYMBOLIC_MODEL_VERSION", "dpda-model-unit-test")
+
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = nsc_pb_grpc.NeuroSymbolicServiceStub(channel)
+
+    resp = stub.ScoreCompilationPlan(
+        _nsc_request(),
+        metadata=(
+            ("authorization", "Bearer unit-test-token"),
+            ("x-eigen-service-id", "eigen-kernel"),
+        ),
+    )
+
+    assert resp.contract_version == "1.0.0"
+    assert resp.request_id == "req-nsc-001"
+    assert resp.tenant_id == "tenant-a"
+    assert resp.project_id == "project-a"
+    assert resp.feature_schema_version == "features.v1"
+    assert resp.policy_snapshot_version == "policy-2026-06-15"
+    assert resp.model_version == "dpda-model-unit-test"
+    assert resp.decision in {
+        nsc_pb.ADVISORY_DECISION_ACCEPT,
+        nsc_pb.ADVISORY_DECISION_REVIEW,
+        nsc_pb.ADVISORY_DECISION_REJECT,
+    }
+    assert 0.0 <= resp.score <= 1.0
+    assert 0.55 <= resp.confidence <= 0.99
+    assert resp.explanation_ref.startswith("nsc://explanations/req-nsc-001/")
+    assert len(resp.replay_digest) == 64
+    assert resp.deterministic_compatible is True
+
+
+def test_neuro_symbolic_service_fails_closed_without_internal_identity(
+    grpc_addr: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("EIGEN_NEURO_SYMBOLIC_SERVICE_TOKEN", "unit-test-token")
+    monkeypatch.setenv("EIGEN_NEURO_SYMBOLIC_ALLOWED_CALLERS", "eigen-kernel,eigen-compiler")
+
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = nsc_pb_grpc.NeuroSymbolicServiceStub(channel)
+
+    with pytest.raises(grpc.RpcError) as e:
+        stub.ScoreCompilationPlan(_nsc_request(), metadata=(("x-eigen-service-id", "eigen-kernel"),))
+
+    assert e.value.code() == grpc.StatusCode.UNAUTHENTICATED
+
+
+def test_neuro_symbolic_service_rejects_unsupported_contract_version(
+    grpc_addr: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("EIGEN_NEURO_SYMBOLIC_SERVICE_TOKEN", "unit-test-token")
+    monkeypatch.setenv("EIGEN_NEURO_SYMBOLIC_ALLOWED_CALLERS", "eigen-kernel,eigen-compiler")
+
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = nsc_pb_grpc.NeuroSymbolicServiceStub(channel)
+
+    with pytest.raises(grpc.RpcError) as e:
+        stub.ScoreCompilationPlan(
+            _nsc_request(contract_version="2.0.0"),
+            metadata=(
+                ("authorization", "Bearer unit-test-token"),
+                ("x-eigen-service-id", "eigen-kernel"),
+            ),
+        )
+
+    assert e.value.code() == grpc.StatusCode.FAILED_PRECONDITION
+
+
+def test_neuro_symbolic_service_rejects_digest_mismatch(
+    grpc_addr: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("EIGEN_NEURO_SYMBOLIC_SERVICE_TOKEN", "unit-test-token")
+    monkeypatch.setenv("EIGEN_NEURO_SYMBOLIC_ALLOWED_CALLERS", "eigen-kernel,eigen-compiler")
+
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = nsc_pb_grpc.NeuroSymbolicServiceStub(channel)
+
+    bad = _nsc_request(
+        feature_vector=b'{"redacted":true,"signals":[1,2,4]}',
+        feature_digest_sha256="0" * 64,
+    )
+
+    with pytest.raises(grpc.RpcError) as e:
+        stub.ScoreCompilationPlan(
+            bad,
+            metadata=(
+                ("authorization", "Bearer unit-test-token"),
+                ("x-eigen-service-id", "eigen-kernel"),
+            ),
+        )
+
+    assert e.value.code() == grpc.StatusCode.INVALID_ARGUMENT

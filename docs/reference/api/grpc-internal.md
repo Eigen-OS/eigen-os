@@ -256,6 +256,47 @@ Operational flow:
 
 ---
 
+### 5.2 NeuroSymbolicService
+
+#### Purpose
+
+Internal-only DPDA model service used for advisory scoring of compilation plans.
+
+This service is callable only by authenticated internal service identities. Public ingress paths MUST NOT expose a direct route to this service.
+
+#### Security and versioning requirements
+
+- All requests MUST include an authenticated internal service identity.
+- Transport MUST use mTLS in deployment; service identity tokens MAY be used as the request-level assertion.
+- Each request MUST include a SemVer contract envelope.
+- Requests without a valid internal identity MUST fail closed with `UNAUTHENTICATED`.
+- Unsupported contract versions MUST be rejected before model scoring.
+
+#### Service definition
+
+```text
+service NeuroSymbolicService {
+    rpc ScoreCompilationPlan(ScoreCompilationPlanRequest)
+        returns (ScoreCompilationPlanResponse);
+}
+```
+
+#### Request/response envelope contract
+
+- `ScoreCompilationPlanRequest.envelope.contract_version` is required.
+- `ScoreCompilationPlanRequest.context.feature_schema_version` is required.
+- `ScoreCompilationPlanRequest.context.policy_snapshot_version` is required.
+- `ScoreCompilationPlanResponse.contract_version` MUST echo the accepted request contract version.
+- Responses MUST remain bounded and MUST NOT return raw secrets, bearer tokens, or unredacted payload fragments.
+
+#### Determinism requirements
+
+- The service MUST be deterministic for the same feature vector, contract version, policy snapshot version, and deterministic seed.
+- The response MUST include a replay digest and a bounded confidence value.
+- The service output is advisory only and MUST NOT directly change security-relevant decisions.
+
+---
+
 ## 6. Common Types
 
 Canonical shared types include:
