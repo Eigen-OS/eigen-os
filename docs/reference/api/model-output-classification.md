@@ -17,6 +17,20 @@ Allowed values are exactly:
 - `Recommendation`
 - `Informational`
 
+## Security decision isolation
+
+The model output classification is **recommendation-only**. It is not an authorization decision, a quota decision, or a privileged-action approval.
+
+The model MUST NOT:
+
+- grant access,
+- revoke access,
+- bypass policy,
+- modify quotas,
+- approve privileged actions.
+
+The policy engine is the final decision authority. Model output MAY be consumed only as an input to that decision process.
+
 ## Validation
 
 - Unknown or empty values MUST be rejected.
