@@ -20,6 +20,7 @@ from system_api.grpc_server import serve
 from system_api.observability import start_metrics_server
 from system_api.proto_gen import ensure_generated
 from system_api.security import security_context
+from system_api.security import validate_recommendation_gateway
 
 ensure_generated()
 
@@ -421,3 +422,32 @@ def test_submit_job_stamps_normalized_security_context_metadata(monkeypatch: pyt
     assert metadata["security_subject"] == "ingress-user"
     assert sec.decision_authority == "policy_engine"
     assert sec.model_output_mode == "recommendation_only"
+
+
+def test_recommendation_gateway_blocks_security_relevant_intents() -> None:
+    ok = validate_recommendation_gateway(
+        classification_label="Recommendation",
+        recommendation="Recommend a policy-reviewed execution plan",
+    )
+    assert ok.validated is True
+    assert ok.policy_engine_target == "policy_engine"
+    assert ok.executable is False
+
+    for forbidden in (
+        "grant access",
+        "revoke access",
+        "bypass policy",
+        "modify quotas",
+        "approve privileged actions",
+    ):
+        with pytest.raises(ValueError):
+            validate_recommendation_gateway(
+                classification_label="Recommendation",
+                recommendation=f"Please {forbidden} for this request.",
+            )
+
+    with pytest.raises(ValueError):
+        validate_recommendation_gateway(
+            classification_label="Optimization",
+            recommendation="Optimize the route without policy validation",
+        )

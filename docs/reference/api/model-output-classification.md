@@ -31,6 +31,13 @@ The model MUST NOT:
 
 The policy engine is the final decision authority. Model output MAY be consumed only as an input to that decision process.
 
+## Gateway flow
+
+Model Output → Validation → Policy Engine → Decision
+
+All recommendations MUST be validated before they can be presented to the policy engine.
+There is no direct path from model output to execution.
+
 ## Validation
 
 - Unknown or empty values MUST be rejected.

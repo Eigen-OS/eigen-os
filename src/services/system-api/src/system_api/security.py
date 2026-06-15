@@ -33,6 +33,13 @@ _ROLE_PERMISSIONS: dict[str, set[str]] = {
 
 _SECURITY_DECISION_AUTHORITY = "policy_engine"
 _MODEL_OUTPUT_MODE = "recommendation_only"
+_FORBIDDEN_SECURITY_INTENTS = {
+    "grant access",
+    "revoke access",
+    "bypass policy",
+    "modify quotas",
+    "approve privileged actions",
+}
 
 
 @dataclass(frozen=True)
@@ -58,6 +65,15 @@ class SecurityContext:
     claims: dict[str, str]
     decision_authority: str = _SECURITY_DECISION_AUTHORITY
     model_output_mode: str = _MODEL_OUTPUT_MODE
+
+
+@dataclass(frozen=True)
+class RecommendationGatewayEnvelope:
+    classification_label: str
+    recommendation: str
+    validated: bool
+    policy_engine_target: str
+    executable: bool
 
 
 @dataclass(frozen=True)
@@ -346,6 +362,29 @@ def security_context(context: grpc.ServicerContext, *, method_name: str) -> Secu
         },
         decision_authority=_SECURITY_DECISION_AUTHORITY,
         model_output_mode=_MODEL_OUTPUT_MODE,
+    )
+
+
+def validate_recommendation_gateway(*, classification_label: str, recommendation: str) -> RecommendationGatewayEnvelope:
+    normalized_label = classification_label.strip()
+    if normalized_label != "Recommendation":
+        raise ValueError("model output must be classified as Recommendation before policy validation")
+
+    normalized_recommendation = recommendation.strip()
+    if not normalized_recommendation:
+        raise ValueError("recommendation text is required")
+
+    lowered = normalized_recommendation.lower()
+    for forbidden in _FORBIDDEN_SECURITY_INTENTS:
+        if forbidden in lowered:
+            raise ValueError(f"security-relevant model intent rejected: {forbidden}")
+
+    return RecommendationGatewayEnvelope(
+        classification_label=normalized_label,
+        recommendation=normalized_recommendation,
+        validated=True,
+        policy_engine_target="policy_engine",
+        executable=False,
     )
 
 

@@ -212,6 +212,8 @@ Security & Isolation is cross-cutting and integrates with:
 2. Vendor SDKs/providers are accessible **only** via Driver Manager (no direct kernel/provider coupling).
 3. Security decisions must be auditable and replayable when deterministic mode is enabled.
 4. Telemetry must never leak secrets or unbounded identifiers.
+5. Model output must not directly trigger execution; it may only enter the policy engine through validation.
+6. The policy engine remains the final decision authority for all security-relevant outcomes.
 
 ---
 
