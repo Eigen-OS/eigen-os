@@ -105,6 +105,7 @@ Inputs to compilation are carried via the internal `CompileJob` (or equivalent) 
 - `target` (string, e.g. `sim:local`, `cluster:auto`, `runtime:auto`),
 - `compiler_options` (bounded map of strings),
 - `request_context` (trace context, tenant/project scope via metadata).
+- Sensitive header values in request context metadata MUST be sanitized before normalization; raw bearer tokens MUST NOT reach compiler metadata or logs.
 
 **Source precedence** (when both provided):
 
