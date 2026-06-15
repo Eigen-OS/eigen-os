@@ -59,6 +59,7 @@ Product 1.0 authorization decisions are evaluated for these principal classes:
 - Replay-sensitive security decisions MUST preserve deterministic replay markers.
 - Policy backend unavailability MUST result in deny behavior.
 - Missing policy snapshots MUST NOT fall back to allow behavior.
+- Knowledge Base retrieval and runtime decision logging MUST fail closed when security context, policy evidence, or redaction cannot be completed.
 
 ---
 

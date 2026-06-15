@@ -18,6 +18,14 @@ from eigen.api.v1 import types_pb2 as types_pb  # noqa: E402
 from system_api.knowledge_base import KnowledgeBaseService, KnowledgeBaseUnavailable  # noqa: E402
 
 
+class _MetadataContext:
+    def __init__(self, metadata: tuple[tuple[str, str], ...]) -> None:
+        self._metadata = metadata
+
+    def invocation_metadata(self):
+        return self._metadata
+
+
 def _ts(value: str) -> Timestamp:
     ts = Timestamp()
     ts.FromDatetime(datetime.fromisoformat(value).replace(tzinfo=timezone.utc))
@@ -120,6 +128,47 @@ def _okb_benchmark_payload(
             "promotion_outcome": "PROMOTED",
         },
     }
+
+
+def _kb_security_metadata() -> tuple[tuple[str, str], ...]:
+    return (
+        ("authorization", "Bearer kb-token"),
+        ("x-eigen-tenant", "tenant-a"),
+        ("x-eigen-roles", "readonly"),
+        ("x-eigen-sub", "kb-subject"),
+        ("x-eigen-service", "system-api"),
+        ("x-eigen-service-role", "public-ingress"),
+        ("x-eigen-sandbox-profile", "default"),
+    )
+
+
+def _configure_kb_security(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SYSTEM_API_AUTH_MODE", "static_token")
+    monkeypatch.setenv("SYSTEM_API_AUTH_TOKEN", "kb-token")
+    monkeypatch.setenv("SYSTEM_API_AUTH_SUBJECT", "kb-subject")
+    monkeypatch.setenv("SYSTEM_API_AUTH_ROLES", "readonly")
+    monkeypatch.setenv("SYSTEM_API_AUTH_TENANT", "tenant-a")
+    monkeypatch.setenv(
+        "SYSTEM_API_POLICY_SNAPSHOT_JSON",
+        json.dumps(
+            {
+                "version": "1.0.0",
+                "issuer": "eigen-auth",
+                "audience": "eigen-api",
+                "role_permissions": {
+                    "readonly": ["kb:read", "kb:write", "devices:list", "jobs:read"],
+                },
+                "service_permissions": {
+                    "system-api": ["public-ingress"],
+                },
+                "sandbox_profiles": ["default"],
+            },
+            sort_keys=True,
+        ),
+    )
+    monkeypatch.setenv("SYSTEM_API_SERVICE_IDENTITY", "system-api")
+    monkeypatch.setenv("SYSTEM_API_SERVICE_ROLE", "public-ingress")
+    monkeypatch.setenv("SYSTEM_API_SANDBOX_PROFILE", "default")
 
 
 def test_upsert_query_replay_and_provenance_are_deterministic(grpc_addr: str) -> None:
@@ -233,6 +282,7 @@ def test_decision_log_lineage_validation_and_ordering(grpc_addr: str) -> None:
 def test_runtime_decision_ingest_persists_explainability_envelope(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     audit_path = tmp_path / "audit.jsonl"
     monkeypatch.setenv("SYSTEM_API_AUDIT_SINK_PATH", str(audit_path))
+    _configure_kb_security(monkeypatch)
     service = KnowledgeBaseService(kb_pb=kb_pb, types_pb=types_pb)
 
     decision_id = service.ingest_runtime_decision(
@@ -243,6 +293,16 @@ def test_runtime_decision_ingest_persists_explainability_envelope(monkeypatch: p
             "tenant_id": "tenant-a",
             "project_id": "project-a",
             "caller_identity": "eigen-compiler",
+            "security_context": {
+                "subject": "eigen-compiler",
+                "tenant": "tenant-a",
+                "project_id": "project-a",
+                "policy_version": "policy-2026-06-15",
+                "auth_mode": "static_token",
+                "service_identity": "system-api",
+                "service_role": "public-ingress",
+                "sandbox_profile": "default",
+            },
             "model_version": "m1",
             "component": "runtime",
             "policy_branch": "baseline",
@@ -391,8 +451,10 @@ def test_kb_fallback_behavior_raises_when_storage_disabled() -> None:
         )
 
 
-def test_okb_query_backend_is_deterministic_and_bounded() -> None:
+def test_okb_query_backend_is_deterministic_and_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
+    _configure_kb_security(monkeypatch)
     service = KnowledgeBaseService(kb_pb=kb_pb, types_pb=types_pb)
+    context = _MetadataContext(_kb_security_metadata())
 
     for i in range(10):
         service.ingest_benchmark_run(
@@ -433,8 +495,8 @@ def test_okb_query_backend_is_deterministic_and_bounded() -> None:
         "candidate_budget": 99,
     }
 
-    first = service.query_optimization_candidates(query)
-    second = service.query_optimization_candidates(query)
+    first = service.query_optimization_candidates(query, context=context)
+    second = service.query_optimization_candidates(query, context=context)
 
     assert first == second
     assert first["tenant_id"] == "tenant-a"
@@ -467,14 +529,14 @@ def test_okb_query_backend_is_deterministic_and_bounded() -> None:
     assert first["index_status"]["indices"]["structural"]["status"] == "ready"
     assert first["index_status"]["indices"]["vector"]["status"] == "ready"
 
-    vector = service.query_optimization_candidates({**query, "query_mode": "vector", "candidate_budget": 2})
+    vector = service.query_optimization_candidates({**query, "query_mode": "vector", "candidate_budget": 2}, context=context)
     assert vector["query_mode"] == "vector"
     assert vector["candidate_budget"] == 2
     assert vector["selected_candidate_id"] == vector["candidates"][0]["candidate_id"]
     assert vector["candidates"][0]["score_breakdown"]["rank_source"] == "vector"
     assert len(vector["candidates"]) == 2
 
-    hybrid = service.query_optimization_candidates({**query, "query_mode": "hybrid", "candidate_budget": 3})
+    hybrid = service.query_optimization_candidates({**query, "query_mode": "hybrid", "candidate_budget": 3}, context=context)
     assert hybrid["query_mode"] == "hybrid"
     assert hybrid["candidate_budget"] == 3
     assert hybrid["selected_candidate_id"] == hybrid["candidates"][0]["candidate_id"]
@@ -482,8 +544,10 @@ def test_okb_query_backend_is_deterministic_and_bounded() -> None:
     assert len(hybrid["candidates"]) == 3
     
 
-def test_okb_query_backend_is_capability_scoped_and_fail_closed() -> None:
+def test_okb_query_backend_is_capability_scoped_and_fail_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    _configure_kb_security(monkeypatch)
     service = KnowledgeBaseService(kb_pb=kb_pb, types_pb=types_pb)
+    context = _MetadataContext(_kb_security_metadata())
 
     service.ingest_benchmark_run(
         _okb_benchmark_payload(
@@ -522,7 +586,8 @@ def test_okb_query_backend_is_capability_scoped_and_fail_closed() -> None:
             "deterministic": True,
             "query_mode": "structural",
             "candidate_budget": 8,
-        }
+        },
+        context=context,
     )
     mismatch = service.query_optimization_candidates(
         {
@@ -542,7 +607,8 @@ def test_okb_query_backend_is_capability_scoped_and_fail_closed() -> None:
             "deterministic": True,
             "query_mode": "structural",
             "candidate_budget": 8,
-        }
+        },
+        context=context,
     )
 
     assert [item["candidate_id"] for item in matched["candidates"]] == ["okb-record-capability-candidate-01"]
@@ -551,8 +617,10 @@ def test_okb_query_backend_is_capability_scoped_and_fail_closed() -> None:
     assert mismatch["selected_candidate_id"] == ""
 
 
-def test_learning_evidence_query_is_capability_scoped_and_fail_closed() -> None:
+def test_learning_evidence_query_is_capability_scoped_and_fail_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    _configure_kb_security(monkeypatch)
     service = KnowledgeBaseService(kb_pb=kb_pb, types_pb=types_pb)
+    context = _MetadataContext(_kb_security_metadata())
 
     service.ingest_learning_evidence(
         {
@@ -596,7 +664,8 @@ def test_learning_evidence_query_is_capability_scoped_and_fail_closed() -> None:
             "model_version": "m1",
             "capability_tags": ["qpu", "latency"],
             "page_size": 10,
-        }
+        },
+        context=context,
     )
     mismatch = service.query_learning_evidence(
         {
@@ -605,7 +674,8 @@ def test_learning_evidence_query_is_capability_scoped_and_fail_closed() -> None:
             "model_version": "m1",
             "capability_tags": ["gpu", "latency"],
             "page_size": 10,
-        }
+        },
+        context=context,
     )
 
     assert matched["total_count"] == 1
@@ -629,13 +699,26 @@ def test_okb_index_recovery_backfill_and_desync_signals() -> None:
         {
             "decision_id": "recover-decision-1",
             "trace_id": "trace-recover",
+            "tenant_id": "tenant-a",
+            "project_id": "project-a",
+            "caller_identity": "kb-subject",
+            "security_context": {
+                "subject": "kb-subject",
+                "tenant": "tenant-a",
+                "project_id": "project-a",
+                "policy_version": "1.0.0",
+                "auth_mode": "static_token",
+                "service_identity": "system-api",
+                "service_role": "public-ingress",
+                "sandbox_profile": "default",
+            },
             "model_version": "m1",
             "component": "runtime",
             "policy_branch": "baseline",
             "selected_action": "backend-alpha",
             "feature_snapshot": {"queue_depth": "2"},
-            "tenant_id": "tenant-a",
-            "project_id": "project-a",
+            "retrieval_sources": ["nsc://policy-snapshot/1.0.0"],
+            "policy_snapshot_version": "1.0.0",
         }
     )
 
