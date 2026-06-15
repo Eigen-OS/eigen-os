@@ -39,6 +39,15 @@ message NeuroSymbolicRequestContext {
 
   // W3C traceparent when available.
   string traceparent = 7;
+
+  // Canonical subject identifier from the normalized security context.
+  string subject_id = 8;
+
+  // Canonical workload identifier from the normalized security context.
+  string workload_id = 9;
+
+  // Stable authorization decision identifier from the authz snapshot.
+  string authz_decision_id = 10;
 }
 
 message ScoreCompilationPlanRequest {
@@ -71,4 +80,7 @@ message ScoreCompilationPlanResponse {
   string explanation_ref = 11;
   string replay_digest = 12;
   bool deterministic_compatible = 13;
+  string subject_id = 14;
+  string workload_id = 15;
+  string authz_decision_id = 16;
 }

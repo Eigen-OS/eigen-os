@@ -286,7 +286,14 @@ service NeuroSymbolicService {
 - `ScoreCompilationPlanRequest.envelope.contract_version` is required.
 - `ScoreCompilationPlanRequest.context.feature_schema_version` is required.
 - `ScoreCompilationPlanRequest.context.policy_snapshot_version` is required.
+- `ScoreCompilationPlanRequest.context.tenant_id` is required.
+- `ScoreCompilationPlanRequest.context.project_id` is required.
+- `ScoreCompilationPlanRequest.context.subject_id` is required.
+- `ScoreCompilationPlanRequest.context.workload_id` is required.
+- `ScoreCompilationPlanRequest.context.authz_decision_id` is required.
+- The normalized security context MUST be fully traceable in audit events and replay digests.
 - `ScoreCompilationPlanResponse.contract_version` MUST echo the accepted request contract version.
+- Responses SHOULD echo the normalized security context fields for bounded auditability.
 - Responses MUST remain bounded and MUST NOT return raw secrets, bearer tokens, or unredacted payload fragments.
 
 #### Determinism requirements

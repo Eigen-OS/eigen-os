@@ -697,6 +697,22 @@ Platform SHALL support:
 
 ---
 
+### 15.4 Normalized security context propagation
+
+
+Every NSC request MUST carry a normalized security context with bounded, non-secret fields:
+
+- `tenant_id`
+- `project_id`
+- `subject_id`
+- `workload_id`
+- `policy_snapshot_id`
+- `authz_decision_id`
+
+These values MUST be validated before inference, included in replay artifacts, and surfaced in audit events. Missing fields MUST fail closed. Raw bearer tokens, tenant-private secrets, and unredacted payload fragments MUST NOT be forwarded into NSC logs or model inputs.
+
+---
+
 ## 16. CI / Conformance Requirements (Target)
 
 CI MUST validate (when NSC is enabled in any environment):

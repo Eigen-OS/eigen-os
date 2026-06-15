@@ -269,6 +269,9 @@ def _nsc_request(
     project_id: str = "project-a",
     feature_schema_version: str = "features.v1",
     policy_snapshot_version: str = "policy-2026-06-15",
+    subject_id: str = "subject-007",
+    workload_id: str = "workload-compiler-01",
+    authz_decision_id: str = "authz-dec-abc123",
     feature_vector: bytes = b'{"redacted":true,"signals":[1,2,3]}',
     feature_digest_sha256: str | None = None,
     deterministic_seed: int = 7,
@@ -284,6 +287,9 @@ def _nsc_request(
             policy_snapshot_version=policy_snapshot_version,
             trace_id="0123456789abcdef0123456789abcdef",
             traceparent="00-0123456789abcdef0123456789abcdef-0123456789abcdef-01",
+            subject_id=subject_id,
+            workload_id=workload_id,
+            authz_decision_id=authz_decision_id,
         ),
         feature_vector=feature_vector,
         feature_digest_sha256=feature_digest_sha256 or hashlib.sha256(feature_vector).hexdigest(),
@@ -390,3 +396,75 @@ def test_neuro_symbolic_service_rejects_digest_mismatch(
         )
 
     assert e.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+
+
+
+@pytest.mark.parametrize(
+    ("field_name", "mutator"),
+    [
+        ("tenant_id", lambda req: setattr(req.context, "tenant_id", "")),
+        ("project_id", lambda req: setattr(req.context, "project_id", "")),
+        ("subject_id", lambda req: setattr(req.context, "subject_id", "")),
+        ("workload_id", lambda req: setattr(req.context, "workload_id", "")),
+        ("policy_snapshot_version", lambda req: setattr(req.context, "policy_snapshot_version", "")),
+        ("authz_decision_id", lambda req: setattr(req.context, "authz_decision_id", "")),
+    ],
+)
+def test_neuro_symbolic_service_rejects_missing_security_context_field(
+    grpc_addr: str,
+    monkeypatch: pytest.MonkeyPatch,
+    field_name: str,
+    mutator,
+) -> None:
+    monkeypatch.setenv("EIGEN_NEURO_SYMBOLIC_SERVICE_TOKEN", "unit-test-token")
+    monkeypatch.setenv("EIGEN_NEURO_SYMBOLIC_ALLOWED_CALLERS", "eigen-kernel,eigen-compiler")
+
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = nsc_pb_grpc.NeuroSymbolicServiceStub(channel)
+
+    request = _nsc_request()
+    mutator(request)
+
+    with pytest.raises(grpc.RpcError) as e:
+        stub.ScoreCompilationPlan(
+            request,
+            metadata=(
+                ("authorization", "Bearer unit-test-token"),
+                ("x-eigen-service-id", "eigen-kernel"),
+            ),
+        )
+
+    assert e.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+    assert f"context.{field_name} is required" in e.value.details()
+
+
+def test_neuro_symbolic_service_audits_security_context(
+    grpc_addr: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setenv("EIGEN_NEURO_SYMBOLIC_SERVICE_TOKEN", "unit-test-token")
+    monkeypatch.setenv("EIGEN_NEURO_SYMBOLIC_ALLOWED_CALLERS", "eigen-kernel,eigen-compiler")
+    monkeypatch.setenv("EIGEN_NEURO_SYMBOLIC_MODEL_VERSION", "dpda-model-unit-test")
+
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = nsc_pb_grpc.NeuroSymbolicServiceStub(channel)
+
+    with caplog.at_level("INFO", logger="eigen_compiler"):
+        stub.ScoreCompilationPlan(
+            _nsc_request(),
+            metadata=(
+                ("authorization", "Bearer unit-test-token"),
+                ("x-eigen-service-id", "eigen-kernel"),
+            ),
+        )
+
+    records = [record for record in caplog.records if getattr(record, "rpc", "") == "ScoreCompilationPlan"]
+    assert records
+    record = records[-1]
+    assert getattr(record, "subject_id") == "subject-007"
+    assert getattr(record, "workload_id") == "workload-compiler-01"
+    assert getattr(record, "authz_decision_id") == "authz-dec-abc123"
+    assert getattr(record, "tenant_id") == "tenant-a"
+    assert getattr(record, "project_id") == "project-a"
+    assert getattr(record, "policy_snapshot_version") == "policy-2026-06-15"
