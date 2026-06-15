@@ -35,6 +35,7 @@ Every query MUST be scoped by:
 
 - `tenant_id`
 - `project_id`
+- capability scope, when the request carries capability tags or capability metadata
 
 The retrieval backend MUST NOT mix candidates across tenant, project, or capability boundaries.
 
@@ -55,6 +56,7 @@ The backend MAY derive candidates from:
 - other replay-safe KB artifacts that are in the same tenant/project scope.
 
 The pool MUST be filtered before scoring. Cross-scope data MUST NOT be considered.
+When capability metadata is present, the pool MUST also be filtered to the request capability scope and MUST fail closed on mismatch.
 Mixed-tenant, mixed-project, or mixed-capability snapshots are invalid and MUST be rejected before retrieval.
 All explanation and replay outputs MUST stay within the same tenant/project/capability boundary and MUST NOT echo foreign identifiers or payload fragments.
 

@@ -214,7 +214,7 @@ Scope semantics:
 
 - candidates MUST be filtered by tenant/project before scoring,
 - candidates MUST also be filtered by capability boundary before scoring,
-- cross-tenant/project/capability retrieval is forbidden.
+- capability metadata MUST be honored when present and must fail closed on mismatch,
 - diagnostics, selection digests, and replay outputs MUST not expose third-party identifiers or payload fragments.
 
 Returned responses MUST expose:

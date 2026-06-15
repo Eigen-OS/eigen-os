@@ -511,6 +511,7 @@ class KnowledgeBaseService:
                     "capability_scope": list(query["capability_scope"]),
                     "topology_snapshot_digest": query["topology_snapshot_digest"],
                     "policy_envelope_digest": query["policy_envelope_digest"],
+                    "capability_scope": query.get("capability_scope", ()),
                     "kb_schema_version": query["kb_schema_version"],
                     "compiler_version": query["compiler_version"],
                     "optimizer_version": query["optimizer_version"],
@@ -563,7 +564,12 @@ class KnowledgeBaseService:
         capability_scope = _capability_scope_tokens(payload)
         with self._lock:
             self._gc_locked()
-            self._store_decision_log(decision_log=decision_log, envelope=envelope, context=None, capability_scope=capability_scope)
+            self._store_decision_log(
+                decision_log=decision_log,
+                envelope=envelope,
+                context=None,
+                capability_scope=self._capability_scope_tokens(payload),
+            )
             self._learning_store_evidence(
                 source="runtime",
                 evidence_kind="runtime",
@@ -659,7 +665,16 @@ class KnowledgeBaseService:
         envelope = self._payload_envelope(payload)
         with self._lock:
             self._gc_locked()
-            self._upsert_record(record=record, envelope=envelope, allow_overwrite=True, anonymize_attributes=False, source="benchmark", replay_bundle_ref=attrs["replay_bundle_ref"], context=None)
+            self._upsert_record(
+                record=record,
+                envelope=envelope,
+                allow_overwrite=True,
+                anonymize_attributes=False,
+                source="benchmark",
+                replay_bundle_ref=attrs["replay_bundle_ref"],
+                context=None,
+                capability_scope=self._capability_scope_tokens(payload),
+            )
         
             self._learning_store_evidence(
                 source="benchmark",
@@ -710,6 +725,7 @@ class KnowledgeBaseService:
                 },
                 command="benchmark_ingest",
                 decision="validated",
+                capability_scope=self._capability_scope_tokens(payload),
             )
         record_kb_query("benchmark_runs", hit=True)
         return record.record_id
@@ -736,6 +752,7 @@ class KnowledgeBaseService:
                 metadata=dict(payload.get("metadata") or {}),
                 command=str(payload.get("command", "")).strip(),
                 decision=str(payload.get("decision", "")).strip(),
+                capability_scope=self._capability_scope_tokens(payload),
             )
         record_kb_query("learning_evidence", hit=True)
         return evidence["evidence_id"]
@@ -756,6 +773,7 @@ class KnowledgeBaseService:
             offset = 0
         with self._lock:
             self._gc_locked()
+            requested_scope = self._capability_scope_tokens(payload)
             filtered = [
                 item
                 for item in self._learning_evidence
@@ -764,7 +782,7 @@ class KnowledgeBaseService:
                 and (not kind_filter or item["evidence_kind"] == kind_filter)
                 and (not model_version or item["model_version"] == model_version)
                 and (not lifecycle_state or item["lifecycle_state"] == lifecycle_state)
-                and _capability_scope_matches(tuple(item.get("capability_scope", ())), requested_scope)
+                and self._capability_scope_matches(tuple(item.get("capability_scope", ())), requested_scope)
             ]
             filtered.sort(key=lambda item: (item["created_at"], item["evidence_id"]))
             window = filtered[offset : offset + page_size]
@@ -785,13 +803,14 @@ class KnowledgeBaseService:
         target_model_version = str(payload.get("model_version", "")).strip()
         with self._lock:
             self._gc_locked()
+            requested_scope = self._capability_scope_tokens(payload)
             scoped = [
                 item
                 for item in self._learning_evidence
                 if item["tenant_id"] == envelope["tenant_id"]
                 and item["project_id"] == envelope["project_id"]
                 and (not target_model_version or item["model_version"] == target_model_version)
-                and _capability_scope_matches(tuple(item.get("capability_scope", ())), requested_scope)
+                and self._capability_scope_matches(tuple(item.get("capability_scope", ())), requested_scope)
             ]
             runtime_decisions = [item for item in scoped if item["evidence_kind"] == "runtime"]
             benchmark_runs = [item for item in scoped if item["evidence_kind"] == "benchmark"]
@@ -1001,6 +1020,7 @@ class KnowledgeBaseService:
             "kb_schema_version": str(payload.get("kb_schema_version", _KB_CONTRACT_VERSION)).strip() or _KB_CONTRACT_VERSION,
             "compiler_version": str(payload.get("compiler_version", "")).strip(),
             "optimizer_version": str(payload.get("optimizer_version", "")).strip(),
+            "capability_scope": self._capability_scope_tokens(payload),
             "seed": seed,
             "deterministic": bool(payload.get("deterministic", True)),
             "query_mode": query_mode,
@@ -1011,6 +1031,7 @@ class KnowledgeBaseService:
         pool: list[_OptimizationCandidate] = []
 
         scope_key = self._okb_scope_key(query["tenant_id"], query["project_id"])
+        requested_scope = tuple(query.get("capability_scope", ()))
         source_ids = self._okb_index_sources_for_mode_locked(query["query_mode"], scope_key)
         if not source_ids:
             source_ids = [
@@ -1023,7 +1044,12 @@ class KnowledgeBaseService:
             if candidate is not None:
                 pool.append(candidate)
 
-        return [candidate for candidate in pool if candidate.score_total > 0.0]
+        return [
+            candidate
+            for candidate in pool
+            if candidate.score_total > 0.0
+            and self._capability_scope_matches(tuple(candidate.metadata.get("capability_scope", ())), requested_scope)
+        ]
 
     def _candidate_from_record(self, entry: _StoredRecord, query: dict[str, Any]) -> _OptimizationCandidate:
         candidate_id = f"okb-record-{entry.record.record_id}"
@@ -1037,6 +1063,7 @@ class KnowledgeBaseService:
             "lineage_model_version": getattr(getattr(entry.record, "lineage", None), "model_version", ""),
             "artifact_ref": entry.record.artifact_ref,
             "provenance_ref": entry.record.provenance.compiler_ref,
+            "capability_scope": entry.capability_scope,
             "query": query,
         }
         return self._build_candidate(
@@ -1063,6 +1090,7 @@ class KnowledgeBaseService:
             "component": entry.decision_log.component,
             "policy_branch": entry.decision_log.policy_branch,
             "selected_action": entry.decision_log.selected_action,
+            "capability_scope": entry.capability_scope,
             "query": query,
         }
         return self._build_candidate(
@@ -1106,6 +1134,7 @@ class KnowledgeBaseService:
                     "capability_scope": list(query["capability_scope"]),
                     "topology_snapshot_digest": query["topology_snapshot_digest"],
                     "policy_envelope_digest": query["policy_envelope_digest"],
+                    "capability_scope": query.get("capability_scope", ()),
                     "seed": query["seed"],
                     "query_mode": query["query_mode"],
                     "deterministic": query["deterministic"],
@@ -1131,6 +1160,7 @@ class KnowledgeBaseService:
                     "capability_scope": list(query["capability_scope"]),
                     "topology_snapshot_digest": query["topology_snapshot_digest"],
                     "policy_envelope_digest": query["policy_envelope_digest"],
+                    "capability_scope": query.get("capability_scope", ()),
                     "seed": query["seed"],
                     "query_mode": query["query_mode"],
                     "deterministic": query["deterministic"],
@@ -1160,6 +1190,7 @@ class KnowledgeBaseService:
             "optimizer_version": query["optimizer_version"],
             "tenant_id": query["tenant_id"],
             "project_id": query["project_id"],
+            "capability_scope": tuple(query.get("capability_scope", ())),
         }
         return _OptimizationCandidate(
             candidate_id=candidate_id,
@@ -1698,6 +1729,36 @@ class KnowledgeBaseService:
     def _decision_visible_to_tenant(self, entry: _StoredDecisionLog, tenant_id: str, project_id: str, context: grpc.ServicerContext) -> bool:
         return entry.tenant_id == tenant_id and entry.project_id == project_id
     
+    def _capability_scope_tokens(self, payload: dict[str, Any] | None) -> tuple[str, ...]:
+        if not payload:
+            return ()
+        raw_scope = payload.get("capability_scope")
+        if raw_scope in (None, ""):
+            raw_scope = payload.get("capability_tags")
+        if raw_scope in (None, ""):
+            raw_scope = payload.get("capabilities")
+        tokens: list[str] = []
+        if isinstance(raw_scope, dict):
+            iterable = raw_scope.keys()
+        elif isinstance(raw_scope, str):
+            iterable = [raw_scope]
+        elif isinstance(raw_scope, (list, tuple, set)):
+            iterable = raw_scope
+        else:
+            iterable = ()
+        for item in iterable:
+            token = str(item).strip().lower()
+            if token and token not in tokens:
+                tokens.append(token)
+        return tuple(tokens)
+
+    def _capability_scope_matches(self, stored_scope: tuple[str, ...], requested_scope: tuple[str, ...]) -> bool:
+        if not requested_scope:
+            return True
+        if not stored_scope:
+            return False
+        return set(stored_scope).issubset(set(requested_scope))
+
     def _record_matches_filter(self, record: Any, query_filter: Any) -> bool:
         if query_filter is None:
             return True
@@ -1857,7 +1918,7 @@ class KnowledgeBaseService:
             record=self._clone_record(record),
             tenant_id=envelope["tenant_id"],
             project_id=envelope["project_id"],
-            capability_scope=normalized_scope,
+            capability_scope=tuple(capability_scope or self._capability_scope_tokens(dict(attrs))),
             created_at=created_at,
             updated_at=now,
             fingerprint=fingerprint,
@@ -1881,7 +1942,7 @@ class KnowledgeBaseService:
             decision_log=self._clone_decision_log(decision_log),
             tenant_id=envelope["tenant_id"],
             project_id=envelope["project_id"],
-            capability_scope=normalized_scope,
+            capability_scope=tuple(capability_scope or ()),
             decided_at=decided_at,
             fingerprint=fingerprint,
             sequence=self._sequence,
@@ -1969,6 +2030,7 @@ class KnowledgeBaseService:
         metadata: dict[str, Any],
         command: str,
         decision: str,
+        capability_scope: tuple[str, ...] | None = None,
     ) -> dict[str, Any]:
         normalized_kind = evidence_kind.strip().lower() or "learning"
         capability_scope = tuple(_capability_scope_tokens(evidence_payload))
@@ -1989,6 +2051,7 @@ class KnowledgeBaseService:
             "command": command,
             "decision": decision,
             "payload": _anonymize_mapping(dict(evidence_payload or {}), salt=self._anon_salt, epoch=self._anon_epoch),
+            "capability_scope": capability_scope,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
         evidence["evidence_hash"] = _stable_hash(evidence)
@@ -2017,6 +2080,7 @@ class KnowledgeBaseService:
                 "gate_results": evidence["gate_results"],
                 "metadata": evidence["metadata"],
                 "payload": evidence["payload"],
+                "capability_scope": evidence["capability_scope"],
                 "created_at": evidence["created_at"],
                 "queryable_ref": evidence["queryable_ref"],
             }
@@ -2134,6 +2198,7 @@ class KnowledgeBaseService:
             "lifecycle_state": item["lifecycle_state"],
             "quarantine_state": item["quarantine_state"],
             "queryable_ref": item["queryable_ref"],
+            "metadata": dict(item["metadata"]),
             "created_at": item["created_at"],
         }
 
