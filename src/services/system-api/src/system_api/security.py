@@ -31,6 +31,9 @@ _ROLE_PERMISSIONS: dict[str, set[str]] = {
     "readonly": {"jobs:read", "devices:list"},
 }
 
+_SECURITY_DECISION_AUTHORITY = "policy_engine"
+_MODEL_OUTPUT_MODE = "recommendation_only"
+
 
 @dataclass(frozen=True)
 class PolicySnapshot:
@@ -53,6 +56,8 @@ class SecurityContext:
     service_role: str | None
     sandbox_profile: str | None
     claims: dict[str, str]
+    decision_authority: str = _SECURITY_DECISION_AUTHORITY
+    model_output_mode: str = _MODEL_OUTPUT_MODE
 
 
 @dataclass(frozen=True)
@@ -339,6 +344,8 @@ def security_context(context: grpc.ServicerContext, *, method_name: str) -> Secu
             "replay_marker": replay_marker,
             "policy_snapshot": snapshot.version,
         },
+        decision_authority=_SECURITY_DECISION_AUTHORITY,
+        model_output_mode=_MODEL_OUTPUT_MODE,
     )
 
 
