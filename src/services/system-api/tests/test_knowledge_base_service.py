@@ -387,6 +387,9 @@ def test_okb_query_backend_is_deterministic_and_bounded() -> None:
     assert first["candidates"][0]["deterministic_digest"].startswith("sha256:")
     assert first["okb_selection_digest"].startswith("sha256:")
     assert first["explanation_ref"] == "qfs://jobs/job-1/kb/explain.json"
+    assert first["index_status"]["overall_status"] == "ready"
+    assert first["index_status"]["indices"]["structural"]["status"] == "ready"
+    assert first["index_status"]["indices"]["vector"]["status"] == "ready"
 
     vector = service.query_optimization_candidates({**query, "query_mode": "vector", "candidate_budget": 2})
     assert vector["query_mode"] == "vector"
@@ -402,3 +405,59 @@ def test_okb_query_backend_is_deterministic_and_bounded() -> None:
     assert hybrid["candidates"][0]["score_breakdown"]["rank_source"] == "hybrid"
     assert len(hybrid["candidates"]) == 3
     
+
+def test_okb_index_recovery_backfill_and_desync_signals() -> None:
+    service = KnowledgeBaseService(kb_pb=kb_pb, types_pb=types_pb)
+
+    service.ingest_benchmark_run(
+        _okb_benchmark_payload(
+            "recover-record-1",
+            tenant_id="tenant-a",
+            project_id="project-a",
+            trace_id="trace-recover",
+        )
+    )
+    service.ingest_runtime_decision(
+        {
+            "decision_id": "recover-decision-1",
+            "trace_id": "trace-recover",
+            "model_version": "m1",
+            "component": "runtime",
+            "policy_branch": "baseline",
+            "selected_action": "backend-alpha",
+            "feature_snapshot": {"queue_depth": "2"},
+            "tenant_id": "tenant-a",
+            "project_id": "project-a",
+        }
+    )
+
+    ready = service.describe_index_health(tenant_id="tenant-a", project_id="project-a")
+    assert ready["overall_status"] == "ready"
+    assert ready["desynced"] is False
+    assert ready["indices"]["structural"]["status"] == "ready"
+    assert ready["indices"]["vector"]["status"] == "ready"
+
+    service._reset_okb_index_runtime_state()  # noqa: SLF001 - simulate a crash / cold restart.
+    unavailable = service.describe_index_health(tenant_id="tenant-a", project_id="project-a")
+    assert unavailable["overall_status"] == "unavailable"
+
+    recovered = service.recover_indexes({"tenant_id": "tenant-a", "project_id": "project-a"})
+    assert recovered["overall_status"] == "ready"
+    assert recovered["scopes"][0]["source_count"] == 2
+    assert service.describe_index_health(tenant_id="tenant-a", project_id="project-a")["overall_status"] == "ready"
+
+    backfill_first = service.backfill_indexes({"tenant_id": "tenant-a", "project_id": "project-a"})
+    backfill_second = service.backfill_indexes({"tenant_id": "tenant-a", "project_id": "project-a"})
+    assert backfill_first["overall_status"] == "ready"
+    assert backfill_first["scopes"][0]["source_count"] == backfill_second["scopes"][0]["source_count"] == 2
+
+    scope_key = "tenant-a::project-a"
+    service._okb_indexes["structural"].scope_entries[scope_key].pop()  # noqa: SLF001 - simulate index corruption.
+    degraded = service.describe_index_health(tenant_id="tenant-a", project_id="project-a")
+    assert degraded["overall_status"] == "degraded"
+    assert degraded["desynced"] is True
+    assert degraded["indices"]["structural"]["desynced"] is True
+
+    rebuilt = service.rebuild_indexes({"tenant_id": "tenant-a", "project_id": "project-a"})
+    assert rebuilt["overall_status"] == "ready"
+    assert service.describe_index_health(tenant_id="tenant-a", project_id="project-a")["overall_status"] == "ready"

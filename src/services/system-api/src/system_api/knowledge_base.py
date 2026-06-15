@@ -64,6 +64,12 @@ _LEARNING_ALLOWED_TRANSITIONS = {
 _LEARNING_QUARANTINE_KEYS = {"user_id", "client_ip", "email", "subject", "raw_payload", "unredacted_payload"}
 _LEARNING_QUERY_KINDS = {"optimizer", "runtime", "benchmark", "control_plane_command"}
 
+_INDEX_STATUS_READY = "ready"
+_INDEX_STATUS_REBUILDING = "rebuilding"
+_INDEX_STATUS_DEGRADED = "degraded"
+_INDEX_STATUS_UNAVAILABLE = "unavailable"
+_OKB_INDEX_MODES = ("structural", "vector")
+
 
 class KnowledgeBaseUnavailable(RuntimeError):
     """Raised when the KB backend is disabled or unavailable."""
@@ -129,6 +135,21 @@ class _OptimizationCandidate:
     score_total: float
     selected: bool
     metadata: dict[str, str]
+
+
+@dataclass(slots=True)
+class _IndexState:
+    name: str
+    status: str
+    source_revision: int
+    source_fingerprint: str
+    scope_entries: dict[str, list[str]]
+    scope_fingerprints: dict[str, str]
+    scope_counts: dict[str, int]
+    built_at: datetime | None
+    backfilled_at: datetime | None
+    recovered_at: datetime | None
+    last_error: str
 
 
 def _metadata(context: grpc.ServicerContext) -> dict[str, str]:
@@ -253,6 +274,10 @@ class KnowledgeBaseService:
         self._learning_datasets: dict[str, dict[str, Any]] = {}
         self._learning_command_index: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
         self._sequence = 0
+        self._okb_indexes: dict[str, _IndexState] = {
+            mode: self._new_index_state(mode) for mode in _OKB_INDEX_MODES
+        }
+        self._okb_restart_count = 0
 
     # Public RPC methods -------------------------------------------------
 
@@ -370,7 +395,9 @@ class KnowledgeBaseService:
         query = self._normalize_okb_query(payload)
         with self._lock:
             self._gc_locked()
+            self._okb_ensure_indexes_ready_locked(query["tenant_id"], query["project_id"])
             candidates = self._okb_candidate_pool(query)
+            index_status = self._describe_index_health_locked(tenant_id=query["tenant_id"], project_id=query["project_id"])
 
         ordered = sorted(
             candidates,
@@ -435,6 +462,7 @@ class KnowledgeBaseService:
             "candidates": selected_payload,
             "explanation_ref": f"qfs://jobs/{query['job_id']}/kb/explain.json" if query["job_id"] else f"kb://explain/{digest}",
             "okb_selection_digest": digest,
+            "index_status": index_status,
         }
 
 
@@ -900,15 +928,18 @@ class KnowledgeBaseService:
     def _okb_candidate_pool(self, query: dict[str, Any]) -> list[_OptimizationCandidate]:
         pool: list[_OptimizationCandidate] = []
 
-        for entry in self._records.values():
-            if entry.tenant_id != query["tenant_id"] or entry.project_id != query["project_id"]:
-                continue
-            pool.append(self._candidate_from_record(entry, query))
+        scope_key = self._okb_scope_key(query["tenant_id"], query["project_id"])
+        source_ids = self._okb_index_sources_for_mode_locked(query["query_mode"], scope_key)
+        if not source_ids:
+            source_ids = [
+                *[f"record:{entry.record.record_id}" for entry in self._records.values() if entry.tenant_id == query["tenant_id"] and entry.project_id == query["project_id"]],
+                *[f"decision:{entry.decision_log.decision_id}" for entry in self._decision_logs if entry.tenant_id == query["tenant_id"] and entry.project_id == query["project_id"]],
+            ]
 
-        for entry in self._decision_logs:
-            if entry.tenant_id != query["tenant_id"] or entry.project_id != query["project_id"]:
-                continue
-            pool.append(self._candidate_from_decision_log(entry, query))
+        for source_id in source_ids:
+            candidate = self._okb_candidate_from_source_id(source_id, query)
+            if candidate is not None:
+                pool.append(candidate)
 
         return [candidate for candidate in pool if candidate.score_total > 0.0]
 
@@ -1093,7 +1124,354 @@ class KnowledgeBaseService:
         return round(0.50 + (base * 0.40), 6)
 
 
-    # Internal helpers --------------------------------------------------
+    def describe_index_health(self, *, tenant_id: str | None = None, project_id: str | None = None) -> dict[str, Any]:
+        """Return a deterministic health snapshot for the derived OKB indexes."""
+
+        with self._lock:
+            return self._describe_index_health_locked(tenant_id=tenant_id, project_id=project_id)
+
+    def rebuild_indexes(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Rebuild all or one scope of the derived indexes from the primary store."""
+
+        payload = dict(payload or {})
+        tenant_id = str(payload.get("tenant_id", "")).strip() or None
+        project_id = str(payload.get("project_id", "")).strip() or None
+        with self._lock:
+            self._gc_locked()
+            return self._rebuild_indexes_locked(tenant_id=tenant_id, project_id=project_id, reason="rebuild")
+
+    def recover_indexes(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Recover indexes after a crash or restart from the primary store of truth."""
+
+        payload = dict(payload or {})
+        tenant_id = str(payload.get("tenant_id", "")).strip() or None
+        project_id = str(payload.get("project_id", "")).strip() or None
+        with self._lock:
+            self._gc_locked()
+            return self._rebuild_indexes_locked(tenant_id=tenant_id, project_id=project_id, reason="recovery")
+
+    def backfill_indexes(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Backfill historical primary-store records into the derived indexes."""
+
+        payload = dict(payload or {})
+        tenant_id = str(payload.get("tenant_id", "")).strip() or None
+        project_id = str(payload.get("project_id", "")).strip() or None
+        with self._lock:
+            self._gc_locked()
+            return self._rebuild_indexes_locked(tenant_id=tenant_id, project_id=project_id, reason="backfill")
+
+    def _reset_okb_index_runtime_state(self) -> None:
+        """Simulate a cold restart without mutating the primary store."""
+        self._okb_indexes = {mode: self._new_index_state(mode) for mode in _OKB_INDEX_MODES}
+        self._okb_restart_count += 1
+
+    def _new_index_state(self, name: str) -> _IndexState:
+        return _IndexState(
+            name=name,
+            status=_INDEX_STATUS_UNAVAILABLE,
+            source_revision=0,
+            source_fingerprint="",
+            scope_entries={},
+            scope_fingerprints={},
+            scope_counts={},
+            built_at=None,
+            backfilled_at=None,
+            recovered_at=None,
+            last_error="",
+        )
+
+    def _okb_scope_key(self, tenant_id: str, project_id: str) -> str:
+        return f"{tenant_id}::{project_id}"
+
+    def _okb_scope_tuple(self, scope_key: str) -> tuple[str, str]:
+        tenant_id, project_id = scope_key.split("::", 1)
+        return tenant_id, project_id
+
+    def _okb_scope_snapshot_locked(self, tenant_id: str, project_id: str) -> list[dict[str, Any]]:
+        snapshot: list[dict[str, Any]] = []
+
+        for entry in self._records.values():
+            if entry.tenant_id != tenant_id or entry.project_id != project_id:
+                continue
+            snapshot.append(
+                {
+                    "source_id": f"record:{entry.record.record_id}",
+                    "source_kind": "record",
+                    "primary_id": entry.record.record_id,
+                    "sequence": entry.sequence,
+                    "timestamp": self._ts_signature(entry.created_at),
+                    "fingerprint": entry.fingerprint,
+                    "order_hint": 0,
+                }
+            )
+
+        for entry in self._decision_logs:
+            if entry.tenant_id != tenant_id or entry.project_id != project_id:
+                continue
+            snapshot.append(
+                {
+                    "source_id": f"decision:{entry.decision_log.decision_id}",
+                    "source_kind": "decision_log",
+                    "primary_id": entry.decision_log.decision_id,
+                    "sequence": entry.sequence,
+                    "timestamp": self._ts_signature(entry.decided_at),
+                    "fingerprint": entry.fingerprint,
+                    "order_hint": 1,
+                }
+            )
+
+        snapshot.sort(key=lambda item: (item["order_hint"], item["timestamp"], item["primary_id"], item["sequence"]))
+        return snapshot
+
+    def _okb_scope_fingerprint_locked(self, tenant_id: str, project_id: str) -> str:
+        snapshot = self._okb_scope_snapshot_locked(tenant_id, project_id)
+        return _stable_hash(
+            {
+                "tenant_id": tenant_id,
+                "project_id": project_id,
+                "sources": [
+                    {
+                        "source_id": item["source_id"],
+                        "source_kind": item["source_kind"],
+                        "primary_id": item["primary_id"],
+                        "sequence": item["sequence"],
+                        "timestamp": item["timestamp"],
+                        "fingerprint": item["fingerprint"],
+                    }
+                    for item in snapshot
+                ],
+            }
+        )
+
+    def _okb_order_scope_snapshot(self, snapshot: list[dict[str, Any]], mode: str) -> list[dict[str, Any]]:
+        if mode == "vector":
+            return sorted(snapshot, key=lambda item: (item["fingerprint"], item["source_id"]))
+        if mode == "hybrid":
+            return sorted(snapshot, key=lambda item: (item["order_hint"], item["fingerprint"], item["source_id"]))
+        return list(snapshot)
+
+    def _okb_expected_scope_entries_locked(self, tenant_id: str, project_id: str, mode: str) -> list[str]:
+        snapshot = self._okb_scope_snapshot_locked(tenant_id, project_id)
+        return [item["source_id"] for item in self._okb_order_scope_snapshot(snapshot, mode)]
+
+    def _okb_index_catalog_fingerprint_locked(self, shard: _IndexState) -> str:
+        return _stable_hash(
+            {
+                "name": shard.name,
+                "scope_fingerprints": [
+                    {
+                        "scope": scope,
+                        "fingerprint": shard.scope_fingerprints.get(scope, ""),
+                        "entry_count": shard.scope_counts.get(scope, 0),
+                        "source_ids": shard.scope_entries.get(scope, []),
+                    }
+                    for scope in sorted(shard.scope_entries)
+                ],
+            }
+        )
+
+    def _okb_target_scopes_locked(self, tenant_id: str | None, project_id: str | None) -> list[tuple[str, str]]:
+        scopes = {
+            self._okb_scope_key(entry.tenant_id, entry.project_id)
+            for entry in self._records.values()
+        }
+        scopes.update(
+            self._okb_scope_key(entry.tenant_id, entry.project_id)
+            for entry in self._decision_logs
+        )
+        if tenant_id is not None and project_id is not None:
+            requested = self._okb_scope_key(tenant_id, project_id)
+            return [self._okb_scope_tuple(requested)]
+        return [self._okb_scope_tuple(scope) for scope in sorted(scopes)]
+
+    def _okb_sync_index_scope_locked(self, tenant_id: str, project_id: str, *, reason: str) -> dict[str, Any]:
+        scope_key = self._okb_scope_key(tenant_id, project_id)
+        snapshot = self._okb_scope_snapshot_locked(tenant_id, project_id)
+        scope_fingerprint = self._okb_scope_fingerprint_locked(tenant_id, project_id)
+        now = datetime.now(timezone.utc)
+        result = {
+            "tenant_id": tenant_id,
+            "project_id": project_id,
+            "scope_key": scope_key,
+            "source_count": len(snapshot),
+            "source_fingerprint": scope_fingerprint,
+            "reason": reason,
+            "indices": {},
+        }
+
+        for mode in _OKB_INDEX_MODES:
+            shard = self._okb_indexes[mode]
+            try:
+                shard.status = _INDEX_STATUS_REBUILDING
+                ordered = self._okb_order_scope_snapshot(snapshot, mode)
+                shard.scope_entries[scope_key] = [item["source_id"] for item in ordered]
+                shard.scope_fingerprints[scope_key] = scope_fingerprint
+                shard.scope_counts[scope_key] = len(ordered)
+                shard.source_revision = self._sequence
+                shard.source_fingerprint = self._okb_index_catalog_fingerprint_locked(shard)
+                shard.last_error = ""
+                if reason == "recovery":
+                    shard.recovered_at = now
+                elif reason == "backfill":
+                    shard.backfilled_at = now
+                else:
+                    shard.built_at = now
+                shard.status = _INDEX_STATUS_READY
+                result["indices"][mode] = {
+                    "status": shard.status,
+                    "entry_count": shard.scope_counts[scope_key],
+                    "source_fingerprint": shard.scope_fingerprints[scope_key],
+                }
+            except Exception as exc:  # pragma: no cover - deterministic helpers should not fail
+                shard.status = _INDEX_STATUS_DEGRADED
+                shard.last_error = str(exc)
+                result["indices"][mode] = {
+                    "status": shard.status,
+                    "error": shard.last_error,
+                }
+
+        result["overall_status"] = self._okb_overall_status_locked(tenant_id=tenant_id, project_id=project_id)
+        return result
+
+    def _rebuild_indexes_locked(self, *, tenant_id: str | None, project_id: str | None, reason: str) -> dict[str, Any]:
+        scopes = self._okb_target_scopes_locked(tenant_id, project_id)
+        if not scopes:
+            for shard in self._okb_indexes.values():
+                shard.status = _INDEX_STATUS_READY
+                shard.source_revision = self._sequence
+                shard.source_fingerprint = self._okb_index_catalog_fingerprint_locked(shard)
+            return {
+                "overall_status": _INDEX_STATUS_READY,
+                "scopes": [],
+                "source_revision": self._sequence,
+            }
+
+        summaries = []
+        for scope_tenant, scope_project in scopes:
+            summaries.append(self._okb_sync_index_scope_locked(scope_tenant, scope_project, reason=reason))
+        return {
+            "overall_status": self._okb_overall_status_locked(tenant_id=tenant_id, project_id=project_id),
+            "scopes": summaries,
+            "source_revision": self._sequence,
+        }
+
+    def _okb_overall_status_locked(self, *, tenant_id: str | None, project_id: str | None) -> str:
+        if self._storage_mode == "disabled":
+            return _INDEX_STATUS_UNAVAILABLE
+
+        relevant = [self._okb_indexes[mode] for mode in _OKB_INDEX_MODES]
+        if any(shard.status == _INDEX_STATUS_DEGRADED for shard in relevant):
+            return _INDEX_STATUS_DEGRADED
+        if any(shard.status == _INDEX_STATUS_REBUILDING for shard in relevant):
+            return _INDEX_STATUS_REBUILDING
+        if any(shard.status == _INDEX_STATUS_UNAVAILABLE for shard in relevant):
+            return _INDEX_STATUS_UNAVAILABLE
+
+        if tenant_id is not None and project_id is not None:
+            scope_key = self._okb_scope_key(tenant_id, project_id)
+            for mode, shard in self._okb_indexes.items():
+                expected_entries = self._okb_expected_scope_entries_locked(tenant_id, project_id, mode)
+                if scope_key not in shard.scope_entries:
+                    return _INDEX_STATUS_UNAVAILABLE
+                if shard.scope_entries.get(scope_key, []) != expected_entries:
+                    return _INDEX_STATUS_DEGRADED
+            return _INDEX_STATUS_READY
+
+        for scope_key in sorted(set().union(*(shard.scope_entries.keys() for shard in relevant))):
+            tenant, project = self._okb_scope_tuple(scope_key)
+            for mode, shard in self._okb_indexes.items():
+                expected_entries = self._okb_expected_scope_entries_locked(tenant, project, mode)
+                if shard.scope_entries.get(scope_key, []) != expected_entries:
+                    return _INDEX_STATUS_DEGRADED
+        return _INDEX_STATUS_READY
+
+    def _describe_index_health_locked(self, *, tenant_id: str | None = None, project_id: str | None = None) -> dict[str, Any]:
+        overall_status = self._okb_overall_status_locked(tenant_id=tenant_id, project_id=project_id)
+        if tenant_id is not None and project_id is not None:
+            scope_key = self._okb_scope_key(tenant_id, project_id)
+            expected_by_mode = {
+                mode: self._okb_expected_scope_entries_locked(tenant_id, project_id, mode)
+                for mode in _OKB_INDEX_MODES
+            }
+            scope_present = any(scope_key in shard.scope_entries for shard in self._okb_indexes.values())
+            shard_health = {
+                mode: {
+                    "status": shard.status,
+                    "entry_count": len(shard.scope_entries.get(scope_key, [])),
+                    "source_fingerprint": shard.scope_fingerprints.get(scope_key, ""),
+                    "desynced": shard.scope_entries.get(scope_key, []) != expected_by_mode[mode],
+                    "last_error": shard.last_error,
+                    "last_built_at": self._ts_signature(shard.built_at) if shard.built_at else "",
+                    "last_backfilled_at": self._ts_signature(shard.backfilled_at) if shard.backfilled_at else "",
+                    "last_recovered_at": self._ts_signature(shard.recovered_at) if shard.recovered_at else "",
+                }
+                for mode, shard in self._okb_indexes.items()
+            }
+            desynced = any(item["desynced"] for item in shard_health.values())
+            return {
+                "overall_status": overall_status,
+                "tenant_id": tenant_id,
+                "project_id": project_id,
+                "scope_key": scope_key,
+                "scope_present": scope_present,
+                "desynced": desynced,
+                "source_revision": self._sequence,
+                "indices": shard_health,
+            }
+
+        shard_health = {
+            mode: {
+                "status": shard.status,
+                "scope_count": len(shard.scope_entries),
+                "source_fingerprint": shard.source_fingerprint,
+                "last_error": shard.last_error,
+                "last_built_at": self._ts_signature(shard.built_at) if shard.built_at else "",
+                "last_backfilled_at": self._ts_signature(shard.backfilled_at) if shard.backfilled_at else "",
+                "last_recovered_at": self._ts_signature(shard.recovered_at) if shard.recovered_at else "",
+            }
+            for mode, shard in self._okb_indexes.items()
+        }
+        return {
+            "overall_status": overall_status,
+            "source_revision": self._sequence,
+            "desynced": overall_status == _INDEX_STATUS_DEGRADED,
+            "indices": shard_health,
+        }
+
+    def _okb_ensure_indexes_ready_locked(self, tenant_id: str, project_id: str) -> dict[str, Any]:
+        health = self._describe_index_health_locked(tenant_id=tenant_id, project_id=project_id)
+        if health["overall_status"] == _INDEX_STATUS_READY and not health["desynced"]:
+            return health
+        self._rebuild_indexes_locked(tenant_id=tenant_id, project_id=project_id, reason="recovery")
+        return self._describe_index_health_locked(tenant_id=tenant_id, project_id=project_id)
+
+    def _okb_index_sources_for_mode_locked(self, query_mode: str, scope_key: str) -> list[str]:
+        structural = list(self._okb_indexes["structural"].scope_entries.get(scope_key, []))
+        vector = list(self._okb_indexes["vector"].scope_entries.get(scope_key, []))
+        if query_mode == "vector":
+            return vector or structural
+        if query_mode == "hybrid":
+            merged: list[str] = []
+            for source_id in structural + vector:
+                if source_id not in merged:
+                    merged.append(source_id)
+            return merged
+        return structural or vector
+
+    def _okb_candidate_from_source_id(self, source_id: str, query: dict[str, Any]) -> _OptimizationCandidate | None:
+        if source_id.startswith("record:"):
+            record_id = source_id.removeprefix("record:")
+            entry = self._records.get(record_id)
+            if entry and self._record_visible_to_tenant(entry, query["tenant_id"], query["project_id"], context=None):
+                return self._candidate_from_record(entry, query)
+            return None
+        if source_id.startswith("decision:"):
+            decision_id = source_id.removeprefix("decision:")
+            for entry in self._decision_logs:
+                if entry.decision_log.decision_id == decision_id and self._decision_visible_to_tenant(entry, query["tenant_id"], query["project_id"], context=None):
+                    return self._candidate_from_decision_log(entry, query)
+            return None
+        return None 
 
     def _require_write(self, context: grpc.ServicerContext, *, operation: str) -> None:
         enforce_authn(context, method_name=f"KnowledgeBaseService.{operation}")
@@ -1222,8 +1600,13 @@ class KnowledgeBaseService:
         }
         return _stable_hash(payload)
 
-    def _ts_signature(self, ts: Timestamp | None) -> str:
-        return _ts_to_dt(ts).isoformat() if ts is not None else ""
+    def _ts_signature(self, ts: Timestamp | datetime | None) -> str:
+        if ts is None:
+            return ""
+        if isinstance(ts, datetime):
+            dt = ts if ts.tzinfo is not None else ts.replace(tzinfo=timezone.utc)
+            return dt.astimezone(timezone.utc).isoformat()
+        return _ts_to_dt(ts).isoformat()
 
     def _record_visible_to_tenant(self, entry: _StoredRecord, tenant_id: str, project_id: str, context: grpc.ServicerContext) -> bool:
         return entry.tenant_id == tenant_id and entry.project_id == project_id
@@ -1392,6 +1775,7 @@ class KnowledgeBaseService:
             sequence=self._sequence,
         )
         self._records[record_id] = stored
+        self._okb_sync_index_scope_locked(envelope["tenant_id"], envelope["project_id"], reason=source)
 
         ts = Timestamp()
         ts.FromDatetime(now)
@@ -1412,6 +1796,7 @@ class KnowledgeBaseService:
             sequence=self._sequence,
         )
         self._decision_logs.append(stored)
+        self._okb_sync_index_scope_locked(envelope["tenant_id"], envelope["project_id"], reason="decision_log")
         return stored
 
     
@@ -1450,6 +1835,10 @@ class KnowledgeBaseService:
     def _gc_locked(self) -> None:
         now = datetime.now(timezone.utc)
         cutoff = now - timedelta(seconds=self._retention_seconds)
+
+        before_record_count = len(self._records)
+        before_decision_count = len(self._decision_logs)
+
         self._records = {
             key: value
             for key, value in self._records.items()
@@ -1468,6 +1857,9 @@ class KnowledgeBaseService:
             for key, value in self._learning_models.items()
             if _parse_iso_datetime(value["updated_at"]) >= cutoff
         }
+
+        if len(self._records) != before_record_count or len(self._decision_logs) != before_decision_count:
+            self._rebuild_indexes_locked(tenant_id=None, project_id=None, reason="gc")
 
     def _learning_store_evidence(
         self,

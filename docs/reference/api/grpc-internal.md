@@ -220,6 +220,36 @@ Returned responses MUST expose:
 - `candidate_budget`
 - `selected_candidate_id`
 - `okb_selection_digest`
+- `index_status`
+
+The `index_status` diagnostic envelope SHOULD report:
+
+- overall status,
+- per-index status,
+- source fingerprint,
+- desync detection,
+- recovery timestamps.
+
+---
+
+## 5.1.1 KB index lifecycle
+
+The KB storage layer uses the primary store as the source of truth and maintains structural/vector derived indexes as deterministic replicas.
+
+Required behavior:
+
+- derived indexes MUST be built in deterministic order: structural first, then vector,
+- rebuild and backfill operations MUST be idempotent,
+- cold-start recovery MUST rebuild from the primary store,
+- partial failure MUST mark the affected scope `degraded`,
+- `ready`, `rebuilding`, `degraded`, and `unavailable` are the canonical status values.
+
+Operational flow:
+
+1. inspect `index_status`,
+2. recover or rebuild the scope from the primary store when needed,
+3. backfill historical records after outage recovery,
+4. resume similarity queries only when the scope reports `ready`.
 
 ---
 

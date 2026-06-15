@@ -188,3 +188,66 @@ This contract is backward-compatible with the existing in-memory KB baseline bec
 - canonical lookup is separated from similarity lookup.
 
 Any caller that does not provide tenant/project scope is invalid for similarity retrieval.
+
+## 11. Index synchronization, recovery, and backfill
+
+The KB uses the primary store as the source of truth.
+
+Primary store:
+- record documents,
+- decision logs,
+- replay-safe evidence.
+
+Derived indexes:
+- structural index,
+- vector index.
+
+### Build order
+
+When a scope is synchronized, the backend MUST build derived indexes in this order:
+
+1. structural index,
+2. vector index,
+3. health reconciliation.
+
+The build is deterministic and idempotent. Re-running the same rebuild or backfill with the same primary-store snapshot MUST produce the same derived index state.
+
+### Recovery procedure
+
+After a cold start or crash restart:
+
+1. inspect index health,
+2. recover from the primary store,
+3. verify the derived index fingerprint matches the primary snapshot,
+4. resume queries only after the scope reports `ready`.
+
+### Backfill procedure
+
+Backfill is used to catch up historical primary-store records after a partial outage.
+
+- Backfill MUST only read from the primary store.
+- Backfill MUST NOT mutate primary records.
+- Backfill MAY be rerun safely.
+- Backfill MUST be scope-aware and tenant/project isolated.
+
+### Health states
+
+The operational status model is:
+
+- `ready` — primary store and derived index match,
+- `rebuilding` — a scope is actively being synchronized,
+- `degraded` — a mismatch or partial failure was detected,
+- `unavailable` — the index is not currently present or the storage layer is disabled.
+
+### Partial failure behavior
+
+If one derived index fails while another succeeds, the scope MUST be marked `degraded`. The primary store remains the source of truth, and the scope can be repaired by `recover_indexes` or `rebuild_indexes`.
+
+### Query-time behavior
+
+Similarity queries MUST:
+
+- verify scope health before ranking,
+- recover a missing scope from the primary store,
+- never return cross-tenant/project candidates,
+- expose the current health snapshot in diagnostics.
