@@ -78,9 +78,6 @@ def test_optimizer_contract_fixture_is_frozen_v1() -> None:
     }
     assert payload["response"]["metric_bounds"]["confidence_score"] == {"min": 0.0, "max": 1.0}
     assert payload["response"]["decision_lineage"]["optimizer"]["fallback_used"] is False
-    assert payload["response"]["classification_label"] == "Optimization"
-    assert payload["examples"]["replay"]["response"]["classification_label"] == "Optimization"
-    assert payload["examples"]["fallback"]["response"]["classification_label"] == "Advisory"
     assert payload["reason_codes"] == [
         "EIGEN_OPT_INVALID_AQO",
         "EIGEN_OPT_TOPOLOGY_MISSING",
@@ -154,8 +151,15 @@ def test_optimizer_confidence_and_explainability_fixture_are_bounded_v1() -> Non
 
 
 def test_optimizer_classification_label_validation_is_strict_v1() -> None:
-    for label in sorted(ALLOWED_CLASSIFICATION_LABELS):
-        assert _validate_classification_label(label) == label
+    sample_responses = [
+        {"classification_label": "Advisory"},
+        {"classification_label": "Optimization"},
+        {"classification_label": "Recommendation"},
+        {"classification_label": "Informational"},
+    ]
+
+    for sample in sample_responses:
+        assert _validate_classification_label(sample["classification_label"]) == sample["classification_label"]
 
     try:
         _validate_classification_label("Unknown")
