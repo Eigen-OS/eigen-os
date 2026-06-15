@@ -121,6 +121,7 @@ class KnowledgeBaseService(_BaseKnowledgeBaseService):
         source: str,
         replay_bundle_ref: str,
         context: grpc.ServicerContext | None,
+        capability_scope: tuple[str, ...] | None = None,
     ) -> dict[str, Any]:
         record_id = str(record.record_id)
         now = datetime.now(timezone.utc)
@@ -191,6 +192,7 @@ class KnowledgeBaseService(_BaseKnowledgeBaseService):
             record=self._clone_record(record),
             tenant_id=envelope["tenant_id"],
             project_id=envelope["project_id"],
+            capability_scope=tuple(capability_scope or ()),
             created_at=record_created_at,
             updated_at=now,
             fingerprint=fingerprint,
