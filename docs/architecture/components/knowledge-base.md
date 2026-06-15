@@ -1,19 +1,35 @@
+# Knowledge Base: canonical patterns and candidate retrieval
+
 **Contract version:** 1.0.0  
-**Status:** Target architecture contract for deterministic OKB candidate retrieval  
-**Applies to:** `KnowledgeBaseService` similarity search, replay tooling, and optimizer reuse selection
+**Status:** Target architecture contract for deterministic KB reuse and canonical pattern selection  
+**Applies to:** `KnowledgeBaseService` similarity search, canonical pattern retrieval, replay tooling, and optimizer reuse selection
 
 ## 1. Scope
 
 The Knowledge Base exposes two distinct behaviors:
 
 1. **Public record storage** — CRUD/query for KB records and decision logs.
-2. **Optimization Knowledge Base (OKB) candidate retrieval** — deterministic reuse selection for optimizer/compiler workflows.
+2. **Optimization Knowledge Base (OKB) retrieval** — deterministic reuse selection for compiler / AQO workflows.
 
-This document defines the OKB retrieval semantics only.
+This document defines the retrieval semantics for both candidate similarity search and canonical pattern lookup.
 
-## 2. Similarity query definition
+## 2. Retrieval primitives
 
-A similarity query is a **deterministic ranking query over a scoped candidate pool**.
+### Candidate pattern
+
+A candidate pattern is a historical, replay-safe pattern extracted from KB artifacts. Candidate patterns may be similar to the current request, but they are not canonical by default.
+
+### Canonical pattern
+
+A canonical pattern is the single template selected by `GetPattern` when the request compatibility window matches exactly. The canonical pattern is deterministic and machine-verifiable.
+
+### Explanation pattern
+
+An explanation pattern is a bounded diagnostic envelope that explains why a canonical pattern was selected or why no canonical pattern was available.
+
+## 3. Similarity query definition
+
+A similarity query is a deterministic ranking query over a scoped candidate pool.
 
 Every query MUST be scoped by:
 
@@ -24,11 +40,11 @@ The retrieval backend MUST NOT mix candidates across tenant or project boundarie
 
 ### Supported modes
 
-- `structural`: rank by structural compatibility.
+- `structural`: rank by structural compatibility and support.
 - `vector`: rank by deterministic vector-similarity surrogate.
 - `hybrid`: rank by a combined score derived from structural and vector scores.
 
-## 3. Candidate pool
+## 4. Candidate pool
 
 The candidate pool is bounded and deterministic.
 
@@ -40,9 +56,9 @@ The backend MAY derive candidates from:
 
 The pool MUST be filtered before scoring. Cross-scope data MUST NOT be considered.
 
-## 4. Rank source of truth
+## 5. Rank source of truth
 
-The final ranking score is `score_total`.
+For candidate retrieval, the final ranking score is `score_total`.
 
 Per mode:
 
@@ -61,7 +77,42 @@ The final tiebreaker is `candidate_id` in ascending lexical order.
 - `confidence`: `0.0..1.0`
 - `score_total`: `0.0..1.0`
 
-## 5. Cardinality and replay
+## 6. Canonical pattern selection (`GetPattern`)
+
+`GetPattern` returns a canonical template, not just a similar historical object.
+
+The canonical pattern MUST satisfy the exact compatibility window for the request:
+
+- `schema_version`
+- `compiler_version`
+- `aqo_version`
+- `optimizer_version`
+- `policy_mode`
+- `policy_digest`
+
+Compatibility metadata MUST be machine-verifiable by exact string equality and a deterministic `compatibility_signature` hash over the normalized compatibility window.
+
+### Canonical selection rule
+
+Among compatible candidates, the canonical pattern is selected deterministically using:
+
+1. `support` descending,
+2. `pattern_family` ascending,
+3. `pattern_id` ascending.
+
+This rule is independent from candidate similarity scoring.
+
+### Incompatibility reason codes
+
+When a pattern is not canonical-eligible, the backend MUST report deterministic reason codes:
+
+- `SCHEMA_MISMATCH`
+- `COMPILER_MISMATCH`
+- `AQO_MISMATCH`
+- `OPTIMIZER_MISMATCH`
+- `POLICY_MISMATCH`
+
+## 7. Cardinality and replay
 
 The candidate budget is bounded.
 
@@ -69,67 +120,71 @@ The candidate budget is bounded.
 - Returned candidates MUST be truncated to the final budget.
 - No pagination or streaming is used for this retrieval path.
 
-Deterministic replay requires that the same normalized query input returns the same ordered candidate list.
+Deterministic replay requires that the same normalized query input returns the same ordered candidate list and the same canonical selection.
 
-## 6. Required deterministic inputs
+## 8. Required deterministic inputs
 
 A normalized query MUST include:
 
 - `tenant_id`
 - `project_id`
+- `snapshot_id`
+- `circuit_id`
+- `backend_class`
 - `semantic_hash`
 - `aqo_hash`
-- `backend_profile_id`
-- `topology_snapshot_digest`
-- `policy_envelope_digest`
-- `kb_schema_version`
+- `schema_version`
 - `compiler_version`
+- `aqo_version`
 - `optimizer_version`
+- `policy_mode`
+- `policy_digest`
 - `seed`
 - `deterministic`
 - `query_mode`
 - `candidate_budget`
 
-## 7. Contracted output fields
+## 9. Contracted output fields
 
-Returned candidates MUST include:
+Returned candidate patterns MUST include:
 
-- `candidate_id`
-- `candidate_source`
-- `optimization_type`
-- `transformation_ref`
-- `provenance_ref`
+- `pattern_id`
+- `pattern_family`
+- `pattern_kind`
+- `circuit_id`
+- `backend_class`
+- `source_record_ids`
+- `support`
 - `compatibility_window`
-- `deterministic_digest`
-- `explanation_ref`
-- `selection_reason`
-- `confidence`
+- `compatibility_signature`
+- `canonical_eligible`
+- `selected`
+- `rank`
 - `score_breakdown`
 - `score_total`
-- `selected`
+- `confidence`
+- `incompatibility_reasons
 - `metadata`
 
-The output MUST also include:
+The canonical response MUST also include:
 
 - `tenant_id`
 - `project_id`
 - `candidate_budget`
-- `selected_candidate_id`
-- `okb_selection_digest`
+- `canonical_pattern_id`
+- `canonical_pattern`
+- `candidate_patterns`
+- `explanation_pattern`
+- `diagnostics`
 
-## 8. Stable tie-breaking
-
-If two or more candidates share the same `score_total` and `confidence`, the backend MUST sort by `candidate_id` ascending.
-
-This guarantees replay-stable ordering when the normalized input is unchanged.
-
-## 9. Compatibility notes
+## 10. Compatibility notes
 
 This contract is backward-compatible with the existing in-memory KB baseline because:
 
 - the candidate pool remains bounded,
 - the ranking remains deterministic,
 - the scope filter is stricter, not looser,
-- the output is additive.
+- the output is additive,
+- canonical lookup is separated from similarity lookup.
 
 Any caller that does not provide tenant/project scope is invalid for similarity retrieval.
