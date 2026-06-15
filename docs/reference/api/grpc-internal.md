@@ -317,6 +317,8 @@ service NeuroSymbolicService {
 - The service MUST be deterministic for the same feature vector, contract version, active policy snapshot version, and deterministic seed.
 - The response MUST include a replay digest and a bounded confidence value.
 - The service output is advisory only and MUST NOT directly change security-relevant decisions.
+- Any recommendation intended for security-sensitive use MUST pass through validation before the policy engine sees it.
+- There MUST be no direct model-to-execution path.
 
 ---
 
