@@ -138,6 +138,7 @@ Required request semantics:
 - `schema_version`, `compiler_version`, `aqo_version`, `optimizer_version`, `policy_mode`, and `policy_digest` MUST be present.
 - compatibility metadata MUST be machine-verifiable by exact string equality.
 - incompatible patterns MUST remain visible only as candidates or diagnostics, never as the canonical result.
+- diagnostics, replay envelopes, and explanation payloads MUST remain scoped to the current tenant/project and MUST NOT echo foreign identifiers or payload fragments.
 
 Canonical selection semantics:
 
@@ -212,6 +213,8 @@ Scope semantics:
 
 - candidates MUST be filtered by tenant/project before scoring,
 - cross-tenant/project retrieval is forbidden.
+- cross-tenant/project retrieval is forbidden,
+- diagnostics, selection digests, and replay outputs MUST not expose third-party identifiers or payload fragments.
 
 Returned responses MUST expose:
 

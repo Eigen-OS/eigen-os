@@ -55,6 +55,8 @@ The backend MAY derive candidates from:
 - other replay-safe KB artifacts that are in the same tenant/project scope.
 
 The pool MUST be filtered before scoring. Cross-scope data MUST NOT be considered.
+Mixed-tenant or mixed-project snapshots are invalid and MUST be rejected before retrieval.
+All explanation and replay outputs MUST stay within the same tenant/project boundary and MUST NOT echo foreign identifiers or payload fragments.
 
 ## 5. Rank source of truth
 
@@ -188,6 +190,7 @@ This contract is backward-compatible with the existing in-memory KB baseline bec
 - canonical lookup is separated from similarity lookup.
 
 Any caller that does not provide tenant/project scope is invalid for similarity retrieval.
+Snapshot ingest MUST preserve the snapshot's tenant/project scope, and retrieval helpers MUST fail closed when the request scope does not match that stored boundary.
 
 ## 11. Index synchronization, recovery, and backfill
 
