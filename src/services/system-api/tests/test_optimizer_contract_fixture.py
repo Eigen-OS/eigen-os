@@ -5,6 +5,14 @@ from hashlib import sha256
 from pathlib import Path
 
 
+ALLOWED_CLASSIFICATION_LABELS = {
+    "Advisory",
+    "Optimization",
+    "Recommendation",
+    "Informational",
+}
+
+
 def _canonical_json(value: object) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
@@ -44,6 +52,13 @@ def _replay_digest(example: dict[str, object]) -> str:
     )
 
 
+def _validate_classification_label(label: str) -> str:
+    normalized = label.strip()
+    if normalized not in ALLOWED_CLASSIFICATION_LABELS:
+        raise ValueError(f"unknown model output classification label: {label}")
+    return normalized
+
+
 def test_optimizer_contract_fixture_is_frozen_v1() -> None:
     payload = _load_fixture()
 
@@ -63,6 +78,9 @@ def test_optimizer_contract_fixture_is_frozen_v1() -> None:
     }
     assert payload["response"]["metric_bounds"]["confidence_score"] == {"min": 0.0, "max": 1.0}
     assert payload["response"]["decision_lineage"]["optimizer"]["fallback_used"] is False
+    assert payload["response"]["classification_label"] == "Optimization"
+    assert payload["examples"]["replay"]["response"]["classification_label"] == "Optimization"
+    assert payload["examples"]["fallback"]["response"]["classification_label"] == "Advisory"
     assert payload["reason_codes"] == [
         "EIGEN_OPT_INVALID_AQO",
         "EIGEN_OPT_TOPOLOGY_MISSING",
@@ -133,3 +151,15 @@ def test_optimizer_confidence_and_explainability_fixture_are_bounded_v1() -> Non
     assert payload["response"]["ranking"]["ordered_candidate_ids"] == [
         candidate["candidate_id"] for candidate in replay["response"]["candidates"]
     ]
+
+
+def test_optimizer_classification_label_validation_is_strict_v1() -> None:
+    for label in sorted(ALLOWED_CLASSIFICATION_LABELS):
+        assert _validate_classification_label(label) == label
+
+    try:
+        _validate_classification_label("Unknown")
+    except ValueError:
+        pass
+    else:  # pragma: no cover - defensive branch
+        raise AssertionError("unknown classification labels must be rejected")
