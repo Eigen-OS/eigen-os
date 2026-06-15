@@ -124,6 +124,12 @@ def _load_policy_snapshot(cfg: SecurityConfig) -> PolicySnapshot:
     )
 
 
+def load_policy_snapshot() -> PolicySnapshot:
+    """Load the active policy snapshot using the current security config."""
+
+    return _load_policy_snapshot(load_security_config())
+
+
 def _int_env(name: str, default: int) -> int:
     raw = os.getenv(name, str(default))
     try:

@@ -18,13 +18,15 @@ from google.protobuf.timestamp_pb2 import Timestamp
 
 from .errors import FieldViolation, PublicErrorSpec, abort_invalid_argument, abort_public, abort_with_error_info
 from .observability import (
+    append_security_audit_event,
     record_kb_contract_marker,
     record_kb_fallback,
     record_kb_query,
     record_kb_replay_failure,
+    sanitized_security_metadata,
     trace_id_from_traceparent,
 )
-from .security import auth_context, enforce_authn, enforce_authz
+from .security import auth_context, enforce_authn, enforce_authz, enforce_sandbox_policy, load_policy_snapshot, security_context
 
 _KB_CONTRACT_VERSION = "1.0.0"
 _SEMVER_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:[-+][0-9A-Za-z.-]+)?$")
@@ -443,6 +445,7 @@ class KnowledgeBaseService:
     def QueryRecords(self, request, context: grpc.ServicerContext):
         self._require_read(context, operation="query_records")
         envelope = self._normalize_envelope(request.envelope, context)
+        sec_ctx, policy_version = self._retrieval_security_context(context, operation="query_records")
         page_size = self._page_size(request.page_size)
         with self._lock:
             self._gc_locked()
@@ -452,19 +455,51 @@ class KnowledgeBaseService:
             next_offset = offset + page_size
             window = filtered[offset:next_offset]
             next_token = self._encode_cursor(envelope=envelope, filter_payload=self._filter_signature(request.filter), kind="records", offset=next_offset, query_sig=query_sig, more=next_offset < len(filtered))
+        self._audit_retrieval_decision(
+            context=context,
+            sec_ctx=sec_ctx,
+            policy_version=policy_version,
+            operation="query_records",
+            decision="allow" if window else "allow",
+            reason="KB_QUERY_HIT" if window else "KB_QUERY_EMPTY",
+            result_count=len(window),
+            hit=bool(window),
+            resource_name=f"{envelope['tenant_id']}/{envelope['project_id']}",
+        )
         record_kb_query("records", hit=bool(window))
         return self._kb_pb.QueryRecordsResponse(records=window, next_page_token=next_token)
 
     def GetRecord(self, request, context: grpc.ServicerContext):
         self._require_read(context, operation="get_record")
         envelope = self._normalize_envelope(request.envelope, context)
+        sec_ctx, policy_version = self._retrieval_security_context(context, operation="get_record")
         with self._lock:
             self._gc_locked()
             entry = self._records.get(request.record_id)
             if entry is None or not self._record_visible_to_tenant(entry, envelope["tenant_id"], envelope["project_id"], context):
+                self._audit_retrieval_decision(
+                    context=context,
+                    sec_ctx=sec_ctx,
+                    policy_version=policy_version,
+                    operation="get_record",
+                    decision="deny",
+                    reason="KB_RECORD_NOT_FOUND",
+                    hit=False,
+                    resource_name=request.record_id,
+                )
                 record_kb_query("records", hit=False)
                 self._abort_not_found(context, request.record_id)
                 return self._kb_pb.GetRecordResponse()
+            self._audit_retrieval_decision(
+                context=context,
+                sec_ctx=sec_ctx,
+                policy_version=policy_version,
+                operation="get_record",
+                decision="allow",
+                reason="KB_RECORD_FOUND",
+                hit=True,
+                resource_name=request.record_id,
+            )
             record_kb_query("records", hit=True)
             return self._kb_pb.GetRecordResponse(record=self._clone_record(entry.record))
 
@@ -481,6 +516,7 @@ class KnowledgeBaseService:
     def QueryDecisionLogs(self, request, context: grpc.ServicerContext):
         self._require_read(context, operation="query_decision_logs")
         envelope = self._normalize_envelope(request.envelope, context)
+        sec_ctx, policy_version = self._retrieval_security_context(context, operation="query_decision_logs")
         page_size = self._page_size(request.page_size)
         with self._lock:
             self._gc_locked()
@@ -490,17 +526,29 @@ class KnowledgeBaseService:
             next_offset = offset + page_size
             window = filtered[offset:next_offset]
             next_token = self._encode_cursor(envelope=envelope, filter_payload={"trace_id": request.trace_id, "model_version": request.model_version}, kind="decision_logs", offset=next_offset, query_sig=query_sig, more=next_offset < len(filtered))
+        self._audit_retrieval_decision(
+            context=context,
+            sec_ctx=sec_ctx,
+            policy_version=policy_version,
+            operation="query_decision_logs",
+            decision="allow",
+            reason="KB_QUERY_HIT" if window else "KB_QUERY_EMPTY",
+            result_count=len(window),
+            hit=bool(window),
+            resource_name=f"{envelope['tenant_id']}/{envelope['project_id']}",
+        )
         record_kb_query("decision_logs", hit=bool(window))
         return self._kb_pb.QueryDecisionLogsResponse(decision_logs=window, next_page_token=next_token)
 
     # Ingestion helpers --------------------------------------------------
 
-    def query_optimization_candidates(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def query_optimization_candidates(self, payload: dict[str, Any], context: grpc.ServicerContext | None = None) -> dict[str, Any]:
         """Deterministic OKB query backend for scoped structural/vector/hybrid reuse selection."""
         if self._storage_mode == "disabled":
             raise KnowledgeBaseUnavailable("knowledge base storage unavailable")
 
         query = self._normalize_okb_query(payload)
+        sec_ctx, policy_version = self._retrieval_security_context(context, operation="query_optimization_candidates")
         with self._lock:
             self._gc_locked()
             self._okb_ensure_indexes_ready_locked(query["tenant_id"], query["project_id"])
@@ -792,11 +840,12 @@ class KnowledgeBaseService:
         record_kb_query("learning_evidence", hit=True)
         return evidence["evidence_id"]
 
-    def query_learning_evidence(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def query_learning_evidence(self, payload: dict[str, Any], context: grpc.ServicerContext | None = None) -> dict[str, Any]:
         if self._storage_mode == "disabled":
             raise KnowledgeBaseUnavailable("knowledge base storage unavailable")
         envelope = self._payload_envelope(payload)
         requested_scope = _capability_scope_tokens(payload)
+        sec_ctx, policy_version = self._retrieval_security_context(context, operation="query_learning_evidence")
         page_size = self._page_size(int(payload.get("page_size", 50) or 50))
         kind_filter = str(payload.get("evidence_kind", "")).strip().lower()
         model_version = str(payload.get("model_version", "")).strip()
@@ -822,6 +871,17 @@ class KnowledgeBaseService:
             filtered.sort(key=lambda item: (item["created_at"], item["evidence_id"]))
             window = filtered[offset : offset + page_size]
             next_page_token = str(offset + page_size) if (offset + page_size) < len(filtered) else ""
+        self._audit_retrieval_decision(
+            context=context,
+            sec_ctx=sec_ctx,
+            policy_version=policy_version,
+            operation="query_learning_evidence",
+            decision="allow",
+            reason="KB_QUERY_HIT" if window else "KB_QUERY_EMPTY",
+            result_count=len(window),
+            hit=bool(window),
+            resource_name=f"{envelope['tenant_id']}/{envelope['project_id']}",
+        )
         record_kb_query("learning_evidence", hit=bool(window))
         return {
             "evidence": [self._learning_public_view(item) for item in window],
@@ -1013,20 +1073,115 @@ class KnowledgeBaseService:
         record_kb_query("learning_models", hit=True)
         return result
 
-    def get_model_lifecycle(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def get_model_lifecycle(self, payload: dict[str, Any], context: grpc.ServicerContext | None = None) -> dict[str, Any]:
         if self._storage_mode == "disabled":
             raise KnowledgeBaseUnavailable("knowledge base storage unavailable")
         scope = self._payload_envelope(payload)
         model_version = str(payload.get("model_version", "")).strip()
         if not model_version:
             raise ValueError("model_version is required")
+        sec_ctx, policy_version = self._retrieval_security_context(context, operation="get_model_lifecycle")
         with self._lock:
             self._gc_locked()
             model = self._learning_models.get((scope["tenant_id"], scope["project_id"], model_version))
             if model is None:
+                self._audit_retrieval_decision(
+                    context=context,
+                    sec_ctx=sec_ctx,
+                    policy_version=policy_version,
+                    operation="get_model_lifecycle",
+                    decision="deny",
+                    reason="KB_MODEL_NOT_FOUND",
+                    hit=False,
+                    resource_name=model_version,
+                )
                 raise KnowledgeBaseUnavailable("model unavailable")
+        self._audit_retrieval_decision(
+            context=context,
+            sec_ctx=sec_ctx,
+            policy_version=policy_version,
+            operation="get_model_lifecycle",
+            decision="allow",
+            reason="KB_MODEL_FOUND",
+            hit=True,
+            resource_name=model_version,
+        )
         record_kb_query("learning_models", hit=bool(model))
         return self._learning_model_view(scope, model)
+
+
+    def _policy_snapshot_version(self) -> str:
+        snapshot = load_policy_snapshot()
+        version = str(snapshot.version).strip()
+        if not version:
+            raise KnowledgeBaseUnavailable("policy snapshot unavailable")
+        return version
+
+    def _retrieval_security_context(
+        self,
+        context: grpc.ServicerContext | None,
+        *,
+        operation: str,
+    ) -> tuple[Any | None, str]:
+        if context is None:
+            return None, self._policy_snapshot_version()
+        sec_ctx = security_context(context, method_name=f"KnowledgeBaseService.{operation}")
+        if sec_ctx.auth_mode != "allow_all":
+            enforce_sandbox_policy(context, sandbox_profile=sec_ctx.sandbox_profile)
+        policy_version = sec_ctx.policy_version.strip() or self._policy_snapshot_version()
+        return sec_ctx, policy_version
+
+    def _audit_retrieval_decision(
+        self,
+        *,
+        context: grpc.ServicerContext | None,
+        sec_ctx: Any | None,
+        policy_version: str,
+        operation: str,
+        decision: str,
+        reason: str,
+        hit: bool,
+        resource_name: str,
+        result_count: int | None = None,
+    ) -> None:
+        md = _metadata(context) if context is not None else {}
+        traceparent = str(md.get("traceparent", ""))
+        trace_id = str(md.get("trace_id", "")) or trace_id_from_traceparent(traceparent)
+        subject = ""
+        roles: tuple[str, ...] = ()
+        auth_mode = "allow_all"
+        service_identity = None
+        sandbox_profile = None
+        replay_marker = ""
+        if sec_ctx is not None:
+            subject = getattr(sec_ctx, "subject", "") or ""
+            roles = tuple(getattr(sec_ctx, "roles", ()) or ())
+            auth_mode = getattr(sec_ctx, "auth_mode", "allow_all") or "allow_all"
+            service_identity = getattr(sec_ctx, "service_identity", None)
+            sandbox_profile = getattr(sec_ctx, "sandbox_profile", None)
+            replay_marker = str(getattr(sec_ctx, "claims", {}).get("replay_marker", "") or "")
+        append_security_audit_event(
+            {
+                "method": f"KnowledgeBaseService.{operation}",
+                "decision": decision,
+                "reason": reason,
+                "trace_id": trace_id,
+                "traceparent": traceparent,
+                "resource_type": "eigen.api.v1.KnowledgeBase",
+                "resource_name": resource_name,
+                "hit": hit,
+                **({"result_count": result_count} if result_count is not None else {}),
+                **sanitized_security_metadata(
+                    subject=subject,
+                    roles=roles,
+                    auth_mode=auth_mode,
+                    policy_version=policy_version,
+                    service_identity=service_identity,
+                    sandbox_profile=sandbox_profile,
+                    replay_marker=replay_marker,
+                ),
+            }
+        )
 
 
     def _normalize_okb_query(self, payload: dict[str, Any]) -> dict[str, Any]:

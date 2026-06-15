@@ -64,6 +64,7 @@ class KnowledgeBaseService(_BaseKnowledgeBaseService):
     def QueryRecords(self, request, context: grpc.ServicerContext):  # noqa: N802
         self._require_read(context, operation="query_records")
         envelope = self._normalize_envelope(request.envelope, context)
+        sec_ctx, policy_version = self._retrieval_security_context(context, operation="query_records")
         page_size = self._page_size(request.page_size)
         with self._lock:
             self._gc_locked()
@@ -78,6 +79,17 @@ class KnowledgeBaseService(_BaseKnowledgeBaseService):
             next_offset = offset + page_size
             window = filtered[offset:next_offset]
             next_token = self._encode_cursor(envelope=envelope, filter_payload=self._filter_signature(request.filter), kind="records", offset=next_offset, query_sig=query_sig, more=next_offset < len(filtered))
+        self._audit_retrieval_decision(
+            context=context,
+            sec_ctx=sec_ctx,
+            policy_version=policy_version,
+            operation="query_records",
+            decision="allow",
+            reason="KB_QUERY_HIT" if window else "KB_QUERY_EMPTY",
+            result_count=len(window),
+            hit=bool(window),
+            resource_name=f"{envelope['tenant_id']}/{envelope['project_id']}",
+        )
         return self._kb_pb.QueryRecordsResponse(records=window, next_page_token=next_token)
 
     def _record_fingerprint(self, record: Any, *, replay_bundle_ref: str, source: str = "") -> str:
