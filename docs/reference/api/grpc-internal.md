@@ -134,6 +134,7 @@ Acts as the internal bridge between:
 Required request semantics:
 
 - `tenant_id` and `project_id` MUST be present.
+- capability boundary metadata (`capability_scope`, `capability_tags`, `capabilities`, or equivalent backend capability discriminator) MUST normalize deterministically.
 - `snapshot_id`, `circuit_id`, and `backend_class` MUST be present.
 - `schema_version`, `compiler_version`, `aqo_version`, `optimizer_version`, `policy_mode`, and `policy_digest` MUST be present.
 - compatibility metadata MUST be machine-verifiable by exact string equality.
@@ -212,8 +213,8 @@ Ranking semantics:
 Scope semantics:
 
 - candidates MUST be filtered by tenant/project before scoring,
-- cross-tenant/project retrieval is forbidden.
-- cross-tenant/project retrieval is forbidden,
+- candidates MUST also be filtered by capability boundary before scoring,
+- cross-tenant/project/capability retrieval is forbidden.
 - diagnostics, selection digests, and replay outputs MUST not expose third-party identifiers or payload fragments.
 
 Returned responses MUST expose:
@@ -224,6 +225,7 @@ Returned responses MUST expose:
 - `selected_candidate_id`
 - `okb_selection_digest`
 - `index_status`
+- `capability_scope`
 
 The `index_status` diagnostic envelope SHOULD report:
 

@@ -80,6 +80,7 @@ class _StoredRecord:
     record: Any
     tenant_id: str
     project_id: str
+    capability_scope: tuple[str, ...]
     created_at: datetime
     updated_at: datetime
     fingerprint: str
@@ -91,6 +92,7 @@ class _StoredDecisionLog:
     decision_log: Any
     tenant_id: str
     project_id: str
+    capability_scope: tuple[str, ...]
     decided_at: datetime
     fingerprint: str
     sequence: int
@@ -248,6 +250,75 @@ def _parse_iso_datetime(value: str) -> datetime:
     return dt.astimezone(timezone.utc)
 
 
+def _capability_tokens_from_value(value: Any) -> set[str]:
+    tokens: set[str] = set()
+    if value is None:
+        return tokens
+    if isinstance(value, dict):
+        for key, item in sorted(value.items(), key=lambda kv: str(kv[0])):
+            key_text = str(key).strip().lower()
+            if not key_text:
+                continue
+            if isinstance(item, dict):
+                nested = _stable_json(item).strip().lower()
+                if nested:
+                    tokens.add(f"{key_text}={nested}")
+                else:
+                    tokens.add(key_text)
+                continue
+            if isinstance(item, (list, tuple, set)):
+                nested_tokens = sorted({str(entry).strip().lower() for entry in item if str(entry).strip()})
+                if nested_tokens:
+                    nested = ",".join(nested_tokens)
+                    tokens.add(f"{key_text}={nested}")
+                    tokens.add(nested)
+                else:
+                    tokens.add(key_text)
+                continue
+            item_text = str(item).strip().lower()
+            if item_text:
+                tokens.add(f"{key_text}={item_text}")
+                tokens.add(item_text)
+            else:
+                tokens.add(key_text)
+    elif isinstance(value, (list, tuple, set)):
+        for item in value:
+            tokens.update(_capability_tokens_from_value(item))
+    else:
+        text = str(value).strip().lower()
+        if text:
+            for part in re.split(r"[,\s]+", text):
+                part = part.strip().lower()
+                if part:
+                    tokens.add(part)
+    return tokens
+
+
+def _capability_scope_tokens(payload: dict[str, Any] | None) -> tuple[str, ...]:
+    if not payload:
+        return ()
+    tokens: set[str] = set()
+    for key in ("capability_scope", "capability_tags", "capabilities"):
+        tokens.update(_capability_tokens_from_value(payload.get(key)))
+    metadata = payload.get("metadata")
+    if isinstance(metadata, dict):
+        for key in ("capability_scope", "capability_tags", "capabilities"):
+            tokens.update(_capability_tokens_from_value(metadata.get(key)))
+    for key in ("backend_profile_id", "backend_profile"):
+        token = str(payload.get(key, "")).strip().lower()
+        if token:
+            tokens.add(token)
+            tokens.add(f"backend_profile={token}")
+            break
+    return tuple(sorted(tokens))
+
+
+def _capability_scope_matches(stored_scope: tuple[str, ...], requested_scope: tuple[str, ...]) -> bool:
+    if not requested_scope:
+        return True
+    return tuple(stored_scope) == tuple(requested_scope)
+
+
 class KnowledgeBaseService:
     """Deterministic in-memory KnowledgeBaseService implementation."""
 
@@ -396,7 +467,7 @@ class KnowledgeBaseService:
         with self._lock:
             self._gc_locked()
             self._okb_ensure_indexes_ready_locked(query["tenant_id"], query["project_id"])
-            candidates = self._okb_candidate_pool(query)
+            candidates = self._okb_candidate_pool(query, query["capability_scope"])
             index_status = self._describe_index_health_locked(tenant_id=query["tenant_id"], project_id=query["project_id"])
 
         ordered = sorted(
@@ -437,6 +508,7 @@ class KnowledgeBaseService:
                     "semantic_hash": query["semantic_hash"],
                     "aqo_hash": query["aqo_hash"],
                     "backend_profile_id": query["backend_profile_id"],
+                    "capability_scope": list(query["capability_scope"]),
                     "topology_snapshot_digest": query["topology_snapshot_digest"],
                     "policy_envelope_digest": query["policy_envelope_digest"],
                     "kb_schema_version": query["kb_schema_version"],
@@ -488,9 +560,10 @@ class KnowledgeBaseService:
         else:
             decision_log.decided_at.CopyFrom(_now_ts())
         envelope = self._payload_envelope(payload)
+        capability_scope = _capability_scope_tokens(payload)
         with self._lock:
             self._gc_locked()
-            self._store_decision_log(decision_log=decision_log, envelope=envelope, context=None)
+            self._store_decision_log(decision_log=decision_log, envelope=envelope, context=None, capability_scope=capability_scope)
             self._learning_store_evidence(
                 source="runtime",
                 evidence_kind="runtime",
@@ -504,6 +577,7 @@ class KnowledgeBaseService:
                     "selected_action": decision_log.selected_action,
                     "fallback_used": decision_log.fallback_used,
                     "feature_snapshot": dict(decision_log.feature_snapshot),
+                    "capability_scope": list(capability_scope),
                     "decided_at": decision_log.decided_at,
                     "training_set_hash": str(payload.get("training_set_hash", "")).strip(),
                     "evaluation_bundle_hash": str(payload.get("evaluation_bundle_hash", "")).strip(),
@@ -564,6 +638,7 @@ class KnowledgeBaseService:
             record.lineage.evaluation_bundle_hash = str(lineage.get("evaluation_bundle_hash", "")).strip()
             record.lineage.promotion_policy_version = str(lineage.get("promotion_policy_version", "")).strip()
             record.lineage.promotion_outcome = str(lineage.get("promotion_outcome", "")).strip()
+        capability_scope = _capability_scope_tokens(payload)
         attrs = _anonymize_mapping(dict(payload.get("attributes") or {}), salt=self._anon_salt, epoch=self._anon_epoch)
         attrs.update(
             {
@@ -572,6 +647,7 @@ class KnowledgeBaseService:
                 "idempotency_key": str(payload.get("idempotency_key", "")).strip(),
                 "parent_run_id": str(payload.get("parent_run_id", "")).strip(),
                 "run_state": str(payload.get("state", "")).strip(),
+                "capability_scope": _stable_json(list(capability_scope)),
                 "tenant_id": _anon_token(salt=self._anon_salt, epoch=self._anon_epoch, value=str(payload.get("tenant_id", ""))) if payload.get("tenant_id") else "",
                 "project_id": _anon_token(salt=self._anon_salt, epoch=self._anon_epoch, value=str(payload.get("project_id", ""))) if payload.get("project_id") else "",
                 "trace_id": str(payload.get("trace_id", "")).strip(),
@@ -601,6 +677,7 @@ class KnowledgeBaseService:
                     "entanglement_score": record.entanglement_score,
                     "noise_profile_id": record.noise_profile_id,
                     "backend_class": record.backend_class,
+                    "capability_scope": list(capability_scope),
                     "provenance": {
                         "compiler_ref": record.provenance.compiler_ref,
                         "optimizer_ref": record.provenance.optimizer_ref,
@@ -667,6 +744,7 @@ class KnowledgeBaseService:
         if self._storage_mode == "disabled":
             raise KnowledgeBaseUnavailable("knowledge base storage unavailable")
         envelope = self._payload_envelope(payload)
+        requested_scope = _capability_scope_tokens(payload)
         page_size = self._page_size(int(payload.get("page_size", 50) or 50))
         kind_filter = str(payload.get("evidence_kind", "")).strip().lower()
         model_version = str(payload.get("model_version", "")).strip()
@@ -686,6 +764,7 @@ class KnowledgeBaseService:
                 and (not kind_filter or item["evidence_kind"] == kind_filter)
                 and (not model_version or item["model_version"] == model_version)
                 and (not lifecycle_state or item["lifecycle_state"] == lifecycle_state)
+                and _capability_scope_matches(tuple(item.get("capability_scope", ())), requested_scope)
             ]
             filtered.sort(key=lambda item: (item["created_at"], item["evidence_id"]))
             window = filtered[offset : offset + page_size]
@@ -701,6 +780,7 @@ class KnowledgeBaseService:
         if self._storage_mode == "disabled":
             raise KnowledgeBaseUnavailable("knowledge base storage unavailable")
         envelope = self._payload_envelope(payload)
+        requested_scope = _capability_scope_tokens(payload)
         policy = self._normalize_learning_policy(payload)
         target_model_version = str(payload.get("model_version", "")).strip()
         with self._lock:
@@ -711,6 +791,7 @@ class KnowledgeBaseService:
                 if item["tenant_id"] == envelope["tenant_id"]
                 and item["project_id"] == envelope["project_id"]
                 and (not target_model_version or item["model_version"] == target_model_version)
+                and _capability_scope_matches(tuple(item.get("capability_scope", ())), requested_scope)
             ]
             runtime_decisions = [item for item in scoped if item["evidence_kind"] == "runtime"]
             benchmark_runs = [item for item in scoped if item["evidence_kind"] == "benchmark"]
@@ -914,6 +995,7 @@ class KnowledgeBaseService:
             "semantic_hash": str(payload.get("semantic_hash", "")).strip(),
             "aqo_hash": str(payload.get("aqo_hash", "")).strip(),
             "backend_profile_id": str(payload.get("backend_profile_id", "")).strip(),
+            "capability_scope": _capability_scope_tokens(payload),
             "topology_snapshot_digest": str(payload.get("topology_snapshot_digest", "")).strip(),
             "policy_envelope_digest": str(payload.get("policy_envelope_digest", "")).strip(),
             "kb_schema_version": str(payload.get("kb_schema_version", _KB_CONTRACT_VERSION)).strip() or _KB_CONTRACT_VERSION,
@@ -925,7 +1007,7 @@ class KnowledgeBaseService:
             "candidate_budget": candidate_budget,
         }
 
-    def _okb_candidate_pool(self, query: dict[str, Any]) -> list[_OptimizationCandidate]:
+    def _okb_candidate_pool(self, query: dict[str, Any], requested_scope: tuple[str, ...]) -> list[_OptimizationCandidate]:
         pool: list[_OptimizationCandidate] = []
 
         scope_key = self._okb_scope_key(query["tenant_id"], query["project_id"])
@@ -937,7 +1019,7 @@ class KnowledgeBaseService:
             ]
 
         for source_id in source_ids:
-            candidate = self._okb_candidate_from_source_id(source_id, query)
+            candidate = self._okb_candidate_from_source_id(source_id, query, requested_scope)
             if candidate is not None:
                 pool.append(candidate)
 
@@ -1021,6 +1103,7 @@ class KnowledgeBaseService:
                     "semantic_hash": query["semantic_hash"],
                     "aqo_hash": query["aqo_hash"],
                     "backend_profile_id": query["backend_profile_id"],
+                    "capability_scope": list(query["capability_scope"]),
                     "topology_snapshot_digest": query["topology_snapshot_digest"],
                     "policy_envelope_digest": query["policy_envelope_digest"],
                     "seed": query["seed"],
@@ -1045,6 +1128,7 @@ class KnowledgeBaseService:
                     "semantic_hash": query["semantic_hash"],
                     "aqo_hash": query["aqo_hash"],
                     "backend_profile_id": query["backend_profile_id"],
+                    "capability_scope": list(query["capability_scope"]),
                     "topology_snapshot_digest": query["topology_snapshot_digest"],
                     "policy_envelope_digest": query["policy_envelope_digest"],
                     "seed": query["seed"],
@@ -1458,17 +1542,17 @@ class KnowledgeBaseService:
             return merged
         return structural or vector
 
-    def _okb_candidate_from_source_id(self, source_id: str, query: dict[str, Any]) -> _OptimizationCandidate | None:
+    def _okb_candidate_from_source_id(self, source_id: str, query: dict[str, Any], requested_scope: tuple[str, ...]) -> _OptimizationCandidate | None:
         if source_id.startswith("record:"):
             record_id = source_id.removeprefix("record:")
             entry = self._records.get(record_id)
-            if entry and self._record_visible_to_tenant(entry, query["tenant_id"], query["project_id"], context=None):
+            if entry and self._record_visible_to_tenant(entry, query["tenant_id"], query["project_id"], context=None) and _capability_scope_matches(entry.capability_scope, requested_scope):
                 return self._candidate_from_record(entry, query)
             return None
         if source_id.startswith("decision:"):
             decision_id = source_id.removeprefix("decision:")
             for entry in self._decision_logs:
-                if entry.decision_log.decision_id == decision_id and self._decision_visible_to_tenant(entry, query["tenant_id"], query["project_id"], context=None):
+                if entry.decision_log.decision_id == decision_id and self._decision_visible_to_tenant(entry, query["tenant_id"], query["project_id"], context=None) and _capability_scope_matches(entry.capability_scope, requested_scope):
                     return self._candidate_from_decision_log(entry, query)
             return None
         return None 
@@ -1722,6 +1806,7 @@ class KnowledgeBaseService:
         source: str,
         replay_bundle_ref: str,
         context: grpc.ServicerContext | None,
+        capability_scope: tuple[str, ...] | None = None,
     ) -> dict[str, Any]:
         record_id = record.record_id
         now = datetime.now(timezone.utc)
@@ -1736,6 +1821,9 @@ class KnowledgeBaseService:
         if anonymize_attributes:
             attrs = _anonymize_mapping(attrs, salt=self._anon_salt, epoch=self._anon_epoch)
 
+        normalized_scope = tuple(capability_scope or _capability_scope_tokens({"backend_profile": getattr(record, "backend_profile", ""), "capability_scope": attrs.get("capability_scope"), "capabilities": attrs.get("capabilities"), "capability_tags": attrs.get("capability_tags")}))
+        attrs["capability_scope"] = _stable_json(list(normalized_scope)) if normalized_scope else ""
+        
         fingerprint = self._record_fingerprint(record, replay_bundle_ref=replay_bundle_ref)
         attrs["request_hash"] = fingerprint
         attrs["replay_bundle_ref"] = replay_bundle_ref
@@ -1769,6 +1857,7 @@ class KnowledgeBaseService:
             record=self._clone_record(record),
             tenant_id=envelope["tenant_id"],
             project_id=envelope["project_id"],
+            capability_scope=normalized_scope,
             created_at=created_at,
             updated_at=now,
             fingerprint=fingerprint,
@@ -1781,16 +1870,18 @@ class KnowledgeBaseService:
         ts.FromDatetime(now)
         return {"record_id": record_id, "created": not bool(existing), "updated_at": ts}
 
-    def _store_decision_log(self, decision_log: Any, envelope: dict[str, Any], context: grpc.ServicerContext | None) -> _StoredDecisionLog:
+    def _store_decision_log(self, decision_log: Any, envelope: dict[str, Any], context: grpc.ServicerContext | None, capability_scope: tuple[str, ...] | None = None) -> _StoredDecisionLog:
         self._sequence += 1
         decided_at = _ts_to_dt(decision_log.decided_at) if getattr(decision_log, "decided_at", None) else datetime.now(timezone.utc)
         decision_log.decided_at.FromDatetime(decided_at)
         
+        normalized_scope = tuple(capability_scope or ())
         fingerprint = self._decision_fingerprint(decision_log)
         stored = _StoredDecisionLog(
             decision_log=self._clone_decision_log(decision_log),
             tenant_id=envelope["tenant_id"],
             project_id=envelope["project_id"],
+            capability_scope=normalized_scope,
             decided_at=decided_at,
             fingerprint=fingerprint,
             sequence=self._sequence,
@@ -1880,9 +1971,11 @@ class KnowledgeBaseService:
         decision: str,
     ) -> dict[str, Any]:
         normalized_kind = evidence_kind.strip().lower() or "learning"
+        capability_scope = tuple(_capability_scope_tokens(evidence_payload))
         evidence = {
             "tenant_id": envelope["tenant_id"],
             "project_id": envelope["project_id"],
+            "capability_scope": capability_scope,
             "source": source,
             "evidence_kind": normalized_kind,
             "model_version": model_version,
@@ -1909,6 +2002,7 @@ class KnowledgeBaseService:
                 "evidence_id": evidence["evidence_id"],
                 "tenant_id": evidence["tenant_id"],
                 "project_id": evidence["project_id"],
+                "capability_scope": evidence["capability_scope"],
                 "evidence_kind": evidence["evidence_kind"],
                 "evidence_hash": evidence["evidence_hash"],
                 "model_version": evidence["model_version"],

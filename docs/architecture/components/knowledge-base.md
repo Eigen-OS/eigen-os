@@ -36,7 +36,7 @@ Every query MUST be scoped by:
 - `tenant_id`
 - `project_id`
 
-The retrieval backend MUST NOT mix candidates across tenant or project boundaries.
+The retrieval backend MUST NOT mix candidates across tenant, project, or capability boundaries.
 
 ### Supported modes
 
@@ -55,8 +55,8 @@ The backend MAY derive candidates from:
 - other replay-safe KB artifacts that are in the same tenant/project scope.
 
 The pool MUST be filtered before scoring. Cross-scope data MUST NOT be considered.
-Mixed-tenant or mixed-project snapshots are invalid and MUST be rejected before retrieval.
-All explanation and replay outputs MUST stay within the same tenant/project boundary and MUST NOT echo foreign identifiers or payload fragments.
+Mixed-tenant, mixed-project, or mixed-capability snapshots are invalid and MUST be rejected before retrieval.
+All explanation and replay outputs MUST stay within the same tenant/project/capability boundary and MUST NOT echo foreign identifiers or payload fragments.
 
 ## 5. Rank source of truth
 
@@ -130,6 +130,7 @@ A normalized query MUST include:
 
 - `tenant_id`
 - `project_id`
+- `capability_scope` / `capability_tags` / `capabilities` or an equivalent backend capability discriminator
 - `snapshot_id`
 - `circuit_id`
 - `backend_class`
@@ -190,7 +191,7 @@ This contract is backward-compatible with the existing in-memory KB baseline bec
 - canonical lookup is separated from similarity lookup.
 
 Any caller that does not provide tenant/project scope is invalid for similarity retrieval.
-Snapshot ingest MUST preserve the snapshot's tenant/project scope, and retrieval helpers MUST fail closed when the request scope does not match that stored boundary.
+Snapshot ingest MUST preserve the snapshot's tenant/project/capability scope, and retrieval helpers MUST fail closed when the request scope does not match that stored boundary.
 
 ## 11. Index synchronization, recovery, and backfill
 

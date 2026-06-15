@@ -83,6 +83,8 @@ def _okb_benchmark_payload(
     trace_id: str,
     backend_profile: str = "backend-alpha",
     optimizer_version: str = "opt-1.0",
+    capability_tags: list[str] | None = None,
+    capabilities: dict[str, str] | None = None,
 ) -> dict[str, object]:
     return {
         "record_id": record_id,
@@ -101,6 +103,8 @@ def _okb_benchmark_payload(
         "entanglement_score": 0.44,
         "noise_profile_id": "noise-shared",
         "backend_class": "simulator",
+        **({"capability_tags": capability_tags} if capability_tags is not None else {}),
+        **({"capabilities": capabilities} if capabilities is not None else {}),
         "provenance": {
             "compiler_ref": "compiler://shared",
             "optimizer_ref": "optimizer://shared",
@@ -405,6 +409,138 @@ def test_okb_query_backend_is_deterministic_and_bounded() -> None:
     assert hybrid["candidates"][0]["score_breakdown"]["rank_source"] == "hybrid"
     assert len(hybrid["candidates"]) == 3
     
+
+def test_okb_query_backend_is_capability_scoped_and_fail_closed() -> None:
+    service = KnowledgeBaseService(kb_pb=kb_pb, types_pb=types_pb)
+
+    service.ingest_benchmark_run(
+        _okb_benchmark_payload(
+            "capability-candidate-01",
+            tenant_id="tenant-a",
+            project_id="project-a",
+            trace_id="trace-capability",
+            capability_tags=["qpu", "latency"],
+        )
+    )
+    service.ingest_benchmark_run(
+        _okb_benchmark_payload(
+            "capability-candidate-02",
+            tenant_id="tenant-a",
+            project_id="project-a",
+            trace_id="trace-capability",
+            capability_tags=["simulator", "latency"],
+        )
+    )
+
+    matched = service.query_optimization_candidates(
+        {
+            "tenant_id": "tenant-a",
+            "project_id": "project-a",
+            "job_id": "job-capability",
+            "semantic_hash": "sha256:semantic-capability",
+            "aqo_hash": "sha256:aqo-capability",
+            "backend_profile_id": "backend-alpha",
+            "capability_tags": ["qpu", "latency"],
+            "topology_snapshot_digest": "topology-capability",
+            "policy_envelope_digest": "policy-capability",
+            "kb_schema_version": "1.0.0",
+            "compiler_version": "compiler-1.0",
+            "optimizer_version": "opt-1.0",
+            "seed": 11,
+            "deterministic": True,
+            "query_mode": "structural",
+            "candidate_budget": 8,
+        }
+    )
+    mismatch = service.query_optimization_candidates(
+        {
+            "tenant_id": "tenant-a",
+            "project_id": "project-a",
+            "job_id": "job-capability-mismatch",
+            "semantic_hash": "sha256:semantic-capability",
+            "aqo_hash": "sha256:aqo-capability",
+            "backend_profile_id": "backend-alpha",
+            "capability_tags": ["gpu", "latency"],
+            "topology_snapshot_digest": "topology-capability",
+            "policy_envelope_digest": "policy-capability",
+            "kb_schema_version": "1.0.0",
+            "compiler_version": "compiler-1.0",
+            "optimizer_version": "opt-1.0",
+            "seed": 11,
+            "deterministic": True,
+            "query_mode": "structural",
+            "candidate_budget": 8,
+        }
+    )
+
+    assert [item["candidate_id"] for item in matched["candidates"]] == ["okb-record-capability-candidate-01"]
+    assert matched["selected_candidate_id"] == "okb-record-capability-candidate-01"
+    assert mismatch["candidates"] == []
+    assert mismatch["selected_candidate_id"] == ""
+
+
+def test_learning_evidence_query_is_capability_scoped_and_fail_closed() -> None:
+    service = KnowledgeBaseService(kb_pb=kb_pb, types_pb=types_pb)
+
+    service.ingest_learning_evidence(
+        {
+            "tenant_id": "tenant-a",
+            "project_id": "project-a",
+            "evidence_kind": "learning",
+            "source": "manual",
+            "model_version": "m1",
+            "training_set_hash": "train-hash",
+            "evaluation_bundle_hash": "eval-hash",
+            "promotion_policy_version": "policy-v1",
+            "capability_tags": ["qpu", "latency"],
+            "metadata": {"note": "matched"},
+            "gate_results": {"pass": True},
+            "command": "ingest",
+            "decision": "accepted",
+        }
+    )
+    service.ingest_learning_evidence(
+        {
+            "tenant_id": "tenant-a",
+            "project_id": "project-a",
+            "evidence_kind": "learning",
+            "source": "manual",
+            "model_version": "m1",
+            "training_set_hash": "train-hash",
+            "evaluation_bundle_hash": "eval-hash",
+            "promotion_policy_version": "policy-v1",
+            "capability_tags": ["simulator", "latency"],
+            "metadata": {"note": "foreign"},
+            "gate_results": {"pass": True},
+            "command": "ingest",
+            "decision": "accepted",
+        }
+    )
+
+    matched = service.query_learning_evidence(
+        {
+            "tenant_id": "tenant-a",
+            "project_id": "project-a",
+            "model_version": "m1",
+            "capability_tags": ["qpu", "latency"],
+            "page_size": 10,
+        }
+    )
+    mismatch = service.query_learning_evidence(
+        {
+            "tenant_id": "tenant-a",
+            "project_id": "project-a",
+            "model_version": "m1",
+            "capability_tags": ["gpu", "latency"],
+            "page_size": 10,
+        }
+    )
+
+    assert matched["total_count"] == 1
+    assert [item["metadata"]["note"] for item in matched["evidence"]] == ["matched"]
+    assert mismatch["total_count"] == 0
+    assert mismatch["evidence"] == []
+
 
 def test_okb_index_recovery_backfill_and_desync_signals() -> None:
     service = KnowledgeBaseService(kb_pb=kb_pb, types_pb=types_pb)
