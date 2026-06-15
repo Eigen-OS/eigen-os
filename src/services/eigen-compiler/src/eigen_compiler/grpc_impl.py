@@ -702,6 +702,28 @@ def _neuro_metadata(context: grpc.ServicerContext) -> dict[str, str]:
     return {k.lower(): v for k, v in (context.invocation_metadata() or [])}
 
 
+def _require_tenant_project_binding(
+    context: grpc.ServicerContext,
+    *,
+    method_name: str,
+    tenant_id: str,
+    project_id: str,
+) -> None:
+    md = _neuro_metadata(context)
+    md_tenant_id = md.get("x-eigen-tenant-id", "").strip()
+    md_project_id = md.get("x-eigen-project-id", "").strip()
+    if not md_tenant_id or not md_project_id:
+        context.abort(
+            grpc.StatusCode.PERMISSION_DENIED,
+            f"tenant/project binding required for {method_name}",
+        )
+    if md_tenant_id != tenant_id or md_project_id != project_id:
+        context.abort(
+            grpc.StatusCode.PERMISSION_DENIED,
+            f"tenant/project scope mismatch for {method_name}",
+        )
+
+
 def _require_internal_model_identity(context: grpc.ServicerContext, *, method_name: str) -> tuple[str, dict[str, object]]:
     cfg = _neuro_service_config()
     md = _neuro_metadata(context)
@@ -803,6 +825,12 @@ class NeuroSymbolicService:
             context.abort(grpc.StatusCode.INVALID_ARGUMENT, "context.workload_id is required")
         if not authz_decision_id:
             context.abort(grpc.StatusCode.INVALID_ARGUMENT, "context.authz_decision_id is required")
+        _require_tenant_project_binding(
+            context,
+            method_name="ScoreCompilationPlan",
+            tenant_id=tenant_id,
+            project_id=project_id,
+        )
         if not request.feature_vector:
             context.abort(grpc.StatusCode.INVALID_ARGUMENT, "feature_vector is required")
         redaction = _redact_feature_vector(request.feature_vector)

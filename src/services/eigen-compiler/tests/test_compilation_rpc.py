@@ -302,6 +302,30 @@ def _nsc_request(
     )
 
 
+def _nsc_metadata(tenant_id: str = "tenant-a", project_id: str = "project-a") -> tuple[tuple[str, str], ...]:
+    return (
+        ("authorization", "Bearer unit-test-token"),
+        ("x-eigen-service-id", "eigen-kernel"),
+        ("x-eigen-tenant-id", tenant_id),
+        ("x-eigen-project-id", project_id),
+    )
+
+
+def _nsc_metadata(
+    *,
+    tenant_id: str = "tenant-a",
+    project_id: str = "project-a",
+    authorization: str = "Bearer unit-test-token",
+    service_id: str = "eigen-kernel",
+) -> tuple[tuple[str, str], ...]:
+    return (
+        ("authorization", authorization),
+        ("x-eigen-service-id", service_id),
+        ("x-eigen-tenant-id", tenant_id),
+        ("x-eigen-project-id", project_id),
+    )
+
+
 class _FakeServicerRpcError(grpc.RpcError):
     def __init__(self, code: grpc.StatusCode, details: str):
         super().__init__()
@@ -336,10 +360,7 @@ def test_neuro_symbolic_service_scores_internal_requests(grpc_addr: str, monkeyp
 
     resp = stub.ScoreCompilationPlan(
          _nsc_request(),
-        metadata=(
-            ("authorization", "Bearer unit-test-token"),
-            ("x-eigen-service-id", "eigen-kernel"),
-        ),
+        metadata=_nsc_metadata()
     )
 
     assert resp.contract_version == "1.0.0"
@@ -372,7 +393,14 @@ def test_neuro_symbolic_service_fails_closed_without_internal_identity(
     stub = nsc_pb_grpc.NeuroSymbolicServiceStub(channel)
 
     with pytest.raises(grpc.RpcError) as e:
-        stub.ScoreCompilationPlan(_nsc_request(), metadata=(("x-eigen-service-id", "eigen-kernel"),))
+        stub.ScoreCompilationPlan(
+            _nsc_request(),
+            metadata=(
+                ("x-eigen-service-id", "eigen-kernel"),
+                ("x-eigen-tenant-id", "tenant-a"),
+                ("x-eigen-project-id", "project-a"),
+            ),
+        )
 
     assert e.value.code() == grpc.StatusCode.UNAUTHENTICATED
 
@@ -390,13 +418,34 @@ def test_neuro_symbolic_service_rejects_unsupported_contract_version(
     with pytest.raises(grpc.RpcError) as e:
         stub.ScoreCompilationPlan(
             _nsc_request(contract_version="2.0.0"),
-            metadata=(
-                ("authorization", "Bearer unit-test-token"),
-                ("x-eigen-service-id", "eigen-kernel"),
-            ),
+            metadata=_nsc_metadata(),
         )
 
     assert e.value.code() == grpc.StatusCode.FAILED_PRECONDITION
+
+
+def test_neuro_symbolic_service_rejects_tenant_project_scope_mismatch(
+    grpc_addr: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("EIGEN_NEURO_SYMBOLIC_SERVICE_TOKEN", "unit-test-token")
+    monkeypatch.setenv("EIGEN_NEURO_SYMBOLIC_ALLOWED_CALLERS", "eigen-kernel,eigen-compiler")
+
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = nsc_pb_grpc.NeuroSymbolicServiceStub(channel)
+
+    with pytest.raises(grpc.RpcError) as e:
+        stub.ScoreCompilationPlan(
+            _nsc_request(),
+            metadata=(
+                ("authorization", "Bearer unit-test-token"),
+                ("x-eigen-service-id", "eigen-kernel"),
+                ("x-eigen-tenant-id", "tenant-b"),
+                ("x-eigen-project-id", "project-b"),
+            ),
+        )
+
+    assert e.value.code() == grpc.StatusCode.PERMISSION_DENIED
 
 
 def test_neuro_symbolic_feature_redaction_masks_sensitive_values() -> None:
@@ -530,10 +579,7 @@ def test_neuro_symbolic_service_redacts_sensitive_feature_payload(
             feature_vector=raw_feature_vector,
             feature_digest_sha256=hashlib.sha256(redacted.feature_vector).hexdigest(),
         ),
-        metadata=(
-            ("authorization", "Bearer unit-test-token"),
-            ("x-eigen-service-id", "eigen-kernel"),
-        ),
+        metadata=_nsc_metadata()
     )
 
     redacted = _redact_feature_vector(raw_feature_vector)
@@ -545,10 +591,7 @@ def test_neuro_symbolic_service_redacts_sensitive_feature_payload(
             feature_vector=raw_feature_vector,
             feature_digest_sha256=hashlib.sha256(redacted.feature_vector).hexdigest(),
         ),
-        metadata=(
-            ("authorization", "Bearer unit-test-token"),
-            ("x-eigen-service-id", "eigen-kernel"),
-        ),
+        metadata=_nsc_metadata()
     )
 
     assert repeat.replay_digest == resp.replay_digest
@@ -606,10 +649,7 @@ def test_neuro_symbolic_service_minimizes_payload_before_scoring(
             feature_vector=raw_feature_vector,
             feature_digest_sha256=hashlib.sha256(minimized.feature_vector).hexdigest(),
         ),
-        metadata=(
-            ("authorization", "Bearer unit-test-token"),
-            ("x-eigen-service-id", "eigen-kernel"),
-        ),
+        metadata=_nsc_metadata()
     )
 
     variant_feature_vector = json.dumps(
@@ -640,10 +680,7 @@ def test_neuro_symbolic_service_minimizes_payload_before_scoring(
             feature_vector=variant_feature_vector,
             feature_digest_sha256=hashlib.sha256(variant_minimized.feature_vector).hexdigest(),
         ),
-        metadata=(
-            ("authorization", "Bearer unit-test-token"),
-            ("x-eigen-service-id", "eigen-kernel"),
-        ),
+        metadata=_nsc_metadata(),
     )
 
     assert repeat.replay_digest == resp.replay_digest
@@ -688,10 +725,7 @@ def test_neuro_symbolic_service_enforces_policy_feature_payload_limit(
                 feature_vector=oversized,
                 feature_digest_sha256=hashlib.sha256(oversized_minimized.feature_vector).hexdigest(),
             ),
-            metadata=(
-                ("authorization", "Bearer unit-test-token"),
-                ("x-eigen-service-id", "eigen-kernel"),
-            ),
+            metadata=_nsc_metadata(),
         )
 
     assert e.value.code() == grpc.StatusCode.RESOURCE_EXHAUSTED
@@ -715,10 +749,7 @@ def test_neuro_symbolic_service_rejects_digest_mismatch(
     with pytest.raises(grpc.RpcError) as e:
         stub.ScoreCompilationPlan(
             bad,
-            metadata=(
-                ("authorization", "Bearer unit-test-token"),
-                ("x-eigen-service-id", "eigen-kernel"),
-            ),
+            metadata=_nsc_metadata(),
         )
 
     assert e.value.code() == grpc.StatusCode.INVALID_ARGUMENT
@@ -737,10 +768,7 @@ def test_neuro_symbolic_service_uses_frozen_policy_snapshot_version(monkeypatch:
 
     resp = svc.ScoreCompilationPlan(
         _nsc_request(policy_snapshot_version="policy-locked-1"),
-        _FakeServicerContext((
-            ("authorization", "Bearer unit-test-token"),
-            ("x-eigen-service-id", "eigen-kernel"),
-        )),
+        _FakeServicerContext(_nsc_metadata()),
     )
 
     assert resp.policy_snapshot_version == "policy-locked-1"
@@ -748,10 +776,7 @@ def test_neuro_symbolic_service_uses_frozen_policy_snapshot_version(monkeypatch:
     with pytest.raises(_FakeServicerRpcError) as e:
         svc.ScoreCompilationPlan(
             _nsc_request(policy_snapshot_version="policy-locked-2"),
-            _FakeServicerContext((
-                ("authorization", "Bearer unit-test-token"),
-                ("x-eigen-service-id", "eigen-kernel"),
-            )),
+            _FakeServicerContext(_nsc_metadata()),
         )
 
     assert e.value.code() == grpc.StatusCode.FAILED_PRECONDITION
@@ -786,10 +811,7 @@ def test_neuro_symbolic_service_rejects_missing_security_context_field(
     with pytest.raises(grpc.RpcError) as e:
         stub.ScoreCompilationPlan(
             request,
-            metadata=(
-                ("authorization", "Bearer unit-test-token"),
-                ("x-eigen-service-id", "eigen-kernel"),
-            ),
+            metadata=_nsc_metadata(),
         )
 
     assert e.value.code() == grpc.StatusCode.INVALID_ARGUMENT
@@ -811,10 +833,7 @@ def test_neuro_symbolic_service_audits_security_context(
     with caplog.at_level("INFO", logger="eigen_compiler"):
         stub.ScoreCompilationPlan(
             _nsc_request(),
-            metadata=(
-                ("authorization", "Bearer unit-test-token"),
-                ("x-eigen-service-id", "eigen-kernel"),
-            ),
+            metadata=_nsc_metadata(),
         )
 
     records = [record for record in caplog.records if getattr(record, "rpc", "") == "ScoreCompilationPlan"]

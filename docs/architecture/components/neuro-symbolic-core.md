@@ -417,7 +417,8 @@ All requests MUST support (as structured fields or standardized metadata):
 - `trace_id` (correlation, not as metric label),
 - policy context digest,
 - determinism mode + `seed` (required when deterministic=true),
-- tenant context (NOT as metric label; redacted/hashed where applicable),
+- tenant/project context (NOT as metric label; redacted/hashed where applicable),
+- internal request metadata MUST carry the same tenant/project binding used by the request context,
 - feature schema version,
 - timeout budget,
 - replay identifier (if present),
@@ -716,7 +717,7 @@ Every NSC request MUST carry a normalized security context with bounded, non-sec
 - `policy_snapshot_id`
 - `authz_decision_id`
 
-These values MUST be validated before inference, included in replay artifacts, and surfaced in audit events. Missing fields MUST fail closed. Raw bearer tokens, tenant-private secrets, and unredacted payload fragments MUST NOT be forwarded into NSC logs or model inputs.
+These values MUST be validated before inference, included in replay artifacts, and surfaced in audit events. Missing fields MUST fail closed. The inbound `x-eigen-tenant-id` and `x-eigen-project-id` request metadata MUST match the normalized request context exactly; any mismatch MUST fail closed with `PERMISSION_DENIED`. Raw bearer tokens, tenant-private secrets, and unredacted payload fragments MUST NOT be forwarded into NSC logs or model inputs.
 
 ---
 
