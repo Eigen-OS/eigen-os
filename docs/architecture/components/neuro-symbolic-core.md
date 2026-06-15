@@ -210,6 +210,8 @@ Every accepted NSC recommendation MUST include:
 - provenance,
 - model version (or “heuristic/symbolic-only”),
 - confidence score (bounded numeric),
+- feature set summary (bounded and reproducible),
+- retrieval references for the scored evidence,
 - reasoning metadata (bounded),
 - fallback eligibility,
 - reproducibility hash (digest),
@@ -226,6 +228,8 @@ NSC MUST support deterministic mode.
 When `deterministic=true`, outputs MUST be a pure function of canonical inputs + seed and MUST be replayable byte-for-byte at the decision artifact level (canonical serialization).
 
 The active policy snapshot version used for scoring MUST be included in response metadata and audit logs so replay evidence is bound to the same immutable snapshot.
+
+The audit record MUST also retain the explainability envelope with model version, feature set summary, confidence, and retrieval references so the same inference can be replayed deterministically from immutable artifacts.
 
 ---
 
@@ -435,6 +439,8 @@ All responses MUST include:
 - `confidence` (bounded numeric),
 - `provenance` (stable reference or “symbolic-only”),
 - `model_version` (or “none”),
+- `feature_set` (bounded summary),
+- `retrieval_references` (bounded list),
 - `deterministic_compatible` (bool),
 - `fallback_eligible` (bool),
 - explainability payload or reference,

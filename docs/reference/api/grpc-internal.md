@@ -310,6 +310,12 @@ service NeuroSymbolicService {
 - `ScoreCompilationPlanResponse.contract_version` MUST echo the accepted request contract version.
 - `ScoreCompilationPlanResponse.policy_snapshot_version` MUST echo the active immutable snapshot version used for scoring.
 - Responses SHOULD echo the normalized security context fields for bounded auditability.
+- Responses MUST carry a bounded explainability envelope in audit/log form that includes:
+  - `model_version`,
+  - `feature_set`,
+  - `confidence`,
+  - `retrieval_references`.
+- The explainability envelope MUST be derived from the minimized/redacted feature vector and the immutable policy snapshot, not from raw payloads.
 - Responses MUST remain bounded and MUST NOT return raw secrets, bearer tokens, or unredacted payload fragments.
 
 #### Determinism requirements

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 
 import grpc
@@ -227,6 +228,49 @@ def test_decision_log_lineage_validation_and_ordering(grpc_addr: str) -> None:
     )
     assert [item.decision_id for item in query.decision_logs] == ["decision-a", "decision-b"]
     assert [item.selected_action for item in query.decision_logs] == ["backend-alpha", "backend-beta"]
+
+
+def test_runtime_decision_ingest_persists_explainability_envelope() -> None:
+    service = KnowledgeBaseService(kb_pb=kb_pb, types_pb=types_pb)
+
+    decision_id = service.ingest_runtime_decision(
+        {
+            "record_id": "decision-runtime-1",
+            "decision_id": "decision-runtime-1",
+            "trace_id": "trace-runtime",
+            "model_version": "m1",
+            "component": "runtime",
+            "policy_branch": "baseline",
+            "selected_action": "backend-alpha",
+            "fallback_used": False,
+            "feature_snapshot": {"queue_depth": "2"},
+            "feature_set": {"schema_version": "features.v1", "signature": "sig-1"},
+            "confidence": 0.8125,
+            "retrieval_references": [
+                "nsc://feature-set/tenant-a/project-a/request-1/feature-digest",
+                "nsc://policy-snapshot/policy-2026-06-15",
+                "nsc://model/dpda-model-unit-test",
+            ],
+            "replay_digest": "sha256:replay-1",
+            "policy_snapshot_version": "policy-2026-06-15",
+            "decided_at": _ts("2026-06-11T10:05:00+00:00"),
+        }
+    )
+
+    assert decision_id == "decision-runtime-1"
+    stored = service._decision_logs[-1]
+    snapshot = dict(stored.decision_log.feature_snapshot)
+    envelope = json.loads(snapshot["explainability_envelope"])
+    assert envelope["model_version"] == "m1"
+    assert envelope["feature_set"]["schema_version"] == "features.v1"
+    assert envelope["confidence"] == 0.8125
+    assert envelope["retrieval_reference_count"] == 3
+    assert envelope["retrieval_references"][1] == "nsc://policy-snapshot/policy-2026-06-15"
+
+    evidence = service._learning_evidence[-1]
+    assert evidence["payload"]["explainability_envelope"]["model_version"] == "m1"
+    assert evidence["payload"]["explainability_envelope"]["confidence"] == 0.8125
+    assert evidence["metadata"]["explainability_envelope_json"]
 
 
 def test_kb_records_and_decision_logs_are_project_scoped(grpc_addr: str) -> None:

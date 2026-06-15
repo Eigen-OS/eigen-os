@@ -172,6 +172,10 @@ def _bump(counter: Counter[tuple[tuple[str, str], ...]], **labels: str) -> None:
         counter[_label_tuple(**labels)] += 1
 
 
+def _stable_json(value: object) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+
+
 def _bump_stage(stage: str, elapsed_seconds: float, outcome: str) -> None:
     if stage not in _STAGE_LABELS:
         stage = "emit"
@@ -777,6 +781,69 @@ def _decision_from_score(score: float):
     return "ADVISORY_DECISION_REJECT"
 
 
+def _explainability_feature_set(
+    *,
+    feature_schema_version: str,
+    model_hint: str,
+    feature_digest_sha256: str,
+    minimized_feature_vector: bytes,
+    redacted_fields: tuple[str, ...],
+) -> dict[str, object]:
+    return {
+        "schema_version": feature_schema_version,
+        "model_hint": model_hint.strip(),
+        "feature_digest_sha256": feature_digest_sha256,
+        "minimized_feature_vector_sha256": _hex_digest(minimized_feature_vector),
+        "minimized_feature_vector_bytes": len(minimized_feature_vector),
+        "redacted_fields": list(redacted_fields),
+    }
+
+
+def _build_explainability_envelope(
+    *,
+    contract_version: str,
+    request_id: str,
+    tenant_id: str,
+    project_id: str,
+    feature_schema_version: str,
+    policy_snapshot_version: str,
+    model_version: str,
+    confidence: float,
+    feature_digest_sha256: str,
+    replay_digest: str,
+    minimized_feature_vector: bytes,
+    redacted_fields: tuple[str, ...],
+    model_hint: str,
+) -> dict[str, object]:
+    feature_set = _explainability_feature_set(
+        feature_schema_version=feature_schema_version,
+        model_hint=model_hint,
+        feature_digest_sha256=feature_digest_sha256,
+        minimized_feature_vector=minimized_feature_vector,
+        redacted_fields=redacted_fields,
+    )
+    retrieval_references = [
+        f"nsc://feature-set/{tenant_id}/{project_id}/{request_id}/{feature_digest_sha256}",
+        f"nsc://policy-snapshot/{policy_snapshot_version}",
+        f"nsc://model/{model_version}",
+    ]
+    return {
+        "contract_version": contract_version,
+        "request_id": request_id,
+        "tenant_id": tenant_id,
+        "project_id": project_id,
+        "policy_snapshot_version": policy_snapshot_version,
+        "model_version": model_version,
+        "confidence": round(float(confidence), 6),
+        "feature_set": feature_set,
+        "retrieval_references": retrieval_references,
+        "retrieval_reference_count": len(retrieval_references),
+        "replay_digest": replay_digest,
+        "decision_digest": replay_digest,
+        "explanation_ref": f"nsc://explanations/{request_id}/{replay_digest}",
+    }
+
+
 class NeuroSymbolicService:
     """Implementation of eigen.internal.v1.NeuroSymbolicService."""
 
@@ -878,6 +945,22 @@ class NeuroSymbolicService:
         confidence = _confidence_from_score(score)
         decision_name = _decision_from_score(score)
         decision = getattr(self._nsc_pb, decision_name)
+        model_version = str(cfg["model_version"])
+        explainability_envelope = _build_explainability_envelope(
+            contract_version=contract_version,
+            request_id=request_id,
+            tenant_id=tenant_id,
+            project_id=project_id,
+            feature_schema_version=feature_schema_version,
+            policy_snapshot_version=active_policy_snapshot_version,
+            model_version=model_version,
+            confidence=confidence,
+            feature_digest_sha256=feature_digest,
+            replay_digest=replay_digest,
+            minimized_feature_vector=feature_vector,
+            redacted_fields=redaction.redacted_fields,
+            model_hint=request.model_hint.strip(),
+        )
 
         response = self._nsc_pb.ScoreCompilationPlanResponse(
             contract_version=contract_version,
@@ -886,11 +969,11 @@ class NeuroSymbolicService:
             project_id=project_id,
             feature_schema_version=feature_schema_version,
             policy_snapshot_version=active_policy_snapshot_version,
-            model_version=str(cfg["model_version"]),
+            model_version=model_version,
             decision=decision,
             score=score,
             confidence=confidence,
-            explanation_ref=f"nsc://explanations/{request_id}/{replay_digest}",
+            explanation_ref=explainability_envelope["explanation_ref"],
             replay_digest=replay_digest,
             deterministic_compatible=True,
             subject_id=subject_id,
@@ -911,8 +994,7 @@ class NeuroSymbolicService:
                 "policy_snapshot_version": policy_snapshot_version,
                 "feature_schema_version": feature_schema_version,
                 "service_id": caller_id,
-                "model_version": str(cfg["model_version"]),
-                "policy_snapshot_version": active_policy_snapshot_version,
+                "model_version": model_version,
                 "decision": decision_name,
                 "feature_payload_bytes": len(request.feature_vector),
                 "feature_payload_minimized_bytes": len(feature_vector),
@@ -920,6 +1002,8 @@ class NeuroSymbolicService:
                 "feature_redaction_fields": redaction.redacted_fields,
                 "feature_redaction_count": len(redaction.redacted_fields),
                 "replay_digest": replay_digest,
+                "explainability_envelope": explainability_envelope,
+                "explainability_envelope_json": _stable_json(explainability_envelope),
                 "trace_id": getattr(req_context, "trace_id", ""),
                 "traceparent": getattr(req_context, "traceparent", ""),
             },
