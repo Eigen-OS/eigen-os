@@ -421,6 +421,12 @@ impl JobRuntimeRecord {
         )
     }
 
+    fn stable_summary_map(&self) -> BTreeMap<String, String> {
+        let mut summary = self.submission.summary_map();
+        summary.remove("deadline_at_unix_ms");
+        summary
+    }
+
     fn snapshot_bytes(&self) -> Vec<u8> {
         // Snapshot digest is used as a stability fingerprint for identical logical jobs.
         // Exclude wall-clock fields and derived replay tokens so equivalent runs hash the same.
@@ -450,7 +456,7 @@ impl JobRuntimeRecord {
 
         serde_json::to_vec(&serde_json::json!({
             "job_id": self.job_id,
-            "submission": self.submission.summary_map(),
+            "submission": self.stable_summary_map(),
             "state": self.state as i32,
             "current_stage": self.current_stage.map(|s| s.key()),
             "stage_records": stage_json,

@@ -62,6 +62,19 @@ _REDACT_DELETE_KEYS = {
     "id_token",
     "raw_auth_header",
     "raw_authorization",
+    "body",
+    "debug_trace",
+    "full_request_body",
+    "headers",
+    "http_headers",
+    "large_trace_dump",
+    "metadata",
+    "payload",
+    "raw_payload",
+    "raw_request_body",
+    "request_body",
+    "stack_trace",
+    "trace_dump",
 }
 _REDACT_MASK_EMAIL_KEYS = {
     "email",
@@ -497,6 +510,8 @@ _NEURO_CALLERS_ENV = "EIGEN_NEURO_SYMBOLIC_ALLOWED_CALLERS"
 _NEURO_MODEL_VERSION_ENV = "EIGEN_NEURO_SYMBOLIC_MODEL_VERSION"
 _NEURO_POLICY_SNAPSHOT_VERSION_ENV = "EIGEN_NEURO_SYMBOLIC_POLICY_SNAPSHOT_VERSION"
 _NEURO_POLICY_SNAPSHOT_DEFAULT = "policy-2026-06-15"
+_NEURO_MAX_FEATURE_VECTOR_BYTES_ENV = "EIGEN_NEURO_SYMBOLIC_MAX_FEATURE_VECTOR_BYTES"
+_NEURO_MAX_FEATURE_VECTOR_BYTES_DEFAULT = 65536
 
 
 def _redaction_path(parent: str, key: str) -> str:
@@ -613,6 +628,19 @@ def _active_policy_snapshot_version() -> str:
     return snapshot_version or _NEURO_POLICY_SNAPSHOT_DEFAULT
 
 
+def _feature_vector_byte_limit() -> int:
+    raw_limit = os.getenv(
+        _NEURO_MAX_FEATURE_VECTOR_BYTES_ENV,
+        str(_NEURO_MAX_FEATURE_VECTOR_BYTES_DEFAULT),
+    ).strip()
+    if not raw_limit:
+        return _NEURO_MAX_FEATURE_VECTOR_BYTES_DEFAULT
+    try:
+        return max(0, int(raw_limit))
+    except ValueError:
+        return _NEURO_MAX_FEATURE_VECTOR_BYTES_DEFAULT
+
+
 def _neuro_metadata(context: grpc.ServicerContext) -> dict[str, str]:
     return {k.lower(): v for k, v in (context.invocation_metadata() or [])}
 
@@ -721,6 +749,13 @@ class NeuroSymbolicService:
         if not request.feature_vector:
             context.abort(grpc.StatusCode.INVALID_ARGUMENT, "feature_vector is required")
         redaction = _redact_feature_vector(request.feature_vector)
+        feature_vector = redaction.feature_vector
+        feature_vector_limit = _feature_vector_byte_limit()
+        if len(feature_vector) > feature_vector_limit:
+            context.abort(
+                grpc.StatusCode.RESOURCE_EXHAUSTED,
+                f"feature_vector exceeds policy size limit ({len(feature_vector)} > {feature_vector_limit})",
+            )
         active_policy_snapshot_version = self._policy_snapshot_version
         if req_context.policy_snapshot_version.strip() != active_policy_snapshot_version:
             context.abort(
@@ -730,7 +765,7 @@ class NeuroSymbolicService:
         feature_digest = request.feature_digest_sha256.strip().lower()
         if not re.fullmatch(r"[0-9a-f]{64}", feature_digest):
             context.abort(grpc.StatusCode.INVALID_ARGUMENT, "feature_digest_sha256 must be a SHA-256 hex digest")
-        computed_digest = _hex_digest(request.feature_vector)
+        computed_digest = _hex_digest(feature_vector)
         if computed_digest != feature_digest:
             context.abort(grpc.StatusCode.INVALID_ARGUMENT, "feature_digest_sha256 does not match feature_vector")
         deterministic_seed = int(request.deterministic_seed)
@@ -749,7 +784,7 @@ class NeuroSymbolicService:
                 str(deterministic_seed).encode("utf-8"),
                 caller_id.encode("utf-8"),
                 request.model_hint.strip().encode("utf-8"),
-                redaction.feature_vector,
+                feature_vector,
             ]
         )
         replay_digest = _hex_digest(canonical)
@@ -794,6 +829,9 @@ class NeuroSymbolicService:
                 "model_version": str(cfg["model_version"]),
                 "policy_snapshot_version": active_policy_snapshot_version,
                 "decision": decision_name,
+                "feature_payload_bytes": len(request.feature_vector),
+                "feature_payload_minimized_bytes": len(feature_vector),
+                "feature_payload_limit_bytes": feature_vector_limit,
                 "feature_redaction_fields": redaction.redacted_fields,
                 "feature_redaction_count": len(redaction.redacted_fields),
                 "replay_digest": replay_digest,
