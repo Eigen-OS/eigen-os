@@ -125,366 +125,49 @@ Acts as the internal bridge between:
 
 #### Service Definition
 
-```text
-service KernelGatewayService {
-    rpc EnqueueJob(EnqueueJobRequest)
-        returns (EnqueueJobResponse);
 
-    rpc GetJobStatus(GetJobStatusRequest)
-        returns (GetJobStatusResponse);
 
-    rpc CancelJob(CancelJobRequest)
-        returns (CancelJobResponse);
+#### GetPattern semantics
 
-    rpc GetJobResults(GetJobResultsRequest)
-        returns (GetJobResultsResponse);
+`GetPattern` returns a canonical template, not just a similar historical object.
 
-    rpc PollJobUpdates(PollJobUpdatesRequest)
-        returns (stream JobUpdateEvent);
-}
-```
+Required request semantics:
 
----
+- `tenant_id` and `project_id` MUST be present.
+- `snapshot_id`, `circuit_id`, and `backend_class` MUST be present.
+- `schema_version`, `compiler_version`, `aqo_version`, `optimizer_version`, `policy_mode`, and `policy_digest` MUST be present.
+- compatibility metadata MUST be machine-verifiable by exact string equality.
+- incompatible patterns MUST remain visible only as candidates or diagnostics, never as the canonical result.
 
-#### Required Semantics
+Canonical selection semantics:
 
-#### EnqueueJob
+- exact compatibility is the canonical eligibility gate,
+- among compatible candidates the canonical template is selected by `support` desc, `pattern_family` asc, then `pattern_id` asc,
+- canonical selection is independent from similarity scoring,
+- `GetPattern` MUST return a fallback/diagnostics envelope when no canonical template is found.
 
-Creates a new execution workflow.
+Incompatibility reason codes:
 
-MUST:
-- validate authorization,
-- assign deterministic `job_id`,
-- persist JobSpec,
-- enqueue into QRTX.
+- `SCHEMA_MISMATCH`
+- `COMPILER_MISMATCH`
+- `AQO_MISMATCH`
+- `OPTIMIZER_MISMATCH`
+- `POLICY_MISMATCH`
 
-#### GetJobStatus
+Returned responses MUST expose:
 
-Returns lifecycle state.
+- `tenant_id`
+- `project_id`
+- `candidate_budget`
+- `canonical_pattern_id`
+- `canonical_pattern`
+- `candidate_patterns`
+- `explanation_pattern`
+- `diagnostics`
 
-Canonical states:
-```text
-PENDING
-COMPILING
-QUEUED
-RUNNING
-DONE
-ERROR
-CANCELLED
-TIMEOUT
-```
-
-#### CancelJob
-
-MUST:
-
-- propagate cancellation to all downstream services,
-- cancel queued/running backend executions,
-- release qubit reservations,
-- update observability traces.
-
-#### PollJobUpdates
-
-Streaming API for incremental updates.
-
-Replaces polling loops.
-
-MUST support:
-
-- server streaming,
-- heartbeat events,
-- cancellation propagation,
-- deadline handling.
+The canonical pattern MUST be distinct from the candidate pattern list and MUST not be recomputed from an arbitrary nearest neighbor.
 
 ---
-
-### 5.2 CompilationService
-
-#### Purpose
-
-Neuro-symbolic compilation interface.
-
-Transforms:
-```text
-Eigen-Lang → AST → AQO → Intermediate representations
-```
-
-**Service Definition**
-```text
-service CompilationService {
-    rpc CompileCircuit(CompileCircuitRequest)
-        returns (CompileCircuitResponse);
-
-    rpc CompileJob(CompileJobRequest)
-        returns (CompileJobResponse);
-
-    rpc OptimizeCircuit(OptimizeCircuitRequest)
-        returns (OptimizeCircuitResponse);
-
-    rpc ValidateCircuit(ValidateCircuitRequest)
-        returns (ValidateCircuitResponse);
-}
-```
-
-#### CompileCircuit
-
-Compiles a standalone circuit.
-
-#### Request metadata
-
-All internal compile requests MUST carry canonical metadata either in the request envelope or in the propagated gRPC metadata boundary.
-
-Required canonical request metadata:
-
-- request ID,
-- trace context,
-- deadline,
-- retry policy,
-- security context,
-- tenant/project scope.
-
-When both `source` and `source_ref` are present, `source` MUST take precedence.
-When `source_ref` is used, it MUST resolve deterministically against the QFS root.
-
-Outputs:
-
-- AQO,
-- IR,
-- diagnostics,
-- compiler trace.
-
-#### CompileJob
-
-Compiles a full hybrid workflow.
-
-The request follows the same canonical metadata and source-precedence rules as `CompileCircuit`.
-
-MUST support:
-
-- multiple circuits,
-- classical orchestration,
-- dataset references,
-- parameter binding.
-
-#### OptimizeCircuit
-
-Previously stubbed.
-
-MUST now be implemented.
-
-Responsibilities:
-
-- AQO optimization,
-- gate simplification,
-- SWAP reduction,
-- noise-aware rewriting,
-- topology-aware transformations.
-
-#### ValidateCircuit
-
-Previously stubbed.
-
-MUST now be implemented.
-
-Validation includes:
-
-- AST safety,
-- deterministic semantics,
-- unsupported gates,
-- recursion prevention,
-- bounded resources,
-- prohibited runtime constructs.
-
----
-
-### 5.3 DriverManagerService
-
-#### Purpose
-
-Hardware abstraction orchestration layer.
-
-Provides unified access to:
-
-- simulators,
-- local hardware,
-- cloud quantum devices.
-
-#### Service Definition
-
-```text
-service DriverManagerService {
-    rpc ListDevices(ListDevicesRequest)
-        returns (ListDevicesResponse);
-
-    rpc GetDeviceStatus(GetDeviceStatusRequest)
-        returns (GetDeviceStatusResponse);
-
-    rpc ExecuteCircuit(ExecuteCircuitRequest)
-        returns (ExecuteCircuitResponse);
-
-    rpc ExecuteCircuitAsync(ExecuteCircuitRequest)
-        returns (ExecutionHandle);
-
-    rpc StreamExecutionUpdates(ExecutionHandle)
-        returns (stream ExecutionEvent);
-
-    rpc CalibrateDevice(CalibrateDeviceRequest)
-        returns (CalibrateDeviceResponse);
-}
-```
-
-Driver Manager capability registry semantics are read-only and queryable through the same internal boundary:
-
-- device and capability snapshots MUST be deterministic,
-- live session state MUST remain separate from snapshot metadata,
-- versioned device profiles MUST be queryable for provider selection,
-- unsupported profile negotiation MUST fail closed unless the simulator fallback is explicitly available.
-
-The kernel-facing transport surface remains the implementation boundary; profile negotiation is a contract over registry behavior and metadata stability, not a new public wire surface.
-
-Canonical final-contract reference for this boundary:
-
-- `docs/reference/api/qdriver.md`
-
-`DriverManagerService` is the kernel-facing transport projection of the final QDriver v1 contract. The semantic mapping is intentionally stable:
-
-- `ExecuteCircuit` projects QDriver `Execute`
-- `GetDeviceStatus` projects QDriver `GetStatus`
-- `CalibrateDevice` projects QDriver `Calibrate`
-- cancellation is propagated through the kernel transport layer as the QDriver `Cancel` semantic
-
-Unsupported capability selection and version mismatch MUST remain deterministic and must use the canonical error model defined by the QDriver reference.
-
-#### ExecuteCircuit
-
-Synchronous unary execution.
-
-Recommended only for short-running jobs.
-
-#### ExecuteCircuitAsync
-
-Required for:
-
-- cloud devices,
-- queued systems,
-- long-running executions.
-
-Returns execution handle.
-
-#### StreamExecutionUpdates
-
-Streams:
-
-- queue status,
-- execution start,
-- execution completion,
-- telemetry,
-- cancellation,
-- failure events.
-
-#### CalibrateDevice
-
-Previously stubbed.
-
-MUST now be implemented.
-
-Calibration MAY include:
-
-- T1/T2 refresh,
-- gate recalibration,
-- readout recalibration,
-- topology refresh.
-
----
-
-### 5.4 OptimizerService
-
-#### Purpose
-
-GNN-based routing and placement optimization.
-
-Transforms:
-
-```text
-AQO → topology-aware executable QASM
-```
-
-#### Service Definition
-
-```text
-service OptimizerService {
-    rpc OptimizeCircuit(OptimizeCircuitRequest)
-        returns (OptimizeCircuitResponse);
-}
-```
-
-#### Required Semantics
-
-MUST support:
-
-- deterministic seed replay,
-- confidence scoring,
-- fallback algorithms,
-- topology-aware routing,
-- SWAP minimization,
-- noise prediction.
-
-#### Required Failure Codes
-
-| **Code** | **Meaning** |
-|----------------------|------|
-| `OPT_INVALID_AQO` | Invalid intermediate representation |
-| `OPT_TIMEOUT` | Optimization exceeded deadline |
-| `OPT_NO_FEASIBLE_MAPPING` | No routing solution |
-| `OPT_MODEL_FAILURE` | ML model failure |
-| `OPT_INTERNAL_ERROR` | Internal optimizer failure |
-
----
-
-### 5.5 QFSService
-
-#### Purpose
-
-Internal persistence interface for QFS.
-
-Previously undocumented in internal API contracts.
-
-Now mandatory.
-
-#### Service Definition
-
-```text
-service QFSService {
-    rpc StoreArtifact(StoreArtifactRequest)
-        returns (StoreArtifactResponse);
-
-    rpc GetArtifact(GetArtifactRequest)
-        returns (GetArtifactResponse);
-
-    rpc ListArtifacts(ListArtifactsRequest)
-        returns (ListArtifactsResponse);
-
-    rpc CheckpointState(CheckpointStateRequest)
-        returns (CheckpointStateResponse);
-
-    rpc RestoreState(RestoreStateRequest)
-        returns (RestoreStateResponse);
-}
-```
-
----
-
-### 5.6 KnowledgeBaseService
-
-#### Purpose
-
-Persistent memory and learning interface.
-
-Previously omitted from internal API spec.
-
-Now mandatory.
-
-#### Service Definition
 
 ```text
 service KnowledgeBaseService {
