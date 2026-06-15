@@ -831,7 +831,7 @@ def test_neuro_symbolic_service_audits_security_context(
     stub = nsc_pb_grpc.NeuroSymbolicServiceStub(channel)
 
     with caplog.at_level("INFO", logger="eigen_compiler"):
-        stub.ScoreCompilationPlan(
+        resp = stub.ScoreCompilationPlan(
             _nsc_request(),
             metadata=_nsc_metadata(),
         )
@@ -845,3 +845,17 @@ def test_neuro_symbolic_service_audits_security_context(
     assert getattr(record, "tenant_id") == "tenant-a"
     assert getattr(record, "project_id") == "project-a"
     assert getattr(record, "policy_snapshot_version") == "policy-2026-06-15"
+
+    envelope = getattr(record, "explainability_envelope")
+    assert envelope["model_version"] == "dpda-model-unit-test"
+    assert envelope["feature_set"]["schema_version"] == "features.v1"
+    assert envelope["feature_set"]["feature_digest_sha256"] == hashlib.sha256(b'{"redacted":true,"signals":[1,2,3]}').hexdigest()
+    assert envelope["confidence"] == resp.confidence
+    assert envelope["explanation_ref"] == resp.explanation_ref
+    assert envelope["retrieval_reference_count"] == 3
+    assert envelope["retrieval_references"] == [
+        "nsc://feature-set/tenant-a/project-a/req-nsc-001/" + hashlib.sha256(b'{"redacted":true,"signals":[1,2,3]}').hexdigest(),
+        "nsc://policy-snapshot/policy-2026-06-15",
+        "nsc://model/dpda-model-unit-test",
+    ]
+    assert getattr(record, "explainability_envelope_json")

@@ -225,6 +225,57 @@ def _anonymize_mapping(payload: dict[str, Any], *, salt: str, epoch: str) -> dic
     return {key: _anonymize_value(key, value, salt=salt, epoch=epoch) for key, value in payload.items()}
 
 
+def _explainability_envelope_from_payload(payload: dict[str, Any], *, salt: str, epoch: str) -> dict[str, Any]:
+    raw_envelope = payload.get("explainability_envelope")
+    if isinstance(raw_envelope, dict) and raw_envelope:
+        envelope = dict(raw_envelope)
+    else:
+        envelope = {
+            "contract_version": str(payload.get("contract_version", "")).strip() or _KB_CONTRACT_VERSION,
+            "model_version": str(payload.get("model_version", "")).strip(),
+            "feature_set": payload.get("feature_set") if isinstance(payload.get("feature_set"), dict) else {},
+            "confidence": payload.get("confidence", 0.0),
+            "retrieval_references": payload.get("retrieval_references") or [],
+            "replay_digest": str(payload.get("replay_digest", "")).strip(),
+            "decision_digest": str(payload.get("decision_digest", "")).strip(),
+            "policy_snapshot_version": str(payload.get("policy_snapshot_version", "")).strip(),
+        }
+
+    feature_set = envelope.get("feature_set")
+    if isinstance(feature_set, dict):
+        normalized_feature_set = _anonymize_mapping(dict(feature_set), salt=salt, epoch=epoch)
+    elif feature_set:
+        normalized_feature_set = {"value": str(feature_set)}
+    else:
+        normalized_feature_set = {}
+
+    retrieval_references = envelope.get("retrieval_references")
+    if isinstance(retrieval_references, (list, tuple, set)):
+        normalized_retrieval_references = [str(ref).strip() for ref in retrieval_references if str(ref).strip()]
+    elif retrieval_references:
+        normalized_retrieval_references = [str(retrieval_references).strip()]
+    else:
+        normalized_retrieval_references = []
+
+    confidence = envelope.get("confidence", 0.0)
+    try:
+        confidence_value = round(float(confidence), 6)
+    except (TypeError, ValueError):
+        confidence_value = 0.0
+
+    return {
+        "contract_version": str(envelope.get("contract_version", "")).strip() or _KB_CONTRACT_VERSION,
+        "model_version": str(envelope.get("model_version", "")).strip(),
+        "feature_set": normalized_feature_set,
+        "confidence": confidence_value,
+        "retrieval_references": normalized_retrieval_references,
+        "retrieval_reference_count": len(normalized_retrieval_references),
+        "replay_digest": str(envelope.get("replay_digest", "")).strip(),
+        "decision_digest": str(envelope.get("decision_digest") or envelope.get("replay_digest") or "").strip(),
+        "policy_snapshot_version": str(envelope.get("policy_snapshot_version", "")).strip(),
+    }
+
+
 def _copy_timestamp(ts: Timestamp | None) -> Timestamp:
     if ts is None:
         return _now_ts()
@@ -633,7 +684,19 @@ class KnowledgeBaseService:
         decision_log.policy_branch = str(payload.get("policy_branch", "")).strip()
         decision_log.selected_action = str(payload.get("selected_action", "")).strip()
         decision_log.fallback_used = bool(payload.get("fallback_used", False))
+        explainability_envelope = _explainability_envelope_from_payload(
+            payload,
+            salt=self._anon_salt,
+            epoch=self._anon_epoch,
+        )
         snapshot = _anonymize_mapping(dict(payload.get("feature_snapshot") or {}), salt=self._anon_salt, epoch=self._anon_epoch)
+        snapshot["explainability_envelope"] = _stable_json(explainability_envelope)
+        snapshot["feature_set"] = _stable_json(explainability_envelope["feature_set"])
+        snapshot["confidence"] = f"{explainability_envelope['confidence']:.6f}"
+        snapshot["retrieval_references"] = _stable_json(explainability_envelope["retrieval_references"])
+        snapshot["replay_digest"] = explainability_envelope["replay_digest"]
+        snapshot["policy_snapshot_version"] = explainability_envelope["policy_snapshot_version"]
+        snapshot["model_version"] = explainability_envelope["model_version"] or decision_log.model_version
         for key, value in snapshot.items():
             decision_log.feature_snapshot[key] = str(value)
         decided_at = payload.get("decided_at")
@@ -671,6 +734,7 @@ class KnowledgeBaseService:
                     "training_set_hash": str(payload.get("training_set_hash", "")).strip(),
                     "evaluation_bundle_hash": str(payload.get("evaluation_bundle_hash", "")).strip(),
                     "promotion_policy_version": str(payload.get("promotion_policy_version", "")).strip(),
+                    "explainability_envelope": explainability_envelope,
                 },
                 model_version=decision_log.model_version,
                 training_set_hash=str(payload.get("training_set_hash", "")).strip(),
@@ -685,6 +749,7 @@ class KnowledgeBaseService:
                 metadata={
                     "component": decision_log.component,
                     "policy_branch": decision_log.policy_branch,
+                    "explainability_envelope_json": _stable_json(explainability_envelope),
                 },
                 command="runtime_decision",
                 decision=decision_log.selected_action,
