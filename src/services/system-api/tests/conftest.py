@@ -99,6 +99,9 @@ def grpc_addr(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
     previous_kernel_addr = os.environ.get("EIGEN_KERNEL_ADDR")
     previous_kernel_endpoint = os.environ.get("KERNEL_ENDPOINT")
     previous_kernel_grpc_endpoint = os.environ.get("KERNEL_GRPC_ENDPOINT")
+    previous_kernel_addr = os.environ.get("EIGEN_KERNEL_ADDR")
+    previous_kernel_endpoint = os.environ.get("KERNEL_ENDPOINT")
+    previous_kernel_grpc_endpoint = os.environ.get("KERNEL_GRPC_ENDPOINT")
     port = _free_port()
     addr = f"127.0.0.1:{port}"
     previous_store_path = os.environ.get("SYSTEM_API_IDEMPOTENCY_STORE_PATH")
@@ -107,6 +110,9 @@ def grpc_addr(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
         tmp_path_factory.mktemp("system-api") / "idempotency.json"
     )
     os.environ["EIGEN_QFS_LOCAL_ROOT"] = str(tmp_path_factory.mktemp("system-api-qfs") / "qfs")
+    os.environ.pop("EIGEN_KERNEL_ADDR", None)
+    os.environ.pop("KERNEL_ENDPOINT", None)
+    os.environ.pop("KERNEL_GRPC_ENDPOINT", None)
     os.environ.pop("EIGEN_KERNEL_ADDR", None)
     os.environ.pop("KERNEL_ENDPOINT", None)
     os.environ.pop("KERNEL_GRPC_ENDPOINT", None)
@@ -130,6 +136,19 @@ def grpc_addr(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
     else:
         os.environ["EIGEN_QFS_LOCAL_ROOT"] = previous_qfs_root
 
+    if previous_kernel_addr is None:
+        os.environ.pop("EIGEN_KERNEL_ADDR", None)
+    else:
+        os.environ["EIGEN_KERNEL_ADDR"] = previous_kernel_addr
+    if previous_kernel_endpoint is None:
+        os.environ.pop("KERNEL_ENDPOINT", None)
+    else:
+        os.environ["KERNEL_ENDPOINT"] = previous_kernel_endpoint
+    if previous_kernel_grpc_endpoint is None:
+        os.environ.pop("KERNEL_GRPC_ENDPOINT", None)
+    else:
+        os.environ["KERNEL_GRPC_ENDPOINT"] = previous_kernel_grpc_endpoint
+ 
 
     if previous_kernel_addr is None:
         os.environ.pop("EIGEN_KERNEL_ADDR", None)

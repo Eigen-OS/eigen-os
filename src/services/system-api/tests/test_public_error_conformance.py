@@ -41,7 +41,7 @@ def test_validation_negative_fixture_is_accepted_by_submit_job(grpc_addr: str) -
     response = stub.SubmitJob(job_pb.SubmitJobRequest())
     assert response.job_id
     assert response.status.job_id == response.job_id
-    assert response.status.state == job_pb.JOB_STATE_PENDING
+    assert response.status.state == types_pb.JOB_STATE_PENDING
 
 
 def test_idempotency_conflict_negative_fixture_has_precondition_detail(grpc_addr: str) -> None:
@@ -104,7 +104,7 @@ def test_payload_limit_fixture_is_accepted_by_submit_job(grpc_addr: str, monkeyp
     )
     assert response.job_id
     assert response.status.job_id == response.job_id
-    assert response.status.state == job_pb.JOB_STATE_PENDING
+    assert response.status.state == types_pb.JOB_STATE_PENDING
 
 
 @pytest.mark.parametrize(
