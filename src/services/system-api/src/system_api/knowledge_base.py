@@ -511,7 +511,6 @@ class KnowledgeBaseService:
                     "capability_scope": list(query["capability_scope"]),
                     "topology_snapshot_digest": query["topology_snapshot_digest"],
                     "policy_envelope_digest": query["policy_envelope_digest"],
-                    "capability_scope": query.get("capability_scope", ()),
                     "kb_schema_version": query["kb_schema_version"],
                     "compiler_version": query["compiler_version"],
                     "optimizer_version": query["optimizer_version"],
@@ -537,7 +536,6 @@ class KnowledgeBaseService:
             "okb_selection_digest": digest,
             "index_status": index_status,
         }
-
 
     def ingest_runtime_decision(self, payload: dict[str, Any]) -> str:
         if self._storage_mode == "disabled":
@@ -675,7 +673,7 @@ class KnowledgeBaseService:
                 context=None,
                 capability_scope=self._capability_scope_tokens(payload),
             )
-        
+
             self._learning_store_evidence(
                 source="benchmark",
                 evidence_kind="benchmark",
@@ -1020,7 +1018,6 @@ class KnowledgeBaseService:
             "kb_schema_version": str(payload.get("kb_schema_version", _KB_CONTRACT_VERSION)).strip() or _KB_CONTRACT_VERSION,
             "compiler_version": str(payload.get("compiler_version", "")).strip(),
             "optimizer_version": str(payload.get("optimizer_version", "")).strip(),
-            "capability_scope": self._capability_scope_tokens(payload),
             "seed": seed,
             "deterministic": bool(payload.get("deterministic", True)),
             "query_mode": query_mode,
@@ -1134,7 +1131,6 @@ class KnowledgeBaseService:
                     "capability_scope": list(query["capability_scope"]),
                     "topology_snapshot_digest": query["topology_snapshot_digest"],
                     "policy_envelope_digest": query["policy_envelope_digest"],
-                    "capability_scope": query.get("capability_scope", ()),
                     "seed": query["seed"],
                     "query_mode": query["query_mode"],
                     "deterministic": query["deterministic"],
@@ -1160,7 +1156,6 @@ class KnowledgeBaseService:
                     "capability_scope": list(query["capability_scope"]),
                     "topology_snapshot_digest": query["topology_snapshot_digest"],
                     "policy_envelope_digest": query["policy_envelope_digest"],
-                    "capability_scope": query.get("capability_scope", ()),
                     "seed": query["seed"],
                     "query_mode": query["query_mode"],
                     "deterministic": query["deterministic"],
@@ -1627,7 +1622,6 @@ class KnowledgeBaseService:
             "subject": subject,
             "roles": roles,
         }
-        return {}
 
     def _abort_storage_unavailable(self, context: grpc.ServicerContext, operation: str) -> None:
         record_kb_fallback("storage_unavailable")
@@ -2051,7 +2045,6 @@ class KnowledgeBaseService:
             "command": command,
             "decision": decision,
             "payload": _anonymize_mapping(dict(evidence_payload or {}), salt=self._anon_salt, epoch=self._anon_epoch),
-            "capability_scope": capability_scope,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
         evidence["evidence_hash"] = _stable_hash(evidence)
@@ -2080,7 +2073,6 @@ class KnowledgeBaseService:
                 "gate_results": evidence["gate_results"],
                 "metadata": evidence["metadata"],
                 "payload": evidence["payload"],
-                "capability_scope": evidence["capability_scope"],
                 "created_at": evidence["created_at"],
                 "queryable_ref": evidence["queryable_ref"],
             }
