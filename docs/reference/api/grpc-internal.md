@@ -297,9 +297,12 @@ service NeuroSymbolicService {
 - Every edited field path MUST be emitted in audit/log metadata as redacted-only evidence.
 - `ScoreCompilationPlanRequest.context.tenant_id` is required.
 - `ScoreCompilationPlanRequest.context.project_id` is required.
+- Internal request metadata MUST also carry `x-eigen-tenant-id` and `x-eigen-project-id`, and those values MUST match the request context bound for scoring.
 - `ScoreCompilationPlanRequest.context.subject_id` is required.
 - `ScoreCompilationPlanRequest.context.workload_id` is required.
 - `ScoreCompilationPlanRequest.context.authz_decision_id` is required.
+- `x-eigen-tenant-id` and `x-eigen-project-id` gRPC metadata keys are required and MUST match the request context exactly.
+- Any tenant/project mismatch MUST fail closed with `PERMISSION_DENIED` before model scoring.
 - The normalized security context MUST be fully traceable in audit events and replay digests.
 - Raw bearer tokens and header values MUST be sanitized before normalization; only bounded, secret-free security context metadata may be forwarded into inference.
 - `ScoreCompilationPlanResponse.contract_version` MUST echo the accepted request contract version.
