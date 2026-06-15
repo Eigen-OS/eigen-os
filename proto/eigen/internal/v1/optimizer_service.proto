@@ -138,4 +138,9 @@ message OptimizerServiceOptimizeCircuitResponse {
   double confidence_score = 14;
   string explanation_ref = 15;
   string optimizer_digest = 16;
+
+  // Classification label for the model output.
+  // Allowed values: Advisory, Optimization, Recommendation, Informational.
+  // Unknown or empty values MUST be rejected by the caller/service boundary.
+  string classification_label = 17;
 }
