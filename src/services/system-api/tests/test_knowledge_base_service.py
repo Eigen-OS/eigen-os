@@ -75,6 +75,48 @@ def _record(record_id: str, *, created_at: str, trace_id: str, user_id: str) -> 
     )
 
 
+def _okb_benchmark_payload(
+    record_id: str,
+    *,
+    tenant_id: str,
+    project_id: str,
+    trace_id: str,
+    backend_profile: str = "backend-alpha",
+    optimizer_version: str = "opt-1.0",
+) -> dict[str, object]:
+    return {
+        "record_id": record_id,
+        "run_id": f"run-{record_id}",
+        "job_id": f"job-{record_id}",
+        "trace_id": trace_id,
+        "tenant_id": tenant_id,
+        "project_id": project_id,
+        "request_hash": f"sha256:{record_id}",
+        "backend_profile": backend_profile,
+        "optimizer_version": optimizer_version,
+        "circuit_id": "circuit-shared",
+        "artifact_ref": "qfs://artifacts/shared-reuse",
+        "dataset_ref": "dataset-shared",
+        "qubit_count": 12,
+        "entanglement_score": 0.44,
+        "noise_profile_id": "noise-shared",
+        "backend_class": "simulator",
+        "provenance": {
+            "compiler_ref": "compiler://shared",
+            "optimizer_ref": "optimizer://shared",
+            "runtime_ref": "runtime://shared",
+            "checkpoint_ref": "checkpoint://shared",
+        },
+        "lineage": {
+            "model_version": "m1",
+            "training_set_hash": "train-hash",
+            "evaluation_bundle_hash": "eval-hash",
+            "promotion_policy_version": "policy-v1",
+            "promotion_outcome": "PROMOTED",
+        },
+    }
+
+
 def test_upsert_query_replay_and_provenance_are_deterministic(grpc_addr: str) -> None:
     channel = grpc.insecure_channel(grpc_addr)
     stub = kb_pb_grpc.KnowledgeBaseServiceStub(channel)
@@ -276,54 +318,30 @@ def test_kb_fallback_behavior_raises_when_storage_disabled() -> None:
 def test_okb_query_backend_is_deterministic_and_bounded() -> None:
     service = KnowledgeBaseService(kb_pb=kb_pb, types_pb=types_pb)
 
+    for i in range(10):
+        service.ingest_benchmark_run(
+            _okb_benchmark_payload(
+                f"candidate-{i:02d}",
+                tenant_id="tenant-a",
+                project_id="project-a",
+                trace_id="trace-okb",
+            )
+        )
+
     service.ingest_benchmark_run(
-        {
-            "record_id": "okb-record-1",
-            "run_id": "run-1",
-            "job_id": "job-1",
-            "trace_id": "trace-okb",
-            "tenant_id": "tenant-a",
-            "project_id": "project-a",
-            "request_hash": "sha256:record-1",
-            "backend_profile": "backend-alpha",
-            "optimizer_version": "opt-1.0",
-            "circuit_id": "circuit-1",
-            "artifact_ref": "qfs://artifacts/okb-record-1",
-            "dataset_ref": "dataset-v1",
-            "qubit_count": 12,
-            "entanglement_score": 0.44,
-            "noise_profile_id": "noise-1",
-            "backend_class": "simulator",
-            "provenance": {
-                "compiler_ref": "compiler://v1",
-                "optimizer_ref": "optimizer://v1",
-                "runtime_ref": "runtime://v1",
-                "checkpoint_ref": "checkpoint://v1",
-            },
-            "lineage": {
-                "model_version": "m1",
-                "training_set_hash": "train-hash",
-                "evaluation_bundle_hash": "eval-hash",
-                "promotion_policy_version": "policy-v1",
-                "promotion_outcome": "PROMOTED",
-            },
-        }
-    )
-    service.ingest_runtime_decision(
-        {
-            "decision_id": "okb-decision-1",
-            "trace_id": "trace-okb",
-            "model_version": "m1",
-            "component": "runtime",
-            "policy_branch": "baseline",
-            "selected_action": "backend-alpha",
-            "feature_snapshot": {"queue_depth": "2"},
-            "backend_profile_id": "backend-alpha",
-            "optimizer_version": "opt-1.0",
-        }
+        _okb_benchmark_payload(
+            "foreign-candidate",
+            tenant_id="tenant-b",
+            project_id="project-b",
+            trace_id="trace-foreign",
+            backend_profile="backend-foreign",
+            optimizer_version="opt-foreign",
+        )
     )
 
     query = {
+        "tenant_id": "tenant-a",
+        "project_id": "project-a",
         "job_id": "job-1",
         "semantic_hash": "sha256:semantic-1",
         "aqo_hash": "sha256:aqo-1",
@@ -336,26 +354,51 @@ def test_okb_query_backend_is_deterministic_and_bounded() -> None:
         "seed": 7,
         "deterministic": True,
         "query_mode": "structural",
-        "candidate_budget": 2,
+        "candidate_budget": 99,
     }
 
     first = service.query_optimization_candidates(query)
     second = service.query_optimization_candidates(query)
 
     assert first == second
+    assert first["tenant_id"] == "tenant-a"
+    assert first["project_id"] == "project-a"
     assert first["query_mode"] == "structural"
-    assert first["candidate_budget"] == 2
+    assert first["candidate_budget"] == 8
+    assert len(first["candidates"]) == 8
     assert first["selected_candidate_id"] == first["candidates"][0]["candidate_id"]
-    assert len(first["candidates"]) <= 2
-    assert 0.0 <= first["candidates"][0]["confidence"] <= 1.0
-    assert 0.0 <= first["candidates"][0]["score_total"] <= 1.0
+    assert [item["candidate_id"] for item in first["candidates"]] == [
+        "okb-record-candidate-00",
+        "okb-record-candidate-01",
+        "okb-record-candidate-02",
+        "okb-record-candidate-03",
+        "okb-record-candidate-04",
+        "okb-record-candidate-05",
+        "okb-record-candidate-06",
+        "okb-record-candidate-07",
+    ]
+    assert all(item["candidate_source"] == "record" for item in first["candidates"])
+    assert all(item["score_breakdown"]["rank_source"] == "structural" for item in first["candidates"])
+    assert all(item["score_breakdown"]["structural_score"] == 1.0 for item in first["candidates"])
+    assert len({item["score_breakdown"]["vector_score"] for item in first["candidates"]}) == 1
+    assert all("foreign-candidate" not in item["candidate_id"] for item in first["candidates"])
+    assert all(0.0 <= item["confidence"] <= 1.0 for item in first["candidates"])
+    assert all(0.0 <= item["score_total"] <= 1.0 for item in first["candidates"])
     assert first["candidates"][0]["deterministic_digest"].startswith("sha256:")
     assert first["okb_selection_digest"].startswith("sha256:")
     assert first["explanation_ref"] == "qfs://jobs/job-1/kb/explain.json"
 
-    vector = service.query_optimization_candidates({**query, "query_mode": "vector"})
+    vector = service.query_optimization_candidates({**query, "query_mode": "vector", "candidate_budget": 2})
     assert vector["query_mode"] == "vector"
+    assert vector["candidate_budget"] == 2
     assert vector["selected_candidate_id"] == vector["candidates"][0]["candidate_id"]
-    assert len(vector["candidates"]) <= 2
-    assert vector["okb_selection_digest"].startswith("sha256:")
+    assert vector["candidates"][0]["score_breakdown"]["rank_source"] == "vector"
+    assert len(vector["candidates"]) == 2
+
+    hybrid = service.query_optimization_candidates({**query, "query_mode": "hybrid", "candidate_budget": 3})
+    assert hybrid["query_mode"] == "hybrid"
+    assert hybrid["candidate_budget"] == 3
+    assert hybrid["selected_candidate_id"] == hybrid["candidates"][0]["candidate_id"]
+    assert hybrid["candidates"][0]["score_breakdown"]["rank_source"] == "hybrid"
+    assert len(hybrid["candidates"]) == 3
     
