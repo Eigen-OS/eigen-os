@@ -107,9 +107,36 @@ _REDACT_MASK_IDENTIFIER_KEYS = {
 }
 
 _EMAIL_RE = re.compile(r"(?i)\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b")
-_PHONE_RE = re.compile(r"(?<!\d)(?:\+?\d{1,3}[-.\s]?)?(?:\(?\d{2,4}\)?[-.\s]?){1,3}\d{2,4}(?!\d)")
+_PHONE_RE = re.compile(r"(?i)(?<!\d)(?:\+?\d{1,3}[-.\s]?)?(?:\(?\d{2,4}\)?[-.\s]?){1,3}\d{2,4}(?!\d)")
 _BEARER_RE = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{8,}\b")
 _UUID_RE = re.compile(r"(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b")
+_SENSITIVE_HEADER_LINE_RE = re.compile(
+    r"(?im)^(?P<name>authorization|proxy-authorization|x-api-key|x-auth-token|x-access-token|cookie|set-cookie)\s*:\s*(?P<value>.+)$"
+)
+_INTERNAL_ENDPOINT_RE = re.compile(
+    r"(?i)\b(?:https?|grpc)://"
+    r"(?:"
+    r"localhost"
+    r"|127\.0\.0\.1"
+    r"|0\.0\.0\.0"
+    r"|10\.\d{1,3}\.\d{1,3}\.\d{1,3}"
+    r"|192\.168\.\d{1,3}\.\d{1,3}"
+    r"|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}"
+    r"|(?!-)(?:[a-z0-9-]+\.)*(?:internal|cluster\.local|svc\.cluster\.local|localdomain|corp|lan)"
+    r")(?::\d+)?(?:/[^\s\"'<>]*)?"
+)
+_SECRET_PATH_RE = re.compile(
+    r"(?i)(?P<path>(?:[A-Za-z]:\\|/)"
+    r"(?:[^\s\"'<>]*/)*"
+    r"(?:secrets?|secret|private|credentials?|tokens?|keys?)"
+    r"(?:/[^\s\"'<>]*)?)"
+)
+_STACK_TRACE_MARKERS = (
+    "Traceback (most recent call last):",
+    "java.lang.",
+    "Caused by:",
+)
+_STACK_TRACE_LINE_RE = re.compile(r"(?m)^\s*File \".+\", line \d+, in .+$|^\s*at [\w.$<>/]+\(.*\)$")
 
 
 @dataclass(frozen=True)
@@ -247,13 +274,17 @@ def _request_context_from_rpc(request, context: grpc.ServicerContext) -> dict[st
         if remaining is not None:
             deadline = f"{remaining:.6f}s"
 
+    security_context = pick("security_context", "authorization")
+    if security_context:
+        security_context = _redact_scalar_text(security_context, "$.security_context", set())
+
     return {
         "request_id": pick("request_id", "x-eigen-request-id"),
         "trace_id": pick("trace_id", "x-eigen-trace-id"),
         "traceparent": pick("traceparent", "traceparent"),
         "deadline": deadline,
         "retry_policy": pick("retry_policy", "x-eigen-retry-policy"),
-        "security_context": pick("security_context", "authorization"),
+        "security_context": security_context,
         "sandbox_profile": pick("sandbox_profile", "x-eigen-sandbox-profile"),
         "tenant_id": pick("tenant_id", "x-eigen-tenant-id"),
         "project_id": pick("project_id", "x-eigen-project-id"),
@@ -524,12 +555,38 @@ def _record_redaction(redactions: set[str], path: str, reason: str) -> None:
     redactions.add(f"{path}:{reason}")
 
 
+def _looks_like_stack_trace(value: str) -> bool:
+    if any(marker in value for marker in _STACK_TRACE_MARKERS):
+        return True
+    return _STACK_TRACE_LINE_RE.search(value) is not None
+
+
+def _redact_sensitive_text(value: str, path: str, redactions: set[str]) -> str:
+    redacted = value
+
+    if _SENSITIVE_HEADER_LINE_RE.search(redacted):
+        redacted = _SENSITIVE_HEADER_LINE_RE.sub(_REDACTED_VALUE, redacted)
+        _record_redaction(redactions, path, "masked_header")
+    if _INTERNAL_ENDPOINT_RE.search(redacted):
+        redacted = _INTERNAL_ENDPOINT_RE.sub(_REDACTED_VALUE, redacted)
+        _record_redaction(redactions, path, "masked_endpoint")
+    if _SECRET_PATH_RE.search(redacted):
+        redacted = _SECRET_PATH_RE.sub(_REDACTED_VALUE, redacted)
+        _record_redaction(redactions, path, "masked_path")
+
+    return redacted
+
 def _redact_scalar_text(value: str, path: str, redactions: set[str]) -> str:
     redacted = value
+
+    if _looks_like_stack_trace(redacted):
+        _record_redaction(redactions, path, "deleted")
+        return _REDACTED_VALUE
 
     if _BEARER_RE.search(redacted):
         redacted = _BEARER_RE.sub(_REDACTED_VALUE, redacted)
         _record_redaction(redactions, path, "deleted")
+    redacted = _redact_sensitive_text(redacted, path, redactions)
     if _EMAIL_RE.search(redacted):
         redacted = _EMAIL_RE.sub(_MASKED_EMAIL_VALUE, redacted)
         _record_redaction(redactions, path, "masked_email")

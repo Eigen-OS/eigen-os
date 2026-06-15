@@ -8,6 +8,7 @@ import pytest
 from google.rpc import error_details_pb2
 from grpc_status import rpc_status
 
+from eigen_compiler.compiler import compile_eigen_lang
 from eigen_compiler.grpc_impl import _redact_feature_vector
 from eigen_compiler.proto_gen import ensure_generated
 
@@ -436,6 +437,63 @@ def test_neuro_symbolic_feature_redaction_masks_sensitive_values() -> None:
     assert any(field.endswith(":masked_email") for field in result.redacted_fields)
     assert any(field.endswith(":masked_phone") for field in result.redacted_fields)
     assert any(field.endswith(":masked_identifier") for field in result.redacted_fields)
+
+
+def test_neuro_symbolic_feature_redaction_removes_stack_traces_endpoints_paths_and_sensitive_headers() -> None:
+    raw_feature_vector = json.dumps(
+        {
+            "diagnostics": "Traceback (most recent call last):\n  File \"/app/main.py\", line 12, in run\n    raise RuntimeError('boom')",
+            "callback_url": "grpc://internal-api.svc.cluster.local:8443/v1/compile",
+            "artifact_path": "/var/lib/eigen/secret/pipelines/private/server.key",
+            "header_blob": "Authorization: Bearer sk-test-secret-token\nX-API-Key: sk-live-1234567890\nX-Auth-Token: token-abcdef123456",
+            "signals": [{"label": "ok"}],
+        },
+        sort_keys=True,
+    ).encode("utf-8")
+
+    result = _redact_feature_vector(raw_feature_vector)
+    decoded = json.loads(result.feature_vector.decode("utf-8"))
+
+    assert decoded["diagnostics"] == "[REDACTED]"
+    assert decoded["callback_url"] == "[REDACTED]"
+    assert decoded["artifact_path"] == "[REDACTED]"
+    assert all(line == "[REDACTED]" for line in decoded["header_blob"].splitlines())
+
+    rendered = result.feature_vector.decode("utf-8")
+    assert "Traceback (most recent call last):" not in rendered
+    assert "internal-api.svc.cluster.local" not in rendered
+    assert "server.key" not in rendered
+    assert "sk-test-secret-token" not in rendered
+    assert "sk-live-1234567890" not in rendered
+    assert any(field.endswith(":deleted") for field in result.redacted_fields)
+    assert any(field.endswith(":masked_endpoint") for field in result.redacted_fields)
+    assert any(field.endswith(":masked_path") for field in result.redacted_fields)
+    assert any(field.endswith(":masked_header") for field in result.redacted_fields)
+
+
+def test_compile_eigen_lang_redacts_security_context_in_metadata() -> None:
+    result = compile_eigen_lang(
+        source=(
+            b"from eigen_lang import hybrid_program\n\n"
+            b"@hybrid_program()\n"
+            b"def main():\n"
+            b"    ry(0, theta=1.0)\n"
+        ),
+        request_context={
+            "request_id": "req-1",
+            "trace_id": "0123456789abcdef0123456789abcdef",
+            "traceparent": "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01",
+            "deadline": "5s",
+            "retry_policy": "none",
+            "security_context": "authorization: Bearer sk-test-secret-token",
+            "sandbox_profile": "strict",
+            "tenant_id": "tenant-a",
+            "project_id": "project-a",
+        },
+    )
+
+    assert result.metadata["security_context"] == "[REDACTED]"
+    assert "sk-test-secret-token" not in result.metadata["request_context_json"]
 
 
 def test_neuro_symbolic_service_redacts_sensitive_feature_payload(

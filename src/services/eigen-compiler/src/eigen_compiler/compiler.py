@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import re
 import os
 from math import isfinite
 from dataclasses import dataclass, asdict
@@ -30,6 +31,18 @@ _AQO_MEASUREMENT_BASIS = {"X", "Y", "Z"}
 _AQO_NON_PARAMETERIZED_OPS = {"CX", "CZ", "SWAP", "CCX", "CCZ", "X", "Y", "Z", "H", "S", "T", "RESET"}
 _AQO_ARITY = {"RX": 1, "RY": 1, "RZ": 1, "CX": 2, "CZ": 2, "SWAP": 2, "CCX": 3, "CCZ": 3, "X": 1, "Y": 1, "Z": 1, "H": 1, "S": 1, "T": 1, "MEASURE": 1, "RESET": 1}
 _ALLOWED_SANDBOX_PROFILES = {"default", "restricted", "strict"}
+_SENSITIVE_HEADER_RE = re.compile(
+    r"(?i)\b(?:authorization|proxy-authorization|x-api-key|x-auth-token|x-access-token|cookie|set-cookie)\s*:\s*.+"
+)
+_BEARER_RE = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{8,}\b")
+
+
+def _sanitize_security_context(value: str) -> str:
+    if not value:
+        return ""
+    redacted = _SENSITIVE_HEADER_RE.sub("[REDACTED]", value)
+    redacted = _BEARER_RE.sub("[REDACTED]", redacted)
+    return redacted
 
 
 @dataclass(frozen=True)
@@ -231,7 +244,7 @@ def _normalize_request_context(request_context: dict[str, str] | None) -> Compil
         traceparent=str(context.get("traceparent", "")),
         deadline=str(context.get("deadline", "")),
         retry_policy=str(context.get("retry_policy", "")),
-        security_context=str(context.get("security_context", "")),
+        security_context=_sanitize_security_context(str(context.get("security_context", ""))),
         sandbox_profile=sandbox_profile,
         tenant_id=str(context.get("tenant_id", "")),
         project_id=str(context.get("project_id", "")),
