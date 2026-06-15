@@ -420,7 +420,10 @@ All requests MUST support (as structured fields or standardized metadata):
 - tenant context (NOT as metric label; redacted/hashed where applicable),
 - feature schema version,
 - timeout budget,
-- replay identifier (if present).
+- replay identifier (if present),
+- a mandatory preprocessing redaction layer that removes bearer tokens, API keys, tenant-private secrets, credentials, session cookies, and raw auth headers before scoring,
+- masking of email addresses, phone numbers, and internal identifiers before model input,
+- redacted field paths recorded in audit/log metadata only.
 
 ---
 
@@ -755,6 +758,7 @@ Golden tests SHOULD include:
 - `NeuroSymbolicService` internal model-service contract,
 - SemVer request/response envelope,
 - authenticated internal identity gate,
+- mandatory feature-extraction redaction layer for model input,
 - fail-closed rejection for unsupported contract versions.
 
 #### Still not implemented

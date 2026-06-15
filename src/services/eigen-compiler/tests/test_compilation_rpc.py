@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import logging
 import grpc
 import pytest
 from google.rpc import error_details_pb2
 from grpc_status import rpc_status
 
+from eigen_compiler.grpc_impl import _redact_feature_vector
 from eigen_compiler.proto_gen import ensure_generated
 
 ensure_generated()
@@ -393,6 +396,108 @@ def test_neuro_symbolic_service_rejects_unsupported_contract_version(
         )
 
     assert e.value.code() == grpc.StatusCode.FAILED_PRECONDITION
+
+
+def test_neuro_symbolic_feature_redaction_masks_sensitive_values() -> None:
+    raw_feature_vector = json.dumps(
+        {
+            "authorization": "Bearer sk-test-secret-token",
+            "api_key": "sk-live-1234567890",
+            "credentials": {
+                "session_cookie": "sessionid=abc123",
+                "password": "super-secret-password",
+            },
+            "contact": {
+                "email": "alice@example.com",
+                "phone": "+1 (555) 123-4567",
+            },
+            "internal_id": "7e3b7e77-4b2d-4c85-a8f5-0d9307cc0a11",
+            "signals": [{"label": "ok"}],
+        },
+        sort_keys=True,
+    ).encode("utf-8")
+
+    result = _redact_feature_vector(raw_feature_vector)
+    decoded = json.loads(result.feature_vector.decode("utf-8"))
+
+    assert decoded["authorization"] == "[REDACTED]"
+    assert decoded["api_key"] == "[REDACTED]"
+    assert decoded["credentials"] == "[REDACTED]"
+    assert decoded["contact"]["email"] == "[REDACTED_EMAIL]"
+    assert decoded["contact"]["phone"] == "[REDACTED_PHONE]"
+    assert decoded["internal_id"] == "[REDACTED_ID]"
+    assert all(secret not in result.feature_vector.decode("utf-8") for secret in [
+        "sk-test-secret-token",
+        "alice@example.com",
+        "+1 (555) 123-4567",
+        "7e3b7e77-4b2d-4c85-a8f5-0d9307cc0a11",
+    ])
+    assert any(field.endswith(":deleted") for field in result.redacted_fields)
+    assert any(field.endswith(":masked_email") for field in result.redacted_fields)
+    assert any(field.endswith(":masked_phone") for field in result.redacted_fields)
+    assert any(field.endswith(":masked_identifier") for field in result.redacted_fields)
+
+
+def test_neuro_symbolic_service_redacts_sensitive_feature_payload(
+    grpc_addr: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setenv("EIGEN_NEURO_SYMBOLIC_SERVICE_TOKEN", "unit-test-token")
+    monkeypatch.setenv("EIGEN_NEURO_SYMBOLIC_ALLOWED_CALLERS", "eigen-kernel,eigen-compiler")
+    monkeypatch.setenv("EIGEN_NEURO_SYMBOLIC_MODEL_VERSION", "dpda-model-unit-test")
+    monkeypatch.setenv("EIGEN_NEURO_SYMBOLIC_POLICY_SNAPSHOT_VERSION", "policy-2026-06-15")
+    caplog.set_level(logging.INFO, logger="eigen_compiler")
+
+    raw_feature_vector = json.dumps(
+        {
+            "authorization": "Bearer sk-test-secret-token",
+            "api_key": "sk-live-1234567890",
+            "contact": {
+                "email": "alice@example.com",
+                "phone": "+1 (555) 123-4567",
+            },
+            "internal_id": "7e3b7e77-4b2d-4c85-a8f5-0d9307cc0a11",
+            "signals": [{"label": "ok"}],
+        },
+        sort_keys=True,
+    ).encode("utf-8")
+
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = nsc_pb_grpc.NeuroSymbolicServiceStub(channel)
+    resp = stub.ScoreCompilationPlan(
+        _nsc_request(feature_vector=raw_feature_vector),
+        metadata=(
+            ("authorization", "Bearer unit-test-token"),
+            ("x-eigen-service-id", "eigen-kernel"),
+        ),
+    )
+
+    redacted = _redact_feature_vector(raw_feature_vector)
+    assert len(resp.replay_digest) == 64
+    int(resp.replay_digest, 16)
+
+    repeat = stub.ScoreCompilationPlan(
+        _nsc_request(feature_vector=raw_feature_vector),
+        metadata=(
+            ("authorization", "Bearer unit-test-token"),
+            ("x-eigen-service-id", "eigen-kernel"),
+        ),
+    )
+
+    assert repeat.replay_digest == resp.replay_digest
+    assert resp.policy_snapshot_version == "policy-2026-06-15"
+    assert resp.model_version == "dpda-model-unit-test"
+
+    scoring_logs = [record for record in caplog.records if record.getMessage() == "neuro-symbolic scoring completed"]
+    assert scoring_logs, "expected a scoring log record"
+    record = scoring_logs[-1]
+    assert "feature_redaction_fields" in record.__dict__
+    assert record.feature_redaction_count == len(redacted.redacted_fields)
+    assert any(field.endswith(":deleted") for field in record.feature_redaction_fields)
+    assert any(field.endswith(":masked_email") for field in record.feature_redaction_fields)
+    assert any(field.endswith(":masked_phone") for field in record.feature_redaction_fields)
+    assert any(field.endswith(":masked_identifier") for field in record.feature_redaction_fields)
 
 
 def test_neuro_symbolic_service_rejects_digest_mismatch(

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from dataclasses import dataclass
 from datetime import timedelta
 import hashlib
 import hmac
+import json
 import logging
 import os
 import re
@@ -30,6 +32,77 @@ _AQO_DIGEST_TOTALS: Counter[tuple[tuple[str, str], ...]] = Counter()
 _REPLAY_TOTALS: Counter[tuple[tuple[str, str], ...]] = Counter()
 _SEEN_AQO_DIGESTS: set[str] = set()
 _OBSERVABILITY_CONTRACT_VERSION = "1.0.0"
+
+_REDACTED_VALUE = "[REDACTED]"
+_MASKED_EMAIL_VALUE = "[REDACTED_EMAIL]"
+_MASKED_PHONE_VALUE = "[REDACTED_PHONE]"
+_MASKED_IDENTIFIER_VALUE = "[REDACTED_ID]"
+
+_REDACT_DELETE_KEYS = {
+    "authorization",
+    "auth_header",
+    "auth-token",
+    "bearer",
+    "cookie",
+    "credentials",
+    "credential",
+    "password",
+    "passwd",
+    "pwd",
+    "private_secret",
+    "secret",
+    "session_cookie",
+    "sessionid",
+    "session_token",
+    "token",
+    "api_key",
+    "apikey",
+    "access_token",
+    "refresh_token",
+    "id_token",
+    "raw_auth_header",
+    "raw_authorization",
+}
+_REDACT_MASK_EMAIL_KEYS = {
+    "email",
+    "email_address",
+    "contact_email",
+    "e_mail",
+}
+_REDACT_MASK_PHONE_KEYS = {
+    "phone",
+    "phone_number",
+    "mobile",
+    "msisdn",
+    "contact_phone",
+}
+_REDACT_MASK_IDENTIFIER_KEYS = {
+    "id",
+    "identifier",
+    "internal_id",
+    "internal_identifier",
+    "subject_id",
+    "user_id",
+    "tenant_id",
+    "project_id",
+    "request_id",
+    "trace_id",
+    "session_id",
+    "correlation_id",
+    "device_id",
+    "account_id",
+}
+
+_EMAIL_RE = re.compile(r"(?i)\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b")
+_PHONE_RE = re.compile(r"(?<!\d)(?:\+?\d{1,3}[-.\s]?)?(?:\(?\d{2,4}\)?[-.\s]?){1,3}\d{2,4}(?!\d)")
+_BEARER_RE = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{8,}\b")
+_UUID_RE = re.compile(r"(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b")
+
+
+@dataclass(frozen=True)
+class FeatureRedactionResult:
+    feature_vector: bytes
+    redacted_fields: tuple[str, ...]
 
 _STAGE_LABELS = {
     "request_validation",
@@ -426,6 +499,100 @@ _NEURO_POLICY_SNAPSHOT_VERSION_ENV = "EIGEN_NEURO_SYMBOLIC_POLICY_SNAPSHOT_VERSI
 _NEURO_POLICY_SNAPSHOT_DEFAULT = "policy-2026-06-15"
 
 
+def _redaction_path(parent: str, key: str) -> str:
+    if not parent or parent == "$":
+        return f"$.{key}"
+    return f"{parent}.{key}"
+
+
+def _record_redaction(redactions: set[str], path: str, reason: str) -> None:
+    redactions.add(f"{path}:{reason}")
+
+
+def _redact_scalar_text(value: str, path: str, redactions: set[str]) -> str:
+    redacted = value
+
+    if _BEARER_RE.search(redacted):
+        redacted = _BEARER_RE.sub(_REDACTED_VALUE, redacted)
+        _record_redaction(redactions, path, "deleted")
+    if _EMAIL_RE.search(redacted):
+        redacted = _EMAIL_RE.sub(_MASKED_EMAIL_VALUE, redacted)
+        _record_redaction(redactions, path, "masked_email")
+    if _PHONE_RE.search(redacted):
+        redacted = _PHONE_RE.sub(_MASKED_PHONE_VALUE, redacted)
+        _record_redaction(redactions, path, "masked_phone")
+    if _UUID_RE.search(redacted):
+        redacted = _UUID_RE.sub(_MASKED_IDENTIFIER_VALUE, redacted)
+        _record_redaction(redactions, path, "masked_identifier")
+    return redacted
+
+
+def _redact_json_value(value, path: str, redactions: set[str]):
+    if isinstance(value, dict):
+        redacted: dict[str, object] = {}
+        for key, nested in value.items():
+            nested_path = _redaction_path(path, str(key))
+            key_lower = str(key).strip().lower()
+
+            if key_lower in _REDACT_DELETE_KEYS:
+                redacted[key] = _REDACTED_VALUE
+                _record_redaction(redactions, nested_path, "deleted")
+                continue
+            if key_lower in _REDACT_MASK_EMAIL_KEYS:
+                redacted[key] = _MASKED_EMAIL_VALUE
+                _record_redaction(redactions, nested_path, "masked_email")
+                continue
+            if key_lower in _REDACT_MASK_PHONE_KEYS:
+                redacted[key] = _MASKED_PHONE_VALUE
+                _record_redaction(redactions, nested_path, "masked_phone")
+                continue
+            if key_lower in _REDACT_MASK_IDENTIFIER_KEYS or key_lower.endswith("_id"):
+                if isinstance(nested, (dict, list)):
+                    redacted[key] = _redact_json_value(nested, nested_path, redactions)
+                else:
+                    redacted[key] = _MASKED_IDENTIFIER_VALUE
+                    _record_redaction(redactions, nested_path, "masked_identifier")
+                continue
+
+            redacted[key] = _redact_json_value(nested, nested_path, redactions)
+        return redacted
+
+    if isinstance(value, list):
+        return [
+            _redact_json_value(item, f"{path}[{index}]", redactions)
+            for index, item in enumerate(value)
+        ]
+
+    if isinstance(value, str):
+        return _redact_scalar_text(value, path, redactions)
+
+    return value
+
+
+def _redact_feature_vector(feature_vector: bytes) -> FeatureRedactionResult:
+    if not feature_vector:
+        return FeatureRedactionResult(feature_vector=b"", redacted_fields=())
+
+    redactions: set[str] = set()
+    raw_text = feature_vector.decode("utf-8", errors="replace")
+
+    try:
+        parsed = json.loads(raw_text)
+    except json.JSONDecodeError:
+        sanitized = _redact_scalar_text(raw_text, "$", redactions)
+        return FeatureRedactionResult(
+            feature_vector=sanitized.encode("utf-8"),
+            redacted_fields=tuple(sorted(redactions)),
+        )
+
+    redacted = _redact_json_value(parsed, "$", redactions)
+    sanitized_text = json.dumps(redacted, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return FeatureRedactionResult(
+        feature_vector=sanitized_text.encode("utf-8"),
+        redacted_fields=tuple(sorted(redactions)),
+    )
+
+
 def _neuro_service_config() -> dict[str, object]:
     allowed_callers = {
         caller.strip().lower()
@@ -553,6 +720,7 @@ class NeuroSymbolicService:
             context.abort(grpc.StatusCode.INVALID_ARGUMENT, "context.authz_decision_id is required")
         if not request.feature_vector:
             context.abort(grpc.StatusCode.INVALID_ARGUMENT, "feature_vector is required")
+        redaction = _redact_feature_vector(request.feature_vector)
         active_policy_snapshot_version = self._policy_snapshot_version
         if req_context.policy_snapshot_version.strip() != active_policy_snapshot_version:
             context.abort(
@@ -581,7 +749,7 @@ class NeuroSymbolicService:
                 str(deterministic_seed).encode("utf-8"),
                 caller_id.encode("utf-8"),
                 request.model_hint.strip().encode("utf-8"),
-                request.feature_vector,
+                redaction.feature_vector,
             ]
         )
         replay_digest = _hex_digest(canonical)
@@ -626,6 +794,8 @@ class NeuroSymbolicService:
                 "model_version": str(cfg["model_version"]),
                 "policy_snapshot_version": active_policy_snapshot_version,
                 "decision": decision_name,
+                "feature_redaction_fields": redaction.redacted_fields,
+                "feature_redaction_count": len(redaction.redacted_fields),
                 "replay_digest": replay_digest,
                 "trace_id": getattr(req_context, "trace_id", ""),
                 "traceparent": getattr(req_context, "traceparent", ""),
