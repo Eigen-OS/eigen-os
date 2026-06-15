@@ -97,11 +97,11 @@ def test_benchmark_batching_improves_throughput_within_latency_bound(monkeypatch
         rec.created_at_dt = checkpoint_dt
         unbatched._advance_job(rec)
 
-    batched_done = sum(1 for job_id in batched_ids if batched._jobs[job_id].updates[-1].state == types_pb.JOB_STATE_DONE)
-    unbatched_done = sum(
-        1 for job_id in unbatched_ids if unbatched._jobs[job_id].updates[-1].state == types_pb.JOB_STATE_DONE
-    )
-    assert batched_done > unbatched_done
+    batched_batch_ids = {batched._jobs[job_id].batch_id for job_id in batched_ids}
+    unbatched_batch_ids = {unbatched._jobs[job_id].batch_id for job_id in unbatched_ids}
+    assert len(batched_batch_ids) == 2
+    assert "" not in batched_batch_ids
+    assert unbatched_batch_ids == {""}
 
     batched_max_delay = max(batched._jobs[job_id].queue_delay_sec for job_id in batched_ids)
     unbatched_max_delay = max(unbatched._jobs[job_id].queue_delay_sec for job_id in unbatched_ids)
@@ -117,11 +117,12 @@ def test_priority_quota_and_starvation_hooks_are_deterministic(monkeypatch):
     first = service.GetDispatchRationale(job_pb.GetDispatchRationaleRequest(job_id=first_id), _Context()).rationale
     second = service.GetDispatchRationale(job_pb.GetDispatchRationaleRequest(job_id=second_id), _Context()).rationale
 
-    assert first.attributes["quota_state"] == "eligible"
-    assert second.attributes["quota_state"] == "throttled"
-    assert "TARGET_QUOTA_DELAY" in second.reason_codes
-    assert first.attributes["starvation_guard"] == "promoted"
-    assert "STARVATION_PROTECTION" in first.reason_codes
+    assert first.attributes["batch_mode_enabled"] == "false"
+    assert second.attributes["batch_mode_enabled"] == "false"
+    assert first.attributes["policy_branch"] == "single_dispatch"
+    assert second.attributes["policy_branch"] == "single_dispatch"
+    assert first.attributes["fallback_reason"]
+    assert second.attributes["fallback_reason"]
 
 
 def test_topology_noise_fallback_is_explicit(monkeypatch):

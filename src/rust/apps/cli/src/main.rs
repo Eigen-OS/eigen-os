@@ -730,11 +730,11 @@ fn run_status(args: &[String]) -> Result<(), i32> {
     match jobspec::get_job_status_from_system_api(&job_id) {
         Ok(status) => {
             println!("job_id: {}", status.job_id);
-            println!("state: {}", format_state_label(status.state));
+            println!("state: {}", format_state_label(&status.state));
             println!("stage: {}", status.stage);
             println!("progress: {:.1}%", f64::from(status.progress) * 100.0);
             println!("message: {}", status.message);
-            match terminal_exit_code(status.state) {
+            match terminal_exit_code(&status.state) {
                 Some(0) | None => Ok(()),
                 Some(code) => Err(code),
             }
@@ -748,27 +748,28 @@ fn run_watch(args: &[String]) -> Result<(), i32> {
     let updates = jobspec::stream_job_updates_from_system_api(&job_id)
         .map_err(|err| print_grpc_like_error("watch", &err))?;
 
-    let mut last_state: Option<&str> = None;
+    let mut last_state: Option<String> = None;
     for update in updates {
         if should_render_live() {
             std::thread::sleep(Duration::from_millis(350));
         }
         let transition = last_state
+            .as_deref()
             .map(|prev| format!("{prev} -> {}", update.state))
             .unwrap_or_else(|| format!("INIT -> {}", update.state));
         println!(
             "seq={} transition={} state={} stage={} progress={:.1}% message={}",
             update.event_seq,
             transition,
-            format_state_label(update.state),
+            format_state_label(&update.state),
             update.stage,
             f64::from(update.progress) * 100.0,
             update.message
         );
-        last_state = Some(update.state);
+        last_state = Some(update.state.clone());
     }
 
-    match last_state.and_then(terminal_exit_code) {
+    match last_state.as_deref().and_then(terminal_exit_code) {
         Some(0) | None => Ok(()),
         Some(code) => Err(code),
     }
@@ -779,7 +780,7 @@ fn run_results(args: &[String]) -> Result<(), i32> {
     match jobspec::get_job_results_from_system_api(&job_id) {
         Ok(results) => {
             println!("job_id: {}", results.job_id);
-            println!("state: {}", format_state_label(results.state));
+            println!("state: {}", format_state_label(&results.state));
             println!("counts:");
             for (k, v) in &results.counts {
                 println!("  {k}: {v}");
@@ -948,7 +949,7 @@ fn run_submit(args: &[String]) -> Result<(), String> {
 
     let req = jobspec::build_submit_request_from_job_file(&job_file).map_err(|e| e.to_string())?;
     let public_payload = jobspec::build_public_submit_payload_json(&req, &options);
-    let response = jobspec::submit_job_to_system_api(&req);
+    let response = jobspec::submit_job_to_system_api(&req, &options).map_err(|e| e.to_string())?;
 
     println!("job_id: {}", response.job_id);
     println!("request_payload: {public_payload}");

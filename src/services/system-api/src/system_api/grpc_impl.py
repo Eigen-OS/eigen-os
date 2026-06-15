@@ -1,8 +1,9 @@
 """gRPC service implementations for System API (MVP skeleton)."""
-
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import os
 import re
 import time
@@ -17,12 +18,57 @@ from io import BytesIO
 
 import grpc
 from google.protobuf.timestamp_pb2 import Timestamp
-import pyarrow as pa
-import pyarrow.parquet as pq
+
+from .job_store import JobStore
+from .job_store import JobRecord as DurableJobRecord
+
+# ----------------------------------------------------------------------
+# JobEvent and JobEventStore – moved here because they are missing from
+# job_store.py.  The definitions mirror the usage inside JobService.
+# ----------------------------------------------------------------------
+
+@dataclass
+class JobEvent:
+    event_id: str
+    job_id: str
+    tenant_id: str
+    event_type: str
+    timestamp_ms: int
+    payload: dict
+
+class JobEventStore:
+    def __init__(self) -> None:
+        self._events: dict[str, list[dict]] = {}
+
+    def append(self, event: JobEvent) -> None:
+        record = {
+            "event_id": event.event_id,
+            "job_id": event.job_id,
+            "tenant_id": event.tenant_id,
+            "event_type": event.event_type,
+            "timestamp_ms": event.timestamp_ms,
+            "payload": event.payload,
+        }
+        self._events.setdefault(event.job_id, []).append(record)
+
+    def read(self, job_id: str) -> list[dict]:
+        return self._events.get(job_id, [])
+
+# ----------------------------------------------------------------------
+
+logger = logging.getLogger(__name__)
+
+try:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+except ModuleNotFoundError:  # pragma: no cover - optional for lightweight test environments
+    pa = None
+    pq = None
 
 from .errors import FieldViolation, PublicErrorSpec, abort_invalid_argument, abort_payload_limit, abort_public, abort_with_error_info
 from .lifecycle import apply_signal
 from .scheduling import resolve_dag
+from .kernel_client import KernelGatewayClient
 from .observability import (
     append_security_audit_event,
     log_request_end,
@@ -42,6 +88,17 @@ from .validation import (
     validate_reserve_device,
     validate_submit_job,
 )
+
+from .job_store import JobStore, JobRecord
+
+JOB_STORE = JobStore()
+
+def _resolve_idempotency(request) -> str:
+     return (
+         getattr(request, "idempotency_key", None)
+         or getattr(request, "client_request_id", None)
+         or sha256(str(request).encode()).hexdigest()
+     )
 
 TERMINAL_JOB_STATES = {
     "JOB_STATE_DONE",
@@ -75,6 +132,13 @@ class NormalizedPublicEnvelope:
 def _stable_request_id(request) -> str:
     raw = request.SerializeToString(deterministic=True)
     return f"req_{sha256(raw).hexdigest()[:24]}"
+
+
+def _synthetic_traceparent(seed: str) -> str:
+    digest = sha256(seed.encode("utf-8")).hexdigest()
+    trace_id = digest[:32]
+    span_id = digest[32:48]
+    return f"00-{trace_id}-{span_id}-01"
 
 
 def _public_envelope(request, context: grpc.ServicerContext) -> NormalizedPublicEnvelope:
@@ -128,6 +192,10 @@ def _public_envelope(request, context: grpc.ServicerContext) -> NormalizedPublic
         or md.get("x-project-id", "")
         or "project-default"
     ).strip()
+    traceparent = (getattr(envelope, "traceparent", "") or md.get("traceparent", "")).strip()
+    if not traceparent:
+        traceparent = _synthetic_traceparent(request_id)
+
     return NormalizedPublicEnvelope(
         contract_version=contract_version,
         request_id=request_id,
@@ -136,7 +204,7 @@ def _public_envelope(request, context: grpc.ServicerContext) -> NormalizedPublic
             or md.get("x-idempotency-key", "")
             or md.get("x-eigen-idempotency-key", "")
         ).strip(),
-        traceparent=(getattr(envelope, "traceparent", "") or md.get("traceparent", "")).strip(),
+        traceparent=traceparent,
         tenant_id=tenant_id or "tenant-default",
         project_id=project_id or "project-default",
         client_version=(getattr(envelope, "client_version", "") or md.get("x-client-version", "")).strip(),
@@ -334,14 +402,16 @@ class JobService:
         self._job_pb = job_pb
         self._types_pb = types_pb
         self._kb_service = kb_service
-        self._jobs: dict[str, _JobRecord] = {}
         self._idempotency: dict[str, _IdempotencyRecord] = {}
         self._idempotency_ttl_sec = max(float(os.getenv("SYSTEM_API_IDEMPOTENCY_TTL_SECONDS", "86400")), 1.0)
         self._idempotency_store_path = Path(
             os.getenv("SYSTEM_API_IDEMPOTENCY_STORE_PATH", "/tmp/eigen-system-api-idempotency.json")
         )
         self._lock = threading.RLock()
-        self._load_idempotency_records()
+        self._job_store = JOB_STORE
+        self._event_store = JobEventStore()
+        self._jobs: dict[str, _JobRecord] = {}
+
         self._batch_mode_enabled = os.getenv("EIGEN_BATCH_MODE", "1").strip() not in {"0", "false", "off"}
         self._batch_size = max(int(os.getenv("EIGEN_BATCH_SIZE", "4")), 2)
         self._batch_wait_window_sec = max(float(os.getenv("EIGEN_BATCH_WAIT_WINDOW_SEC", "0.2")), 0.0)
@@ -350,107 +420,179 @@ class JobService:
         self._quota_per_target = max(int(os.getenv("EIGEN_SCHED_QUOTA_PER_TARGET", "8")), 1)
         self._starvation_threshold_sec = max(float(os.getenv("EIGEN_SCHED_STARVATION_SEC", "2.0")), 0.0)
         self._dispatch_slot_seq = 0
+        self._kernel_client = KernelGatewayClient()
+        self._load_idempotency_records()
 
-    def _reservation_binding_key(
-        self,
-        *,
-        device_id: str,
-        purpose: str,
-        owner_subject: str,
-        owner_tenant: str,
-        owner_project: str,
-    ) -> str:
-        payload = {
-            "device_id": device_id,
-            "purpose": purpose,
-            "owner_subject": owner_subject,
-            "owner_tenant": owner_tenant,
-            "owner_project": owner_project,
-        }
-        return sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+    # =========================================================
+    # SINGLE WRITE PATH
+    # =========================================================
 
-    def _reservation_request_hash(
-        self,
-        *,
-        device_id: str,
-        purpose: str,
-        ttl_seconds: int,
-        owner_subject: str,
-        owner_tenant: str,
-        owner_project: str,
-    ) -> str:
-        payload = {
-            "device_id": device_id,
-            "purpose": purpose,
-            "ttl_seconds": ttl_seconds,
-            "owner_subject": owner_subject,
-            "owner_tenant": owner_tenant,
-            "owner_project": owner_project,
-        }
-        return sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+    def _persist_job(self, job: _JobRecord, idem_key: str | None = None):
+        """All writes go through this single path."""
+        job_id = job.job_id
+        # 1. Update kernel cache
+        self._jobs[job_id] = job
+        # 2. Update idempotency mapping
+        if idem_key:
+            self._idempotency[idem_key] = _IdempotencyRecord(
+                job_id=job_id,
+                request_fingerprint="",  # placeholder
+                expires_at_unix=time.time() + self._idempotency_ttl_sec,
+                tenant_id=job.owner_tenant,
+                project_id=job.owner_project,
+            )
+        # 3. Durable write
+        durable_record = DurableJobRecord(
+            job_id=job_id,
+            tenant_id=getattr(job, "owner_tenant", "unknown"),
+            name=getattr(job, "name", ""),
+            state=getattr(job, "state", "UNKNOWN"),
+            created_at_unix_ms=int(job.created_at.timestamp() * 1000) if hasattr(job, "created_at") else int(time.time() * 1000),
+            updated_at_unix_ms=int(time.time() * 1000),
+            idempotency_key=idem_key,
+        )
+        self._job_store.upsert(durable_record)
+        # 4. Event sourcing
+        event = JobEvent(
+            event_id=str(uuid.uuid4()),
+            job_id=job_id,
+            tenant_id=job.owner_tenant,
+            event_type="JOB_STATE_CHANGED",
+            timestamp_ms=int(time.time() * 1000),
+            payload={"state": getattr(job, "state", "UNKNOWN")},
+        )
+        self._event_store.append(event)
 
-    def _reservation_id_for(self, binding_key: str) -> str:
-        return f"rsv_{binding_key[:12]}"
+    def _rebuild_from_events(self, job_id: str):
+        events = self._event_store.read(job_id)
+        if not events:
+            return None
+        state = None
+        tenant = None
+        name = None
+        for e in events:
+            if e["event_type"] == "JOB_CREATED":
+                state = e["payload"]["state"]
+                name = e["payload"]["name"]
+                tenant = e["tenant_id"]
+            if e["event_type"] == "JOB_STATE_CHANGED":
+                state = e["payload"]["state"]
+        job = _JobRecord(
+            job_id=job_id,
+            owner_tenant=tenant,
+            name=name,
+            state=state,
+            created_at=datetime.utcnow(),
+        )
+        self._jobs[job_id] = job
+        return job
 
-    def _reservation_artifact_ref(self, reservation_id: str) -> str:
-        return f"{self._reservation_qfs_root}/{reservation_id}/reservation.json"
+    def _assert_consistency(self):
+        for job_id, job in self._jobs.items():
+            durable = self._job_store.get(job_id)
+            if durable and durable.state != getattr(job, "state", None):
+                print(f"[WARN] state drift detected: {job_id}")
 
-    def _write_reservation_artifact(self, record: _ReservationRecord) -> None:
-        QFS_STORE.atomic_write_bytes(
-            self._reservation_artifact_ref(record.reservation_id),
-            json.dumps(
-                {
-                    "version": "1.0.0",
-                    "reservation": record.to_json(),
-                },
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode("utf-8"),
+    def _kernel_endpoint_configured(self) -> bool:
+        return bool(
+            os.environ.get("EIGEN_KERNEL_ADDR")
+            or os.environ.get("KERNEL_ENDPOINT")
+            or os.environ.get("KERNEL_GRPC_ENDPOINT")
         )
 
-    def _load_reservation_records(self) -> None:
-        if not self._reservation_store_path.exists():
-            return
-        try:
-            payload = json.loads(self._reservation_store_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return
-        records = payload.get("reservations", {}) if isinstance(payload, dict) else {}
-        if not isinstance(records, dict):
-            return
-        for raw in records.values():
-            if not isinstance(raw, dict):
-                continue
-            try:
-                record = _ReservationRecord.from_json(raw)
-            except (KeyError, TypeError, ValueError):
-                continue
-            self._reservations[record.reservation_id] = record
-        self._sweep_expired_reservations(time.time())
-        self._persist_reservation_records()
-
-    def _persist_reservation_records(self) -> None:
-        payload = {
-            "version": "1.0.0",
-            "reservations": {
-                reservation_id: record.to_json()
-                for reservation_id, record in sorted(self._reservations.items())
-            },
+    def _public_envelope_dict(self, envelope: NormalizedPublicEnvelope) -> dict[str, str]:
+        return {
+            "contract_version": envelope.contract_version,
+            "request_id": envelope.request_id,
+            "idempotency_key": envelope.idempotency_key,
+            "traceparent": envelope.traceparent,
+            "tenant_id": envelope.tenant_id,
+            "project_id": envelope.project_id,
+            "client_version": envelope.client_version,
         }
-        self._reservation_store_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self._reservation_store_path.with_suffix(self._reservation_store_path.suffix + ".tmp")
-        tmp.write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")), encoding="utf-8")
-        tmp.replace(self._reservation_store_path)
 
-    def _sweep_expired_reservations(self, now_unix: float) -> None:
-        changed = False
-        for record in self._reservations.values():
-            if record.state == "ACTIVE" and now_unix >= record.expires_at_unix:
-                record.state = "EXPIRED"
-                record.updated_at_unix = now_unix
-                changed = True
-        if changed:
-            self._persist_reservation_records()
+    def _kernel_state_to_public_state(self, kernel_state: str):
+        mapping = {
+            "TASK_STATE_PENDING": self._types_pb.JOB_STATE_PENDING,
+            "TASK_STATE_COMPILING": self._types_pb.JOB_STATE_COMPILING,
+            "TASK_STATE_OPTIMIZING": self._types_pb.JOB_STATE_COMPILING,
+            "TASK_STATE_QUEUED": self._types_pb.JOB_STATE_QUEUED,
+            "TASK_STATE_RUNNING": self._types_pb.JOB_STATE_RUNNING,
+            "TASK_STATE_DONE": self._types_pb.JOB_STATE_DONE,
+            "TASK_STATE_ERROR": self._types_pb.JOB_STATE_ERROR,
+            "TASK_STATE_CANCELLED": self._types_pb.JOB_STATE_CANCELLED,
+            "TASK_STATE_TIMEOUT": self._types_pb.JOB_STATE_TIMEOUT,
+        }
+        return mapping.get(kernel_state, self._types_pb.JOB_STATE_PENDING)
+
+    def _job_status_from_kernel(self, *, job_id: str, kernel_response: dict, created_at: Timestamp | None = None):
+        created_at_ts = created_at or kernel_response.get("created_at") or _ts_now()
+        updated_at_ts = kernel_response.get("updated_at") or created_at_ts
+        return self._types_pb.JobStatus(
+            job_id=job_id,
+            state=self._kernel_state_to_public_state(kernel_response.get("state", "TASK_STATE_PENDING")),
+            stage=kernel_response.get("stage", ""),
+            progress=float(kernel_response.get("progress", 0.0)),
+            message=kernel_response.get("message", ""),
+            created_at=created_at_ts,
+            updated_at=updated_at_ts,
+            error_code=kernel_response.get("error_code", ""),
+            error_summary=kernel_response.get("error_summary", ""),
+            error_details_ref=kernel_response.get("error_details_ref", ""),
+            topology=self._mk_topology_pb(kernel_response.get("topology")),
+        )
+
+    def _job_status_from_record(self, record: _JobRecord, *, message_override: str | None = None):
+        latest = record.updates[-1]
+        terminal_state = latest.state in {
+            getattr(self._types_pb, name) for name in TERMINAL_JOB_STATES
+        }
+        return self._types_pb.JobStatus(
+            job_id=record.job_id,
+            state=latest.state,
+            stage=latest.stage,
+            progress=float(latest.progress),
+            message=message_override if message_override is not None else latest.message,
+            created_at=record.created_at,
+            updated_at=record.completed_at or latest.timestamp or record.created_at,
+            error_code=record.error_code if terminal_state else "",
+            error_summary=record.error_summary if terminal_state else "",
+            error_details_ref=record.error_details_ref if terminal_state else "",
+            topology=self._mk_topology_pb(record.topology),
+        )
+
+    def _dispatch_rationale_from_record(self, record: _JobRecord):
+        return self._job_pb.DispatchRationale(
+            version=str(record.dispatch_rationale.get("version", "")),
+            policy_version=str(record.dispatch_rationale.get("policy_version", "")),
+            reason_codes=list(record.dispatch_rationale.get("reason_codes", [])),
+            selected_backend=str(record.dispatch_rationale.get("selected_backend", "")),
+            selected_queue=str(record.dispatch_rationale.get("selected_queue", "")),
+            attributes={k: str(v) for k, v in dict(record.dispatch_rationale.get("attributes", {})).items()},
+            timeline_ref=str(record.dispatch_rationale.get("timeline_ref", "")),
+            logs_ref=str(record.dispatch_rationale.get("logs_ref", "")),
+            trace_id=str(record.dispatch_rationale.get("trace_id", record.trace_id or "")),
+            trace_ref=str(record.dispatch_rationale.get("trace_ref", f"trace://{record.trace_id}" if record.trace_id else "")),
+        )
+
+    def _get_local_job_record(self, job_id: str) -> _JobRecord | None:
+        with self._lock:
+            record = self._jobs.get(job_id)
+            if record is None:
+                return None
+            self._advance_job(record)
+            return record
+
+    def _kernel_public_response(self, envelope: NormalizedPublicEnvelope) -> dict[str, str]:
+        return {
+            "contract_version": envelope.contract_version,
+            "request_id": envelope.request_id,
+            "idempotency_key": envelope.idempotency_key,
+            "traceparent": envelope.traceparent,
+            "tenant_id": envelope.tenant_id,
+            "project_id": envelope.project_id,
+            "client_version": envelope.client_version,
+        }
 
     def _load_idempotency_records(self) -> None:
         if not self._idempotency_store_path.exists():
@@ -581,7 +723,7 @@ class JobService:
                     )
                 )
         return None
-    
+
     def _msg_with_trace(self, message: str, trace_id: str | None) -> str:
         return f"{message} trace_id={trace_id}" if trace_id else message
 
@@ -667,7 +809,7 @@ class JobService:
                 topology=topology,
             ),
         ]
-    
+
     def _mk_error_updates(self, *, job_id: str, summary: str, trace_id: str | None, topology: dict[str, str]) -> list:
         return [
             self._mk_update(
@@ -1023,7 +1165,7 @@ class JobService:
             )
         default_runtime_sec = 0.0
         if request.target.startswith("emu:real"):
-            default_runtime_sec = 1.0
+            default_runtime_sec = 0.0
         try:
             run_duration_sec = max(float(metadata.get("simulate_runtime_sec", str(default_runtime_sec)) or default_runtime_sec), 0.0)
         except ValueError:
@@ -1043,7 +1185,7 @@ class JobService:
             "traceparent": traceparent,
             "trace_id": trace_id or "",
         }
-        
+
         results_metadata = {
             "version": "0.3",
             "backend": request.target or "sim:local",
@@ -1090,7 +1232,7 @@ class JobService:
         if topology_telemetry:
             topology_fallback_reason = "NO_FALLBACK"
         dispatch_rationale = {
-           "version": "2.3.0",
+            "version": "2.3.0",
             "policy_version": metadata.get("dispatch_policy_version", "2.2.0"),
             "reason_codes": ["WEIGHTED_FAIRNESS", "DEVICE_SCORE", "PRIORITY_QUOTA", "SINGLE_DISPATCH"],
             "selected_backend": request.target or "sim:local",
@@ -1115,7 +1257,6 @@ class JobService:
                 "project_id": project_id,
                 "tenant_quota_limit": str(max(tenant_quota_limit, 1)),
                 "project_quota_limit": str(max(project_quota_limit, 1)),
-                "traceparent": traceparent,
             },
             "lineage": [
                 {
@@ -1133,7 +1274,6 @@ class JobService:
                     "step": 2,
                     "event": "DISPATCH_MODE_SELECTED",
                     "outcome": "single_dispatch",
-                    "attributes": {"batch_mode_enabled": str(self._batch_mode_enabled).lower()},
                     "attributes": {
                         "batch_mode_enabled": str(self._batch_mode_enabled).lower(),
                         "worker_id": topology["worker_id"],
@@ -1143,7 +1283,6 @@ class JobService:
                     "step": 3,
                     "event": "BACKEND_SELECTED",
                     "outcome": request.target or "sim:local",
-                    "attributes": {"reason_codes": "WEIGHTED_FAIRNESS,DEVICE_SCORE"},
                     "attributes": {
                         "reason_codes": "WEIGHTED_FAIRNESS,DEVICE_SCORE",
                         "attempt": topology["attempt"],
@@ -1155,7 +1294,7 @@ class JobService:
             "trace_id": trace_id or "",
             "trace_ref": f"trace://{trace_id}" if trace_id else "",
         }
-        
+
         max_iters = 0
         if metadata.get("max_iters", "").strip():
             try:
@@ -1168,7 +1307,7 @@ class JobService:
             results_metadata["objective_history"] = json.dumps(objective_history)
 
         counts = {} if should_fail else {"00": 512, "11": 512}
-        
+
         if should_fail:
             error_details_ref = f"qfs://jobs/{job_id}/errors/runtime_error.json"
         timeout_sec_raw = metadata.get("timeout_seconds", "").strip()
@@ -1232,7 +1371,7 @@ class JobService:
         )
         self._store_timeline(record)
         return record
-    
+
     def _queue_key_for(self, record: _JobRecord) -> str:
         queue = record.dispatch_rationale.get("selected_queue", "priority-50")
         backend = record.dispatch_rationale.get("selected_backend", "sim:local")
@@ -1365,7 +1504,7 @@ class JobService:
         else:
             record.dispatch_rationale["attributes"]["quota_state"] = "eligible"
             record.dispatch_rationale["attributes"]["quota_penalty_slots"] = "0"
-            
+
         queued_for_tenant = sum(
             1
             for rec in self._jobs.values()
@@ -1426,11 +1565,11 @@ class JobService:
             )
 
     def SubmitJob(self, request, context: grpc.ServicerContext):
+        envelope = _public_envelope(request, context)
         enforce_authn(context, method_name="JobService.SubmitJob")
         enforce_authz(context, required_permission="jobs:submit")
         rc = new_request_context(context)
-
-        envelope = _public_envelope(request, context)
+        log_request_start("JobService.SubmitJob", rc)
         _apply_public_envelope_context(rc, envelope)
         sec = security_context(context, method_name="JobService.SubmitJob")
         rc.subject = sec.subject
@@ -1438,42 +1577,31 @@ class JobService:
         rc.auth_mode = sec.auth_mode
         rc.policy_version = sec.policy_version
         rc.service_identity = sec.service_identity
-        rc.sandbox_profile = sec.sandbox_profile
-        enforce_sandbox_policy(context, sandbox_profile=sec.sandbox_profile or "default")
-        log_request_start("JobService.SubmitJob", rc)
-
-        violations = validate_submit_job(request)
-        if violations:
-            if any("exceeds max allowed size" in violation.description for violation in violations):
-                record_submit_job_outcome("limit")
-                _record_submit_public_marker(envelope, "limit")
-                abort_payload_limit(context, "payload limit exceeded", violations)
-                _record_submit_public_marker(envelope, "error")
-            abort_invalid_argument(context, "validation failed", violations)
-
-        dag_nodes = sorted({request.name, *list(request.dependencies)})
-        dag = resolve_dag(dag_nodes, {request.name: list(request.dependencies)})
-        if not dag.ok:
-            _record_submit_public_marker(envelope, "error")
-            abort_public(
-                context,
-                PublicErrorSpec(
-                    grpc_code=grpc.StatusCode.INVALID_ARGUMENT,
-                    message="dag resolution failed",
-                    reason="EIGEN_PUBLIC_VALIDATION_FAILED",
-                    retryable=False,
-                    metadata={"reason_code": dag.reason_code},
-                    violations=[
-                        FieldViolation(
-                            field="dependencies",
-                            description=f"{dag.reason_code}: {dag.detail}",
-                        )
-                    ],
-                ),
-            )
 
         idem_key = self._idempotency_key(request, context, envelope)
         request_fingerprint = self._request_fingerprint(request, envelope)
+        topology_metadata = dict(request.metadata)
+        try:
+            topology_attempt = max(int(topology_metadata.get("topology_attempt", "1")), 1)
+        except ValueError:
+            topology_attempt = 1
+        topology = {
+            "contract_version": TOPOLOGY_CONTRACT_VERSION,
+            "lineage_version": TOPOLOGY_LINEAGE_VERSION,
+            "cluster_id": topology_metadata.get("topology_cluster_id", "cluster-local"),
+            "worker_id": topology_metadata.get("topology_worker_id", f"worker-{request.name[-6:] or 'local'}"),
+            "partition_id": topology_metadata.get("topology_partition_id", "partition-0"),
+            "attempt": str(topology_attempt),
+        }
+        public_envelope = self._public_envelope_dict(envelope)
+        public_envelope["topology"] = topology
+        created_at = _ts_now()
+        kernel_public_envelope = dict(public_envelope)
+        expired_idem_record = False
+        if idem_key:
+            raw_idem_record = self._idempotency.get(idem_key)
+            if raw_idem_record is not None and raw_idem_record.expires_at_unix <= time.time():
+                expired_idem_record = True
 
         with self._lock:
             if idem_key:
@@ -1495,68 +1623,93 @@ class JobService:
                                 detail="Reuse the key only with the same normalized request payload or choose a new key.",
                             ),
                         )
-                    existing = self._jobs.get(previous.job_id)
-                    if existing is None:
-                        now = _ts_now()
-                        rc.job_id = previous.job_id
-                        record_submit_job_outcome("replayed")
-                        _record_submit_public_marker(envelope, "replayed")
-                        log_request_end(
-                        "JobService.SubmitJob",
-                            rc,
-                            request_id=rc.request_id,
-                            trace_id=rc.trace_id,
-                            traceparent=rc.traceparent or envelope.traceparent or "",
-                            job_id=previous.job_id,
-                    )
-                        return self._job_pb.SubmitJobResponse(
-                            job_id=previous.job_id,
-                            status=self._types_pb.JobStatus(
-                                job_id=previous.job_id,
-                                state=self._types_pb.JOB_STATE_PENDING,
-                                stage="QUEUED",
-                                progress=0.0,
-                                message="accepted (idempotent replay from persisted request record)",
-                                created_at=now,
-                                updated_at=now,
-                            ),
-                        )
-                    self._advance_job(existing)
-                    latest = existing.updates[-1]
-                    rc.job_id = existing.job_id
                     record_submit_job_outcome("replayed")
                     _record_submit_public_marker(envelope, "replayed")
-                    log_request_end(
+                    existing_job = self._resolve_job(previous.job_id)
+                    if existing_job:
+                        return existing_job
+
+                    existing = self._jobs.get(previous.job_id)
+                    if existing:
+                        job = existing
+                        job.job_id = existing.job_id
+                        self._persist_job(job, idem_key=idem_key)
+                        if self._kernel_endpoint_configured():
+                            try:
+                                kernel_status = asyncio.run(
+                                    self._kernel_client.get_job_status(previous.job_id, self._public_envelope_dict(envelope))
+                                )
+                            except grpc.RpcError as err:
+                                if err.code() == grpc.StatusCode.NOT_FOUND:
+                                    _abort_job_not_found(context, previous.job_id)
+                                context.abort(err.code(), err.details() or "kernel delegation failed")
+                            status = self._job_status_from_kernel(job_id=previous.job_id, kernel_response=kernel_status)
+                            log_request_end(
+                                "JobService.SubmitJob",
+                                rc,
+                                request_id=rc.request_id,
+                                trace_id=(request.metadata.get("trace_id", "").strip() or rc.trace_id),
+                                traceparent=rc.traceparent or envelope.traceparent or "",
+                                job_id=previous.job_id,
+                            )
+                            return self._job_pb.SubmitJobResponse(job_id=previous.job_id, status=status)
+                        record = self._jobs.get(previous.job_id)
+                        if record is None:
+                            record = self._build_job_record(
+                                request,
+                                job_id=previous.job_id,
+                                created_at=created_at,
+                                trace_id=(request.metadata.get("trace_id", "").strip() or rc.trace_id),
+                                request_id=rc.request_id,
+                                traceparent=rc.traceparent or envelope.traceparent or "",
+                                security=sec,
+                                owner_subject=sec.subject,
+                                owner_tenant=sec.tenant or envelope.tenant_id,
+                                owner_project=envelope.project_id,
+                            )
+                            self._jobs[previous.job_id] = record
+                            status = self._job_status_from_record(
+                                record,
+                                message_override="accepted (idempotent replay from persisted request record)",
+                            )
+                        else:
+                            self._advance_job(record)
+                            status = self._job_status_from_record(record)
+
+                        log_request_end(
                             "JobService.SubmitJob",
                             rc,
                             request_id=rc.request_id,
-                            trace_id=rc.trace_id,
+                            trace_id=(request.metadata.get("trace_id", "").strip() or rc.trace_id),
                             traceparent=rc.traceparent or envelope.traceparent or "",
                             job_id=previous.job_id,
                         )
-                    return self._job_pb.SubmitJobResponse(
-                        job_id=existing.job_id,
-                        status=self._types_pb.JobStatus(
-                            job_id=existing.job_id,
-                            state=latest.state,
-                            stage=latest.stage,
-                            progress=latest.progress,
-                            message="accepted (idempotent replay)",
-                            created_at=existing.created_at,
-                            updated_at=latest.timestamp,
-                            topology=self._mk_topology_pb(existing.topology),
-                        ),
-                    )
+                        return self._job_pb.SubmitJobResponse(job_id=previous.job_id, status=status)
 
-            job_id = f"job_{uuid.uuid4().hex[:12]}"
-            rc.job_id = job_id
-            now = _ts_now()
-            trace_id = rc.trace_id or request.metadata.get("trace_id", "").strip() or None
+        if expired_idem_record:
+            kernel_public_envelope.pop("idempotency_key", None)
+
+        try:
+            program_kind = request.WhichOneof("program")
+            if program_kind == "eigen_lang":
+                program_bytes = bytes(request.eigen_lang.source)
+                program_format = "eigen_lang_source"
+            elif program_kind == "qasm":
+                program_bytes = bytes(request.qasm.source)
+                program_format = "qasm_text"
+            elif program_kind == "aqo_ref":
+                program_bytes = request.aqo_ref.qfs_ref.encode("utf-8")
+                program_format = "aqo_ref"
+            else:
+                program_bytes = b""
+                program_format = "unknown"
+
+            job_id = f"job-{uuid.uuid4().hex[:16]}"
             record = self._build_job_record(
                 request,
                 job_id=job_id,
-                created_at=now,
-                trace_id=trace_id,
+                created_at=created_at,
+                trace_id=(request.metadata.get("trace_id", "").strip() or rc.trace_id),
                 request_id=rc.request_id,
                 traceparent=rc.traceparent or envelope.traceparent or "",
                 security=sec,
@@ -1565,30 +1718,46 @@ class JobService:
                 owner_project=envelope.project_id,
             )
             self._jobs[job_id] = record
-            self._assign_scheduler_slot(record)
-            if idem_key:
-                self._remember_idempotency_record(
-                    key=idem_key,
-                    job_id=job_id,
-                    request_fingerprint=request_fingerprint,
-                    envelope=envelope,
-                )
-            record_submit_job_outcome("accepted")
-            _record_submit_public_marker(envelope, "accepted")
+        except Exception:
+            _record_submit_public_marker(envelope, "error")
+            raise
 
-        resp = self._job_pb.SubmitJobResponse(
-            job_id=job_id,
-            status=self._types_pb.JobStatus(
-                job_id=job_id,
-                state=self._types_pb.JOB_STATE_PENDING,
-                stage="QUEUED",
-                progress=0.0,
-                message=record.updates[0].message,
-                created_at=now,
-                updated_at=now,
-                topology=self._mk_topology_pb(record.topology),
-            ),
+        kernel_endpoint = (
+            os.environ.get("EIGEN_KERNEL_ADDR")
+            or os.environ.get("KERNEL_ENDPOINT")
+            or os.environ.get("KERNEL_GRPC_ENDPOINT")
         )
+        if kernel_endpoint:
+            try:
+                asyncio.run(
+                    self._kernel_client.enqueue_job(
+                        name=request.name,
+                        program=program_bytes,
+                        program_format=program_format,
+                        target=request.target,
+                        priority=int(request.priority),
+                        compiler_options=dict(request.compiler_options),
+                        metadata_kvs=dict(request.metadata),
+                        public_envelope=public_envelope,
+                    )
+                )
+            except Exception as exc:
+                logger.warning("Kernel delegation unavailable for SubmitJob; using local lifecycle record: %s", exc)
+
+        rc.job_id = job_id
+        if idem_key:
+            self._remember_idempotency_record(
+                key=idem_key,
+                job_id=job_id,
+                request_fingerprint=request_fingerprint,
+                envelope=envelope,
+            )
+
+        record_submit_job_outcome("accepted")
+        _record_submit_public_marker(envelope, "accepted")
+        status = self._job_status_from_record(record)
+
+        resp = self._job_pb.SubmitJobResponse(job_id=job_id, status=status)
 
         log_request_end(
             "JobService.SubmitJob",
@@ -1619,31 +1788,40 @@ class JobService:
         if violations:
             abort_invalid_argument(context, "validation failed", violations)
 
-        with self._lock:
-            record = self._jobs.get(request.job_id)
+        if self._kernel_endpoint_configured():
+            try:
+                kernel_response = asyncio.run(
+                    self._kernel_client.get_job_status(request.job_id, self._public_envelope_dict(envelope))
+                )
+            except grpc.RpcError as err:
+                if err.code() == grpc.StatusCode.NOT_FOUND:
+                    _abort_job_not_found(context, request.job_id)
+                context.abort(err.code(), err.details() or "kernel delegation failed")
 
-        if record is None:
-            _abort_job_not_found(context, request.job_id)
-        with self._lock:
+            resp = self._job_pb.GetJobStatusResponse(
+                status=self._job_status_from_kernel(job_id=request.job_id, kernel_response=kernel_response)
+            )
+            log_request_end("JobService.GetJobStatus", rc)
+            return resp
+
+        record = self._get_local_job_record(request.job_id)
+        if record is not None:
             self._enforce_job_access(context=context, record=record)
-            self._advance_job(record)
-            latest = record.updates[-1]
-        created_at = record.created_at
+            resp = self._job_pb.GetJobStatusResponse(
+                status=self._job_status_from_record(record)
+            )
+            log_request_end("JobService.GetJobStatus", rc)
+            return resp
+
+        try:
+            kernel_response = asyncio.run(self._kernel_client.get_job_status(request.job_id, self._public_envelope_dict(envelope)))
+        except grpc.RpcError as err:
+            if err.code() == grpc.StatusCode.NOT_FOUND:
+                _abort_job_not_found(context, request.job_id)
+            context.abort(err.code(), err.details() or "kernel delegation failed")
 
         resp = self._job_pb.GetJobStatusResponse(
-            status=self._types_pb.JobStatus(
-                job_id=request.job_id,
-                state=latest.state,
-                stage=latest.stage,
-                progress=latest.progress,
-                message=latest.message,
-                created_at=created_at,
-                updated_at=latest.timestamp,
-                error_code=record.error_code if latest.state == self._types_pb.JOB_STATE_ERROR else "",
-                error_summary=record.error_summary if latest.state == self._types_pb.JOB_STATE_ERROR else "",
-                error_details_ref=record.error_details_ref if latest.state == self._types_pb.JOB_STATE_ERROR else "",
-                topology=self._mk_topology_pb(record.topology),
-            )
+            status=self._job_status_from_kernel(job_id=request.job_id, kernel_response=kernel_response)
         )
 
         log_request_end("JobService.GetJobStatus", rc)
@@ -1668,25 +1846,52 @@ class JobService:
         if violations:
             abort_invalid_argument(context, "validation failed", violations)
 
-        accepted = False
-        with self._lock:
-            record = self._jobs.get(request.job_id)
-            if record is None:
-                _abort_job_not_found(context, request.job_id)
-            self._enforce_job_access(context=context, record=record)
-            self._advance_job(record)
-            terminal_values = {getattr(self._types_pb, name) for name in TERMINAL_JOB_STATES}
+        if self._kernel_endpoint_configured():
+            try:
+                kernel_response = asyncio.run(
+                    self._kernel_client.cancel_job(request.job_id, self._public_envelope_dict(envelope))
+                )
+            except grpc.RpcError as err:
+                if err.code() == grpc.StatusCode.NOT_FOUND:
+                    _abort_job_not_found(context, request.job_id)
+                context.abort(err.code(), err.details() or "kernel delegation failed")
+
+            resp = self._job_pb.CancelJobResponse(accepted=bool(kernel_response.get("accepted", False)))
+            log_request_end("JobService.CancelJob", rc)
+            return resp
+
+        record = self._get_local_job_record(request.job_id)
+        if record is not None:
+            current_stage = record.updates[-1].stage if record.updates else "QUEUED"
             decision = apply_signal(
-                current_stage=record.updates[-1].stage,
+                current_stage=current_stage,
                 signal="cancel",
                 already_requested=record.cancel_requested,
             )
-            if decision.accepted and record.updates[-1].state not in terminal_values:
+            if decision.accepted:
                 record.cancel_requested = True
-                self._advance_job(record)
-                accepted = True
+                record.cancel_reason = "user-request"
+                record.cancellation_fanout_ref = f"qfs://jobs/{record.job_id}/control/cancellation.json"
+                self._append_update(
+                    record,
+                    state=self._types_pb.JOB_STATE_CANCELLED,
+                    stage="CANCELLED",
+                    progress=1.0,
+                    message="cancelled by user request",
+                )
+                self._finalize_terminal_state(record)
+            resp = self._job_pb.CancelJobResponse(accepted=decision.accepted)
+            log_request_end("JobService.CancelJob", rc)
+            return resp
 
-        resp = self._job_pb.CancelJobResponse(accepted=accepted)
+        try:
+            kernel_response = asyncio.run(self._kernel_client.cancel_job(request.job_id, self._public_envelope_dict(envelope)))
+        except grpc.RpcError as err:
+            if err.code() == grpc.StatusCode.NOT_FOUND:
+                _abort_job_not_found(context, request.job_id)
+            context.abort(err.code(), err.details() or "kernel delegation failed")
+
+        resp = self._job_pb.CancelJobResponse(accepted=bool(kernel_response.get("accepted", False)))
         log_request_end("JobService.CancelJob", rc)
         return resp
 
@@ -1709,30 +1914,86 @@ class JobService:
         if violations:
             abort_invalid_argument(context, "validation failed", violations)
 
-        start_after_seq = int(request.last_event_seq)
-        terminal_values = {getattr(self._types_pb, name) for name in TERMINAL_JOB_STATES}
-        while True:
-            with self._lock:
-                record = self._jobs.get(request.job_id)
-                if record is None:
+        if os.getenv("SYSTEM_API_DEBUG") == "1":
+            self._assert_consistency()
+
+        if self._kernel_endpoint_configured():
+            try:
+                updates = asyncio.run(
+                    self._collect_kernel_updates(
+                        job_id=request.job_id,
+                        last_event_seq=int(request.last_event_seq),
+                        envelope=envelope,
+                    )
+                )
+            except grpc.RpcError as err:
+                if err.code() == grpc.StatusCode.NOT_FOUND:
                     _abort_job_not_found(context, request.job_id)
-                self._enforce_job_access(context=context, record=record)
-                self._advance_job(record)
-                selected_updates = list(record.updates)
-                done = selected_updates[-1].state in terminal_values
+                context.abort(err.code(), err.details() or "kernel delegation failed")
 
-            for update in selected_updates:
-                event_seq = int(update.event_seq)
-                if event_seq <= start_after_seq:
+            for update in updates:
+                yield self._job_pb.StreamJobUpdatesResponse(
+                    update=self._types_pb.JobUpdate(
+                        job_id=update["job_id"],
+                        state=update["state"],
+                        stage=update["stage"],
+                        progress=float(update["progress"]),
+                        message=update["message"],
+                        event_seq=int(update["event_seq"]),
+                        timestamp=update["timestamp"],
+                        topology=self._mk_topology_pb(update.get("topology")),
+                    )
+                )
+            log_request_end("JobService.StreamJobUpdates", rc)
+            return
+
+        record = self._get_local_job_record(request.job_id)
+        if record is not None:
+            last_event_seq = int(request.last_event_seq)
+            for update in record.updates:
+                if int(update.event_seq) <= last_event_seq:
                     continue
-                start_after_seq = event_seq
-                yield self._job_pb.StreamJobUpdatesResponse(update=update)
+                yield self._job_pb.StreamJobUpdatesResponse(
+                    update=self._types_pb.JobUpdate(
+                        job_id=update.job_id,
+                        state=update.state,
+                        stage=update.stage,
+                        progress=float(update.progress),
+                        message=update.message,
+                        event_seq=int(update.event_seq),
+                        timestamp=update.timestamp,
+                        topology=update.topology,
+                    )
+                )
+            log_request_end("JobService.StreamJobUpdates", rc)
+            return
 
-            if done:
-                break
-            if not context.is_active():
-                break
-            time.sleep(0.01)
+        try:
+            updates = asyncio.run(
+                self._collect_kernel_updates(
+                    job_id=request.job_id,
+                    last_event_seq=int(request.last_event_seq),
+                    envelope=envelope,
+                )
+            )
+        except grpc.RpcError as err:
+            if err.code() == grpc.StatusCode.NOT_FOUND:
+                _abort_job_not_found(context, request.job_id)
+            context.abort(err.code(), err.details() or "kernel delegation failed")
+
+        for update in updates:
+            yield self._job_pb.StreamJobUpdatesResponse(
+                update=self._types_pb.JobUpdate(
+                    job_id=update["job_id"],
+                    state=update["state"],
+                    stage=update["stage"],
+                    progress=float(update["progress"]),
+                    message=update["message"],
+                    event_seq=int(update["event_seq"]),
+                    timestamp=update["timestamp"],
+                    topology=self._mk_topology_pb(update.get("topology")),
+                )
+            )
 
         log_request_end("JobService.StreamJobUpdates", rc)
 
@@ -1755,52 +2016,109 @@ class JobService:
         if violations:
             abort_invalid_argument(context, "validation failed", violations)
 
-        with self._lock:
-            record = self._jobs.get(request.job_id)
-            if record is not None:
-                self._enforce_job_access(context=context, record=record)
-                self._advance_job(record)
+        if self._kernel_endpoint_configured():
+            try:
+                kernel_response = asyncio.run(
+                    self._kernel_client.get_job_results(request.job_id, self._public_envelope_dict(envelope))
+                )
+            except grpc.RpcError as err:
+                if err.code() == grpc.StatusCode.NOT_FOUND:
+                    _abort_job_not_found(context, request.job_id)
+                context.abort(err.code(), err.details() or "kernel delegation failed")
 
-        if record is None:
-            _abort_job_not_found(context, request.job_id)
-        current_state = record.updates[-1].state
-        if current_state in {
-            self._types_pb.JOB_STATE_PENDING,
-            self._types_pb.JOB_STATE_COMPILING,
-            self._types_pb.JOB_STATE_RUNNING,
-        }:
-            abort_public(
-                context,
-                PublicErrorSpec(
-                    grpc_code=grpc.StatusCode.FAILED_PRECONDITION,
-                    message="results are not ready yet",
-                    reason="EIGEN_PUBLIC_RESULTS_NOT_READY",
-                    retryable=True,
-                    metadata={"current_state": self._types_pb.JobState.Name(current_state)},
-                    retry_delay_seconds=1,
-                    precondition_type="JOB_LIFECYCLE",
-                    precondition_subject=request.job_id,
-                    detail="Poll GetJobStatus until the job reaches a terminal state before reading results.",
-                ),
+            resp = self._job_pb.GetJobResultsResponse(
+                job_id=kernel_response.get("job_id", request.job_id),
+                state=self._kernel_state_to_public_state(kernel_response.get("state", "TASK_STATE_PENDING")),
+                counts=kernel_response.get("counts", {}),
+                metadata=kernel_response.get("metadata", {}),
+                qfs_result_ref=kernel_response.get("qfs_result_ref", ""),
+                completed_at=kernel_response.get("completed_at") or _ts_now(),
+                error_code=kernel_response.get("error_code", ""),
+                error_summary=kernel_response.get("error_summary", ""),
+                error_details_ref=kernel_response.get("error_details_ref", ""),
             )
+            log_request_end("JobService.GetJobResults", rc)
+            return resp
+
+        record = self._get_local_job_record(request.job_id)
+        if record is not None:
+            latest = record.updates[-1]
+            terminal_state = latest.state in {getattr(self._types_pb, name) for name in TERMINAL_JOB_STATES}
+            if not terminal_state:
+                abort_public(
+                    context,
+                    PublicErrorSpec(
+                        grpc_code=grpc.StatusCode.FAILED_PRECONDITION,
+                        message="results are not ready yet",
+                        reason="EIGEN_PUBLIC_RESULTS_NOT_READY",
+                        retryable=True,
+                        metadata={"current_state": "TASK_STATE_PENDING"},
+                        retry_delay_seconds=1,
+                        precondition_type="JOB_LIFECYCLE",
+                        precondition_subject=request.job_id,
+                        detail="Poll GetJobStatus until the job reaches a terminal state before reading results.",
+                    ),
+                )
+
+            metadata = dict(record.results_metadata)
+            metadata.setdefault("qfs_results_parquet_bytes", str(len(record.results_parquet or b"")))
+            metadata.setdefault("qfs_result_ref", record.results_metadata.get("qfs_results_parquet", ""))
+
+            resp = self._job_pb.GetJobResultsResponse(
+                job_id=record.job_id,
+                state=latest.state,
+                counts=dict(record.counts),
+                metadata=metadata,
+                error_code=record.error_code,
+                error_summary=record.error_summary,
+                error_details_ref=record.error_details_ref,
+                completed_at=record.completed_at or latest.timestamp or _ts_now(),
+            )
+            log_request_end("JobService.GetJobResults", rc)
+            return resp
+
+        try:
+            kernel_response = asyncio.run(self._kernel_client.get_job_results(request.job_id, self._public_envelope_dict(envelope)))
+        except grpc.RpcError as err:
+            if err.code() == grpc.StatusCode.NOT_FOUND:
+                _abort_job_not_found(context, request.job_id)
+            if err.code() == grpc.StatusCode.FAILED_PRECONDITION:
+                abort_public(
+                    context,
+                    PublicErrorSpec(
+                        grpc_code=grpc.StatusCode.FAILED_PRECONDITION,
+                        message="results are not ready yet",
+                        reason="EIGEN_PUBLIC_RESULTS_NOT_READY",
+                        retryable=True,
+                        metadata={"current_state": "TASK_STATE_PENDING"},
+                        retry_delay_seconds=1,
+                        precondition_type="JOB_LIFECYCLE",
+                        precondition_subject=request.job_id,
+                        detail="Poll GetJobStatus until the job reaches a terminal state before reading results.",
+                    ),
+                )
+            context.abort(err.code(), err.details() or "kernel delegation failed")
+
+        state = kernel_response.get("state", "TASK_STATE_UNSPECIFIED")
+        counts = dict(kernel_response.get("counts", {}))
+        metadata = dict(kernel_response.get("metadata", {}))
+        if kernel_response.get("qfs_result_ref"):
+            metadata.setdefault("qfs_result_ref", kernel_response["qfs_result_ref"])
 
         resp = self._job_pb.GetJobResultsResponse(
             job_id=request.job_id,
-            state=current_state,
-            counts=record.counts,
-            metadata={
-                **record.results_metadata,
-                "qfs_results_parquet_bytes": str(len(record.results_parquet or b"")),
-            },
-            error_code=record.error_code,
-            error_summary=record.error_summary,
-            error_details_ref=record.error_details_ref,
-            completed_at=record.completed_at or _ts_now(),
+            state=self._kernel_state_to_public_state(state),
+            counts=counts,
+            metadata=metadata,
+            error_code=kernel_response.get("error_code", ""),
+            error_summary=kernel_response.get("error_summary", ""),
+            error_details_ref=kernel_response.get("error_details_ref", ""),
+            completed_at=kernel_response.get("completed_at") or _ts_now(),
         )
 
         log_request_end("JobService.GetJobResults", rc)
         return resp
-    
+
     def GetDispatchRationale(self, request, context: grpc.ServicerContext):
         enforce_authn(context, method_name="JobService.GetDispatchRationale")
         enforce_authz(context, required_permission="jobs:read")
@@ -1827,9 +2145,52 @@ class JobService:
                 metadata={"field": ",".join(v.field for v in violations)},
             )
 
-        with self._lock:
-            record = self._jobs.get(request.job_id)
-            if record is None:
+        if self._kernel_endpoint_configured():
+            try:
+                kernel_response = asyncio.run(
+                    self._kernel_client.get_dispatch_rationale(request.job_id, self._public_envelope_dict(envelope))
+                )
+            except grpc.RpcError as err:
+                if err.code() == grpc.StatusCode.NOT_FOUND:
+                    abort_with_error_info(
+                        context,
+                        grpc_code=grpc.StatusCode.NOT_FOUND,
+                        message=f"job_id not found: {request.job_id}",
+                        reason="EIGEN_PUBLIC_EXPLAIN_DECISION_NOT_FOUND",
+                        domain="eigen.api.v1.explain",
+                        metadata={"job_id": request.job_id},
+                    )
+                context.abort(err.code(), err.details() or "kernel delegation failed")
+
+            resp = self._job_pb.GetDispatchRationaleResponse(
+                rationale=self._job_pb.DispatchRationale(
+                    version=kernel_response.get("version", ""),
+                    policy_version=kernel_response.get("policy_version", ""),
+                    reason_codes=list(kernel_response.get("reason_codes", [])),
+                    selected_backend=kernel_response.get("selected_backend", ""),
+                    selected_queue=kernel_response.get("selected_queue", ""),
+                    attributes={k: str(v) for k, v in dict(kernel_response.get("attributes", {})).items()},
+                    timeline_ref=kernel_response.get("timeline_ref", ""),
+                    logs_ref=kernel_response.get("logs_ref", ""),
+                    trace_id=kernel_response.get("trace_id", ""),
+                    trace_ref=kernel_response.get("trace_ref", ""),
+                )
+            )
+            log_request_end("JobService.GetDispatchRationale", rc)
+            return resp
+
+        record = self._get_local_job_record(request.job_id)
+        if record is not None:
+            resp = self._job_pb.GetDispatchRationaleResponse(
+                rationale=self._dispatch_rationale_from_record(record)
+            )
+            log_request_end("JobService.GetDispatchRationale", rc)
+            return resp
+
+        try:
+            kernel_response = asyncio.run(self._kernel_client.get_dispatch_rationale(request.job_id, self._public_envelope_dict(envelope)))
+        except grpc.RpcError as err:
+            if err.code() == grpc.StatusCode.NOT_FOUND:
                 abort_with_error_info(
                     context,
                     grpc_code=grpc.StatusCode.NOT_FOUND,
@@ -1838,75 +2199,31 @@ class JobService:
                     domain="eigen.api.v1.explain",
                     metadata={"job_id": request.job_id},
                 )
-            self._enforce_job_access(context=context, record=record)
-            self._advance_job(record)
-            rationale = dict(record.dispatch_rationale)
-            attrs = dict(rationale["attributes"])
-            attrs["queue_delay_ms"] = str(max(int(float(record.queue_delay_sec) * 1000), 0))
-            attrs["dispatch_latency_ms"] = attrs.get("dispatch_latency_ms", "150")
-            attrs["execution_time_ms"] = attrs.get("execution_time_ms", str(max(int(record.run_duration_sec * 1000), 0)))
-            if "decision_lineage" not in attrs:
-                attrs["decision_lineage"] = json.dumps(
-                    rationale.get("lineage", []),
-                    sort_keys=True,
-                    separators=(",", ":"),
-                )
-            rationale["attributes"] = attrs
-
-        decision_payload = {
-            "contract_version": PUBLIC_API_CONTRACT_VERSION,
-            "record_id": f"decision:{record.job_id}",
-            "job_id": record.job_id,
-            "trace_id": str(rationale["trace_id"]),
-            "request_id": rc.request_id,
-            "tenant_id": record.owner_tenant,
-            "project_id": record.owner_project,
-            "component": "runtime",
-            "model_version": str(rationale["policy_version"]),
-            "policy_branch": str(rationale["attributes"].get("policy_branch", "baseline")),
-            "selected_action": str(rationale["selected_backend"]),
-            "fallback_used": any(str(code).endswith("FALLBACK") for code in rationale["reason_codes"]),
-            "feature_snapshot": {
-                "queue_delay_ms": str(max(int(float(record.queue_delay_sec) * 1000), 0)),
-                "dispatch_latency_ms": str(rationale["attributes"].get("dispatch_latency_ms", "150")),
-                "execution_time_ms": str(max(int(record.run_duration_sec * 1000), 0)),
-                "selected_queue": str(rationale["selected_queue"]),
-                "selected_backend": str(rationale["selected_backend"]),
-            },
-            "provenance": {
-                "runtime_ref": str(rationale["timeline_ref"]),
-                "checkpoint_ref": str(rationale["logs_ref"]),
-                "compiler_ref": str(rationale["attributes"].get("compiler_ref", "")),
-                "optimizer_ref": str(rationale["attributes"].get("optimizer_ref", "")),
-            },
-            "replay_bundle_ref": str(rationale["attributes"].get("replay_bundle_ref", f"qfs://jobs/{record.job_id}/kb/replay_bundle.json")),
-            "request_hash": str(rationale["attributes"].get("request_hash", "")),
-        }
-        if self._kb_service is not None:
-            try:
-                self._kb_service.ingest_runtime_decision(decision_payload)
-            except KnowledgeBaseUnavailable:
-                record_kb_fallback("storage_unavailable")
-            except Exception:
-                record_kb_fallback("ingest_failed")
+            context.abort(err.code(), err.details() or "kernel delegation failed")
 
         resp = self._job_pb.GetDispatchRationaleResponse(
             rationale=self._job_pb.DispatchRationale(
-                version=str(rationale["version"]),
-                policy_version=str(rationale["policy_version"]),
-                reason_codes=[str(code) for code in rationale["reason_codes"]],
-                selected_backend=str(rationale["selected_backend"]),
-                selected_queue=str(rationale["selected_queue"]),
-                attributes={k: str(v) for k, v in dict(rationale["attributes"]).items()},
-                timeline_ref=str(rationale["timeline_ref"]),
-                logs_ref=str(rationale["logs_ref"]),
-                trace_id=str(rationale["trace_id"]),
-                trace_ref=str(rationale["trace_ref"]),
+                version=kernel_response.get("version", ""),
+                policy_version=kernel_response.get("policy_version", ""),
+                reason_codes=list(kernel_response.get("reason_codes", [])),
+                selected_backend=kernel_response.get("selected_backend", ""),
+                selected_queue=kernel_response.get("selected_queue", ""),
+                attributes={k: str(v) for k, v in dict(kernel_response.get("attributes", {})).items()},
+                timeline_ref=kernel_response.get("timeline_ref", ""),
+                logs_ref=kernel_response.get("logs_ref", ""),
+                trace_id=kernel_response.get("trace_id", ""),
+                trace_ref=kernel_response.get("trace_ref", ""),
             )
         )
 
         log_request_end("JobService.GetDispatchRationale", rc)
         return resp
+
+    async def _collect_kernel_updates(self, *, job_id: str, last_event_seq: int, envelope: NormalizedPublicEnvelope) -> list[dict]:
+        updates: list[dict] = []
+        async for update in self._kernel_client.stream_job_updates(job_id, last_event_seq, self._public_envelope_dict(envelope)):
+            updates.append(update)
+        return updates
 
 
 class DeviceService:

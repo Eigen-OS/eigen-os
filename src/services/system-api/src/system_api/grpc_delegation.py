@@ -17,6 +17,7 @@ Source of truth: RFC 0050, W2-03 issue
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from typing import Optional, AsyncIterator
 
@@ -54,6 +55,14 @@ class DelegationHandler:
             "TASK_STATE_TIMEOUT": "TIMEOUT",
         }
     
+    def _ensure_kernel_connected(self) -> None:
+        connect = self.kernel_client.connect
+        result = connect()
+        if inspect.isawaitable(result):
+            return result
+        return None
+
+
     async def submit_job_delegated(
         self,
         name: str,
@@ -80,7 +89,9 @@ class DelegationHandler:
         try:
             # Connect if needed
             if self.kernel_client._closed:
-                await self.kernel_client.connect()
+                maybe = self._ensure_kernel_connected()
+                if inspect.isawaitable(maybe):
+                    await maybe
             
             # Delegate to Kernel
             kernel_response = await self.kernel_client.enqueue_job(
@@ -133,7 +144,9 @@ class DelegationHandler:
         """
         try:
             if self.kernel_client._closed:
-                await self.kernel_client.connect()
+                maybe = self._ensure_kernel_connected()
+                if inspect.isawaitable(maybe):
+                    await maybe
             
             # Delegate to Kernel
             kernel_response = await self.kernel_client.get_job_status(
@@ -185,7 +198,9 @@ class DelegationHandler:
         """
         try:
             if self.kernel_client._closed:
-                await self.kernel_client.connect()
+                maybe = self._ensure_kernel_connected()
+                if inspect.isawaitable(maybe):
+                    await maybe
             
             # Delegate to Kernel
             kernel_response = await self.kernel_client.cancel_job(
@@ -229,7 +244,9 @@ class DelegationHandler:
         """
         try:
             if self.kernel_client._closed:
-                await self.kernel_client.connect()
+                maybe = self._ensure_kernel_connected()
+                if inspect.isawaitable(maybe):
+                    await maybe
             
             # Delegate to Kernel
             kernel_response = await self.kernel_client.get_job_results(
@@ -281,7 +298,9 @@ class DelegationHandler:
         """
         try:
             if self.kernel_client._closed:
-                await self.kernel_client.connect()
+                maybe = self._ensure_kernel_connected()
+                if inspect.isawaitable(maybe):
+                    await maybe
             
             # Delegate to Kernel and map responses
             async for kernel_update in self.kernel_client.stream_job_updates(

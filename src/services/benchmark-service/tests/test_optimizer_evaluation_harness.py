@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 from benchmark_service.optimizer_evaluation import (
     ContinuousLearningPipeline,
@@ -11,7 +12,9 @@ from benchmark_service.optimizer_evaluation import (
 FIXTURE = Path(__file__).parent / "fixtures" / "optimizer_evaluation" / "offline_online_fixture.json"
 
 
-def _fixture() -> dict[str, object]:
+JsonDict = dict[str, Any]
+
+def _fixture() -> JsonDict:
     return json.loads(FIXTURE.read_text(encoding="utf-8"))
 
 

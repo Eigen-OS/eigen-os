@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import threading
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from datetime import UTC, datetime
 from typing import Callable, Protocol
 
@@ -29,43 +31,98 @@ class BlobBackend(Protocol):
 
 
 class LocalBlobBackend:
-    """Thread-safe local (in-memory) backend for qfs:// refs."""
+    """Thread-safe local filesystem backend for qfs:// refs."""
 
     def __init__(self):
-        self._data: dict[str, bytes] = {}
+        self._root = self._select_root()
         self._lock = threading.RLock()
+
+    @staticmethod
+    def _candidate_roots() -> list[Path]:
+        roots: list[Path] = []
+        env_root = os.getenv("EIGEN_QFS_LOCAL_ROOT")
+        if env_root:
+            roots.append(Path(env_root))
+        roots.extend([
+            Path("/tmp/eigen/qfs"),
+            Path(tempfile.gettempdir()) / "eigen" / "qfs",
+        ])
+        return roots
+
+    def _select_root(self) -> Path:
+        last_exc: Exception | None = None
+        for root in self._candidate_roots():
+            try:
+                root.mkdir(parents=True, exist_ok=True)
+                probe = root / f".probe-{threading.get_ident()}-{time.monotonic_ns()}"
+                probe.write_bytes(b"")
+                probe.unlink(missing_ok=True)
+                return root
+            except Exception as exc:  # pragma: no cover - environment dependent
+                last_exc = exc
+        raise RuntimeError("unable to initialize writable QFS root") from last_exc
+
+
+    def _ref_path(self, ref: str) -> Path:
+        rel = ref[len("qfs://") :] if ref.startswith("qfs://") else ref
+        path = (self._root / rel).resolve()
+        root = self._root.resolve()
+        if root not in path.parents and path != root:
+            raise ValueError(f"invalid qfs ref: {ref}")
+        return path
 
     def upload_bytes(self, ref: str, payload: bytes) -> None:
         with self._lock:
-            self._data[ref] = payload
+            path = self._ref_path(ref)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(path.suffix + f".tmp-{threading.get_ident()}-{time.monotonic_ns()}")
+            tmp.write_bytes(payload)
+            tmp.replace(path)
 
     def download_bytes(self, ref: str) -> bytes | None:
         with self._lock:
-            value = self._data.get(ref)
-            return None if value is None else bytes(value)
+            path = self._ref_path(ref)
+            return None if not path.exists() else path.read_bytes()
 
     def list_refs(self, prefix: str) -> list[str]:
         with self._lock:
-            return sorted(key for key in self._data if key.startswith(prefix))
+            root = self._root.resolve()
+            if not root.exists():
+                return []
+            refs: list[str] = []
+            for path in root.rglob("*"):
+                if path.is_file():
+                    rel = path.relative_to(root).as_posix()
+                    ref = f"qfs://{rel}"
+                    if ref.startswith(prefix):
+                        refs.append(ref)
+            return sorted(refs)
 
     def delete_ref(self, ref: str) -> None:
         with self._lock:
-            self._data.pop(ref, None)
+            path = self._ref_path(ref)
+            if path.exists():
+                path.unlink()
 
     def delete_prefix(self, prefix: str) -> None:
         with self._lock:
-            for key in [key for key in self._data if key.startswith(prefix)]:
-                del self._data[key]
+            for ref in self.list_refs(prefix):
+                self.delete_ref(ref)
     def clear(self) -> None:
         with self._lock:
-            self._data.clear()
+            if self._root.exists():
+                for path in sorted(self._root.rglob("*"), reverse=True):
+                    if path.is_file():
+                        path.unlink()
+                    elif path.is_dir():
+                        try:
+                            path.rmdir()
+                        except OSError:
+                            pass
 
     def atomic_write(self, ref: str, payload: bytes) -> None:
         with self._lock:
-            tmp = f"{ref}.tmp-{threading.get_ident()}-{time.monotonic_ns()}"
-            self._data[tmp] = payload
-            self._data[ref] = self._data[tmp]
-            del self._data[tmp]
+            self.upload_bytes(ref, payload)
 
 
 class S3BlobBackend:
@@ -204,7 +261,33 @@ def _build_qfs_store_from_env() -> QFSStore:
     return QFSStore([primary, *fallback], retry=retry)
 
 
-QFS_STORE = _build_qfs_store_from_env()
+class _QFSStoreProxy:
+    def _store(self) -> QFSStore:
+        return _build_qfs_store_from_env()
+
+    def put_bytes(self, qfs_ref: str, payload: bytes) -> None:
+        self._store().put_bytes(qfs_ref, payload)
+
+    def atomic_write_bytes(self, qfs_ref: str, payload: bytes) -> None:
+        self._store().atomic_write_bytes(qfs_ref, payload)
+
+    def get_bytes(self, qfs_ref: str) -> bytes | None:
+        return self._store().get_bytes(qfs_ref)
+
+    def list_refs(self, prefix: str) -> list[str]:
+        return self._store().list_refs(prefix)
+
+    def delete_bytes(self, qfs_ref: str) -> None:
+        self._store().delete_bytes(qfs_ref)
+
+    def delete_prefix(self, prefix: str) -> None:
+        self._store().delete_prefix(prefix)
+
+    def clear(self) -> None:
+        self._store().clear()
+
+
+QFS_STORE = _QFSStoreProxy()
 
 QFS_L3_ARTIFACT_CONTRACT_VERSION = "1.0.0"
 

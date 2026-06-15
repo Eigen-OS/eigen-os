@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any, cast, Sequence
 
 from benchmark_service.compare_api import (
     BENCHMARK_COMPARE_API_VERSION,
@@ -14,7 +15,7 @@ from benchmark_service.compare_api import (
 CONTRACT_FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "contracts" / "benchmark_compare_v1"
 
 
-def _load_json(name: str) -> dict[str, object]:
+def _load_json(name: str) -> dict[str, Any]:
     return json.loads((CONTRACT_FIXTURE_ROOT / name).read_text(encoding="utf-8"))
 
 
