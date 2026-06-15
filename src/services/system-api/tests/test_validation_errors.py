@@ -18,6 +18,7 @@ from eigen.api.v1 import device_service_pb2 as dev_pb  # noqa: E402
 from eigen.api.v1 import device_service_pb2_grpc as dev_pb_grpc  # noqa: E402
 from eigen.api.v1 import job_service_pb2 as job_pb  # noqa: E402
 from eigen.api.v1 import job_service_pb2_grpc as job_pb_grpc  # noqa: E402
+from eigen.api.v1 import types_pb2 as types_pb  # noqa: E402
 
 
 def _free_port() -> int:
