@@ -69,30 +69,47 @@ class PatternMinerService:
     def __init__(self) -> None:
         self._snapshots: dict[str, dict[str, Any]] = {}
 
-    def ingest_snapshot(self, *, snapshot_id: str, records: list[dict[str, Any]], config_digest: str) -> SnapshotIngestResult:
-        normalized_records = sorted(records, key=lambda row: _canonical_json(row))
+    def ingest_snapshot(
+        self,
+        *,
+        snapshot_id: str,
+        records: list[dict[str, Any]],
+        config_digest: str,
+        tenant_id: str = "",
+        project_id: str = "",
+    ) -> SnapshotIngestResult:
+        normalized_tenant_id, normalized_project_id, normalized_records = self._normalize_snapshot_records(
+            records,
+            tenant_id=tenant_id,
+            project_id=project_id,
+        )
         idempotency_key = sha256(
             _canonical_json(
                 {
                     "snapshot_id": snapshot_id,
                     "config_digest": config_digest,
+                    "tenant_id": normalized_tenant_id,
+                    "project_id": normalized_project_id,
                     "records": normalized_records,
                 }
             ).encode("utf-8")
         ).hexdigest()
         existing = self._snapshots.get(snapshot_id)
+        snapshot_payload = {
+            "config_digest": config_digest,
+            "tenant_id": normalized_tenant_id,
+            "project_id": normalized_project_id,
+            "records": normalized_records,
+            "idempotency_key": idempotency_key,
+        }
         if existing is None:
-            self._snapshots[snapshot_id] = {
-                "config_digest": config_digest,
-                "records": normalized_records,
-                "idempotency_key": idempotency_key,
-            }
+            self._snapshots[snapshot_id] = snapshot_payload
             return SnapshotIngestResult(snapshot_id, config_digest, idempotency_key, True)
         if existing["idempotency_key"] != idempotency_key:
             raise ValueError("snapshot_id already ingested with different payload")
         return SnapshotIngestResult(snapshot_id, config_digest, idempotency_key, False)
 
-    def mine_patterns(self, *, snapshot_id: str) -> dict[str, Any]:
+    def mine_patterns(self, *, snapshot_id: str, tenant_id: str, project_id: str) -> dict[str, Any]:
         snapshot = self._snapshots[snapshot_id]
         patterns = self._pattern_catalog(snapshot_id=snapshot_id)
         return {
@@ -124,6 +141,7 @@ class PatternMinerService:
         deterministic: bool = True,
     ) -> dict[str, Any]:
         snapshot = self._snapshots[snapshot_id]
+        self._require_snapshot_scope(snapshot, tenant_id=tenant_id, project_id=project_id)
         query = self._normalize_pattern_query(
             {
                 "snapshot_id": snapshot_id,
@@ -245,8 +263,17 @@ class PatternMinerService:
             "diagnostics": diagnostics,
         }
 
-    def get_recommendation(self, *, snapshot_id: str, circuit_id: str, backend_class: str, min_confidence: float = 0.0) -> dict[str, Any]:
-        mined = self.mine_patterns(snapshot_id=snapshot_id)
+    def get_recommendation(
+        self,
+        *,
+        snapshot_id: str,
+        tenant_id: str,
+        project_id: str,
+        circuit_id: str,
+        backend_class: str,
+        min_confidence: float = 0.0,
+    ) -> dict[str, Any]:
+        mined = self.mine_patterns(snapshot_id=snapshot_id, tenant_id=tenant_id, project_id=project_id)
         matching = [
             p
             for p in mined["patterns"]
@@ -258,10 +285,12 @@ class PatternMinerService:
         return {
             "contract": "pattern_miner.recommendation",
             "version": RECOMMENDATION_CONTRACT_VERSION,
+            "tenant_id": tenant_id,
+            "project_id": project_id,
             "snapshot_id": snapshot_id,
             "config_digest": mined["config_digest"],
             "cadence_seconds": mined["cadence_seconds"],
-            "query": {"circuit_id": circuit_id, "backend_class": backend_class},
+            "query": {"tenant_id": tenant_id, "project_id": project_id, "circuit_id": circuit_id, "backend_class": backend_class},
             "recommendation": {
                 "selected_pattern_id": matching[0]["pattern_id"] if matching else None,
                 "confidence": round(confidence, 6),
@@ -280,10 +309,71 @@ class PatternMinerService:
 
     GetPattern = get_pattern
 
+    def _normalize_snapshot_records(
+        self,
+        records: list[dict[str, Any]],
+        *,
+        tenant_id: str,
+        project_id: str,
+    ) -> tuple[str, str, list[dict[str, Any]]]:
+        normalized_tenant_id = _normalized_text(tenant_id)
+        normalized_project_id = _normalized_text(project_id)
+
+        record_tenants = sorted(
+            {
+                _normalized_text(record.get("tenant_id"))
+                for record in records
+                if _normalized_text(record.get("tenant_id"))
+            }
+        )
+        record_projects = sorted(
+            {
+                _normalized_text(record.get("project_id"))
+                for record in records
+                if _normalized_text(record.get("project_id"))
+            }
+        )
+
+        if not normalized_tenant_id:
+            normalized_tenant_id = record_tenants[0] if len(record_tenants) == 1 else "tenant-default"
+        if not normalized_project_id:
+            normalized_project_id = record_projects[0] if len(record_projects) == 1 else "project-default"
+
+        if len(record_tenants) > 1:
+            raise ValueError("snapshot records must share a single tenant_id")
+        if len(record_projects) > 1:
+            raise ValueError("snapshot records must share a single project_id")
+        if record_tenants and record_tenants[0] != normalized_tenant_id:
+            raise ValueError("snapshot tenant_id does not match record tenant_id")
+        if record_projects and record_projects[0] != normalized_project_id:
+            raise ValueError("snapshot project_id does not match record project_id")
+
+        normalized_records: list[dict[str, Any]] = []
+        for record in sorted(records, key=lambda row: _canonical_json(row)):
+            normalized_record = dict(record)
+            record_tenant_id = _normalized_text(normalized_record.get("tenant_id")) or normalized_tenant_id
+            record_project_id = _normalized_text(normalized_record.get("project_id")) or normalized_project_id
+            if record_tenant_id != normalized_tenant_id or record_project_id != normalized_project_id:
+                raise ValueError("snapshot records must share a single tenant/project scope")
+            normalized_record["tenant_id"] = normalized_tenant_id
+            normalized_record["project_id"] = normalized_project_id
+            normalized_records.append(normalized_record)
+
+        return normalized_tenant_id, normalized_project_id, normalized_records
+
+    def _require_snapshot_scope(self, snapshot: dict[str, Any], *, tenant_id: str, project_id: str) -> None:
+        if snapshot["tenant_id"] != _normalized_text(tenant_id) or snapshot["project_id"] != _normalized_text(project_id):
+            raise PermissionError("snapshot scope mismatch")
+
     def _pattern_catalog(self, *, snapshot_id: str) -> list[dict[str, Any]]:
         snapshot = self._snapshots[snapshot_id]
         grouped: dict[tuple[str, str, str, str], list[dict[str, Any]]] = {}
-        for record in snapshot["records"]:
+        for record in [
+            record
+            for record in snapshot["records"]
+            if _normalized_text(record.get("tenant_id")) == snapshot["tenant_id"]
+            and _normalized_text(record.get("project_id")) == snapshot["project_id"]
+        ]:
             circuit_id = _normalized_text(record.get("circuit_id"))
             backend_class = _normalized_text(record.get("backend_class"))
             pattern_family = _normalized_text(record.get("pattern_family") or f"{circuit_id}:{backend_class}") or f"{circuit_id}:{backend_class}"
