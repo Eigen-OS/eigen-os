@@ -11,7 +11,7 @@ import re
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Sequence
 
 import grpc
 from google.protobuf.timestamp_pb2 import Timestamp
@@ -80,7 +80,7 @@ class _StoredRecord:
     record: Any
     tenant_id: str
     project_id: str
-    capability_scope: tuple[str, ...]
+    capability_scope: Sequence[str]
     created_at: datetime
     updated_at: datetime
     fingerprint: str
@@ -92,7 +92,7 @@ class _StoredDecisionLog:
     decision_log: Any
     tenant_id: str
     project_id: str
-    capability_scope: tuple[str, ...]
+    capability_scope: Sequence[str]
     decided_at: datetime
     fingerprint: str
     sequence: int
@@ -294,7 +294,7 @@ def _capability_tokens_from_value(value: Any) -> set[str]:
     return tokens
 
 
-def _capability_scope_tokens(payload: dict[str, Any] | None) -> tuple[str, ...]:
+def _capability_scope_tokens(payload: dict[str, Any] | None) -> Sequence[str]:
     if not payload:
         return ()
     tokens: set[str] = set()
@@ -313,11 +313,48 @@ def _capability_scope_tokens(payload: dict[str, Any] | None) -> tuple[str, ...]:
     return tuple(sorted(tokens))
 
 
-def _capability_scope_matches(stored_scope: tuple[str, ...], requested_scope: tuple[str, ...]) -> bool:
+def _capability_scope_matches(stored_scope: Sequence[str], requested_scope: Sequence[str]) -> bool:
     if not requested_scope:
         return True
     return tuple(stored_scope) == tuple(requested_scope)
 
+
+from collections.abc import Sequence
+from typing import Any
+
+
+def _okb_filter_scope_tokens(
+    scope: Any,
+    backend_profile_id: str,
+) -> Sequence[str]:
+    """
+    Normalize scope for OKB matching.
+
+    Backend profile is used for scoring/routing, but it should not narrow the
+    capability filter itself. Otherwise queries without explicit capability tags
+    can be filtered down to zero candidates.
+    """
+
+    if not scope:
+        return ()
+
+    backend_profile_id = str(backend_profile_id).strip().lower()
+    routing_tokens = (
+        {backend_profile_id, f"backend_profile={backend_profile_id}"}
+        if backend_profile_id
+        else set()
+    )
+
+    items = (scope,) if isinstance(scope, str) else tuple(scope)
+
+    normalized: list[str] = []
+    for token in items:
+        value = str(token).strip().lower()
+        if not value or value in routing_tokens:
+            continue
+        normalized.append(value)
+
+    return tuple(sorted(dict.fromkeys(normalized)))
 
 class KnowledgeBaseService:
     """Deterministic in-memory KnowledgeBaseService implementation."""
@@ -1024,11 +1061,12 @@ class KnowledgeBaseService:
             "candidate_budget": candidate_budget,
         }
 
-    def _okb_candidate_pool(self, query: dict[str, Any], requested_scope: tuple[str, ...]) -> list[_OptimizationCandidate]:
+    def _okb_candidate_pool(self, query: dict[str, Any], requested_scope: Sequence[str]) -> list[_OptimizationCandidate]:
         pool: list[_OptimizationCandidate] = []
 
         scope_key = self._okb_scope_key(query["tenant_id"], query["project_id"])
-        requested_scope = tuple(query.get("capability_scope", ()))
+        backend_profile_id = str(query.get("backend_profile_id", "")).strip()
+        requested_scope = _okb_filter_scope_tokens(query.get("capability_scope", ()), backend_profile_id)
         source_ids = self._okb_index_sources_for_mode_locked(query["query_mode"], scope_key)
         if not source_ids:
             source_ids = [
@@ -1045,7 +1083,10 @@ class KnowledgeBaseService:
             candidate
             for candidate in pool
             if candidate.score_total > 0.0
-            and self._capability_scope_matches(tuple(candidate.metadata.get("capability_scope", ())), requested_scope)
+            and self._capability_scope_matches(
+                _okb_filter_scope_tokens(candidate.metadata.get("capability_scope", ()), backend_profile_id),
+                requested_scope,
+            )
         ]
 
     def _candidate_from_record(self, entry: _StoredRecord, query: dict[str, Any]) -> _OptimizationCandidate:
@@ -1568,17 +1609,24 @@ class KnowledgeBaseService:
             return merged
         return structural or vector
 
-    def _okb_candidate_from_source_id(self, source_id: str, query: dict[str, Any], requested_scope: tuple[str, ...]) -> _OptimizationCandidate | None:
+    def _okb_candidate_from_source_id(self, source_id: str, query: dict[str, Any], requested_scope: Sequence[str]) -> _OptimizationCandidate | None:
+        backend_profile_id = str(query.get("backend_profile_id", "")).strip()
         if source_id.startswith("record:"):
             record_id = source_id.removeprefix("record:")
             entry = self._records.get(record_id)
-            if entry and self._record_visible_to_tenant(entry, query["tenant_id"], query["project_id"], context=None) and _capability_scope_matches(entry.capability_scope, requested_scope):
+            if entry and self._record_visible_to_tenant(entry, query["tenant_id"], query["project_id"], context=None) and _capability_scope_matches(
+                _okb_filter_scope_tokens(entry.capability_scope, backend_profile_id),
+                requested_scope,
+            ):
                 return self._candidate_from_record(entry, query)
             return None
         if source_id.startswith("decision:"):
             decision_id = source_id.removeprefix("decision:")
             for entry in self._decision_logs:
-                if entry.decision_log.decision_id == decision_id and self._decision_visible_to_tenant(entry, query["tenant_id"], query["project_id"], context=None) and _capability_scope_matches(entry.capability_scope, requested_scope):
+                if entry.decision_log.decision_id == decision_id and self._decision_visible_to_tenant(entry, query["tenant_id"], query["project_id"], context=None) and _capability_scope_matches(
+                    _okb_filter_scope_tokens(entry.capability_scope, backend_profile_id),
+                    requested_scope,
+                ):
                     return self._candidate_from_decision_log(entry, query)
             return None
         return None 
@@ -1723,7 +1771,7 @@ class KnowledgeBaseService:
     def _decision_visible_to_tenant(self, entry: _StoredDecisionLog, tenant_id: str, project_id: str, context: grpc.ServicerContext) -> bool:
         return entry.tenant_id == tenant_id and entry.project_id == project_id
     
-    def _capability_scope_tokens(self, payload: dict[str, Any] | None) -> tuple[str, ...]:
+    def _capability_scope_tokens(self, payload: dict[str, Any] | None) -> Sequence[str]:
         if not payload:
             return ()
         raw_scope = payload.get("capability_scope")
@@ -1746,7 +1794,7 @@ class KnowledgeBaseService:
                 tokens.append(token)
         return tuple(tokens)
 
-    def _capability_scope_matches(self, stored_scope: tuple[str, ...], requested_scope: tuple[str, ...]) -> bool:
+    def _capability_scope_matches(self, stored_scope: Sequence[str], requested_scope: Sequence[str]) -> bool:
         if not requested_scope:
             return True
         if not stored_scope:
@@ -1861,7 +1909,7 @@ class KnowledgeBaseService:
         source: str,
         replay_bundle_ref: str,
         context: grpc.ServicerContext | None,
-        capability_scope: tuple[str, ...] | None = None,
+        capability_scope: Sequence[str] | None = None,
     ) -> dict[str, Any]:
         record_id = record.record_id
         now = datetime.now(timezone.utc)
@@ -1925,7 +1973,7 @@ class KnowledgeBaseService:
         ts.FromDatetime(now)
         return {"record_id": record_id, "created": not bool(existing), "updated_at": ts}
 
-    def _store_decision_log(self, decision_log: Any, envelope: dict[str, Any], context: grpc.ServicerContext | None, capability_scope: tuple[str, ...] | None = None) -> _StoredDecisionLog:
+    def _store_decision_log(self, decision_log: Any, envelope: dict[str, Any], context: grpc.ServicerContext | None, capability_scope: Sequence[str] | None = None) -> _StoredDecisionLog:
         self._sequence += 1
         decided_at = _ts_to_dt(decision_log.decided_at) if getattr(decision_log, "decided_at", None) else datetime.now(timezone.utc)
         decision_log.decided_at.FromDatetime(decided_at)
@@ -2024,7 +2072,7 @@ class KnowledgeBaseService:
         metadata: dict[str, Any],
         command: str,
         decision: str,
-        capability_scope: tuple[str, ...] | None = None,
+        capability_scope: Sequence[str] | None = None,
     ) -> dict[str, Any]:
         normalized_kind = evidence_kind.strip().lower() or "learning"
         capability_scope = tuple(_capability_scope_tokens(evidence_payload))
@@ -2207,3 +2255,4 @@ class KnowledgeBaseService:
                     if isinstance(item, dict) and self._learning_payload_contains_quarantine_fields(item):
                         return True
         return False
+    
