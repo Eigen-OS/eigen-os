@@ -51,13 +51,14 @@ def _grpc_tools_proto_include() -> Path:
 
 
 def _default_proto_files(proto_root: Path) -> list[Path]:
-    """Collect proto files needed for public System API (MVP)."""
+    """Collect proto files needed for the public System API and Kernel bridge."""
     return sorted(
         [
             proto_root / "eigen" / "api" / "v1" / "types.proto",
             proto_root / "eigen" / "api" / "v1" / "job_service.proto",
             proto_root / "eigen" / "api" / "v1" / "device_service.proto",
             proto_root / "eigen" / "api" / "v1" / "knowledge_base_service.proto",
+            proto_root / "eigen" / "internal" / "v1" / "kernel_gateway.proto",
         ]
     )
 
@@ -78,9 +79,12 @@ def ensure_generated(files: Iterable[Path] | None = None) -> None:
     if files is None:
         files = _default_proto_files(paths.proto_root)
 
-    # Heuristic: check a representative output file.
-    sentinel = paths.out_dir / "eigen" / "api" / "v1" / "job_service_pb2.py"
-    if sentinel.exists():
+    # Heuristic: check representative output files for both public and internal stubs.
+    sentinels = [
+        paths.out_dir / "eigen" / "api" / "v1" / "job_service_pb2.py",
+        paths.out_dir / "eigen" / "internal" / "v1" / "kernel_gateway_pb2.py",
+    ]
+    if all(s.exists() for s in sentinels):
         return
 
     try:

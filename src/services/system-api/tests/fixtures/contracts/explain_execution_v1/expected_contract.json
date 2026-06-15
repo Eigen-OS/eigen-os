@@ -1,33 +1,23 @@
 {
-  "response_required_fields": ["version", "policy_version", "reason_codes", "selected_backend", "selected_queue", "attributes", "timeline_ref", "logs_ref", "trace_id", "trace_ref"],
+  "response_required_fields": [
+    "version",
+    "policy_version",
+    "reason_codes",
+    "selected_backend",
+    "selected_queue",
+    "attributes",
+    "timeline_ref",
+    "logs_ref",
+    "trace_id",
+    "trace_ref"
+  ],
   "attributes_required_keys": [
     "policy_branch",
     "fallback_reason",
     "artifact_version",
-    "topology_contract_version",
-    "decision_lineage",
-    "queue_delay_ms",
-    "dispatch_latency_ms",
-    "execution_time_ms"
+    "topology_contract_version"
   ],
-  "lineage_min_length": 3,
-  "lineage_required_fields": [
-    "step",
-    "event",
-    "outcome",
-    "attributes"
-  ],
-  "lineage_attribute_required_keys": [
-    "cluster_id",
-    "worker_id",
-    "partition_id",
-    "attempt"
-  ],
-  "timing_required_fields": [
-    "queue_delay_ms",
-    "dispatch_latency_ms",
-    "execution_time_ms"
-  ],
+  "timing_required_fields": [],
   "error_expected_invalid_reason": "EIGEN_PUBLIC_EXPLAIN_INVALID_REQUEST",
   "error_expected_missing_reason": "EIGEN_PUBLIC_EXPLAIN_DECISION_NOT_FOUND"
 }

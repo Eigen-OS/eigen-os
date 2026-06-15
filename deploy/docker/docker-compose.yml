@@ -57,3 +57,14 @@ services:
       - "50061:50061"
       - "9092:9092"
     restart: unless-stopped
+  
+  benchmark-service:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.benchmark-service
+    container_name: eigen-benchmark-service
+    profiles:
+      - benchmark
+    working_dir: /app/src/services/benchmark-service
+    command: ["pytest", "-q", "tests"]
+    

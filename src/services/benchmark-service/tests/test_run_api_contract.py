@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 from benchmark_service.run_api import (
     BENCHMARK_RUN_API_VERSION,
@@ -14,7 +15,7 @@ from benchmark_service.run_lifecycle import RUN_CONTRACT_VERSION, SNAPSHOT_VERSI
 CONTRACT_FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "contracts" / "benchmark_run_v1"
 
 
-def _load_json(name: str) -> dict[str, object]:
+def _load_json(name: str) -> dict[str, Any]:
     return json.loads((CONTRACT_FIXTURE_ROOT / name).read_text(encoding="utf-8"))
 
 

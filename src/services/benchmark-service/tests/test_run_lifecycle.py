@@ -1,3 +1,6 @@
+from typing import Any
+
+
 from benchmark_service.run_lifecycle import (
     RUN_CONTRACT_VERSION,
     BenchmarkRunService,
@@ -5,6 +8,7 @@ from benchmark_service.run_lifecycle import (
     RunTransitionError,
 )
 
+emitted: list[dict[str, Any]] = []
 
 def test_run_state_machine_allows_happy_path_and_blocks_reverse_transition() -> None:
     service = BenchmarkRunService()
@@ -73,7 +77,7 @@ def test_snapshot_is_immutable_and_deterministic() -> None:
 
 
 def test_run_lifecycle_emits_kb_replay_payloads() -> None:
-    emitted: list[dict[str, object]] = []
+    emitted: list[dict[str, Any]] = []
     service = BenchmarkRunService(kb_sink=emitted.append)
     run = service.start_run(idempotency_key="kb-key", config={"dataset": "d3", "seed": 19})
     service.transition(run_id=run.run_id, new_state=RunState.PREPARING)

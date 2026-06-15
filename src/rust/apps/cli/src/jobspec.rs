@@ -1,7 +1,23 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::{Display, Formatter};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+
+use tokio::runtime::{Handle, Runtime};
+use tokio::task;
+use tonic::transport::{Channel, Endpoint, Error as TransportError};
+
+#[cfg(test)]
+use tonic::{Request, Response, Status};
+
+pub mod eigen {
+    pub mod api {
+        pub mod v1 {
+            tonic::include_proto!("eigen.api.v1");
+        }
+    }
+}
 
 pub const JOBSPEC_API_VERSION: &str = "eigen.os/v1";
 pub const LEGACY_JOBSPEC_API_VERSION: &str = "eigen.os/v0.1";
@@ -533,13 +549,392 @@ fn string_vec_json(values: &[String]) -> String {
     format!("[{}]", parts.join(","))
 }
 
-pub fn submit_job_to_system_api(req: &SubmitJobRequest) -> SubmitJobResponse {
-    let _ = validate_submit_request_against_system_api_schema(req);
-    let stable = format!("{}:{}", req.name, req.target);
-    let suffix = &sha256_hex(stable.as_bytes())[0..12];
-    SubmitJobResponse {
-        job_id: format!("job-{suffix}"),
+fn runtime() -> Result<&'static Runtime, GrpcLikeError> {
+    static RT: OnceLock<Result<Runtime, String>> = OnceLock::new();
+    match RT.get_or_init(|| Runtime::new().map_err(|e| e.to_string())) {
+        Ok(rt) => Ok(rt),
+        Err(msg) => Err(GrpcLikeError {
+            code: GrpcCode::Internal,
+            message: format!("failed to create tokio runtime: {msg}"),
+            retry_hint: None,
+        }),
     }
+}
+
+fn block_on_result<F, T>(future: F) -> Result<T, GrpcLikeError>
+where
+    F: std::future::Future<Output = Result<T, GrpcLikeError>>,
+{
+    if Handle::try_current().is_ok() {
+        task::block_in_place(|| Handle::current().block_on(future))
+    } else {
+        runtime()?.block_on(future)
+    }
+}
+
+#[cfg(not(test))]
+fn system_api_endpoint() -> String {
+    std::env::var("EIGEN_SYSTEM_API_ENDPOINT").unwrap_or_else(|_| "http://127.0.0.1:50051".to_string())
+}
+
+#[cfg(test)]
+fn system_api_endpoint() -> String {
+    std::env::var("EIGEN_SYSTEM_API_ENDPOINT").unwrap_or_else(|_| test_system_api_endpoint())
+}
+
+#[cfg(test)]
+fn test_system_api_endpoint() -> String {
+    use std::fs;
+    use std::net::SocketAddr;
+    use std::sync::{mpsc, OnceLock as StdOnceLock};
+
+    use tokio::net::TcpListener;
+    use tokio::runtime::Builder;
+    use tokio_stream::wrappers::TcpListenerStream;
+
+    static ENDPOINT: StdOnceLock<String> = StdOnceLock::new();
+    ENDPOINT
+        .get_or_init(|| {
+            let qfs_root = std::env::temp_dir()
+                .join("eigen-cli-qfs-fixture")
+                .join(std::process::id().to_string());
+            let qfs_results = qfs_root.join("jobs/job-demo-done/results.parquet");
+            fs::create_dir_all(qfs_results.parent().expect("qfs parent"))
+                .expect("create qfs fixture directory");
+            fs::write(&qfs_results, b"PAR1fixturePAR1").expect("write qfs fixture");
+            unsafe {
+                std::env::set_var("EIGEN_QFS_LOCAL_ROOT", &qfs_root);
+            }
+
+            let (addr_tx, addr_rx) = mpsc::channel::<SocketAddr>();
+            std::thread::spawn(move || {
+                let rt = Builder::new_multi_thread()
+                    .enable_all()
+                    .build()
+                    .expect("fixture runtime");
+                rt.block_on(async move {
+                    let listener = TcpListener::bind("127.0.0.1:0")
+                        .await
+                        .expect("bind fixture port");
+                    let addr = listener.local_addr().expect("fixture addr");
+                    addr_tx.send(addr).expect("send fixture addr");
+
+                    let incoming = TcpListenerStream::new(listener);
+                    let service =
+                        eigen::api::v1::job_service_server::JobServiceServer::new(TestJobService);
+                    tonic::transport::Server::builder()
+                        .add_service(service)
+                        .serve_with_incoming(incoming)
+                        .await
+                        .expect("serve fixture api");
+                });
+            });
+
+            let addr = addr_rx.recv().expect("receive fixture addr");
+            format!("http://{addr}")
+        })
+        .clone()
+}
+
+#[cfg(test)]
+struct TestJobService;
+
+#[cfg(test)]
+#[tonic::async_trait]
+impl eigen::api::v1::job_service_server::JobService for TestJobService {
+    type StreamJobUpdatesStream = std::pin::Pin<
+        Box<
+            dyn tokio_stream::Stream<
+                    Item = Result<eigen::api::v1::StreamJobUpdatesResponse, Status>,
+                > + Send
+                + 'static,
+        >,
+    >;
+
+    async fn submit_job(
+        &self,
+        _request: Request<eigen::api::v1::SubmitJobRequest>,
+    ) -> Result<Response<eigen::api::v1::SubmitJobResponse>, Status> {
+        Ok(Response::new(eigen::api::v1::SubmitJobResponse {
+            job_id: "job-fixture-submit".to_string(),
+            ..Default::default()
+        }))
+    }
+
+    async fn get_job_status(
+        &self,
+        request: Request<eigen::api::v1::GetJobStatusRequest>,
+    ) -> Result<Response<eigen::api::v1::GetJobStatusResponse>, Status> {
+        let job_id = request.into_inner().job_id;
+        let (state, stage, progress, message) = match job_id.as_str() {
+            "job-demo" => (4, "RUNNING", 42.0_f32, "running"),
+            "job-demo-done" => (5, "DONE", 100.0_f32, "done"),
+            "job-demo-error" => (6, "ERROR", 100.0_f32, "failed"),
+            _ => return Err(Status::not_found("unknown job_id in fixture server")),
+        };
+
+        Ok(Response::new(eigen::api::v1::GetJobStatusResponse {
+            status: Some(eigen::api::v1::JobStatus {
+                job_id,
+                state,
+                stage: stage.to_string(),
+                progress,
+                message: message.to_string(),
+                ..Default::default()
+            }),
+        }))
+    }
+
+    async fn cancel_job(
+        &self,
+        _request: Request<eigen::api::v1::CancelJobRequest>,
+    ) -> Result<Response<eigen::api::v1::CancelJobResponse>, Status> {
+        Ok(Response::new(eigen::api::v1::CancelJobResponse {
+            accepted: true,
+            ..Default::default()
+        }))
+    }
+
+    async fn stream_job_updates(
+        &self,
+        request: Request<eigen::api::v1::StreamJobUpdatesRequest>,
+    ) -> Result<Response<Self::StreamJobUpdatesStream>, Status> {
+        let job_id = request.into_inner().job_id;
+        if job_id != "job-demo" {
+            return Err(Status::not_found("unknown job_id in fixture server"));
+        }
+
+        let updates = vec![
+            Ok(eigen::api::v1::StreamJobUpdatesResponse {
+                update: Some(eigen::api::v1::JobUpdate {
+                    event_seq: 1,
+                    state: 1,
+                    stage: "PENDING".to_string(),
+                    progress: 0.0,
+                    message: "queued".to_string(),
+                    ..Default::default()
+                }),
+            }),
+            Ok(eigen::api::v1::StreamJobUpdatesResponse {
+                update: Some(eigen::api::v1::JobUpdate {
+                    event_seq: 2,
+                    state: 4,
+                    stage: "RUNNING".to_string(),
+                    progress: 42.0,
+                    message: "running".to_string(),
+                    ..Default::default()
+                }),
+            }),
+            Ok(eigen::api::v1::StreamJobUpdatesResponse {
+                update: Some(eigen::api::v1::JobUpdate {
+                    event_seq: 3,
+                    state: 5,
+                    stage: "DONE".to_string(),
+                    progress: 100.0,
+                    message: "done".to_string(),
+                    ..Default::default()
+                }),
+            }),
+        ];
+        Ok(Response::new(Box::pin(tokio_stream::iter(updates))))
+    }
+
+    async fn get_job_results(
+        &self,
+        request: Request<eigen::api::v1::GetJobResultsRequest>,
+    ) -> Result<Response<eigen::api::v1::GetJobResultsResponse>, Status> {
+        let job_id = request.into_inner().job_id;
+        match job_id.as_str() {
+            "job-demo-done" => Ok(Response::new(eigen::api::v1::GetJobResultsResponse {
+                job_id,
+                state: 5,
+                counts: std::collections::HashMap::from([
+                    ("00".to_string(), 512),
+                    ("11".to_string(), 512),
+                ]),
+                metadata: std::collections::HashMap::from([
+                    (
+                        "qfs_results_parquet".to_string(),
+                        format!("qfs://jobs/{}/results.parquet", "job-demo-done"),
+                    ),
+                ]),
+                ..Default::default()
+            })),
+            "job-demo-error" => Ok(Response::new(eigen::api::v1::GetJobResultsResponse {
+                job_id,
+                state: 6,
+                error_code: "EIGEN_SIM_ERROR".to_string(),
+                error_summary: "failed to simulate fixture job".to_string(),
+                metadata: std::collections::HashMap::from([
+                    (
+                        "qfs_results_parquet".to_string(),
+                        format!("qfs://jobs/{}/results.parquet", "job-demo-error"),
+                    ),
+                ]),
+                ..Default::default()
+            })),
+            _ => Err(Status::not_found("unknown job_id in fixture server")),
+        }
+    }
+
+    async fn get_dispatch_rationale(
+        &self,
+        request: Request<eigen::api::v1::GetDispatchRationaleRequest>,
+    ) -> Result<Response<eigen::api::v1::GetDispatchRationaleResponse>, Status> {
+        let job_id = request.into_inner().job_id;
+        if job_id != "job-demo" {
+            return Err(Status::not_found("unknown job_id in fixture server"));
+        }
+
+        Ok(Response::new(eigen::api::v1::GetDispatchRationaleResponse {
+            rationale: Some(eigen::api::v1::DispatchRationale {
+                version: "2.0.0".to_string(),
+                policy_version: "2.1.0".to_string(),
+                reason_codes: vec![
+                    "WEIGHTED_FAIRNESS".to_string(),
+                    "DEVICE_SCORE".to_string(),
+                ],
+                selected_backend: "sim:local".to_string(),
+                selected_queue: "default".to_string(),
+                attributes: std::collections::HashMap::from([
+                    ("policy_branch".to_string(), "baseline".to_string()),
+                    (
+                        "fallback_reason".to_string(),
+                        "deterministic fixture".to_string(),
+                    ),
+                ]),
+                timeline_ref: format!("qfs://jobs/{}/timeline.json", job_id),
+                logs_ref: format!("qfs://jobs/{}/logs/dispatch.log", job_id),
+                trace_id: "trace-demo".to_string(),
+                trace_ref: "trace://trace-demo".to_string(),
+                ..Default::default()
+            }),
+        }))
+    }
+}
+
+fn map_transport_error(err: TransportError) -> GrpcLikeError {
+    GrpcLikeError {
+        code: GrpcCode::Unavailable,
+        message: format!("failed to connect to system api: {err}"),
+        retry_hint: None,
+    }
+}
+
+fn map_status_error(status: tonic::Status) -> GrpcLikeError {
+    let code = match status.code() {
+        tonic::Code::InvalidArgument => GrpcCode::InvalidArgument,
+        tonic::Code::NotFound => GrpcCode::NotFound,
+        tonic::Code::FailedPrecondition => GrpcCode::FailedPrecondition,
+        tonic::Code::Unavailable => GrpcCode::Unavailable,
+        tonic::Code::DeadlineExceeded => GrpcCode::DeadlineExceeded,
+        _ => GrpcCode::Internal,
+    };
+    GrpcLikeError {
+        code,
+        message: status.message().to_string(),
+        retry_hint: None,
+    }
+}
+
+fn map_job_state(state: i32) -> String {
+    match state {
+        1 => "PENDING",
+        2 => "COMPILING",
+        3 => "QUEUED",
+        4 => "RUNNING",
+        5 => "DONE",
+        6 => "ERROR",
+        7 => "CANCELLED",
+        8 => "TIMEOUT",
+        _ => "UNSPECIFIED",
+    }
+    .to_string()
+}
+
+fn connect_client(
+) -> Result<eigen::api::v1::job_service_client::JobServiceClient<Channel>, GrpcLikeError> {
+    let endpoint = Endpoint::from_shared(system_api_endpoint()).map_err(|e| GrpcLikeError {
+        code: GrpcCode::InvalidArgument,
+        message: format!("invalid system api endpoint: {e}"),
+        retry_hint: None,
+    })?;
+    let client = block_on_result(async {
+        endpoint
+            .connect()
+            .await
+            .map(eigen::api::v1::job_service_client::JobServiceClient::new)
+            .map_err(map_transport_error)
+    })?;
+    Ok(client)
+}
+
+fn build_api_envelope(
+    req: &SubmitJobRequest,
+    options: &PublicSubmitOptions,
+) -> eigen::api::v1::ApiRequestEnvelope {
+    let envelope = normalized_public_submit_envelope(req, options);
+    eigen::api::v1::ApiRequestEnvelope {
+        contract_version: envelope.contract_version,
+        request_id: envelope.request_id,
+        idempotency_key: envelope.idempotency_key,
+        traceparent: envelope.traceparent,
+        tenant_id: envelope.tenant_id,
+        project_id: envelope.project_id,
+        client_version: envelope.client_version,
+        deadline: None,
+    }
+}
+
+fn build_submit_proto_request(
+    req: &SubmitJobRequest,
+    options: &PublicSubmitOptions,
+) -> eigen::api::v1::SubmitJobRequest {
+    let program = match &req.program {
+        ProgramSource::EigenLangSource {
+            source,
+            entrypoint,
+            sha256,
+        } => Some(eigen::api::v1::submit_job_request::Program::EigenLang(
+            eigen::api::v1::EigenLangSource {
+                source: source.as_bytes().to_vec(),
+                entrypoint: entrypoint.clone(),
+                sha256: sha256.clone(),
+            },
+        )),
+    };
+
+    eigen::api::v1::SubmitJobRequest {
+        envelope: Some(build_api_envelope(req, options)),
+        name: req.name.clone(),
+        program,
+        target: req.target.clone(),
+        priority: req.priority,
+        compiler_options: req.compiler_options.clone().into_iter().collect::<HashMap<_, _>>(),
+        metadata: req.metadata.clone().into_iter().collect::<HashMap<_, _>>(),
+        dependencies: req.dependencies.clone(),
+        tenant: None,
+        reservation_id: String::new(),
+    }
+}
+
+pub fn submit_job_to_system_api(
+    req: &SubmitJobRequest,
+    options: &PublicSubmitOptions,
+) -> Result<SubmitJobResponse, GrpcLikeError> {
+    let _ = validate_submit_request_against_system_api_schema(req);
+    block_on_result(async {
+        let mut client = connect_client()?;
+        let proto_req = build_submit_proto_request(req, options);
+        let resp = client
+            .submit_job(proto_req)
+            .await
+            .map_err(map_status_error)?
+            .into_inner();
+        Ok(SubmitJobResponse {
+            job_id: resp.job_id,
+        })
+    })
 }
 
 pub fn validate_submit_request_against_system_api_schema(
@@ -583,11 +978,7 @@ pub fn validate_submit_request_against_system_api_schema(
         });
     }
 
-    if violations.is_empty() {
-        Ok(())
-    } else {
-        Err(JobSpecValidationError::new(violations))
-    }
+    if violations.is_empty() { Ok(()) } else { Err(JobSpecValidationError::new(violations)) }
 }
 
 pub fn normalized_public_submit_envelope(
@@ -882,28 +1273,36 @@ pub struct GrpcLikeError {
     pub retry_hint: Option<String>,
 }
 
+impl Display for GrpcLikeError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.code.as_str(), self.message)
+    }
+}
+
+impl std::error::Error for GrpcLikeError {}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct JobStatusView {
     pub job_id: String,
-    pub state: &'static str,
-    pub stage: &'static str,
+    pub state: String,
+    pub stage: String,
     pub progress: f32,
-    pub message: &'static str,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct JobUpdateView {
     pub event_seq: u64,
-    pub state: &'static str,
-    pub stage: &'static str,
+    pub state: String,
+    pub stage: String,
     pub progress: f32,
-    pub message: &'static str,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JobResultsView {
     pub job_id: String,
-    pub state: &'static str,
+    pub state: String,
     pub counts: BTreeMap<String, i64>,
     pub metadata: BTreeMap<String, String>,
     pub artifacts: BTreeMap<String, String>,
@@ -921,10 +1320,10 @@ pub struct DownloadedArtifactView {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DispatchRationaleView {
-    pub version: &'static str,
-    pub policy_version: &'static str,
-    pub reason_codes: Vec<&'static str>,
-    pub selected_backend: &'static str,
+    pub version: String,
+    pub policy_version: String,
+    pub reason_codes: Vec<String>,
+    pub selected_backend: String,
     pub selected_queue: String,
     pub timeline_ref: String,
     pub logs_ref: String,
@@ -1245,96 +1644,60 @@ pub fn get_job_status_from_system_api(job_id: &str) -> Result<JobStatusView, Grp
         });
     }
 
-    if job_id.starts_with("net-") {
-        return Err(GrpcLikeError {
-            code: GrpcCode::Unavailable,
-            message: "system-api is temporarily unavailable".to_string(),
-            retry_hint: Some("retry with exponential backoff".to_string()),
-        });
-    }
-
-    let state = if job_id.ends_with("error") {
-        "ERROR"
-    } else if job_id.ends_with("done") {
-        "DONE"
-    } else {
-        "RUNNING"
-    };
-
-    let progress = match state {
-        "DONE" | "ERROR" => 1.0,
-        _ => 0.42,
-    };
-
-    let message = match state {
-        "DONE" => "completed",
-        "ERROR" => "failed",
-        _ => "running",
-    };
-
-    Ok(JobStatusView {
-        job_id: job_id.to_string(),
-        state,
-        stage: state,
-        progress,
-        message,
+    block_on_result(async {
+        let mut client = connect_client()?;
+        let resp = client
+            .get_job_status(eigen::api::v1::GetJobStatusRequest {
+                envelope: None,
+                job_id: job_id.to_string(),
+            })
+            .await
+            .map_err(map_status_error)?
+            .into_inner();
+        let status = resp.status.ok_or_else(|| GrpcLikeError {
+            code: GrpcCode::Internal,
+            message: "empty GetJobStatus response".to_string(),
+            retry_hint: None,
+        })?;
+        Ok(JobStatusView {
+            job_id: status.job_id,
+            state: map_job_state(status.state),
+            stage: status.stage,
+            progress: status.progress,
+            message: status.message,
+        })
     })
 }
 
 pub fn stream_job_updates_from_system_api(
     job_id: &str,
 ) -> Result<Vec<JobUpdateView>, GrpcLikeError> {
-    let _ = get_job_status_from_system_api(job_id)?;
-
-    if job_id.ends_with("error") {
-        return Ok(vec![
-            JobUpdateView {
-                event_seq: 1,
-                state: "QUEUED",
-                stage: "QUEUED",
-                progress: 0.0,
-                message: "queued",
-            },
-            JobUpdateView {
-                event_seq: 2,
-                state: "RUNNING",
-                stage: "RUNNING",
-                progress: 0.5,
-                message: "running",
-            },
-            JobUpdateView {
-                event_seq: 3,
-                state: "ERROR",
-                stage: "ERROR",
-                progress: 1.0,
-                message: "failed",
-            },
-        ]);
-    }
-
-    Ok(vec![
-        JobUpdateView {
-            event_seq: 1,
-            state: "QUEUED",
-            stage: "QUEUED",
-            progress: 0.0,
-            message: "queued",
-        },
-        JobUpdateView {
-            event_seq: 2,
-            state: "RUNNING",
-            stage: "RUNNING",
-            progress: 0.5,
-            message: "running",
-        },
-        JobUpdateView {
-            event_seq: 3,
-            state: "DONE",
-            stage: "DONE",
-            progress: 1.0,
-            message: "done",
-        },
-    ])
+    block_on_result(async {
+        let mut client = connect_client()?;
+        let mut stream = client
+            .stream_job_updates(eigen::api::v1::StreamJobUpdatesRequest {
+                envelope: None,
+                job_id: job_id.to_string(),
+                last_event_seq: 0,
+            })
+            .await
+            .map_err(map_status_error)?
+            .into_inner();
+        let mut updates = Vec::new();
+        while let Some(item) = stream.message().await.map_err(map_status_error)? {
+            let Some(update) = item.update else {
+                continue;
+            };
+            updates.push(JobUpdateView {
+                event_seq: update.event_seq,
+                state: map_job_state(update.state),
+                stage: update.stage,
+                progress: update.progress,
+                message: update.message,
+            });
+        }
+        Ok(updates)
+    })
 }
 
 pub fn get_job_results_from_system_api(job_id: &str) -> Result<JobResultsView, GrpcLikeError> {
@@ -1346,51 +1709,42 @@ pub fn get_job_results_from_system_api(job_id: &str) -> Result<JobResultsView, G
         });
     }
 
-    if job_id.ends_with("running") {
-        return Err(GrpcLikeError {
-            code: GrpcCode::FailedPrecondition,
-            message: "results are available only for terminal jobs".to_string(),
-            retry_hint: Some("retry after job reaches terminal state".to_string()),
-        });
-    }
-
-    let mut counts = BTreeMap::new();
-    counts.insert("00".to_string(), 512);
-    counts.insert("11".to_string(), 512);
-
-    let mut metadata = BTreeMap::new();
-    metadata.insert("backend".to_string(), "sim:local".to_string());
-    metadata.insert(
-        "qfs_namespace".to_string(),
-        "qfs://runtime-results".to_string(),
-    );
-
-    let mut artifacts = BTreeMap::new();
-    artifacts.insert(
-        "counts_parquet".to_string(),
-        format!("qfs://runtime-results/jobs/{job_id}/results/counts.parquet"),
-    );
-
-    if job_id.ends_with("error") {
-        return Ok(JobResultsView {
-            job_id: job_id.to_string(),
-            state: "ERROR",
-            counts: BTreeMap::new(),
+    block_on_result(async {
+        let mut client = connect_client()?;
+        let resp = client
+            .get_job_results(eigen::api::v1::GetJobResultsRequest {
+                envelope: None,
+                job_id: job_id.to_string(),
+            })
+            .await
+            .map_err(map_status_error)?
+            .into_inner();
+        let mut counts = BTreeMap::new();
+        for (k, v) in resp.counts {
+            counts.insert(k, v);
+        }
+        let mut metadata = BTreeMap::new();
+        for (k, v) in resp.metadata {
+            metadata.insert(k, v);
+        }
+        let mut artifacts = BTreeMap::new();
+        if let Some(results_parquet) = metadata.get("qfs_results_parquet") {
+            artifacts.insert("counts_parquet".to_string(), results_parquet.clone());
+        } else {
+            artifacts.insert(
+                "counts_parquet".to_string(),
+                format!("qfs://jobs/{job_id}/results.parquet"),
+            );
+        }
+        Ok(JobResultsView {
+            job_id: resp.job_id,
+            state: map_job_state(resp.state),
+            counts,
             metadata,
             artifacts,
-            error_code: Some("EIGEN_SIM_ERROR".to_string()),
-            error_summary: Some("simulated execution failed".to_string()),
-        });
-    }
-
-    Ok(JobResultsView {
-        job_id: job_id.to_string(),
-        state: "DONE",
-        counts,
-        metadata,
-        artifacts,
-        error_code: None,
-        error_summary: None,
+            error_code: if resp.error_code.is_empty() { None } else { Some(resp.error_code) },
+            error_summary: if resp.error_summary.is_empty() { None } else { Some(resp.error_summary) },
+        })
     })
 }
 
@@ -1404,28 +1758,32 @@ pub fn get_dispatch_rationale_from_system_api(
             retry_hint: None,
         });
     }
-    if job_id.starts_with("net-") {
-        return Err(GrpcLikeError {
-            code: GrpcCode::Unavailable,
-            message: "system-api is temporarily unavailable".to_string(),
-            retry_hint: Some("retry with exponential backoff".to_string()),
-        });
-    }
-    let trace_id = if job_id.contains("trace") {
-        Some(format!("trace-{job_id}"))
-    } else {
-        None
-    };
-    Ok(DispatchRationaleView {
-        version: "2.0.0",
-        policy_version: "2.1.0",
-        reason_codes: vec!["WEIGHTED_FAIRNESS", "DEVICE_SCORE"],
-        selected_backend: "sim:local",
-        selected_queue: "priority-50".to_string(),
-        timeline_ref: format!("qfs://jobs/{job_id}/timeline.json"),
-        logs_ref: format!("qfs://jobs/{job_id}/logs/dispatch.log"),
-        trace_ref: trace_id.as_ref().map(|id| format!("trace://{id}")),
-        trace_id,
+    block_on_result(async {
+        let mut client = connect_client()?;
+        let resp = client
+            .get_dispatch_rationale(eigen::api::v1::GetDispatchRationaleRequest {
+                envelope: None,
+                job_id: job_id.to_string(),
+            })
+            .await
+            .map_err(map_status_error)?
+            .into_inner();
+        let rationale = resp.rationale.ok_or_else(|| GrpcLikeError {
+            code: GrpcCode::Internal,
+            message: "empty GetDispatchRationale response".to_string(),
+            retry_hint: None,
+        })?;
+        Ok(DispatchRationaleView {
+            version: rationale.version,
+            policy_version: rationale.policy_version,
+            reason_codes: rationale.reason_codes,
+            selected_backend: rationale.selected_backend,
+            selected_queue: rationale.selected_queue,
+            timeline_ref: rationale.timeline_ref,
+            logs_ref: rationale.logs_ref,
+            trace_id: if rationale.trace_id.is_empty() { None } else { Some(rationale.trace_id) },
+            trace_ref: if rationale.trace_ref.is_empty() { None } else { Some(rationale.trace_ref) },
+        })
     })
 }
 
@@ -1440,6 +1798,7 @@ pub fn download_and_verify_parquet_artifacts_from_qfs(
             retry_hint: None,
         });
     }
+    let qfs_root = std::env::var("EIGEN_QFS_LOCAL_ROOT").unwrap_or_else(|_| "/var/lib/eigen/qfs".to_string());
     let out_dir = std::env::temp_dir().join("eigen-cli-results").join(job_id);
     std::fs::create_dir_all(&out_dir).map_err(|err| GrpcLikeError {
         code: GrpcCode::Internal,
@@ -1463,9 +1822,22 @@ pub fn download_and_verify_parquet_artifacts_from_qfs(
                 retry_hint: None,
             });
         }
+        let rel = qfs_uri.trim_start_matches("qfs://");
+        let source_path = Path::new(&qfs_root).join(rel);
+        if !source_path.exists() {
+            return Err(GrpcLikeError {
+                code: GrpcCode::NotFound,
+                message: format!("QFS artifact not found: {qfs_uri}"),
+                retry_hint: None,
+            });
+        }
         let local_path = out_dir.join(format!("{kind}.parquet"));
-        let parquet_bytes = b"PAR1eigen-mvpPAR1";
-        std::fs::write(&local_path, parquet_bytes).map_err(|err| GrpcLikeError {
+        let parquet_bytes = std::fs::read(&source_path).map_err(|err| GrpcLikeError {
+            code: GrpcCode::Internal,
+            message: format!("failed to read {}: {err}", source_path.display()),
+            retry_hint: None,
+        })?;
+        std::fs::write(&local_path, &parquet_bytes).map_err(|err| GrpcLikeError {
             code: GrpcCode::Internal,
             message: format!("failed to write {}: {err}", local_path.display()),
             retry_hint: None,
@@ -1743,7 +2115,7 @@ spec:
         assert_eq!(status.state, "RUNNING");
 
         let updates = stream_job_updates_from_system_api("job-demo").expect("updates");
-        assert_eq!(updates.last().map(|u| u.state), Some("DONE"));
+        assert_eq!(updates.last().map(|u| u.state.clone()), Some("DONE".to_string()));
 
         let results = get_job_results_from_system_api("job-demo-done").expect("results");
         assert_eq!(results.state, "DONE");
@@ -1931,8 +2303,8 @@ spec:
         let rationale = get_dispatch_rationale_from_system_api("job-demo").expect("rationale");
         assert_eq!(rationale.version, "2.0.0");
         assert_eq!(rationale.policy_version, "2.1.0");
-        assert!(rationale.reason_codes.contains(&"WEIGHTED_FAIRNESS"));
-        assert!(rationale.reason_codes.contains(&"DEVICE_SCORE"));
+        assert!(rationale.reason_codes.contains(&"WEIGHTED_FAIRNESS".to_string()));
+        assert!(rationale.reason_codes.contains(&"DEVICE_SCORE".to_string()));
         assert!(rationale.timeline_ref.ends_with("/timeline.json"));
     }
 
