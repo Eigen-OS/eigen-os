@@ -156,7 +156,7 @@ def test_submit_job_accepts_source_and_yaml_size_limits_configuration(
     )
     assert response.job_id
     assert response.status.job_id == response.job_id
-    assert response.status.state == job_pb.JOB_STATE_PENDING
+    assert response.status.state == types_pb.JOB_STATE_PENDING
 
 
 def test_authz_readonly_cannot_submit_but_can_list_devices(monkeypatch: pytest.MonkeyPatch) -> None:

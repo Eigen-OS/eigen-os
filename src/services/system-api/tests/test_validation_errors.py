@@ -57,7 +57,7 @@ def test_submit_job_missing_required_fields_is_accepted(grpc_addr: str):
     response = stub.SubmitJob(job_pb.SubmitJobRequest())
     assert response.job_id
     assert response.status.job_id == response.job_id
-    assert response.status.state == job_pb.JOB_STATE_PENDING
+    assert response.status.state == types_pb.JOB_STATE_PENDING
 
 
 def test_get_job_status_missing_job_id(grpc_addr: str):
