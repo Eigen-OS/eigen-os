@@ -50,4 +50,8 @@ def abort_invalid_argument(
         message=message,
     )
     st.details.add().Pack(bad_request)
-    context.abort_with_status(rpc_status.to_status(st))
+    try:
+        context.set_trailing_metadata((("grpc-status-details-bin", st.SerializeToString()),))
+    except Exception:
+        pass
+    context.abort(grpc.StatusCode.INVALID_ARGUMENT, message)

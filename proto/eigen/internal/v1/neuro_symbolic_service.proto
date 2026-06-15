@@ -1,0 +1,74 @@
+syntax = "proto3";
+
+package eigen.internal.v1;
+
+option go_package = "github.com/eigen-os/eigen/api/internal/v1;internalv1";
+option java_multiple_files = true;
+option java_outer_classname = "NeuroSymbolicServiceProto";
+option java_package = "com.eigen.api.internal.v1";
+
+// Internal DPDA model service contract v1.
+// Source of truth: DPDA-NEURO-01.
+service NeuroSymbolicService {
+  rpc ScoreCompilationPlan(ScoreCompilationPlanRequest) returns (ScoreCompilationPlanResponse);
+}
+
+message NeuroSymbolicContractEnvelope {
+  // Stable payload SemVer.
+  string contract_version = 1;
+}
+
+message NeuroSymbolicRequestContext {
+  // Stable request identifier for traceability.
+  string request_id = 1;
+
+  // Canonical tenant scope.
+  string tenant_id = 2;
+
+  // Canonical project scope inside the tenant.
+  string project_id = 3;
+
+  // Version of the feature schema presented to the model.
+  string feature_schema_version = 4;
+
+  // Version of the policy snapshot used to authorize the decision.
+  string policy_snapshot_version = 5;
+
+  // W3C trace identifier when available.
+  string trace_id = 6;
+
+  // W3C traceparent when available.
+  string traceparent = 7;
+}
+
+message ScoreCompilationPlanRequest {
+  NeuroSymbolicContractEnvelope envelope = 1;
+  NeuroSymbolicRequestContext context = 2;
+  bytes feature_vector = 3;
+  string feature_digest_sha256 = 4;
+  uint64 deterministic_seed = 5;
+  string model_hint = 6;
+}
+
+enum AdvisoryDecision {
+  ADVISORY_DECISION_UNSPECIFIED = 0;
+  ADVISORY_DECISION_ACCEPT = 1;
+  ADVISORY_DECISION_REVIEW = 2;
+  ADVISORY_DECISION_REJECT = 3;
+}
+
+message ScoreCompilationPlanResponse {
+  string contract_version = 1;
+  string request_id = 2;
+  string tenant_id = 3;
+  string project_id = 4;
+  string feature_schema_version = 5;
+  string policy_snapshot_version = 6;
+  string model_version = 7;
+  AdvisoryDecision decision = 8;
+  double score = 9;
+  double confidence = 10;
+  string explanation_ref = 11;
+  string replay_digest = 12;
+  bool deterministic_compatible = 13;
+}

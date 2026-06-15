@@ -380,6 +380,8 @@ NSC SHALL expose a dedicated internal service:
 eigen.internal.v1.NeuroSymbolicService
 ```
 
+The initial contract surface is the internal `ScoreCompilationPlan` RPC. All callers MUST present authenticated internal service identity and a versioned request envelope; public ingress MUST NOT route to this service directly.
+
 ---
 
 ### 8.2 Required RPC methods (target)
@@ -728,12 +730,18 @@ Golden tests SHOULD include:
 - optimization metadata propagation,
 - tracing/logging infrastructure.
 
-#### Defined but not implemented
+#### Implemented contract surface
+
+- `NeuroSymbolicService` internal model-service contract,
+- SemVer request/response envelope,
+- authenticated internal identity gate,
+- fail-closed rejection for unsupported contract versions.
+
+#### Still not implemented
 
 - DPDA semantic engine runtime,
 - neural inference runtime,
 - GNN optimizer runtime,
-- `NeuroSymbolicService` API,
 - explainability engine + QFS decision artifacts,
 - model registry,
 - OKB integration on request path,

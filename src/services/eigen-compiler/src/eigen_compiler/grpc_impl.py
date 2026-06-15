@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from datetime import timedelta
+import hashlib
+import hmac
 import logging
+import os
 import re
 import threading
 from typing import Callable
@@ -413,6 +416,182 @@ class CompilationService:
 
     def ValidateCircuit(self, request, context: grpc.ServicerContext):
         context.abort(grpc.StatusCode.UNIMPLEMENTED, "ValidateCircuit is not implemented")
+
+_NEURO_CONTRACT_VERSION = "1.0.0"
+_NEURO_ALLOWED_CALLERS_DEFAULT = "eigen-kernel,eigen-compiler,system-api"
+_NEURO_TOKEN_ENV = "EIGEN_NEURO_SYMBOLIC_SERVICE_TOKEN"
+_NEURO_CALLERS_ENV = "EIGEN_NEURO_SYMBOLIC_ALLOWED_CALLERS"
+_NEURO_MODEL_VERSION_ENV = "EIGEN_NEURO_SYMBOLIC_MODEL_VERSION"
+
+
+def _neuro_service_config() -> dict[str, object]:
+    allowed_callers = {
+        caller.strip().lower()
+        for caller in os.getenv(_NEURO_CALLERS_ENV, _NEURO_ALLOWED_CALLERS_DEFAULT).split(",")
+        if caller.strip()
+    }
+    token = os.getenv(_NEURO_TOKEN_ENV, "dev-internal-token")
+    model_version = os.getenv(_NEURO_MODEL_VERSION_ENV, "dpda-model-v1")
+    return {
+        "allowed_callers": allowed_callers,
+        "token": token,
+        "model_version": model_version,
+    }
+
+
+def _neuro_metadata(context: grpc.ServicerContext) -> dict[str, str]:
+    return {k.lower(): v for k, v in (context.invocation_metadata() or [])}
+
+
+def _require_internal_model_identity(context: grpc.ServicerContext, *, method_name: str) -> tuple[str, dict[str, object]]:
+    cfg = _neuro_service_config()
+    md = _neuro_metadata(context)
+    service_id = md.get("x-eigen-service-id", "").strip().lower()
+    authorization = md.get("authorization", "").strip()
+    expected = f"Bearer {cfg['token']}"
+    if not authorization or not service_id:
+        context.abort(
+            grpc.StatusCode.UNAUTHENTICATED,
+            f"internal identity required for {method_name}",
+        )
+    if not hmac.compare_digest(authorization, expected):
+        context.abort(
+            grpc.StatusCode.UNAUTHENTICATED,
+            f"internal identity required for {method_name}",
+        )
+    allowed_callers = cfg["allowed_callers"]
+    assert isinstance(allowed_callers, set)
+    if service_id not in allowed_callers:
+        context.abort(
+            grpc.StatusCode.PERMISSION_DENIED,
+            f"caller not permitted for {method_name}",
+        )
+    return service_id, cfg
+
+
+def _hex_digest(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _float_from_digest(digest: bytes, start: int) -> float:
+    if start < 0:
+        start = 0
+    raw = digest[start : start + 8]
+    if len(raw) < 8:
+        raw = (raw + b"\x00" * 8)[:8]
+    return int.from_bytes(raw, byteorder="big", signed=False) / float(1 << 64)
+
+
+def _confidence_from_score(score: float) -> float:
+    score = max(0.0, min(1.0, score))
+    confidence = 0.55 + (1.0 - abs(score - 0.5) * 2.0) * 0.45
+    return round(max(0.55, min(0.99, confidence)), 6)
+
+
+def _decision_from_score(score: float):
+    if score >= 0.68:
+        return "ADVISORY_DECISION_ACCEPT"
+    if score >= 0.36:
+        return "ADVISORY_DECISION_REVIEW"
+    return "ADVISORY_DECISION_REJECT"
+
+
+class NeuroSymbolicService:
+    """Implementation of eigen.internal.v1.NeuroSymbolicService."""
+
+    def __init__(self, nsc_pb):
+        self._nsc_pb = nsc_pb
+
+    def ScoreCompilationPlan(self, request, context: grpc.ServicerContext):
+        caller_id, cfg = _require_internal_model_identity(context, method_name="ScoreCompilationPlan")
+        envelope = request.envelope if request.HasField("envelope") else None
+        if envelope is None or not envelope.contract_version.strip():
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT, "contract_version is required")
+        if envelope.contract_version.strip() != _NEURO_CONTRACT_VERSION:
+            context.abort(
+                grpc.StatusCode.FAILED_PRECONDITION,
+                f"unsupported neuro-symbolic contract_version: {envelope.contract_version.strip()}",
+            )
+
+        req_context = request.context if request.HasField("context") else None
+        if req_context is None:
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT, "context is required")
+        request_id = req_context.request_id.strip()
+        tenant_id = req_context.tenant_id.strip()
+        project_id = req_context.project_id.strip()
+        feature_schema_version = req_context.feature_schema_version.strip()
+        policy_snapshot_version = req_context.policy_snapshot_version.strip()
+        if not request_id:
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT, "context.request_id is required")
+        if not tenant_id:
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT, "context.tenant_id is required")
+        if not project_id:
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT, "context.project_id is required")
+        if not feature_schema_version:
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT, "context.feature_schema_version is required")
+        if not policy_snapshot_version:
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT, "context.policy_snapshot_version is required")
+        if not request.feature_vector:
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT, "feature_vector is required")
+        feature_digest = request.feature_digest_sha256.strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", feature_digest):
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT, "feature_digest_sha256 must be a SHA-256 hex digest")
+        computed_digest = _hex_digest(request.feature_vector)
+        if computed_digest != feature_digest:
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT, "feature_digest_sha256 does not match feature_vector")
+        deterministic_seed = int(request.deterministic_seed)
+        canonical = b"|".join(
+            [
+                envelope.contract_version.strip().encode("utf-8"),
+                request_id.encode("utf-8"),
+                tenant_id.encode("utf-8"),
+                project_id.encode("utf-8"),
+                feature_schema_version.encode("utf-8"),
+                policy_snapshot_version.encode("utf-8"),
+                feature_digest.encode("utf-8"),
+                str(deterministic_seed).encode("utf-8"),
+                caller_id.encode("utf-8"),
+                request.model_hint.strip().encode("utf-8"),
+                request.feature_vector,
+            ]
+        )
+        replay_digest = _hex_digest(canonical)
+        digest_bytes = hashlib.sha256(canonical).digest()
+        score = round(_float_from_digest(digest_bytes, 0), 6)
+        confidence = _confidence_from_score(score)
+        decision_name = _decision_from_score(score)
+        decision = getattr(self._nsc_pb, decision_name)
+
+        response = self._nsc_pb.ScoreCompilationPlanResponse(
+            contract_version=_NEURO_CONTRACT_VERSION,
+            request_id=request_id,
+            tenant_id=tenant_id,
+            project_id=project_id,
+            feature_schema_version=feature_schema_version,
+            policy_snapshot_version=policy_snapshot_version,
+            model_version=str(cfg["model_version"]),
+            decision=decision,
+            score=score,
+            confidence=confidence,
+            explanation_ref=f"nsc://explanations/{request_id}/{replay_digest}",
+            replay_digest=replay_digest,
+            deterministic_compatible=True,
+        )
+
+        _LOG.info(
+            "neuro-symbolic scoring completed",
+            extra={
+                "rpc": "ScoreCompilationPlan",
+                "request_id": request_id,
+                "tenant_id": tenant_id,
+                "project_id": project_id,
+                "service_id": caller_id,
+                "model_version": str(cfg["model_version"]),
+                "decision": decision_name,
+            },
+        )
+        return response
+
 
 _TRACEPARENT_RE = re.compile(r"^[0-9a-f]{2}-(?P<trace_id>[0-9a-f]{32})-[0-9a-f]{16}-[0-9a-f]{2}$")
 

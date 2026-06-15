@@ -10,7 +10,7 @@ import threading
 
 import grpc
 
-from .grpc_impl import CompilationService, render_metrics_text, reset_metrics
+from .grpc_impl import CompilationService, NeuroSymbolicService, render_metrics_text, reset_metrics
 from .proto_gen import ensure_generated
 
 _LOG = logging.getLogger("eigen_compiler")
@@ -45,11 +45,17 @@ def serve(bind: str | None = None, metrics_bind: str | None = None) -> grpc.Serv
 
     from eigen.internal.v1 import compilation_service_pb2 as comp_pb
     from eigen.internal.v1 import compilation_service_pb2_grpc as comp_pb_grpc
+    from eigen.internal.v1 import neuro_symbolic_service_pb2 as nsc_pb
+    from eigen.internal.v1 import neuro_symbolic_service_pb2_grpc as nsc_pb_grpc
     from eigen.internal.v1 import types_pb2 as types_pb
 
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=8))
     comp_pb_grpc.add_CompilationServiceServicer_to_server(
         CompilationService(comp_pb=comp_pb, types_pb=types_pb),
+        server,
+    )
+    nsc_pb_grpc.add_NeuroSymbolicServiceServicer_to_server(
+        NeuroSymbolicService(nsc_pb=nsc_pb),
         server,
     )
 
