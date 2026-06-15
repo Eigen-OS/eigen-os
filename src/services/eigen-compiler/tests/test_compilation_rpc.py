@@ -334,10 +334,7 @@ def test_neuro_symbolic_service_scores_internal_requests(grpc_addr: str, monkeyp
     stub = nsc_pb_grpc.NeuroSymbolicServiceStub(channel)
 
     resp = stub.ScoreCompilationPlan(
-        _nsc_request(
-            feature_vector=raw_feature_vector,
-            feature_digest_sha256=hashlib.sha256(raw_feature_vector).hexdigest(),
-        ),
+         _nsc_request(),
         metadata=(
             ("authorization", "Bearer unit-test-token"),
             ("x-eigen-service-id", "eigen-kernel"),
@@ -466,10 +463,15 @@ def test_neuro_symbolic_service_redacts_sensitive_feature_payload(
         sort_keys=True,
     ).encode("utf-8")
 
+    redacted = _redact_feature_vector(raw_feature_vector)
+
     channel = grpc.insecure_channel(grpc_addr)
     stub = nsc_pb_grpc.NeuroSymbolicServiceStub(channel)
     resp = stub.ScoreCompilationPlan(
-        _nsc_request(feature_vector=raw_feature_vector),
+        _nsc_request(
+            feature_vector=raw_feature_vector,
+            feature_digest_sha256=hashlib.sha256(redacted.feature_vector).hexdigest(),
+        ),
         metadata=(
             ("authorization", "Bearer unit-test-token"),
             ("x-eigen-service-id", "eigen-kernel"),
@@ -481,7 +483,10 @@ def test_neuro_symbolic_service_redacts_sensitive_feature_payload(
     int(resp.replay_digest, 16)
 
     repeat = stub.ScoreCompilationPlan(
-        _nsc_request(feature_vector=raw_feature_vector),
+        _nsc_request(
+            feature_vector=raw_feature_vector,
+            feature_digest_sha256=hashlib.sha256(redacted.feature_vector).hexdigest(),
+        ),
         metadata=(
             ("authorization", "Bearer unit-test-token"),
             ("x-eigen-service-id", "eigen-kernel"),
