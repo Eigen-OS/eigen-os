@@ -507,10 +507,11 @@ class NeuroSymbolicService:
         envelope = request.envelope if request.HasField("envelope") else None
         if envelope is None or not envelope.contract_version.strip():
             context.abort(grpc.StatusCode.INVALID_ARGUMENT, "contract_version is required")
-        if envelope.contract_version.strip() != _NEURO_CONTRACT_VERSION:
+        contract_version = envelope.contract_version.strip()
+        if contract_version != _NEURO_CONTRACT_VERSION:
             context.abort(
                 grpc.StatusCode.FAILED_PRECONDITION,
-                f"unsupported neuro-symbolic contract_version: {envelope.contract_version.strip()}",
+                f"unsupported neuro-symbolic contract_version: {contract_version}",
             )
 
         req_context = request.context if request.HasField("context") else None
@@ -521,6 +522,9 @@ class NeuroSymbolicService:
         project_id = req_context.project_id.strip()
         feature_schema_version = req_context.feature_schema_version.strip()
         policy_snapshot_version = req_context.policy_snapshot_version.strip()
+        subject_id = req_context.subject_id.strip()
+        workload_id = req_context.workload_id.strip()
+        authz_decision_id = req_context.authz_decision_id.strip()
         if not request_id:
             context.abort(grpc.StatusCode.INVALID_ARGUMENT, "context.request_id is required")
         if not tenant_id:
@@ -531,6 +535,12 @@ class NeuroSymbolicService:
             context.abort(grpc.StatusCode.INVALID_ARGUMENT, "context.feature_schema_version is required")
         if not policy_snapshot_version:
             context.abort(grpc.StatusCode.INVALID_ARGUMENT, "context.policy_snapshot_version is required")
+        if not subject_id:
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT, "context.subject_id is required")
+        if not workload_id:
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT, "context.workload_id is required")
+        if not authz_decision_id:
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT, "context.authz_decision_id is required")
         if not request.feature_vector:
             context.abort(grpc.StatusCode.INVALID_ARGUMENT, "feature_vector is required")
         feature_digest = request.feature_digest_sha256.strip().lower()
@@ -542,10 +552,13 @@ class NeuroSymbolicService:
         deterministic_seed = int(request.deterministic_seed)
         canonical = b"|".join(
             [
-                envelope.contract_version.strip().encode("utf-8"),
+                contract_version.encode("utf-8"),
                 request_id.encode("utf-8"),
                 tenant_id.encode("utf-8"),
                 project_id.encode("utf-8"),
+                subject_id.encode("utf-8"),
+                workload_id.encode("utf-8"),
+                authz_decision_id.encode("utf-8"),
                 feature_schema_version.encode("utf-8"),
                 policy_snapshot_version.encode("utf-8"),
                 feature_digest.encode("utf-8"),
@@ -563,7 +576,7 @@ class NeuroSymbolicService:
         decision = getattr(self._nsc_pb, decision_name)
 
         response = self._nsc_pb.ScoreCompilationPlanResponse(
-            contract_version=_NEURO_CONTRACT_VERSION,
+            contract_version=contract_version,
             request_id=request_id,
             tenant_id=tenant_id,
             project_id=project_id,
@@ -576,6 +589,9 @@ class NeuroSymbolicService:
             explanation_ref=f"nsc://explanations/{request_id}/{replay_digest}",
             replay_digest=replay_digest,
             deterministic_compatible=True,
+            subject_id=subject_id,
+            workload_id=workload_id,
+            authz_decision_id=authz_decision_id,
         )
 
         _LOG.info(
@@ -585,9 +601,17 @@ class NeuroSymbolicService:
                 "request_id": request_id,
                 "tenant_id": tenant_id,
                 "project_id": project_id,
+                "subject_id": subject_id,
+                "workload_id": workload_id,
+                "authz_decision_id": authz_decision_id,
+                "policy_snapshot_version": policy_snapshot_version,
+                "feature_schema_version": feature_schema_version,
                 "service_id": caller_id,
                 "model_version": str(cfg["model_version"]),
                 "decision": decision_name,
+                "replay_digest": replay_digest,
+                "trace_id": getattr(req_context, "trace_id", ""),
+                "traceparent": getattr(req_context, "traceparent", ""),
             },
         )
         return response
