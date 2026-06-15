@@ -583,6 +583,30 @@ class JobService:
             self._advance_job(record)
             return record
 
+    def _resolve_job(self, job_id: str):
+        with self._lock:
+            record = self._jobs.get(job_id)
+            if record is not None:
+                return self._job_pb.SubmitJobResponse(job_id=job_id, status=self._job_status_from_record(record))
+
+            idem_record = next((rec for rec in self._idempotency.values() if rec.job_id == job_id), None)
+            if idem_record is None:
+                return None
+
+            now = _ts_now()
+            return self._job_pb.SubmitJobResponse(
+                job_id=job_id,
+                status=self._types_pb.JobStatus(
+                    job_id=job_id,
+                    state=self._types_pb.JOB_STATE_PENDING,
+                    stage="QUEUED",
+                    progress=0.0,
+                    message="accepted (idempotent replay from persisted request record)",
+                    created_at=now,
+                    updated_at=now,
+                ),
+            )
+
     def _kernel_public_response(self, envelope: NormalizedPublicEnvelope) -> dict[str, str]:
         return {
             "contract_version": envelope.contract_version,
@@ -1803,6 +1827,9 @@ class JobService:
             )
             log_request_end("JobService.GetJobStatus", rc)
             return resp
+        
+        if not self._kernel_endpoint_configured():
+            _abort_job_not_found(context, request.job_id)
 
         record = self._get_local_job_record(request.job_id)
         if record is not None:
@@ -1946,6 +1973,9 @@ class JobService:
                 )
             log_request_end("JobService.StreamJobUpdates", rc)
             return
+        
+        if not self._kernel_endpoint_configured():
+            _abort_job_not_found(context, request.job_id)
 
         record = self._get_local_job_record(request.job_id)
         if record is not None:
@@ -2039,6 +2069,9 @@ class JobService:
             )
             log_request_end("JobService.GetJobResults", rc)
             return resp
+        
+        if not self._kernel_endpoint_configured():
+            _abort_job_not_found(context, request.job_id)
 
         record = self._get_local_job_record(request.job_id)
         if record is not None:
@@ -2186,6 +2219,16 @@ class JobService:
             )
             log_request_end("JobService.GetDispatchRationale", rc)
             return resp
+        
+        if not self._kernel_endpoint_configured():
+            abort_with_error_info(
+                context,
+                grpc_code=grpc.StatusCode.NOT_FOUND,
+                message=f"job_id not found: {request.job_id}",
+                reason="EIGEN_PUBLIC_EXPLAIN_DECISION_NOT_FOUND",
+                domain="eigen.api.v1.explain",
+                metadata={"job_id": request.job_id},
+            )
 
         try:
             kernel_response = asyncio.run(self._kernel_client.get_dispatch_rationale(request.job_id, self._public_envelope_dict(envelope)))

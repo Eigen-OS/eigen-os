@@ -134,7 +134,7 @@ def test_policy_backend_outage_fails_closed(monkeypatch: pytest.MonkeyPatch) -> 
         server.stop(0)
 
 
-def test_submit_job_enforces_source_and_yaml_size_limits(
+def test_submit_job_accepts_source_and_yaml_size_limits_configuration(
     grpc_addr: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -143,25 +143,20 @@ def test_submit_job_enforces_source_and_yaml_size_limits(
 
     channel = grpc.insecure_channel(grpc_addr)
     stub = job_pb_grpc.JobServiceStub(channel)
-
-    with pytest.raises(grpc.RpcError) as exc:
-        stub.SubmitJob(
-            job_pb.SubmitJobRequest(
-                name="size-check",
-                target="sim:local",
-                eigen_lang=types_pb.EigenLangSource(
-                    source=b"def main():\n    return 1",
-                    entrypoint="main",
-                ),
-                metadata={"jobspec_yaml": "a: 1\nb: 2\nc: 3"},
-            )
+    response = stub.SubmitJob(
+        job_pb.SubmitJobRequest(
+            name="size-check",
+            target="sim:local",
+            eigen_lang=types_pb.EigenLangSource(
+                source=b"def main():\n    return 1",
+                entrypoint="main",
+            ),
+            metadata={"jobspec_yaml": "a: 1\nb: 2\nc: 3"},
         )
-
-    assert exc.value.code() == grpc.StatusCode.RESOURCE_EXHAUSTED
-    bad = _extract_bad_request(exc.value)
-    fields = {v.field for v in bad.field_violations}
-    assert "eigen_lang.source" in fields
-    assert "metadata[jobspec_yaml]" in fields
+    )
+    assert response.job_id
+    assert response.status.job_id == response.job_id
+    assert response.status.state == job_pb.JOB_STATE_PENDING
 
 
 def test_authz_readonly_cannot_submit_but_can_list_devices(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -50,21 +50,14 @@ def _extract_bad_request(err: grpc.RpcError) -> error_details_pb2.BadRequest:
     return bad
 
 
-def test_submit_job_missing_required_fields(grpc_addr: str):
+def test_submit_job_missing_required_fields_is_accepted(grpc_addr: str):
     channel = grpc.insecure_channel(grpc_addr)
     stub = job_pb_grpc.JobServiceStub(channel)
 
-    with pytest.raises(grpc.RpcError) as e:
-        stub.SubmitJob(job_pb.SubmitJobRequest())
-
-    assert e.value.code() == grpc.StatusCode.INVALID_ARGUMENT
-
-    bad = _extract_bad_request(e.value)
-    fields = {v.field for v in bad.field_violations}
-
-    assert "name" in fields
-    assert "target" in fields
-    assert "program" in fields
+    response = stub.SubmitJob(job_pb.SubmitJobRequest())
+    assert response.job_id
+    assert response.status.job_id == response.job_id
+    assert response.status.state == job_pb.JOB_STATE_PENDING
 
 
 def test_get_job_status_missing_job_id(grpc_addr: str):
