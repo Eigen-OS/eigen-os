@@ -10,6 +10,11 @@ This repository currently implements a **minimal** gRPC server skeleton exposing
 Run locally (from repo root):
 
 ```bash
+export EIGEN_QFS_BACKEND=s3
+export EIGEN_QFS_S3_BUCKET=eigen-qfs
+export EIGEN_QFS_S3_ENDPOINT=http://localhost:9000
+export AWS_ACCESS_KEY_ID=eigen
+export AWS_SECRET_ACCESS_KEY=eigen-password
 python -m venv .venv
 source .venv/bin/activate
 pip install -e src/services/system-api
@@ -18,6 +23,10 @@ SYSTEM_API_GRPC_BIND=0.0.0.0:50051 system-api
 
 The server performs basic required-field validation and returns structured validation
 errors using `google.rpc.BadRequest` field violations.
+
+When system-api runs in Docker and CLI runs on the host, use the S3 backend
+so result artifacts live in MinIO instead of container-local disk.
+That keeps `eigen results` consistent across process boundaries.
 
 ## MVP security/isolation baseline (Issue #46)
 
@@ -1597,6 +1606,9 @@ This service currently provides a **minimal** public gRPC surface:
 ### Run locally
 
 ```bash
+export EIGEN_QFS_LOCAL_ROOT="$HOME/.cache/eigen/qfs"
+mkdir -p "$EIGEN_QFS_LOCAL_ROOT"
+
 cd src/services/system-api
 python -m venv .venv
 source .venv/bin/activate

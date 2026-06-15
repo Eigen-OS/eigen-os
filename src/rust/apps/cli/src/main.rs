@@ -789,21 +789,6 @@ fn run_results(args: &[String]) -> Result<(), i32> {
             for (k, v) in &results.metadata {
                 println!("  {k}: {v}");
             }
-            println!("artifacts:");
-            let downloads = jobspec::download_and_verify_parquet_artifacts_from_qfs(
-                &results.job_id,
-                &results.artifacts,
-            )
-            .map_err(|err| print_grpc_like_error("results", &err))?;
-            for artifact in downloads {
-                println!(
-                    "  {}: {} -> {} ({} bytes, parquet verified)",
-                    artifact.kind,
-                    artifact.qfs_uri,
-                    artifact.local_path.display(),
-                    artifact.bytes
-                );
-            }
 
             if results.state != "DONE" {
                 eprintln!("error_code: {}", results.error_code.unwrap_or_default());

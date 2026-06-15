@@ -6,6 +6,9 @@ This directory contains practical examples for validating contracts and service 
 
 - `basic/` — minimal examples.
 - `advanced/` — more complete scenarios.
+
+- Max-coverage Eigen-Lang showcase: [`advanced/eigen_lang_showcase/README.md`](advanced/eigen_lang_showcase/README.md)
+- `advanced/vqe_h2/` — polished H2 VQE simulator demo.
 - `python/` — Python/gRPC skeleton services.
 
 ## Python gRPC skeleton servers

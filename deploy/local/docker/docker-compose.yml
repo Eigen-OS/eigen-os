@@ -1,0 +1,118 @@
+services:
+  system-api:
+    build:
+      context: ../../..
+      dockerfile: deploy/local/docker/Dockerfile.api
+    container_name: eigen-system-api
+    environment:
+      SYSTEM_API_GRPC_BIND: 0.0.0.0:50051
+      SYSTEM_API_METRICS_PORT: 9090
+      SYSTEM_API_AUTH_MODE: allow_all
+      EIGEN_QFS_LOCAL_ROOT: ${EIGEN_QFS_LOCAL_ROOT:-/tmp/eigen/qfs}
+      EIGEN_QFS_BACKEND: s3
+      EIGEN_QFS_S3_BUCKET: eigen-qfs
+      EIGEN_QFS_S3_ENDPOINT: http://minio:9000
+      AWS_ACCESS_KEY_ID: eigen
+      AWS_SECRET_ACCESS_KEY: eigen-password
+      EIGEN_KERNEL_ENDPOINT: eigen-kernel:50052
+      EIGEN_COMPILER_ENDPOINT: eigen-compiler:50071
+      DRIVER_MANAGER_ENDPOINT: driver-manager:50061
+    ports:
+      - "50051:50051"
+      - "9090:9090"
+    volumes:
+      - ${EIGEN_QFS_LOCAL_ROOT:-/tmp/eigen/qfs}:${EIGEN_QFS_LOCAL_ROOT:-/tmp/eigen/qfs}
+      
+    depends_on:
+      - minio
+      - minio-init
+      - eigen-kernel
+      - eigen-compiler
+      - driver-manager
+    restart: unless-stopped
+
+  eigen-kernel:
+    build:
+      context: ../../..
+      dockerfile: deploy/local/docker/Dockerfile.kernel
+    container_name: eigen-kernel
+    environment:
+      EIGEN_KERNEL_ADDR: 0.0.0.0:50052
+      EIGEN_QFS_LOCAL_ROOT: ${EIGEN_QFS_LOCAL_ROOT:-/tmp/eigen/qfs}
+      EIGEN_QFS_ROOT: /tmp/eigen/qfs
+      RUST_LOG: info
+    ports:
+      - "50052:50052"
+    volumes:
+      - ${EIGEN_QFS_LOCAL_ROOT:-/tmp/eigen/qfs}:${EIGEN_QFS_LOCAL_ROOT:-/tmp/eigen/qfs}
+    restart: unless-stopped
+
+  eigen-compiler:
+    build:
+      context: ../../..
+      dockerfile: deploy/local/docker/Dockerfile.compiler
+    container_name: eigen-compiler
+    environment:
+      EIGEN_COMPILER_GRPC_BIND: 0.0.0.0:50071
+      EIGEN_COMPILER_METRICS_PORT: 9093
+    ports:
+      - "50071:50071"
+      - "9093:9093"
+    restart: unless-stopped
+
+  driver-manager:
+    build:
+      context: ../../..
+      dockerfile: deploy/local/docker/Dockerfile.driver-manager
+    container_name: eigen-driver-manager
+    environment:
+      DRIVER_MANAGER_GRPC_BIND: 0.0.0.0:50061
+      DRIVER_MANAGER_METRICS_PORT: 9092
+    ports:
+      - "50061:50061"
+      - "9092:9092"
+    restart: unless-stopped
+  
+  benchmark-service:
+    build:
+      context: ../../..
+      dockerfile: deploy/local/docker/Dockerfile.benchmark-service
+    container_name: eigen-benchmark-service
+    profiles:
+      - benchmark
+    working_dir: /app/src/services/benchmark-service
+    command: ["pytest", "-q", "tests"]
+    
+  minio:
+    image: minio/minio:latest
+    container_name: eigen-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: eigen
+      MINIO_ROOT_PASSWORD: eigen-password
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/ready"]
+      interval: 5s
+      timeout: 2s
+      retries: 20
+    restart: unless-stopped
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -lc "
+      mc alias set eigen http://minio:9000 eigen eigen-password &&
+      mc mb -p eigen/eigen-qfs || true
+      "
+    
+volumes:
+  minio-data:
+  

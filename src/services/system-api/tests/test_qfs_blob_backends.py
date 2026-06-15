@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+from pathlib import Path
 
 import pytest
 
@@ -89,6 +90,17 @@ def test_qfs_store_fails_over_to_secondary_backend():
     store.put_bytes("qfs://jobs/fallback.bin", b"ok")
 
     assert fallback.download_bytes("qfs://jobs/fallback.bin") == b"ok"
+
+
+def test_local_blob_backend_accepts_canonical_qfs_root_env(monkeypatch, tmp_path):
+    monkeypatch.delenv("EIGEN_QFS_LOCAL_ROOT", raising=False)
+    monkeypatch.setenv("EIGEN_QFS_ROOT", str(tmp_path))
+
+    backend = LocalBlobBackend()
+    backend.upload_bytes("qfs://jobs/env-root.bin", b"ok")
+
+    assert backend.download_bytes("qfs://jobs/env-root.bin") == b"ok"
+    assert (tmp_path / "jobs" / "env-root.bin").read_bytes() == b"ok"
 
 
 def test_s3_backend_upload_download_list_and_atomic_write():

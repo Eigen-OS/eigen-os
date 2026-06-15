@@ -1,0 +1,20 @@
+apiVersion: eigen.os/v0.1
+kind: QuantumJob
+metadata:
+  name: vqe-h2-demo
+  labels:
+    example: "true"
+    algorithm: "vqe"
+    molecule: "H2"
+spec:
+  program_path: program.eigen.py
+  entrypoint: vqe_h2
+  target: sim:local
+  priority: 60
+  metadata:
+    shots: "4096"
+    max_iters: "40"
+    optimizer: "cobyla"
+    basis: "sto-3g"
+    molecule: "H2"
+    

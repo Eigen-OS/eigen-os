@@ -1308,8 +1308,9 @@ enum ExecuteScriptStep {
 
 impl FixtureAdapters {
     fn from_env() -> Self {
-        let qfs_root = std::env::var("EIGEN_QFS_ROOT")
-            .unwrap_or_else(|_| qfs::DEFAULT_CIRCUIT_FS_ROOT.to_string());
+        let qfs_root = std::env::var("EIGEN_QFS_LOCAL_ROOT")
+            .or_else(|_| std::env::var("EIGEN_QFS_ROOT"))
+            .unwrap_or_else(|_| "/tmp/eigen/qfs".to_string());
         let hold_stage = std::env::var("EIGEN_KERNEL_TEST_HOLD_STAGE").ok().and_then(|raw| parse_stage_kind(&raw));
         let hold_for = std::env::var("EIGEN_KERNEL_TEST_HOLD_MS")
             .ok()
@@ -1631,10 +1632,15 @@ impl OrchestrationAdapters for FixtureAdapters {
             })).collect::<Vec<_>>(),
         });
         let payload = serde_json::to_vec(&artifact).unwrap_or_default();
-        let _ = self.qfs.ensure_job_layout(&submission.job_id);
-        let _ = self
+        if let Err(err) = self.qfs.ensure_job_layout(&submission.job_id) {
+            tracing::warn!(job_id = %submission.job_id, error = %err, "failed to prepare QFS job layout");
+        }
+        if let Err(err) = self
             .qfs
-            .store_results_bundle(&submission.job_id, &payload, env!("CARGO_PKG_VERSION"));
+            .store_results_bundle(&submission.job_id, &payload, env!("CARGO_PKG_VERSION"))
+        {
+            tracing::warn!(job_id = %submission.job_id, error = %err, "failed to persist results bundle");
+        }
 
         let compile_stage = stage_records.iter().find(|stage| stage.stage_key == "compile");
         let optimize_stage = stage_records.iter().find(|stage| stage.stage_key == "optimize");
@@ -3291,6 +3297,21 @@ fn ts_to_json(ts: &Timestamp) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEST_QFS_SEQ: AtomicU64 = AtomicU64::new(0);
+
+    fn test_qfs_root(tag: &str) -> String {
+        let seq = TEST_QFS_SEQ.fetch_add(1, Ordering::Relaxed);
+        let mut root = std::env::temp_dir();
+        root.push(format!(
+            "eigen-kernel-test-qfs-{tag}-{}-{}-{seq}",
+            std::process::id(),
+            unix_epoch_ms_u64(),
+        ));
+        root.to_string_lossy().into_owned()
+    }
     use crate::proto::RequestMetadata;
     use std::collections::BTreeSet;
     use prost_types::Duration as ProtoDuration;
@@ -3299,7 +3320,7 @@ mod tests {
 
     fn make_service(failure_stage: Option<DagStageKind>) -> (KernelGatewaySvc, Arc<KernelRuntimeStore>) {
         let runtime = Arc::new(KernelRuntimeStore::default());
-        let adapters = Arc::new(FixtureAdapters::new("/tmp/eigen-kernel-test-qfs", failure_stage));
+        let adapters = Arc::new(FixtureAdapters::new(test_qfs_root("service"), failure_stage));
         let svc = KernelGatewaySvc::new(runtime.clone(), adapters);
         (svc, runtime)
     }
@@ -3311,7 +3332,7 @@ mod tests {
      ) -> (KernelGatewaySvc, Arc<KernelRuntimeStore>) {
          let runtime = Arc::new(KernelRuntimeStore::default());
          let adapters = Arc::new(FixtureAdapters::with_hold(
-             "/tmp/eigen-kernel-test-qfs",
+             test_qfs_root("hold"),
              failure_stage,
              hold_stage,
              hold_for,
@@ -3493,7 +3514,7 @@ mod tests {
     fn make_retry_service(script: Vec<ExecuteScriptStep>) -> (KernelGatewaySvc, Arc<KernelRuntimeStore>) {
         let runtime = Arc::new(KernelRuntimeStore::default());
         let adapters = Arc::new(FixtureAdapters::with_execute_script(
-            "/tmp/eigen-kernel-test-qfs",
+            test_qfs_root("retry"),
             None,
             script,
         ));

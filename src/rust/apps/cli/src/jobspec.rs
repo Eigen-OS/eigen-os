@@ -31,6 +31,7 @@ pub const DEFAULT_TENANT_ID: &str = "tenant-default";
 pub const DEFAULT_PROJECT_ID: &str = "project-default";
 pub const CLI_CLIENT_VERSION: &str = "eigen-cli/0.16.0";
 
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FieldViolation {
     pub field: String,
@@ -754,7 +755,7 @@ impl eigen::api::v1::job_service_server::JobService for TestJobService {
                 ]),
                 metadata: std::collections::HashMap::from([
                     (
-                        "qfs_results_parquet".to_string(),
+                        "qfs_result_ref".to_string(),
                         format!("qfs://jobs/{}/results.parquet", "job-demo-done"),
                     ),
                 ]),
@@ -767,7 +768,7 @@ impl eigen::api::v1::job_service_server::JobService for TestJobService {
                 error_summary: "failed to simulate fixture job".to_string(),
                 metadata: std::collections::HashMap::from([
                     (
-                        "qfs_results_parquet".to_string(),
+                        "qfs_result_ref".to_string(),
                         format!("qfs://jobs/{}/results.parquet", "job-demo-error"),
                     ),
                 ]),
@@ -1305,17 +1306,8 @@ pub struct JobResultsView {
     pub state: String,
     pub counts: BTreeMap<String, i64>,
     pub metadata: BTreeMap<String, String>,
-    pub artifacts: BTreeMap<String, String>,
     pub error_code: Option<String>,
     pub error_summary: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DownloadedArtifactView {
-    pub kind: String,
-    pub qfs_uri: String,
-    pub local_path: PathBuf,
-    pub bytes: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1710,42 +1702,43 @@ pub fn get_job_results_from_system_api(job_id: &str) -> Result<JobResultsView, G
     }
 
     block_on_result(async {
-        let mut client = connect_client()?;
-        let resp = client
-            .get_job_results(eigen::api::v1::GetJobResultsRequest {
-                envelope: None,
-                job_id: job_id.to_string(),
-            })
-            .await
-            .map_err(map_status_error)?
-            .into_inner();
-        let mut counts = BTreeMap::new();
+    let mut client = connect_client()?;
+    let resp = client
+        .get_job_results(eigen::api::v1::GetJobResultsRequest {
+            envelope: None,
+            job_id: job_id.to_string(),
+        })
+        .await
+        .map_err(map_status_error)?
+        .into_inner();
+
+    let mut counts = BTreeMap::new();
         for (k, v) in resp.counts {
             counts.insert(k, v);
         }
-        let mut metadata = BTreeMap::new();
+
+    let mut metadata = BTreeMap::new();
         for (k, v) in resp.metadata {
             metadata.insert(k, v);
         }
-        let mut artifacts = BTreeMap::new();
-        if let Some(results_parquet) = metadata.get("qfs_results_parquet") {
-            artifacts.insert("counts_parquet".to_string(), results_parquet.clone());
+
+    Ok(JobResultsView {
+        job_id: resp.job_id,
+        state: map_job_state(resp.state),
+        counts,
+        metadata,
+        error_code: if resp.error_code.is_empty() {
+            None
         } else {
-            artifacts.insert(
-                "counts_parquet".to_string(),
-                format!("qfs://jobs/{job_id}/results.parquet"),
-            );
-        }
-        Ok(JobResultsView {
-            job_id: resp.job_id,
-            state: map_job_state(resp.state),
-            counts,
-            metadata,
-            artifacts,
-            error_code: if resp.error_code.is_empty() { None } else { Some(resp.error_code) },
-            error_summary: if resp.error_summary.is_empty() { None } else { Some(resp.error_summary) },
-        })
+            Some(resp.error_code)
+        },
+        error_summary: if resp.error_summary.is_empty() {
+            None
+        } else {
+            Some(resp.error_summary)
+        },
     })
+})
 }
 
 pub fn get_dispatch_rationale_from_system_api(
@@ -1785,88 +1778,6 @@ pub fn get_dispatch_rationale_from_system_api(
             trace_ref: if rationale.trace_ref.is_empty() { None } else { Some(rationale.trace_ref) },
         })
     })
-}
-
-pub fn download_and_verify_parquet_artifacts_from_qfs(
-    job_id: &str,
-    artifacts: &BTreeMap<String, String>,
-) -> Result<Vec<DownloadedArtifactView>, GrpcLikeError> {
-    if job_id.trim().is_empty() {
-        return Err(GrpcLikeError {
-            code: GrpcCode::InvalidArgument,
-            message: "job_id is required".to_string(),
-            retry_hint: None,
-        });
-    }
-    let qfs_root = std::env::var("EIGEN_QFS_LOCAL_ROOT").unwrap_or_else(|_| "/var/lib/eigen/qfs".to_string());
-    let out_dir = std::env::temp_dir().join("eigen-cli-results").join(job_id);
-    std::fs::create_dir_all(&out_dir).map_err(|err| GrpcLikeError {
-        code: GrpcCode::Internal,
-        message: format!("failed to create output dir {}: {err}", out_dir.display()),
-        retry_hint: None,
-    })?;
-
-    let mut downloaded = Vec::new();
-    for (kind, qfs_uri) in artifacts {
-        if !qfs_uri.starts_with("qfs://") {
-            return Err(GrpcLikeError {
-                code: GrpcCode::Internal,
-                message: format!("artifact URI is not QFS-backed: {qfs_uri}"),
-                retry_hint: None,
-            });
-        }
-        if !qfs_uri.ends_with(".parquet") {
-            return Err(GrpcLikeError {
-                code: GrpcCode::Internal,
-                message: format!("artifact URI is not a Parquet file: {qfs_uri}"),
-                retry_hint: None,
-            });
-        }
-        let rel = qfs_uri.trim_start_matches("qfs://");
-        let source_path = Path::new(&qfs_root).join(rel);
-        if !source_path.exists() {
-            return Err(GrpcLikeError {
-                code: GrpcCode::NotFound,
-                message: format!("QFS artifact not found: {qfs_uri}"),
-                retry_hint: None,
-            });
-        }
-        let local_path = out_dir.join(format!("{kind}.parquet"));
-        let parquet_bytes = std::fs::read(&source_path).map_err(|err| GrpcLikeError {
-            code: GrpcCode::Internal,
-            message: format!("failed to read {}: {err}", source_path.display()),
-            retry_hint: None,
-        })?;
-        std::fs::write(&local_path, &parquet_bytes).map_err(|err| GrpcLikeError {
-            code: GrpcCode::Internal,
-            message: format!("failed to write {}: {err}", local_path.display()),
-            retry_hint: None,
-        })?;
-        verify_parquet_magic(&local_path)?;
-        downloaded.push(DownloadedArtifactView {
-            kind: kind.clone(),
-            qfs_uri: qfs_uri.clone(),
-            local_path,
-            bytes: parquet_bytes.len(),
-        });
-    }
-    Ok(downloaded)
-}
-
-fn verify_parquet_magic(path: &Path) -> Result<(), GrpcLikeError> {
-    let bytes = std::fs::read(path).map_err(|err| GrpcLikeError {
-        code: GrpcCode::Internal,
-        message: format!("failed to read {}: {err}", path.display()),
-        retry_hint: None,
-    })?;
-    if bytes.len() < 8 || &bytes[..4] != b"PAR1" || &bytes[bytes.len() - 4..] != b"PAR1" {
-        return Err(GrpcLikeError {
-            code: GrpcCode::Internal,
-            message: format!("artifact {} is not a valid parquet payload", path.display()),
-            retry_hint: None,
-        });
-    }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -2128,20 +2039,19 @@ spec:
         assert_eq!(results.state, "ERROR");
         assert_eq!(results.error_code.as_deref(), Some("EIGEN_SIM_ERROR"));
         assert!(results.error_summary.unwrap_or_default().contains("failed"));
-        assert!(results.artifacts.contains_key("counts_parquet"));
+        assert_eq!(
+            results.metadata.get("qfs_result_ref").map(String::as_str),
+            Some("qfs://jobs/job-demo-error/results.parquet")
+        );
     }
 
     #[test]
-    fn qfs_parquet_artifacts_are_downloaded_and_verified() {
+    fn results_expose_qfs_result_ref_via_metadata() {
         let results = get_job_results_from_system_api("job-demo-done").expect("results");
-        let downloaded =
-            download_and_verify_parquet_artifacts_from_qfs("job-demo-done", &results.artifacts)
-                .expect("downloaded");
-        assert_eq!(downloaded.len(), 1);
-        let artifact = &downloaded[0];
-        assert_eq!(artifact.kind, "counts_parquet");
-        assert!(artifact.local_path.exists());
-        assert!(artifact.bytes >= 8);
+        assert_eq!(
+            results.metadata.get("qfs_result_ref").map(String::as_str),
+            Some("qfs://jobs/job-demo-done/results.parquet")
+        );
     }
 
     #[test]
