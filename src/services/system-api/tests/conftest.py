@@ -45,11 +45,6 @@ def _free_port() -> int:
 
 @pytest.fixture(scope="session")
 def kernel_addr(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
-    external_addr = os.environ.get("EIGEN_KERNEL_ADDR") or os.environ.get("KERNEL_ENDPOINT") or os.environ.get("KERNEL_GRPC_ENDPOINT")
-    if external_addr:
-        yield external_addr
-        return
-
     cargo = shutil.which("cargo")
     if cargo is None:
         pytest.skip("cargo is required to start the kernel integration test server")
@@ -100,7 +95,7 @@ def kernel_addr(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
 
 
 @pytest.fixture(scope="module")
-def grpc_addr(kernel_addr: str, tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
+def grpc_addr(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
     port = _free_port()
     addr = f"127.0.0.1:{port}"
     previous_store_path = os.environ.get("SYSTEM_API_IDEMPOTENCY_STORE_PATH")
@@ -109,9 +104,6 @@ def grpc_addr(kernel_addr: str, tmp_path_factory: pytest.TempPathFactory) -> Ite
         tmp_path_factory.mktemp("system-api") / "idempotency.json"
     )
     os.environ["EIGEN_QFS_LOCAL_ROOT"] = str(tmp_path_factory.mktemp("system-api-qfs") / "qfs")
-    os.environ["EIGEN_KERNEL_ADDR"] = kernel_addr
-    os.environ["KERNEL_ENDPOINT"] = kernel_addr
-    os.environ["KERNEL_GRPC_ENDPOINT"] = kernel_addr
 
     from system_api.grpc_server import serve
 
@@ -142,3 +134,30 @@ def _clean_qfs_store() -> Iterator[None]:
 @pytest.fixture
 def anyio_backend() -> str:
     return "asyncio"
+
+
+def _resolve_job(self, job_id: str):
+        with self._lock:
+            record = self._jobs.get(job_id)
+            if record is not None:
+                return self._job_pb.SubmitJobResponse(
+                    job_id=job_id,
+                    status=self._job_status_from_record(record),
+                )
+
+            durable = self._job_store.get(job_id)
+            if durable is None:
+                return None
+
+            return self._job_pb.SubmitJobResponse(
+                job_id=durable.job_id,
+                status=self._types_pb.JobStatus(
+                    job_id=durable.job_id,
+                    state=self._types_pb.JOB_STATE_PENDING,
+                    stage="QUEUED",
+                    progress=0.0,
+                    message="idempotent replay from durable store",
+                    created_at=_ts_from_unix(durable.created_at_unix_ms / 1000.0),
+                    updated_at=_ts_from_unix(durable.updated_at_unix_ms / 1000.0),
+                ),
+            )
