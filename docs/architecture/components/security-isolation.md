@@ -88,6 +88,8 @@ System API enforces auth modes:
 - `SYSTEM_API_AUTH_MODE=allow_all`
 - `SYSTEM_API_AUTH_MODE=static_token`
 
+`allow_all` remains a local/dev bootstrap mode for ingress-only flows; knowledge-base retrieval and runtime audit helpers MUST still fail closed when security context or policy evidence is missing.
+
 Static token mode uses:
 
 `SYSTEM_API_AUTH_TOKEN=<token>`

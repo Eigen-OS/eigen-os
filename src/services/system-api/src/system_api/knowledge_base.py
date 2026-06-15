@@ -432,6 +432,13 @@ def _okb_filter_scope_tokens(
 
     return tuple(sorted(dict.fromkeys(normalized)))
 
+def _policy_snapshot_configured() -> bool:
+    return bool(
+        os.getenv("SYSTEM_API_POLICY_SNAPSHOT_JSON", "").strip()
+        or os.getenv("SYSTEM_API_POLICY_SNAPSHOT_PATH", "").strip()
+    )
+
+
 class KnowledgeBaseService:
     """Deterministic in-memory KnowledgeBaseService implementation."""
 
@@ -736,6 +743,23 @@ class KnowledgeBaseService:
     def ingest_runtime_decision(self, payload: dict[str, Any]) -> str:
         if self._storage_mode == "disabled":
             raise KnowledgeBaseUnavailable("knowledge base storage unavailable")
+        
+        security_payload = payload.get("security_context") if isinstance(payload.get("security_context"), dict) else {}
+        security_payload = dict(security_payload or {})
+        subject = str(security_payload.get("subject") or payload.get("caller_identity") or payload.get("subject") or "").strip()
+        tenant_id = str(security_payload.get("tenant") or security_payload.get("tenant_id") or payload.get("tenant_id") or "").strip()
+        project_id = str(security_payload.get("project_id") or payload.get("project_id") or "").strip()
+        policy_snapshot_version = str(security_payload.get("policy_version") or payload.get("policy_snapshot_version") or payload.get("policy_version") or "").strip()
+        auth_mode = str(security_payload.get("auth_mode") or payload.get("auth_mode") or "").strip().lower()
+        service_identity = str(security_payload.get("service_identity") or payload.get("service_identity") or "").strip()
+        retrieval_sources = _audit_string_list(
+            payload.get("retrieval_sources")
+            or security_payload.get("retrieval_sources")
+            or payload.get("retrieval_references")
+        )
+        if not subject or not tenant_id or not project_id or not policy_snapshot_version or not service_identity or not auth_mode or auth_mode == "allow_all" or not retrieval_sources:
+            raise KnowledgeBaseUnavailable("security context unavailable")
+
         decision_log = self._kb_pb.DecisionLog()
         decision_log.decision_id = str(payload.get("decision_id") or self._decision_id(payload))
         decision_log.trace_id = str(payload.get("trace_id", "")).strip()
@@ -744,97 +768,104 @@ class KnowledgeBaseService:
         decision_log.policy_branch = str(payload.get("policy_branch", "")).strip()
         decision_log.selected_action = str(payload.get("selected_action", "")).strip()
         decision_log.fallback_used = bool(payload.get("fallback_used", False))
-        explainability_envelope = _explainability_envelope_from_payload(
-            payload,
-            salt=self._anon_salt,
-            epoch=self._anon_epoch,
-        )
-        snapshot = _anonymize_mapping(dict(payload.get("feature_snapshot") or {}), salt=self._anon_salt, epoch=self._anon_epoch)
-        caller_identity = _caller_identity_from_payload(payload)
-        retrieval_sources = _audit_string_list(payload.get("retrieval_sources") or explainability_envelope["retrieval_references"])
-        snapshot["caller_identity"] = caller_identity
-        snapshot["tenant_id"] = str(payload.get("tenant_id") or self._payload_envelope(payload)["tenant_id"]).strip()
-        snapshot["project_id"] = str(payload.get("project_id") or self._payload_envelope(payload)["project_id"]).strip()
-        snapshot["policy_snapshot_version"] = explainability_envelope["policy_snapshot_version"]
-        snapshot["model_version"] = explainability_envelope["model_version"] or decision_log.model_version
-        snapshot["retrieval_sources"] = _stable_json(retrieval_sources)
-        snapshot["final_decision"] = decision_log.selected_action
-        snapshot["explainability_envelope"] = _stable_json(explainability_envelope)
-        snapshot["feature_set"] = _stable_json(explainability_envelope["feature_set"])
-        snapshot["confidence"] = f"{explainability_envelope['confidence']:.6f}"
-        snapshot["retrieval_references"] = _stable_json(explainability_envelope["retrieval_references"])
-        snapshot["replay_digest"] = explainability_envelope["replay_digest"]
-        for key, value in snapshot.items():
-            decision_log.feature_snapshot[key] = str(value)
-        decided_at = payload.get("decided_at")
-        if isinstance(decided_at, Timestamp):
-            decision_log.decided_at.CopyFrom(decided_at)
-        elif isinstance(decided_at, datetime):
-            decision_log.decided_at.FromDatetime(decided_at.astimezone(timezone.utc))
-        else:
-            decision_log.decided_at.CopyFrom(_now_ts())
-        envelope = self._payload_envelope(payload)
-        capability_scope = _capability_scope_tokens(payload)
-        self._audit_decision_event(
-            operation="ingest_runtime_decision",
-            decision_id=decision_log.decision_id,
-            final_decision=decision_log.selected_action,
-            tenant_id=envelope["tenant_id"],
-            project_id=envelope["project_id"],
-            policy_snapshot_version=explainability_envelope["policy_snapshot_version"] or envelope["contract_version"],
-            model_version=decision_log.model_version,
-            retrieval_sources=retrieval_sources,
-            caller_identity=caller_identity,
-            trace_id=decision_log.trace_id,
-            replay_digest=explainability_envelope["replay_digest"],
-            confidence=explainability_envelope["confidence"],
-        )
-        with self._lock:
-            self._gc_locked()
-            self._store_decision_log(
-                decision_log=decision_log,
-                envelope=envelope,
-                context=None,
-                capability_scope=self._capability_scope_tokens(payload),
+        
+        try:
+            explainability_envelope = _explainability_envelope_from_payload(
+                payload,
+                salt=self._anon_salt,
+                epoch=self._anon_epoch,
             )
-            self._learning_store_evidence(
-                source="runtime",
-                evidence_kind="runtime",
-                envelope=envelope,
-                evidence_payload={
-                    "decision_id": decision_log.decision_id,
-                    "trace_id": decision_log.trace_id,
-                    "model_version": decision_log.model_version,
-                    "component": decision_log.component,
-                    "policy_branch": decision_log.policy_branch,
-                    "selected_action": decision_log.selected_action,
-                    "fallback_used": decision_log.fallback_used,
-                    "feature_snapshot": dict(decision_log.feature_snapshot),
-                    "capability_scope": list(capability_scope),
-                    "decided_at": decision_log.decided_at,
-                    "training_set_hash": str(payload.get("training_set_hash", "")).strip(),
-                    "evaluation_bundle_hash": str(payload.get("evaluation_bundle_hash", "")).strip(),
-                    "promotion_policy_version": str(payload.get("promotion_policy_version", "")).strip(),
-                    "explainability_envelope": explainability_envelope,
-                },
+            if not explainability_envelope["policy_snapshot_version"]:
+                raise KnowledgeBaseUnavailable("policy snapshot unavailable")
+            snapshot = _anonymize_mapping(dict(payload.get("feature_snapshot") or {}), salt=self._anon_salt, epoch=self._anon_epoch)
+            caller_identity = subject
+            snapshot["caller_identity"] = caller_identity
+            snapshot["tenant_id"] = tenant_id
+            snapshot["project_id"] = project_id
+            snapshot["policy_snapshot_version"] = policy_snapshot_version or explainability_envelope["policy_snapshot_version"]
+            snapshot["model_version"] = explainability_envelope["model_version"] or decision_log.model_version
+            snapshot["retrieval_sources"] = _stable_json(retrieval_sources)
+            snapshot["final_decision"] = decision_log.selected_action
+            snapshot["explainability_envelope"] = _stable_json(explainability_envelope)
+            snapshot["feature_set"] = _stable_json(explainability_envelope["feature_set"])
+            snapshot["confidence"] = f"{explainability_envelope['confidence']:.6f}"
+            snapshot["retrieval_references"] = _stable_json(explainability_envelope["retrieval_references"])
+            snapshot["replay_digest"] = explainability_envelope["replay_digest"]
+            for key, value in snapshot.items():
+                decision_log.feature_snapshot[key] = str(value)
+            decided_at = payload.get("decided_at")
+            if isinstance(decided_at, Timestamp):
+                decision_log.decided_at.CopyFrom(decided_at)
+            elif isinstance(decided_at, datetime):
+                decision_log.decided_at.FromDatetime(decided_at.astimezone(timezone.utc))
+            else:
+                decision_log.decided_at.CopyFrom(_now_ts())
+            envelope = self._payload_envelope({**payload, "tenant_id": tenant_id, "project_id": project_id})
+            capability_scope = _capability_scope_tokens(payload)
+            self._audit_decision_event(
+                operation="ingest_runtime_decision",
+                decision_id=decision_log.decision_id,
+                final_decision=decision_log.selected_action,
+                tenant_id=envelope["tenant_id"],
+                project_id=envelope["project_id"],
+                policy_snapshot_version=explainability_envelope["policy_snapshot_version"] or policy_snapshot_version or envelope["contract_version"],
                 model_version=decision_log.model_version,
-                training_set_hash=str(payload.get("training_set_hash", "")).strip(),
-                evaluation_bundle_hash=str(payload.get("evaluation_bundle_hash", "")).strip(),
-                promotion_policy_version=str(payload.get("promotion_policy_version", "")).strip(),
-                lifecycle_state="VALIDATED",
-                quarantine_state="quarantine" if self._learning_payload_contains_quarantine_fields(payload) else "none",
-                gate_results={
-                    "fallback_used": bool(decision_log.fallback_used),
-                    "trace_id": decision_log.trace_id,
-                },
-                metadata={
-                    "component": decision_log.component,
-                    "policy_branch": decision_log.policy_branch,
-                    "explainability_envelope_json": _stable_json(explainability_envelope),
-                },
-                command="runtime_decision",
-                decision=decision_log.selected_action,
-            )
+                retrieval_sources=retrieval_sources,
+                caller_identity=caller_identity,
+                trace_id=decision_log.trace_id,
+                replay_digest=explainability_envelope["replay_digest"],
+                confidence=explainability_envelope["confidence"],
+            )    
+            with self._lock:
+                self._gc_locked()
+                self._store_decision_log(
+                    decision_log=decision_log,
+                    envelope=envelope,
+                    context=None,
+                    capability_scope=self._capability_scope_tokens(payload),
+                )
+                self._learning_store_evidence(
+                    source="runtime",
+                    evidence_kind="runtime",
+                    envelope=envelope,
+                    evidence_payload={
+                        "decision_id": decision_log.decision_id,
+                        "trace_id": decision_log.trace_id,
+                        "model_version": decision_log.model_version,
+                        "component": decision_log.component,
+                        "policy_branch": decision_log.policy_branch,
+                        "selected_action": decision_log.selected_action,
+                        "fallback_used": decision_log.fallback_used,
+                        "feature_snapshot": dict(decision_log.feature_snapshot),
+                        "capability_scope": list(capability_scope),
+                        "decided_at": decision_log.decided_at,
+                        "training_set_hash": str(payload.get("training_set_hash", "")).strip(),
+                        "evaluation_bundle_hash": str(payload.get("evaluation_bundle_hash", "")).strip(),
+                        "promotion_policy_version": str(payload.get("promotion_policy_version", "")).strip(),
+                        "explainability_envelope": explainability_envelope,
+                    },
+                    model_version=decision_log.model_version,
+                    training_set_hash=str(payload.get("training_set_hash", "")).strip(),
+                    evaluation_bundle_hash=str(payload.get("evaluation_bundle_hash", "")).strip(),
+                    promotion_policy_version=str(payload.get("promotion_policy_version", "")).strip(),
+                    lifecycle_state="VALIDATED",
+                    quarantine_state="quarantine" if self._learning_payload_contains_quarantine_fields(payload) else "none",
+                    gate_results={
+                        "fallback_used": bool(decision_log.fallback_used),
+                        "trace_id": decision_log.trace_id,
+                    },
+                    metadata={
+                        "component": decision_log.component,
+                        "policy_branch": decision_log.policy_branch,
+                        "explainability_envelope_json": _stable_json(explainability_envelope),
+                    },
+                    command="runtime_decision",
+                    decision=decision_log.selected_action,
+                )
+        except KnowledgeBaseUnavailable:
+            raise
+        except Exception as exc:
+            raise KnowledgeBaseUnavailable("redaction failure") from exc
         record_kb_query("runtime_decisions", hit=True)
         return decision_log.decision_id
 
@@ -874,88 +905,93 @@ class KnowledgeBaseService:
             record.lineage.promotion_policy_version = str(lineage.get("promotion_policy_version", "")).strip()
             record.lineage.promotion_outcome = str(lineage.get("promotion_outcome", "")).strip()
         capability_scope = _capability_scope_tokens(payload)
-        attrs = _anonymize_mapping(dict(payload.get("attributes") or {}), salt=self._anon_salt, epoch=self._anon_epoch)
-        attrs.update(
-            {
-                "record_kind": "benchmark_run",
-                "request_hash": str(payload.get("request_hash", "")).strip(),
-                "idempotency_key": str(payload.get("idempotency_key", "")).strip(),
-                "parent_run_id": str(payload.get("parent_run_id", "")).strip(),
-                "run_state": str(payload.get("state", "")).strip(),
-                "capability_scope": _stable_json(list(capability_scope)),
-                "tenant_id": _anon_token(salt=self._anon_salt, epoch=self._anon_epoch, value=str(payload.get("tenant_id", ""))) if payload.get("tenant_id") else "",
-                "project_id": _anon_token(salt=self._anon_salt, epoch=self._anon_epoch, value=str(payload.get("project_id", ""))) if payload.get("project_id") else "",
-                "trace_id": str(payload.get("trace_id", "")).strip(),
-                "replay_bundle_ref": str(payload.get("replay_bundle_ref") or self._replay_bundle_ref(record.record_id)).strip(),
-            }
-        )
-        for key, value in attrs.items():
-            record.attributes[key] = str(value)
-        envelope = self._payload_envelope(payload)
-        with self._lock:
-            self._gc_locked()
-            self._upsert_record(
-                record=record,
-                envelope=envelope,
-                allow_overwrite=True,
-                anonymize_attributes=False,
-                source="benchmark",
-                replay_bundle_ref=attrs["replay_bundle_ref"],
-                context=None,
-                capability_scope=self._capability_scope_tokens(payload),
-            )
+        try:
+            attrs = _anonymize_mapping(dict(payload.get("attributes") or {}), salt=self._anon_salt, epoch=self._anon_epoch)
+            attrs.update(
+                {
+                    "record_kind": "benchmark_run",
+                    "request_hash": str(payload.get("request_hash", "")).strip(),
+                    "idempotency_key": str(payload.get("idempotency_key", "")).strip(),
+                    "parent_run_id": str(payload.get("parent_run_id", "")).strip(),
+                    "run_state": str(payload.get("state", "")).strip(),
+                    "capability_scope": _stable_json(list(capability_scope)),
+                    "tenant_id": _anon_token(salt=self._anon_salt, epoch=self._anon_epoch, value=str(payload.get("tenant_id", ""))) if payload.get("tenant_id") else "",
+                    "project_id": _anon_token(salt=self._anon_salt, epoch=self._anon_epoch, value=str(payload.get("project_id", ""))) if payload.get("project_id") else "",
+                    "trace_id": str(payload.get("trace_id", "")).strip(),
+                    "replay_bundle_ref": str(payload.get("replay_bundle_ref") or self._replay_bundle_ref(record.record_id)).strip(),
+                }
+             )
+            for key, value in attrs.items():
+                record.attributes[key] = str(value)
+            envelope = self._payload_envelope(payload)
+            with self._lock:
+                self._gc_locked()
+                self._upsert_record(
+                    record=record,
+                    envelope=envelope,
+                    allow_overwrite=True,
+                    anonymize_attributes=False,
+                    source="benchmark",
+                    replay_bundle_ref=attrs["replay_bundle_ref"],
+                    context=None,
+                    capability_scope=self._capability_scope_tokens(payload),
+                )
 
             self._learning_store_evidence(
-                source="benchmark",
-                evidence_kind="benchmark",
-                envelope=envelope,
-                evidence_payload={
-                    "record_id": record.record_id,
-                    "job_id": record.job_id,
-                    "circuit_id": record.circuit_id,
-                    "artifact_ref": record.artifact_ref,
-                    "dataset_ref": record.dataset_ref,
-                    "backend_profile": record.backend_profile,
-                    "optimizer_version": record.optimizer_version,
-                    "qubit_count": record.qubit_count,
-                    "entanglement_score": record.entanglement_score,
-                    "noise_profile_id": record.noise_profile_id,
-                    "backend_class": record.backend_class,
-                    "capability_scope": list(capability_scope),
-                    "provenance": {
-                        "compiler_ref": record.provenance.compiler_ref,
-                        "optimizer_ref": record.provenance.optimizer_ref,
-                        "runtime_ref": record.provenance.runtime_ref,
-                        "checkpoint_ref": record.provenance.checkpoint_ref,
+                    source="benchmark",
+                    evidence_kind="benchmark",
+                    envelope=envelope,
+                    evidence_payload={
+                        "record_id": record.record_id,
+                        "job_id": record.job_id,
+                        "circuit_id": record.circuit_id,
+                        "artifact_ref": record.artifact_ref,
+                        "dataset_ref": record.dataset_ref,
+                        "backend_profile": record.backend_profile,
+                        "optimizer_version": record.optimizer_version,
+                        "qubit_count": record.qubit_count,
+                        "entanglement_score": record.entanglement_score,
+                        "noise_profile_id": record.noise_profile_id,
+                        "backend_class": record.backend_class,
+                        "capability_scope": list(capability_scope),
+                        "provenance": {
+                            "compiler_ref": record.provenance.compiler_ref,
+                            "optimizer_ref": record.provenance.optimizer_ref,
+                            "runtime_ref": record.provenance.runtime_ref,
+                            "checkpoint_ref": record.provenance.checkpoint_ref,
+                        },
+                        "lineage": {
+                            "model_version": record.lineage.model_version,
+                            "training_set_hash": record.lineage.training_set_hash,
+                            "evaluation_bundle_hash": record.lineage.evaluation_bundle_hash,
+                            "promotion_policy_version": record.lineage.promotion_policy_version,
+                            "promotion_outcome": record.lineage.promotion_outcome,
+                        },
+                        "created_at": record.created_at,
                     },
-                    "lineage": {
-                        "model_version": record.lineage.model_version,
-                        "training_set_hash": record.lineage.training_set_hash,
-                        "evaluation_bundle_hash": record.lineage.evaluation_bundle_hash,
-                        "promotion_policy_version": record.lineage.promotion_policy_version,
+                    model_version=record.lineage.model_version,
+                    training_set_hash=record.lineage.training_set_hash,
+                    evaluation_bundle_hash=record.lineage.evaluation_bundle_hash,
+                    promotion_policy_version=record.lineage.promotion_policy_version,
+                    lifecycle_state="VALIDATED",
+                    quarantine_state="none",
+                    gate_results={
                         "promotion_outcome": record.lineage.promotion_outcome,
+                        "optimizer_version": record.optimizer_version,
                     },
-                    "created_at": record.created_at,
-                },
-                model_version=record.lineage.model_version,
-                training_set_hash=record.lineage.training_set_hash,
-                evaluation_bundle_hash=record.lineage.evaluation_bundle_hash,
-                promotion_policy_version=record.lineage.promotion_policy_version,
-                lifecycle_state="VALIDATED",
-                quarantine_state="none",
-                gate_results={
-                    "promotion_outcome": record.lineage.promotion_outcome,
-                    "optimizer_version": record.optimizer_version,
-                },
-                metadata={
-                    "backend_profile": record.backend_profile,
-                    "backend_class": record.backend_class,
-                    "noise_profile_id": record.noise_profile_id,
-                },
-                command="benchmark_ingest",
-                decision="validated",
-                capability_scope=self._capability_scope_tokens(payload),
-            )
+                    metadata={
+                        "backend_profile": record.backend_profile,
+                        "backend_class": record.backend_class,
+                        "noise_profile_id": record.noise_profile_id,
+                    },
+                    command="benchmark_ingest",
+                    decision="validated",
+                    capability_scope=self._capability_scope_tokens(payload),
+                )
+        except KnowledgeBaseUnavailable:
+            raise
+        except Exception as exc:
+            raise KnowledgeBaseUnavailable("redaction failure") from exc
         record_kb_query("benchmark_runs", hit=True)
         return record.record_id
 
@@ -964,25 +1000,30 @@ class KnowledgeBaseService:
         if self._storage_mode == "disabled":
             raise KnowledgeBaseUnavailable("knowledge base storage unavailable")
         envelope = self._payload_envelope(payload)
-        with self._lock:
-            self._gc_locked()
-            evidence = self._learning_store_evidence(
-                source=str(payload.get("source", "manual")).strip() or "manual",
-                evidence_kind=str(payload.get("evidence_kind", "learning")).strip() or "learning",
-                envelope=envelope,
-                evidence_payload=dict(payload),
-                model_version=str(payload.get("model_version", "")).strip(),
-                training_set_hash=str(payload.get("training_set_hash", "")).strip(),
-                evaluation_bundle_hash=str(payload.get("evaluation_bundle_hash", "")).strip(),
-                promotion_policy_version=str(payload.get("promotion_policy_version", "")).strip(),
-                lifecycle_state=str(payload.get("lifecycle_state", "DRAFT")).strip() or "DRAFT",
-                quarantine_state="quarantine" if self._learning_payload_contains_quarantine_fields(payload) else "none",
-                gate_results=dict(payload.get("gate_results") or {}),
-                metadata=dict(payload.get("metadata") or {}),
-                command=str(payload.get("command", "")).strip(),
-                decision=str(payload.get("decision", "")).strip(),
-                capability_scope=self._capability_scope_tokens(payload),
-            )
+        try:
+            with self._lock:
+                self._gc_locked()
+                evidence = self._learning_store_evidence(
+                    source=str(payload.get("source", "manual")).strip() or "manual",
+                    evidence_kind=str(payload.get("evidence_kind", "learning")).strip() or "learning",
+                    envelope=envelope,
+                    evidence_payload=dict(payload),
+                    model_version=str(payload.get("model_version", "")).strip(),
+                    training_set_hash=str(payload.get("training_set_hash", "")).strip(),
+                    evaluation_bundle_hash=str(payload.get("evaluation_bundle_hash", "")).strip(),
+                    promotion_policy_version=str(payload.get("promotion_policy_version", "")).strip(),
+                    lifecycle_state=str(payload.get("lifecycle_state", "DRAFT")).strip() or "DRAFT",
+                    quarantine_state="quarantine" if self._learning_payload_contains_quarantine_fields(payload) else "none",
+                    gate_results=dict(payload.get("gate_results") or {}),
+                    metadata=dict(payload.get("metadata") or {}),
+                    command=str(payload.get("command", "")).strip(),
+                    decision=str(payload.get("decision", "")).strip(),
+                    capability_scope=self._capability_scope_tokens(payload),
+                )
+        except KnowledgeBaseUnavailable:
+            raise
+        except Exception as exc:
+            raise KnowledgeBaseUnavailable("redaction failure") from exc
         record_kb_query("learning_evidence", hit=True)
         return evidence["evidence_id"]
 
@@ -1263,6 +1304,30 @@ class KnowledgeBaseService:
             raise KnowledgeBaseUnavailable("policy snapshot unavailable")
         return version
 
+    def _fail_closed(self, context: grpc.ServicerContext | None, *, operation: str, reason: str, detail: str) -> None:
+        if context is not None:
+            abort_public(
+                context,
+                PublicErrorSpec(
+                    grpc_code=grpc.StatusCode.PERMISSION_DENIED,
+                    message="access denied",
+                    reason=reason,
+                    retryable=False,
+                    metadata={"operation": operation, "reason": reason},
+                    detail=detail,
+                ),
+            )
+        raise KnowledgeBaseUnavailable(detail)
+
+    def _require_explicit_policy_snapshot(self, context: grpc.ServicerContext | None, *, operation: str) -> str:
+        if not _policy_snapshot_configured():
+            self._fail_closed(context, operation=operation, reason="KB_POLICY_SNAPSHOT_REQUIRED", detail="security policy snapshot unavailable")
+        snapshot = load_policy_snapshot()
+        version = str(snapshot.version).strip()
+        if not version:
+            self._fail_closed(context, operation=operation, reason="KB_POLICY_SNAPSHOT_REQUIRED", detail="security policy snapshot unavailable")
+        return version
+
     def _retrieval_security_context(
         self,
         context: grpc.ServicerContext | None,
@@ -1270,11 +1335,16 @@ class KnowledgeBaseService:
         operation: str,
     ) -> tuple[Any | None, str]:
         if context is None:
-            return None, self._policy_snapshot_version()
+            self._fail_closed(
+                None,
+                operation=operation,
+                reason="KB_SECURITY_CONTEXT_REQUIRED",
+                detail="security context unavailable",
+            )
         sec_ctx = security_context(context, method_name=f"KnowledgeBaseService.{operation}")
+        policy_version = sec_ctx.policy_version.strip() or self._policy_snapshot_version()
         if sec_ctx.auth_mode != "allow_all":
             enforce_sandbox_policy(context, sandbox_profile=sec_ctx.sandbox_profile)
-        policy_version = sec_ctx.policy_version.strip() or self._policy_snapshot_version()
         return sec_ctx, policy_version
 
     def _audit_retrieval_decision(
@@ -2446,73 +2516,78 @@ class KnowledgeBaseService:
     ) -> dict[str, Any]:
         normalized_kind = evidence_kind.strip().lower() or "learning"
         capability_scope = tuple(_capability_scope_tokens(evidence_payload))
-        evidence = {
-            "tenant_id": envelope["tenant_id"],
-            "project_id": envelope["project_id"],
-            "capability_scope": capability_scope,
-            "source": source,
-            "evidence_kind": normalized_kind,
-            "model_version": model_version,
-            "training_set_hash": training_set_hash,
-            "evaluation_bundle_hash": evaluation_bundle_hash,
-            "promotion_policy_version": promotion_policy_version,
-            "lifecycle_state": lifecycle_state.upper() if lifecycle_state else "DRAFT",
-            "quarantine_state": quarantine_state,
-            "gate_results": dict(gate_results or {}),
-            "metadata": _anonymize_mapping(dict(metadata or {}), salt=self._anon_salt, epoch=self._anon_epoch),
-            "command": command,
-            "decision": decision,
-            "payload": _anonymize_mapping(dict(evidence_payload or {}), salt=self._anon_salt, epoch=self._anon_epoch),
-            "capability_scope": capability_scope,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        }
-        evidence["evidence_hash"] = _stable_hash(evidence)
-        evidence["evidence_id"] = str(
-            evidence_payload.get("evidence_id")
-            or f"evid_{hashlib.sha256(_stable_json(evidence).encode('utf-8')).hexdigest()[:24]}"
-        )
-        evidence["queryable_ref"] = f"kb://learning/{evidence['evidence_id']}"
-        self._learning_evidence.append(
-            {
-                "evidence_id": evidence["evidence_id"],
-                "tenant_id": evidence["tenant_id"],
-                "project_id": evidence["project_id"],
-                "capability_scope": evidence["capability_scope"],
-                "evidence_kind": evidence["evidence_kind"],
-                "evidence_hash": evidence["evidence_hash"],
-                "model_version": evidence["model_version"],
-                "training_set_hash": evidence["training_set_hash"],
-                "evaluation_bundle_hash": evidence["evaluation_bundle_hash"],
-                "promotion_policy_version": evidence["promotion_policy_version"],
-                "lifecycle_state": evidence["lifecycle_state"],
-                "quarantine_state": evidence["quarantine_state"],
-                "source": evidence["source"],
-                "command": evidence["command"],
-                "decision": evidence["decision"],
-                "gate_results": evidence["gate_results"],
-                "metadata": evidence["metadata"],
-                "payload": evidence["payload"],
-                "capability_scope": evidence["capability_scope"],
-                "created_at": evidence["created_at"],
-                "queryable_ref": evidence["queryable_ref"],
-            }
-        )
-        if evidence["model_version"]:
-            self._learning_models[(envelope["tenant_id"], envelope["project_id"], evidence["model_version"])] = {
+        try:
+            evidence = {
                 "tenant_id": envelope["tenant_id"],
                 "project_id": envelope["project_id"],
-                "model_version": evidence["model_version"],
-                "training_set_hash": evidence["training_set_hash"],
-                "evaluation_bundle_hash": evidence["evaluation_bundle_hash"],
-                "promotion_policy_version": evidence["promotion_policy_version"],
-                "lifecycle_state": evidence["lifecycle_state"],
+                "capability_scope": capability_scope,
+                "source": source,
+                "evidence_kind": normalized_kind,
+                "model_version": model_version,
+                "training_set_hash": training_set_hash,
+                "evaluation_bundle_hash": evaluation_bundle_hash,
+                "promotion_policy_version": promotion_policy_version,
+                "lifecycle_state": lifecycle_state.upper() if lifecycle_state else "DRAFT",
+                "quarantine_state": quarantine_state,
                 "gate_results": dict(gate_results or {}),
-                "updated_at": evidence["created_at"],
-                "queryable_ref": f"kb://models/{evidence['model_version']}",
-                "evidence_ref": evidence["queryable_ref"],
-                "quarantine_state": evidence["quarantine_state"],
+                "metadata": _anonymize_mapping(dict(metadata or {}), salt=self._anon_salt, epoch=self._anon_epoch),
+                "command": command,
+                "decision": decision,
+                "payload": _anonymize_mapping(dict(evidence_payload or {}), salt=self._anon_salt, epoch=self._anon_epoch),
+                "capability_scope": capability_scope,
+                "created_at": datetime.now(timezone.utc).isoformat(),
             }
-        return evidence
+            evidence["evidence_hash"] = _stable_hash(evidence)
+            evidence["evidence_id"] = str(
+                evidence_payload.get("evidence_id")
+                or f"evid_{hashlib.sha256(_stable_json(evidence).encode('utf-8')).hexdigest()[:24]}"
+            )
+            evidence["queryable_ref"] = f"kb://learning/{evidence['evidence_id']}"
+            self._learning_evidence.append(
+                {
+                    "evidence_id": evidence["evidence_id"],
+                    "tenant_id": evidence["tenant_id"],
+                    "project_id": evidence["project_id"],
+                    "capability_scope": evidence["capability_scope"],
+                    "evidence_kind": evidence["evidence_kind"],
+                    "evidence_hash": evidence["evidence_hash"],
+                    "model_version": evidence["model_version"],
+                    "training_set_hash": evidence["training_set_hash"],
+                    "evaluation_bundle_hash": evidence["evaluation_bundle_hash"],
+                    "promotion_policy_version": evidence["promotion_policy_version"],
+                    "lifecycle_state": evidence["lifecycle_state"],
+                    "quarantine_state": evidence["quarantine_state"],
+                    "source": evidence["source"],
+                    "command": evidence["command"],
+                    "decision": evidence["decision"],
+                    "gate_results": evidence["gate_results"],
+                    "metadata": evidence["metadata"],
+                    "payload": evidence["payload"],
+                    "capability_scope": evidence["capability_scope"],
+                    "created_at": evidence["created_at"],
+                    "queryable_ref": evidence["queryable_ref"],
+                }
+            )
+            if evidence["model_version"]:
+                self._learning_models[(envelope["tenant_id"], envelope["project_id"], evidence["model_version"])] = {
+                    "tenant_id": envelope["tenant_id"],
+                    "project_id": envelope["project_id"],
+                    "model_version": evidence["model_version"],
+                    "training_set_hash": evidence["training_set_hash"],
+                    "evaluation_bundle_hash": evidence["evaluation_bundle_hash"],
+                    "promotion_policy_version": evidence["promotion_policy_version"],
+                    "lifecycle_state": evidence["lifecycle_state"],
+                    "gate_results": dict(gate_results or {}),
+                    "updated_at": evidence["created_at"],
+                    "queryable_ref": f"kb://models/{evidence['model_version']}",
+                    "evidence_ref": evidence["queryable_ref"],
+                    "quarantine_state": evidence["quarantine_state"],
+                }
+            return evidence
+        except KnowledgeBaseUnavailable:
+            raise
+        except Exception as exc:
+            raise KnowledgeBaseUnavailable("redaction failure") from exc
 
     def _learning_collect_lineage(self, *, envelope: dict[str, Any], model_version: str) -> list[dict[str, Any]]:
         lineage: list[dict[str, Any]] = []

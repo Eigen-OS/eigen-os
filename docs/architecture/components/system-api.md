@@ -318,6 +318,8 @@ Auth modes:
 - `SYSTEM_API_AUTH_MODE=static_token`
 - `SYSTEM_API_AUTH_TOKEN=<token>`
 
+`allow_all` is only acceptable for local/dev ingress bootstrap. Internal KB audit and retrieval helpers do not accept permissive fallback; missing security context or policy evidence MUST deny.
+
 Coarse RBAC permissions:
 
 - `jobs:submit`
