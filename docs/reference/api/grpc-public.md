@@ -563,6 +563,8 @@ Returns canonical stored record, including persisted provenance and replay metad
 
 Appends immutable audit/event log entries. The public baseline records runtime decision lineage and benchmark decision traces through this RPC, preserving append order for each trace ID.
 
+Runtime decision logs MUST retain caller identity, tenant, policy snapshot version, model version, retrieval sources, and final decision so the same inference can be replayed from immutable evidence. The service MUST treat the log as append-only.
+
 Retention MUST follow audit policy.
 
 ---

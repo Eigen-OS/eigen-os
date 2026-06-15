@@ -315,6 +315,7 @@ service NeuroSymbolicService {
   - `feature_set`,
   - `confidence`,
   - `retrieval_references`.
+- Every scoring request MUST also emit an immutable audit record containing caller identity, tenant, active policy snapshot version, model version, retrieval sources, and final decision.
 - The explainability envelope MUST be derived from the minimized/redacted feature vector and the immutable policy snapshot, not from raw payloads.
 - Responses MUST remain bounded and MUST NOT return raw secrets, bearer tokens, or unredacted payload fragments.
 
