@@ -1,5 +1,6 @@
 use std::fs;
 use std::fs::OpenOptions;
+use std::collections::BTreeSet;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -94,17 +95,23 @@ impl CircuitFsLocal {
     ) -> Result<(), CircuitFsError> {
         self.ensure_job_layout(job_id)?;
 
-        let result_path = self.result_json_path(job_id)?;
+        let parquet_path = self.results_parquet_path(job_id)?;
+        let result_json_path = self.result_json_path(job_id)?;
         let manifest_path = self.result_manifest_path(job_id)?;
         let envelope_path = self.result_envelope_path(job_id)?;
 
-        for path in [result_path.clone(), manifest_path.clone(), envelope_path.clone()] {
+        for path in [
+            parquet_path.clone(),
+            result_json_path.clone(),
+            manifest_path.clone(),
+            envelope_path.clone(),
+        ] {
             if path.exists() {
                 return Err(CircuitFsError::AlreadyExists { path });
             }
         }
 
-        atomic_write_bytes(&result_path, payload)?;
+        atomic_write_bytes(&parquet_path, payload)?;
 
         let created_at_epoch_ms = unix_epoch_ms();
         let envelope = ResultEnvelope {
@@ -118,6 +125,7 @@ impl CircuitFsLocal {
             lineage: CompiledArtifactLineage::default(),
         };
         let envelope_bytes = serde_json::to_vec_pretty(&envelope).map_err(to_io_error)?;
+        atomic_write_bytes(&result_json_path, &envelope_bytes)?;
         atomic_write_bytes(&envelope_path, &envelope_bytes)?;
 
         let manifest = ResultManifest {
@@ -126,11 +134,18 @@ impl CircuitFsLocal {
             schema_version: "result_manifest.v1".to_string(),
             created_at_epoch_ms,
             retention_policy: "pinned".to_string(),
-            artifacts: vec![ResultArtifactDescriptor {
-                path: "results/result.json".to_string(),
-                content_hash: content_hash_hex(payload),
-                size_bytes: payload.len() as u64,
-            }],
+            artifacts: vec![
+                ResultArtifactDescriptor {
+                    path: "results.parquet".to_string(),
+                    content_hash: content_hash_hex(payload),
+                    size_bytes: payload.len() as u64,
+                },
+                ResultArtifactDescriptor {
+                    path: "results/result.json".to_string(),
+                    content_hash: content_hash_hex(&envelope_bytes),
+                    size_bytes: envelope_bytes.len() as u64,
+                },
+            ],
         };
         let manifest_bytes = serde_json::to_vec_pretty(&manifest).map_err(to_io_error)?;
         atomic_write_bytes(&manifest_path, &manifest_bytes)?;
@@ -236,6 +251,10 @@ impl CircuitFsLocal {
 
     fn results_dir_path(&self, job_id: &str) -> Result<PathBuf, CircuitFsError> {
         Ok(self.job_root_path(job_id)?.join("results"))
+    }
+
+    fn results_parquet_path(&self, job_id: &str) -> Result<PathBuf, CircuitFsError> {
+        Ok(self.job_root_path(job_id)?.join("results.parquet"))
     }
 }
 
@@ -709,6 +728,41 @@ mod tests {
         assert_eq!(provenance_json["compiler_stage_id"], "stage-compile");
         assert_eq!(provenance_json["optimizer_stage_id"], "stage-optimize");
         assert_eq!(provenance_json["compiler_lineage"]["request_id"], "req-456");
+    }
+
+    #[test]
+    fn store_results_bundle_writes_canonical_results_parquet_and_sidecars() {
+        let tempdir = tempdir().expect("tempdir");
+        let fs = CircuitFsLocal::new(tempdir.path());
+
+        let payload = b"PAR1-synthetic-parquet-payload";
+        fs.store_results_bundle("job-789", payload, "1.0.0")
+            .expect("store results bundle");
+
+        let job_root = tempdir.path().join("jobs").join("job-789");
+        assert!(job_root.join("results.parquet").exists());
+        assert!(job_root.join("results/result.json").exists());
+        assert!(job_root.join("results/envelope.json").exists());
+        assert!(job_root.join("results/manifest.json").exists());
+
+        let result_json = read_json(&job_root.join("results/result.json"));
+        assert_eq!(result_json["job_id"], "job-789");
+        assert_eq!(result_json["result_ref"], "results/result.json");
+        assert_eq!(result_json["manifest_ref"], "results/manifest.json");
+
+        let manifest_json = read_json(&job_root.join("results/manifest.json"));
+        let artifacts = manifest_json["artifacts"]
+            .as_array()
+            .expect("artifacts array");
+        let artifact_paths: BTreeSet<String> = artifacts
+            .iter()
+            .filter_map(|artifact| artifact["path"].as_str().map(str::to_string))
+            .collect();
+        assert!(artifact_paths.contains("results.parquet"));
+        assert!(artifact_paths.contains("results/result.json"));
+
+        let parquet_bytes = fs::read(job_root.join("results.parquet")).expect("read parquet");
+        assert_eq!(parquet_bytes, payload);
     }
 
     #[test]

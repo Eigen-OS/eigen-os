@@ -1,0 +1,22 @@
+apiVersion: eigen.os/v0.1
+kind: QuantumJob
+metadata:
+  name: eigen-lang-showcase-h2
+  labels:
+    example: "true"
+    algorithm: "vqe"
+    showcase: "max-coverage"
+spec:
+  program_path: program.eigen.py
+  entrypoint: main
+  target: sim:local
+  priority: 75
+  metadata:
+    shots: "4096"
+    max_iters: "40"
+    optimizer: "cobyla"
+    molecule: "H2"
+    basis: "sto-3g"
+    seed: "7"
+    noise_model: "depolarizing:0.001"
+    

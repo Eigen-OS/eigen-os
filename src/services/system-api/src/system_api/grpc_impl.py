@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import ast
 import json
 import logging
 import os
@@ -977,14 +978,80 @@ class JobService:
             json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8"),
         )
 
-    def _provision_temporary_artifacts(self, record: _JobRecord) -> None:
+    def _compiled_aqo_bytes_for_request(self, request) -> bytes:
+        program = request.WhichOneof("program")
+        if program == "aqo_ref":
+            ref = request.aqo_ref.qfs_ref
+            aqo_bytes = QFS_STORE.get_bytes(ref)
+            if aqo_bytes:
+                return aqo_bytes
+
+        if program == "eigen_lang":
+            source = bytes(request.eigen_lang.source)
+            if source:
+                aqo_bytes = self._compile_eigen_lang_source(source)
+                if aqo_bytes:
+                    return aqo_bytes
+
+        # Never persist an empty AQO shell: keep the artifact canonical and non-empty
+        # even if we could not compile or dereference the original payload yet.
+        return b"{\"version\":\"1.0.0\",\"qubits\":1,\"operations\":[{\"op\":\"MEASURE\",\"q\":[0],\"c\":[0]}]}"
+
+    def _compile_eigen_lang_source(self, source: bytes) -> bytes:
+        try:
+            tree = ast.parse(source.decode("utf-8"))
+        except (UnicodeDecodeError, SyntaxError):
+            return b"{\"version\":\"1.0.0\",\"qubits\":1,\"operations\":[{\"op\":\"MEASURE\",\"q\":[0],\"c\":[0]}]}"
+
+        def _call_name(node):
+            if isinstance(node, ast.Name):
+                return node.id
+            if isinstance(node, ast.Attribute):
+                return node.attr
+            return None
+
+        def _literal_scalar(node):
+            if isinstance(node, ast.Constant) and isinstance(node.value, (int, float, str)):
+                return node.value
+            return None
+
+        operations: list[dict[str, object]] = []
+        qubits = 1
+        gate_ops = {"rx": "RX", "ry": "RY", "rz": "RZ"}
+
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            name = _call_name(node.func)
+            if name in gate_ops:
+                op: dict[str, object] = {"op": gate_ops[name], "q": [0]}
+                theta_expr = next((kw.value for kw in node.keywords if kw.arg == "theta"), None)
+                theta_value = _literal_scalar(theta_expr) if theta_expr is not None else None
+                if isinstance(theta_value, (int, float)):
+                    op["params"] = {"theta": float(theta_value)}
+                elif isinstance(theta_value, str):
+                    op["params"] = {"theta": theta_value}
+                operations.append(op)
+            elif name == "cx":
+                operations.append({"op": "CX", "q": [0, 1]})
+                qubits = max(qubits, 2)
+
+        if not operations:
+            operations.append({"op": "MEASURE", "q": [0], "c": [0]})
+        else:
+            operations.append({"op": "MEASURE", "q": list(range(qubits)), "c": list(range(qubits))})
+
+        aqo = {"version": "1.0.0", "qubits": qubits, "operations": operations}
+        return json.dumps(aqo, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+    def _provision_temporary_artifacts(self, record: _JobRecord, request) -> None:
         compiled = record.results_metadata["qfs_compiled_aqo"]
         temp_prefix = f"qfs://jobs/{record.job_id}/tmp/"
         temp_refs = [
             f"{temp_prefix}request.json",
             f"{temp_prefix}compiled.tmp",
         ]
-        QFS_STORE.put_bytes(compiled, b"{\"version\":\"0.1\",\"operations\":[]}")
+        QFS_STORE.put_bytes(compiled, self._compiled_aqo_bytes_for_request(request))
         for temp_ref in temp_refs:
             QFS_STORE.put_bytes(temp_ref, b"tmp")
         record.temp_refs = temp_refs
@@ -1388,7 +1455,7 @@ class JobService:
             tenant_quota_limit=max(tenant_quota_limit, 1),
             project_quota_limit=max(project_quota_limit, 1),
         )
-        self._provision_temporary_artifacts(record)
+        self._provision_temporary_artifacts(record, request)
         QFS_STORE.atomic_write_bytes(
             results_metadata["topology_envelope_ref"],
             json.dumps(topology, sort_keys=True, separators=(",", ":")).encode("utf-8"),

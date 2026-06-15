@@ -40,12 +40,16 @@ class LocalBlobBackend:
     @staticmethod
     def _candidate_roots() -> list[Path]:
         roots: list[Path] = []
-        env_root = os.getenv("EIGEN_QFS_LOCAL_ROOT")
-        if env_root:
-            roots.append(Path(env_root))
+        # Prefer the explicit local override, but keep compatibility with the
+        # canonical QFS root env var used by the kernel, CLI, and docs.
+        for env_name in ("EIGEN_QFS_LOCAL_ROOT", "EIGEN_QFS_ROOT"):
+            env_root = os.getenv(env_name)
+            if env_root:
+                roots.append(Path(env_root))
         roots.extend([
             Path("/tmp/eigen/qfs"),
-            Path(tempfile.gettempdir()) / "eigen" / "qfs",
+            Path.cwd() / ".eigen" / "qfs",
+            Path(tempfile.gettempdir()) / f"eigen-qfs-{os.getpid()}",
         ])
         return roots
 

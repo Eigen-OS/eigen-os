@@ -63,7 +63,7 @@ eigen results <job_id>
 
 - `eigen status <job_id>` returns current lifecycle state and exits `0` for valid requests.
 - `eigen watch <job_id>` streams transitions and exits on terminal state.
-- `eigen results <job_id>` exits `0` for `DONE`, non-zero for `ERROR|CANCELLED|TIMEOUT`.
+- `eigen results <job_id>` exits `0` for `DONE`, non-zero for `ERROR|CANCELLED|TIMEOUT`, and prints the API-provided result reference instead of reading QFS directly.
 
 ## Common validation errors
 
