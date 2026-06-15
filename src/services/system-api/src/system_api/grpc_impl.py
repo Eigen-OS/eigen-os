@@ -1827,18 +1827,8 @@ class JobService:
             )
             log_request_end("JobService.GetJobStatus", rc)
             return resp
-        
-        if not self._kernel_endpoint_configured():
-            _abort_job_not_found(context, request.job_id)
 
-        record = self._get_local_job_record(request.job_id)
-        if record is not None:
-            self._enforce_job_access(context=context, record=record)
-            resp = self._job_pb.GetJobStatusResponse(
-                status=self._job_status_from_record(record)
-            )
-            log_request_end("JobService.GetJobStatus", rc)
-            return resp
+        _abort_job_not_found(context, request.job_id)
 
         try:
             kernel_response = asyncio.run(self._kernel_client.get_job_status(request.job_id, self._public_envelope_dict(envelope)))
@@ -1944,6 +1934,27 @@ class JobService:
         if os.getenv("SYSTEM_API_DEBUG") == "1":
             self._assert_consistency()
 
+        record = self._get_local_job_record(request.job_id)
+        if record is not None:
+            last_event_seq = int(request.last_event_seq)
+            for update in record.updates:
+                if int(update.event_seq) <= last_event_seq:
+                    continue
+                yield self._job_pb.StreamJobUpdatesResponse(
+                    update=self._types_pb.JobUpdate(
+                        job_id=update.job_id,
+                        state=update.state,
+                        stage=update.stage,
+                        progress=float(update.progress),
+                        message=update.message,
+                        event_seq=int(update.event_seq),
+                        timestamp=update.timestamp,
+                        topology=update.topology,
+                    )
+                )
+            log_request_end("JobService.StreamJobUpdates", rc)
+            return
+        
         if self._kernel_endpoint_configured():
             try:
                 updates = asyncio.run(
@@ -1973,30 +1984,8 @@ class JobService:
                 )
             log_request_end("JobService.StreamJobUpdates", rc)
             return
-        
-        if not self._kernel_endpoint_configured():
-            _abort_job_not_found(context, request.job_id)
 
-        record = self._get_local_job_record(request.job_id)
-        if record is not None:
-            last_event_seq = int(request.last_event_seq)
-            for update in record.updates:
-                if int(update.event_seq) <= last_event_seq:
-                    continue
-                yield self._job_pb.StreamJobUpdatesResponse(
-                    update=self._types_pb.JobUpdate(
-                        job_id=update.job_id,
-                        state=update.state,
-                        stage=update.stage,
-                        progress=float(update.progress),
-                        message=update.message,
-                        event_seq=int(update.event_seq),
-                        timestamp=update.timestamp,
-                        topology=update.topology,
-                    )
-                )
-            log_request_end("JobService.StreamJobUpdates", rc)
-            return
+        _abort_job_not_found(context, request.job_id)
 
         try:
             updates = asyncio.run(
@@ -2070,6 +2059,50 @@ class JobService:
             log_request_end("JobService.GetJobResults", rc)
             return resp
         
+        if self._kernel_endpoint_configured():
+            try:
+                kernel_response = asyncio.run(self._kernel_client.get_job_results(request.job_id, self._public_envelope_dict(envelope)))
+            except grpc.RpcError as err:
+                if err.code() == grpc.StatusCode.NOT_FOUND:
+                    _abort_job_not_found(context, request.job_id)
+                if err.code() == grpc.StatusCode.FAILED_PRECONDITION:
+                    abort_public(
+                        context,
+                        PublicErrorSpec(
+                            grpc_code=grpc.StatusCode.FAILED_PRECONDITION,
+                            message="results are not ready yet",
+                            reason="EIGEN_PUBLIC_RESULTS_NOT_READY",
+                            retryable=True,
+                            metadata={"current_state": "TASK_STATE_PENDING"},
+                            retry_delay_seconds=1,
+                            precondition_type="JOB_LIFECYCLE",
+                            precondition_subject=request.job_id,
+                            detail="Poll GetJobStatus until the job reaches a terminal state before reading results.",
+                        ),
+                    )
+                context.abort(err.code(), err.details() or "kernel delegation failed")
+
+            state = kernel_response.get("state", "TASK_STATE_UNSPECIFIED")
+            counts = dict(kernel_response.get("counts", {}))
+            metadata = dict(kernel_response.get("metadata", {}))
+            if kernel_response.get("qfs_result_ref"):
+                metadata.setdefault("qfs_result_ref", kernel_response["qfs_result_ref"])
+
+            resp = self._job_pb.GetJobResultsResponse(
+                job_id=request.job_id,
+                state=self._kernel_state_to_public_state(state),
+                counts=counts,
+                metadata=metadata,
+                error_code=kernel_response.get("error_code", ""),
+                error_summary=kernel_response.get("error_summary", ""),
+                error_details_ref=kernel_response.get("error_details_ref", ""),
+                completed_at=kernel_response.get("completed_at") or _ts_now(),
+            )
+            log_request_end("JobService.GetJobResults", rc)
+            return resp
+
+        _abort_job_not_found(context, request.job_id)
+
         if not self._kernel_endpoint_configured():
             _abort_job_not_found(context, request.job_id)
 
@@ -2110,47 +2143,6 @@ class JobService:
             log_request_end("JobService.GetJobResults", rc)
             return resp
 
-        try:
-            kernel_response = asyncio.run(self._kernel_client.get_job_results(request.job_id, self._public_envelope_dict(envelope)))
-        except grpc.RpcError as err:
-            if err.code() == grpc.StatusCode.NOT_FOUND:
-                _abort_job_not_found(context, request.job_id)
-            if err.code() == grpc.StatusCode.FAILED_PRECONDITION:
-                abort_public(
-                    context,
-                    PublicErrorSpec(
-                        grpc_code=grpc.StatusCode.FAILED_PRECONDITION,
-                        message="results are not ready yet",
-                        reason="EIGEN_PUBLIC_RESULTS_NOT_READY",
-                        retryable=True,
-                        metadata={"current_state": "TASK_STATE_PENDING"},
-                        retry_delay_seconds=1,
-                        precondition_type="JOB_LIFECYCLE",
-                        precondition_subject=request.job_id,
-                        detail="Poll GetJobStatus until the job reaches a terminal state before reading results.",
-                    ),
-                )
-            context.abort(err.code(), err.details() or "kernel delegation failed")
-
-        state = kernel_response.get("state", "TASK_STATE_UNSPECIFIED")
-        counts = dict(kernel_response.get("counts", {}))
-        metadata = dict(kernel_response.get("metadata", {}))
-        if kernel_response.get("qfs_result_ref"):
-            metadata.setdefault("qfs_result_ref", kernel_response["qfs_result_ref"])
-
-        resp = self._job_pb.GetJobResultsResponse(
-            job_id=request.job_id,
-            state=self._kernel_state_to_public_state(state),
-            counts=counts,
-            metadata=metadata,
-            error_code=kernel_response.get("error_code", ""),
-            error_summary=kernel_response.get("error_summary", ""),
-            error_details_ref=kernel_response.get("error_details_ref", ""),
-            completed_at=kernel_response.get("completed_at") or _ts_now(),
-        )
-
-        log_request_end("JobService.GetJobResults", rc)
-        return resp
 
     def GetDispatchRationale(self, request, context: grpc.ServicerContext):
         enforce_authn(context, method_name="JobService.GetDispatchRationale")
@@ -2178,6 +2170,14 @@ class JobService:
                 metadata={"field": ",".join(v.field for v in violations)},
             )
 
+        record = self._get_local_job_record(request.job_id)
+        if record is not None:
+            resp = self._job_pb.GetDispatchRationaleResponse(
+                rationale=self._dispatch_rationale_from_record(record)
+            )
+            log_request_end("JobService.GetDispatchRationale", rc)
+            return resp
+        
         if self._kernel_endpoint_configured():
             try:
                 kernel_response = asyncio.run(
@@ -2212,55 +2212,14 @@ class JobService:
             log_request_end("JobService.GetDispatchRationale", rc)
             return resp
 
-        record = self._get_local_job_record(request.job_id)
-        if record is not None:
-            resp = self._job_pb.GetDispatchRationaleResponse(
-                rationale=self._dispatch_rationale_from_record(record)
-            )
-            log_request_end("JobService.GetDispatchRationale", rc)
-            return resp
-        
-        if not self._kernel_endpoint_configured():
-            abort_with_error_info(
-                context,
-                grpc_code=grpc.StatusCode.NOT_FOUND,
-                message=f"job_id not found: {request.job_id}",
-                reason="EIGEN_PUBLIC_EXPLAIN_DECISION_NOT_FOUND",
-                domain="eigen.api.v1.explain",
-                metadata={"job_id": request.job_id},
-            )
-
-        try:
-            kernel_response = asyncio.run(self._kernel_client.get_dispatch_rationale(request.job_id, self._public_envelope_dict(envelope)))
-        except grpc.RpcError as err:
-            if err.code() == grpc.StatusCode.NOT_FOUND:
-                abort_with_error_info(
-                    context,
-                    grpc_code=grpc.StatusCode.NOT_FOUND,
-                    message=f"job_id not found: {request.job_id}",
-                    reason="EIGEN_PUBLIC_EXPLAIN_DECISION_NOT_FOUND",
-                    domain="eigen.api.v1.explain",
-                    metadata={"job_id": request.job_id},
-                )
-            context.abort(err.code(), err.details() or "kernel delegation failed")
-
-        resp = self._job_pb.GetDispatchRationaleResponse(
-            rationale=self._job_pb.DispatchRationale(
-                version=kernel_response.get("version", ""),
-                policy_version=kernel_response.get("policy_version", ""),
-                reason_codes=list(kernel_response.get("reason_codes", [])),
-                selected_backend=kernel_response.get("selected_backend", ""),
-                selected_queue=kernel_response.get("selected_queue", ""),
-                attributes={k: str(v) for k, v in dict(kernel_response.get("attributes", {})).items()},
-                timeline_ref=kernel_response.get("timeline_ref", ""),
-                logs_ref=kernel_response.get("logs_ref", ""),
-                trace_id=kernel_response.get("trace_id", ""),
-                trace_ref=kernel_response.get("trace_ref", ""),
-            )
+        abort_with_error_info(
+            context,
+            grpc_code=grpc.StatusCode.NOT_FOUND,
+            message=f"job_id not found: {request.job_id}",
+            reason="EIGEN_PUBLIC_EXPLAIN_DECISION_NOT_FOUND",
+            domain="eigen.api.v1.explain",
+            metadata={"job_id": request.job_id},
         )
-
-        log_request_end("JobService.GetDispatchRationale", rc)
-        return resp
 
     async def _collect_kernel_updates(self, *, job_id: str, last_event_seq: int, envelope: NormalizedPublicEnvelope) -> list[dict]:
         updates: list[dict] = []
