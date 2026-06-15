@@ -298,6 +298,30 @@ def _nsc_request(
     )
 
 
+class _FakeServicerRpcError(grpc.RpcError):
+    def __init__(self, code: grpc.StatusCode, details: str):
+        super().__init__()
+        self._code = code
+        self._details = details
+
+    def code(self):
+        return self._code
+
+    def details(self):
+        return self._details
+
+
+class _FakeServicerContext:
+    def __init__(self, metadata: tuple[tuple[str, str], ...]):
+        self._metadata = metadata
+
+    def invocation_metadata(self):
+        return self._metadata
+
+    def abort(self, code, details):
+        raise _FakeServicerRpcError(code, details)
+
+
 def test_neuro_symbolic_service_scores_internal_requests(grpc_addr: str, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("EIGEN_NEURO_SYMBOLIC_SERVICE_TOKEN", "unit-test-token")
     monkeypatch.setenv("EIGEN_NEURO_SYMBOLIC_ALLOWED_CALLERS", "eigen-kernel,eigen-compiler")
@@ -397,6 +421,38 @@ def test_neuro_symbolic_service_rejects_digest_mismatch(
 
     assert e.value.code() == grpc.StatusCode.INVALID_ARGUMENT
 
+
+def test_neuro_symbolic_service_uses_frozen_policy_snapshot_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EIGEN_NEURO_SYMBOLIC_SERVICE_TOKEN", "unit-test-token")
+    monkeypatch.setenv("EIGEN_NEURO_SYMBOLIC_ALLOWED_CALLERS", "eigen-kernel,eigen-compiler")
+    monkeypatch.setenv("EIGEN_NEURO_SYMBOLIC_POLICY_SNAPSHOT_VERSION", "policy-locked-1")
+
+    # Instantiate the concrete implementation directly so the frozen snapshot can be verified in-process.
+    from eigen_compiler.grpc_impl import NeuroSymbolicService
+
+    svc = NeuroSymbolicService(nsc_pb=nsc_pb)
+    monkeypatch.setenv("EIGEN_NEURO_SYMBOLIC_POLICY_SNAPSHOT_VERSION", "policy-locked-2")
+
+    resp = svc.ScoreCompilationPlan(
+        _nsc_request(policy_snapshot_version="policy-locked-1"),
+        _FakeServicerContext((
+            ("authorization", "Bearer unit-test-token"),
+            ("x-eigen-service-id", "eigen-kernel"),
+        )),
+    )
+
+    assert resp.policy_snapshot_version == "policy-locked-1"
+
+    with pytest.raises(_FakeServicerRpcError) as e:
+        svc.ScoreCompilationPlan(
+            _nsc_request(policy_snapshot_version="policy-locked-2"),
+            _FakeServicerContext((
+                ("authorization", "Bearer unit-test-token"),
+                ("x-eigen-service-id", "eigen-kernel"),
+            )),
+        )
+
+    assert e.value.code() == grpc.StatusCode.FAILED_PRECONDITION
 
 
 @pytest.mark.parametrize(

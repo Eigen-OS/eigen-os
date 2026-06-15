@@ -164,6 +164,8 @@ Intelligent-adjacent behavior:
 - model registry + signed model lifecycle,
 - confidence-aware policy gating and deterministic rollback controller.
 
+The implemented NSC compiler path MUST still capture an immutable policy snapshot at service start and use that frozen snapshot for all inference requests. Live policy lookups MUST NOT be part of request-time scoring.
+
 **Production execution MUST NOT depend on NSC availability.**
 
 ---
@@ -222,6 +224,8 @@ Opaque decisions are prohibited.
 NSC MUST support deterministic mode.
 
 When `deterministic=true`, outputs MUST be a pure function of canonical inputs + seed and MUST be replayable byte-for-byte at the decision artifact level (canonical serialization).
+
+The active policy snapshot version used for scoring MUST be included in response metadata and audit logs so replay evidence is bound to the same immutable snapshot.
 
 ---
 
