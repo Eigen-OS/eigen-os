@@ -2045,6 +2045,7 @@ class KnowledgeBaseService:
             "command": command,
             "decision": decision,
             "payload": _anonymize_mapping(dict(evidence_payload or {}), salt=self._anon_salt, epoch=self._anon_epoch),
+            "capability_scope": capability_scope,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
         evidence["evidence_hash"] = _stable_hash(evidence)
@@ -2073,6 +2074,7 @@ class KnowledgeBaseService:
                 "gate_results": evidence["gate_results"],
                 "metadata": evidence["metadata"],
                 "payload": evidence["payload"],
+                "capability_scope": evidence["capability_scope"],
                 "created_at": evidence["created_at"],
                 "queryable_ref": evidence["queryable_ref"],
             }
