@@ -45,7 +45,7 @@
       "sha256": "7530003ad5dcd5a1c77434c04843fc91c52fed7ef81899fc0825fa02f4a88207"
     },
     {
-      "path": "src/services/system-api/tests/fixtures/contracts/knowledge_base_v1/error_model_v1_0_0.json",
+      "path": "src/services/neuro-symbolic-service/tests/fixtures/contracts/knowledge_base_v1/error_model_v1_0_0.json",
       "sha256": "06bcabb1b49239b93bf78307bc849bfb9bee6f906fb9fbb7f35c48e10e26d337"
     },
     {
@@ -57,11 +57,11 @@
       "sha256": "7ef76e61bb4f6325947d5f8ae4f8881976e2f0dfa911c1a8af509954932ff0c8"
     },
     {
-      "path": "src/services/system-api/tests/fixtures/contracts/learning_control_plane_v1/control_plane_contract_v1_0_0.json",
+      "path": "src/services/neuro-symbolic-service/tests/fixtures/contracts/learning_control_plane_v1/control_plane_contract_v1_0_0.json",
       "sha256": "585f2cca4615b66776c7e6d91b34c0584984e86d9993e9cb0a9a1deffd097692"
     },
     {
-      "path": "src/services/system-api/tests/fixtures/contracts/knowledge_base_v1/decision_log_lineage_contract_v1_1_0.json",
+      "path": "src/services/neuro-symbolic-service/tests/fixtures/contracts/knowledge_base_v1/decision_log_lineage_contract_v1_1_0.json",
       "sha256": "9be0f3b2b20aa71f3f42cfb8d3774c54bb1348b92a5b55c5de18a987b09d18be"
     },
     {
