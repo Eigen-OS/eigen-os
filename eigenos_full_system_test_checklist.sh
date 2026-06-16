@@ -50,6 +50,8 @@ echo "[8] Product 1.0 / release closure"
 python3 scripts/ci/check-product-1-0-manifest.py
 python3 scripts/ci/check-product-1-0-wave1-closure.py
 python3 scripts/ci/check-product-1-0-wave2-planning.py
+echo "[8.1] Production readiness gate"
+python3 scripts/ci/check-production-readiness-gate.py
 python3 scripts/ci/check-migration-notes.py || true
 
 echo "[9] Rust workspace tests"
