@@ -104,6 +104,7 @@ class DelegationHandler:
                 compiler_options=compiler_options,
                 metadata_kvs=metadata_kvs,
                 public_envelope=public_envelope,
+                workload=workload,
             )
             
             job_id = kernel_response["job_id"]
