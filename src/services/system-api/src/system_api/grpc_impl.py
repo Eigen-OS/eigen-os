@@ -23,6 +23,8 @@ from google.protobuf.timestamp_pb2 import Timestamp
 from .job_store import JobStore
 from .job_store import JobRecord as DurableJobRecord
 
+from .security import _AUTH_ALLOW_ALL
+
 # ----------------------------------------------------------------------
 # JobEvent and JobEventStore – moved here because they are missing from
 # job_store.py.  The definitions mirror the usage inside JobService.
@@ -82,7 +84,15 @@ from .observability import (
 )
 from .knowledge_base import KnowledgeBaseService, KnowledgeBaseUnavailable
 from .qfs_store import QFS_STORE
-from .security import SecurityContext, auth_context, enforce_authn, enforce_authz, enforce_sandbox_policy, security_context
+from .security import (
+    SecurityContext,
+    auth_context,
+    enforce_authn,
+    enforce_authz,
+    enforce_sandbox_policy,
+    security_context,
+    load_security_config,
+)
 from .validation import (
     validate_device_id,
     validate_job_id,
@@ -472,11 +482,9 @@ class JobService:
         tenant = None
         name = None
         for e in events:
-            if e["event_type"] == "JOB_CREATED":
-                state = e["payload"]["state"]
-                name = e["payload"]["name"]
-                tenant = e["tenant_id"]
-            if e["event_type"] == "JOB_STATE_CHANGED":
+            if e["event_type"] in {"JOB_CREATED", "JOB_STATE_CHANGED"}:
+                tenant = e["tenant_id"] or tenant
+                name = e["payload"].get("name", name)
                 state = e["payload"]["state"]
         job = _JobRecord(
             job_id=job_id,
@@ -1637,9 +1645,13 @@ class JobService:
             self._assign_single_dispatch_delay(record)
 
     def _enforce_job_access(self, *, context: grpc.ServicerContext, record: _JobRecord) -> None:
-        subject, roles, tenant = auth_context(context)
-        if "*" in roles or "admin" in roles:
+        cfg = load_security_config()
+        if cfg.auth_mode == "allow_all":
             return
+        cfg = load_security_config()
+        if cfg.auth_mode == _AUTH_ALLOW_ALL:
+            return
+        subject, roles, tenant = auth_context(context)
         if tenant != record.owner_tenant:
             abort_public(
                 context,
@@ -1659,6 +1671,8 @@ class JobService:
         envelope = _public_envelope(request, context)
         enforce_authn(context, method_name="JobService.SubmitJob")
         enforce_authz(context, required_permission="jobs:submit")
+
+        subject, roles, tenant = auth_context(context)
         rc = new_request_context(context)
         log_request_start("JobService.SubmitJob", rc)
         _apply_public_envelope_context(rc, envelope)
@@ -1878,6 +1892,10 @@ class JobService:
         violations = validate_job_id(request)
         if violations:
             abort_invalid_argument(context, "validation failed", violations)
+
+        record = self._get_local_job_record(request.job_id)
+        if record is not None:
+            self._enforce_job_access(context=context, record=record)
 
         if self._kernel_endpoint_configured():
             try:

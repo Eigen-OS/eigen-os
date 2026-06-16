@@ -120,3 +120,18 @@ Knowledge Base retrieval paths MUST be gated before data is returned. The retrie
 3. validation against the active policy snapshot.
 
 Retrieval allow/deny outcomes MUST be written to the audit sink with the active policy version and correlation metadata when available.
+
+---
+
+## 8. Security conformance suite
+
+CI MUST run the security conformance suite that exercises the mandatory regression gates for:
+
+- token leakage
+- cross-tenant access
+- policy bypass
+- retrieval bypass
+- missing context
+- malicious prompt injection
+
+Any regression in one of these gates MUST fail the build. The suite MUST remain aligned with the normative behavior described in the security architecture component docs and the System API security baseline.
