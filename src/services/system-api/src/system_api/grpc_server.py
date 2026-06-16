@@ -12,7 +12,6 @@ from google.rpc import code_pb2, status_pb2, error_details_pb2
 from grpc_status import rpc_status
 
 from .grpc_impl import DeviceService, JobService
-from .knowledge_base import KnowledgeBaseService
 from .observability import trace_id_from_traceparent
 from .proto_gen import ensure_generated
 
@@ -185,8 +184,6 @@ def serve(bind: str | None = None) -> grpc.Server:
     from eigen.api.v1 import device_service_pb2_grpc as dev_pb_grpc
     from eigen.api.v1 import job_service_pb2 as job_pb
     from eigen.api.v1 import job_service_pb2_grpc as job_pb_grpc
-    from eigen.api.v1 import knowledge_base_service_pb2 as kb_pb
-    from eigen.api.v1 import knowledge_base_service_pb2_grpc as kb_pb_grpc
     from eigen.api.v1 import types_pb2 as types_pb
 
     # Initialize server infrastructure with tracing and error safety-nets
@@ -198,20 +195,12 @@ def serve(bind: str | None = None) -> grpc.Server:
         ]
     )
 
-    # Dependency Injection & Mapping Layer
-    # Note: Retained KnowledgeBaseService as required by your core architecture hierarchy
-    kb_service = KnowledgeBaseService(kb_pb=kb_pb, types_pb=types_pb)
-    
     job_pb_grpc.add_JobServiceServicer_to_server(
         JobService(job_pb=job_pb, types_pb=types_pb),
         server,
     )
     dev_pb_grpc.add_DeviceServiceServicer_to_server(
         DeviceService(dev_pb=dev_pb, types_pb=types_pb),
-        server,
-    )
-    kb_pb_grpc.add_KnowledgeBaseServiceServicer_to_server(
-        kb_service,
         server,
     )
 

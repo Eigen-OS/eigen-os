@@ -114,3 +114,95 @@ def start_metrics_server(port: int) -> None:
     server = ThreadingHTTPServer(("127.0.0.1", port), _MetricsHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
+
+
+_AUDIT_LOCK = threading.Lock()
+_KB_LOCK = threading.Lock()
+_KB_QUERY_TOTAL = Counter()
+_KB_FALLBACK_TOTAL = Counter()
+_KB_REPLAY_FAILURES = 0
+_KB_CONTRACT_TOTAL = Counter()
+
+
+def _audit_sink_path() -> str:
+    import os
+    raw = os.getenv("NEURO_SYMBOLIC_AUDIT_SINK_PATH", "").strip() or os.getenv("SYSTEM_API_AUDIT_SINK_PATH", "").strip()
+    if raw:
+        return raw
+    tmpdir = os.getenv("TMPDIR", "/tmp").strip() or "/tmp"
+    return os.path.join(tmpdir, "neuro-symbolic-service", "audit.jsonl")
+
+
+def append_security_audit_event(event: dict[str, object]) -> None:
+    import json
+    import os
+
+    record = json.dumps(event, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    sink_path = _audit_sink_path()
+    with _AUDIT_LOCK:
+        os.makedirs(os.path.dirname(sink_path), exist_ok=True)
+        with open(sink_path, "a", encoding="utf-8") as fh:
+            fh.write(record + "\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+
+
+def trace_id_from_traceparent(traceparent: str | None) -> str | None:
+    import re
+    if not traceparent:
+        return None
+    match = re.match(r"^\s*00-(?P<trace_id>[0-9a-f]{32})-[0-9a-f]{16}-0[01]\s*$", traceparent, re.IGNORECASE)
+    if not match:
+        return None
+    return match.group("trace_id")
+
+
+def sanitized_security_metadata(*, subject: str, roles: tuple[str, ...], auth_mode: str, policy_version: str, service_identity: str | None, sandbox_profile: str | None, replay_marker: str | None) -> dict[str, object]:
+    return {
+        "subject": subject,
+        "roles": ",".join(roles),
+        "auth_mode": auth_mode,
+        "policy_version": policy_version,
+        "service_identity": service_identity or "",
+        "sandbox_profile": sandbox_profile or "",
+        "replay_marker": replay_marker or "",
+    }
+
+
+def log_authz_denied(*, method: str, subject: str, permission: str, job_id: str | None = None, trace_id: str | None = None, traceparent: str | None = None) -> None:
+    _LOG.warning(
+        "authz_denied",
+        extra={
+            "method": method,
+            "subject": subject,
+            "permission": permission,
+            "job_id": job_id,
+            "trace_id": trace_id,
+            "traceparent": traceparent,
+        },
+    )
+
+
+def record_kb_query(kind: str, *, hit: bool) -> None:
+    with _KB_LOCK:
+        _KB_QUERY_TOTAL[kind] += 1
+        if hit:
+            _KB_QUERY_TOTAL[f"{kind}:hit"] += 1
+        else:
+            _KB_QUERY_TOTAL[f"{kind}:miss"] += 1
+
+
+def record_kb_fallback(reason: str) -> None:
+    with _KB_LOCK:
+        _KB_FALLBACK_TOTAL[reason] += 1
+
+
+def record_kb_replay_failure() -> None:
+    global _KB_REPLAY_FAILURES
+    with _KB_LOCK:
+        _KB_REPLAY_FAILURES += 1
+
+
+def record_kb_contract_marker(contract_version: str, outcome: str) -> None:
+    with _KB_LOCK:
+        _KB_CONTRACT_TOTAL[(contract_version or "unsupported", outcome or "error")] += 1

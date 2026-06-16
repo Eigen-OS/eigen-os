@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from system_api.pattern_miner import PatternMinerService
+from neuro_symbolic_service.pattern_miner import PatternMinerService
 
 
 def _dataset(
@@ -312,4 +312,3 @@ def test_pattern_miner_recommendation_contract_fixture_v1_0_0() -> None:
         "reproducible_for_same_snapshot_and_config_digest": True,
     }
     assert payload["compatibility"]["breaking"] is False
-    

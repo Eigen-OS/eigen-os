@@ -7,15 +7,11 @@ import grpc
 import pytest
 from google.protobuf.timestamp_pb2 import Timestamp
 
-from system_api.proto_gen import ensure_generated
-
-ensure_generated()
-
 from eigen.api.v1 import knowledge_base_service_pb2 as kb_pb  # noqa: E402
 from eigen.api.v1 import knowledge_base_service_pb2_grpc as kb_pb_grpc  # noqa: E402
 from eigen.api.v1 import types_pb2 as types_pb  # noqa: E402
 
-from system_api.knowledge_base import KnowledgeBaseService, KnowledgeBaseUnavailable  # noqa: E402
+from neuro_symbolic_service.knowledge_base import KnowledgeBaseService, KnowledgeBaseUnavailable  # noqa: E402
 
 
 class _MetadataContext:

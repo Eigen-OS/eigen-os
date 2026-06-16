@@ -28,8 +28,6 @@ from eigen.api.v1 import device_service_pb2 as dev_pb  # noqa: E402
 from eigen.api.v1 import device_service_pb2_grpc as dev_pb_grpc  # noqa: E402
 from eigen.api.v1 import job_service_pb2 as job_pb  # noqa: E402
 from eigen.api.v1 import job_service_pb2_grpc as job_pb_grpc  # noqa: E402
-from eigen.api.v1 import knowledge_base_service_pb2 as kb_pb  # noqa: E402
-from eigen.api.v1 import knowledge_base_service_pb2_grpc as kb_pb_grpc  # noqa: E402
 from eigen.api.v1 import types_pb2 as types_pb  # noqa: E402
 
 
@@ -502,7 +500,6 @@ def test_security_conformance_suite_blocks_mandatory_security_gates(monkeypatch:
     channel = grpc.insecure_channel(addr)
     dev_stub = dev_pb_grpc.DeviceServiceStub(channel)
     job_stub = job_pb_grpc.JobServiceStub(channel)
-    kb_stub = kb_pb_grpc.KnowledgeBaseServiceStub(channel)
 
     try:
         with pytest.raises(grpc.RpcError) as exc:
@@ -527,56 +524,6 @@ def test_security_conformance_suite_blocks_mandatory_security_gates(monkeypatch:
         with pytest.raises(grpc.RpcError) as exc:
             job_stub.GetJobStatus(job_pb.GetJobStatusRequest(job_id=submitted.job_id), metadata=tenant_b_md)
         assert exc.value.code() == grpc.StatusCode.PERMISSION_DENIED
-
-        kb_envelope_a = kb_pb.ApiContractEnvelope(
-            contract_version="1.0.0",
-            request=types_pb.ApiRequestEnvelope(
-                contract_version="1.0.0",
-                request_id="kb-security-a",
-                tenant_id="tenant-a",
-                project_id="project-a",
-                client_version="cli-1.0.0",
-                traceparent=traceparent,
-            ),
-        )
-        kb_envelope_b = kb_pb.ApiContractEnvelope(
-            contract_version="1.0.0",
-            request=types_pb.ApiRequestEnvelope(
-                contract_version="1.0.0",
-                request_id="kb-security-b",
-                tenant_id="tenant-a",
-                project_id="project-b",
-                client_version="cli-1.0.0",
-                traceparent=traceparent,
-            ),
-        )
-        kb_stub.AppendDecisionLog(
-            kb_pb.AppendDecisionLogRequest(
-                envelope=kb_envelope_a,
-                decision_log=kb_pb.DecisionLog(
-                    decision_id="decision-a",
-                    trace_id="trace-a",
-                    model_version="m1",
-                    component="runtime",
-                    policy_branch="baseline",
-                    selected_action="backend-alpha",
-                    fallback_used=False,
-                    feature_snapshot={"queue_depth": "2"},
-                    decided_at=_ts("2026-06-11T10:00:00+00:00"),
-                ),
-            ),
-            metadata=admin_md,
-        )
-        scoped = kb_stub.QueryDecisionLogs(
-            kb_pb.QueryDecisionLogsRequest(
-                envelope=kb_envelope_b,
-                trace_id="trace-a",
-                model_version="m1",
-                page_size=10,
-            ),
-            metadata=admin_md,
-        )
-        assert scoped.decision_logs == []
 
         with pytest.raises(ValueError):
             validate_recommendation_gateway(

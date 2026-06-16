@@ -2700,4 +2700,3 @@ class KnowledgeBaseService:
                     if isinstance(item, dict) and self._learning_payload_contains_quarantine_fields(item):
                         return True
         return False
-    

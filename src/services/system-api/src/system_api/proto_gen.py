@@ -57,7 +57,6 @@ def _default_proto_files(proto_root: Path) -> list[Path]:
             proto_root / "eigen" / "api" / "v1" / "types.proto",
             proto_root / "eigen" / "api" / "v1" / "job_service.proto",
             proto_root / "eigen" / "api" / "v1" / "device_service.proto",
-            proto_root / "eigen" / "api" / "v1" / "knowledge_base_service.proto",
             proto_root / "eigen" / "internal" / "v1" / "kernel_gateway.proto",
         ]
     )
