@@ -14,10 +14,14 @@ Test categories:
 """
 
 import asyncio
+import json
 import pytest
 import uuid
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from eigen.api.v1 import job_service_pb2 as job_pb
+from eigen.internal.v1 import kernel_gateway_pb2 as kernel_pb
 from system_api.kernel_client import KernelGatewayClient, KernelClientConfig
 from system_api.grpc_delegation import DelegationHandler
 
@@ -95,6 +99,7 @@ class TestSubmitJobDelegation:
         handler = DelegationHandler(kernel_client)
         
         # Call delegated submit
+        workload = {"kind": "QuantumJob", "execution_profile": "quantum", "replayable": False}
         job_id, state = _run(handler.submit_job_delegated(
             name="test_job",
             program=b"@quantum\ndef main(): pass",
@@ -104,14 +109,15 @@ class TestSubmitJobDelegation:
             compiler_options={},
             metadata_kvs={},
             public_envelope={"request_id": "req-001"},
+            workload=workload,
         ))
         
         # Verify response
         assert job_id == "job-abc123"
         assert state == "PENDING"  # Public state name
         
-
         kernel_client.enqueue_job.assert_called_once()
+        assert kernel_client.enqueue_job.call_args.kwargs["workload"] == workload
     
     def test_submit_job_idempotency(self):
         """Verify idempotency key is preserved through delegation."""
@@ -128,7 +134,6 @@ class TestSubmitJobDelegation:
         handler = DelegationHandler(kernel_client)
         
         idempotency_key = f"idempotent-{uuid.uuid4()}"
-        
 
         _run(handler.submit_job_delegated(
             name="test_job",
@@ -142,6 +147,58 @@ class TestSubmitJobDelegation:
         ))
         
         assert kernel_client.enqueue_job.called
+
+    def test_submit_job_internal_workload_context_is_forwarded(self):
+        workload_payload = {
+            "kind": "ReplayJob",
+            "execution_profile": "replay",
+            "replayable": True,
+            "artifact_lineage": {
+                "root_ref": "qfs://root",
+                "parent_ref": "qfs://parent",
+                "policy_snapshot_ref": "qfs://policy",
+                "execution_ref": "qfs://exec",
+            },
+            "observability": {
+                "traceparent": "00-11111111111111111111111111111111-2222222222222222-01",
+                "trace_id": "11111111111111111111111111111111",
+                "trace_ref": "trace://ref",
+                "emit_metrics": True,
+            },
+            "security": {
+                "tenant_id": "tenant-a",
+                "project_id": "project-b",
+                "service_identity": "system-api",
+                "policy_snapshot_ref": "policy://snapshot",
+                "fail_closed": True,
+            },
+            "backend_target": "sim:local",
+        }
+        public_workload = {"kind": "ReplayJob", "execution_profile": "replay", "replayable": True}
+
+        kernel_client = AsyncMock(spec=KernelGatewayClient)
+        kernel_client._closed = False
+        kernel_client.enqueue_job = AsyncMock(return_value={
+            "job_id": "job-abc123",
+            "state": "TASK_STATE_PENDING",
+            "created_at": None,
+        })
+
+        handler = DelegationHandler(kernel_client)
+
+        _run(handler.submit_job_delegated(
+            name="test_job",
+            program=b"program",
+            program_format="eigen_lang_source",
+            target="sim:local",
+            priority=50,
+            compiler_options={},
+            metadata_kvs={"jobspec_workload": json.dumps(workload_payload)},
+            public_envelope={"request_id": "req-001"},
+            workload=public_workload,
+        ))
+
+        assert kernel_client.enqueue_job.call_args.kwargs["workload"] == public_workload
 
 
 class TestGetJobStatusDelegation:
@@ -248,6 +305,72 @@ class TestGetJobResultsDelegation:
         assert response["qfs_result_ref"] == "qfs://results/job-abc123/final"
         
         kernel_client.get_job_results.assert_called_once()
+
+
+class TestKernelClientWorkloadPropagation:
+    def test_enqueue_job_carries_jobspec_workload_into_internal_metadata(self):
+        client = KernelGatewayClient(KernelClientConfig(grpc_endpoint="localhost:1"))
+
+        captured = {}
+
+        class Stub:
+            def EnqueueJob(self, request, timeout=None):
+                captured["request"] = request
+                return SimpleNamespace(job_id="job-xyz", state=kernel_pb.TaskState.TASK_STATE_PENDING, created_at=None)
+
+        client._closed = False
+        client._stub = Stub()
+
+        workload_payload = {
+            "kind": "ReplayJob",
+            "execution_profile": "replay",
+            "replayable": True,
+            "artifact_lineage": {
+                "root_ref": "qfs://root",
+                "parent_ref": "qfs://parent",
+                "policy_snapshot_ref": "qfs://policy",
+                "execution_ref": "qfs://exec",
+            },
+            "observability": {
+                "traceparent": "00-11111111111111111111111111111111-2222222222222222-01",
+                "trace_id": "11111111111111111111111111111111",
+                "trace_ref": "trace://ref",
+                "emit_metrics": True,
+            },
+            "security": {
+                "tenant_id": "tenant-a",
+                "project_id": "project-b",
+                "service_identity": "system-api",
+                "policy_snapshot_ref": "policy://snapshot",
+                "fail_closed": True,
+            },
+            "backend_target": "sim:local",
+        }
+
+        result = _run(client.enqueue_job(
+            name="job",
+            program=b"program",
+            program_format="eigen_lang_source",
+            target="sim:local",
+            priority=50,
+            compiler_options={},
+            metadata_kvs={"jobspec_workload": json.dumps(workload_payload)},
+            public_envelope={"request_id": "req-001"},
+            workload=job_pb.WorkloadContract(
+                kind=job_pb.WorkloadFamilyKind.WORKLOAD_FAMILY_KIND_REPLAY_JOB,
+                execution_profile="replay",
+                replayable=True,
+            ),
+        ))
+
+        assert result["job_id"] == "job-xyz"
+        assert captured["request"].metadata.workload.kind == kernel_pb.WorkloadFamilyKind.WORKLOAD_FAMILY_KIND_REPLAY_JOB
+        assert captured["request"].metadata.workload.execution_profile == "replay"
+        assert captured["request"].metadata.workload.replayable is True
+        assert captured["request"].metadata.workload.artifact_lineage.root_ref == "qfs://root"
+        assert captured["request"].metadata.workload.observability.emit_metrics is True
+        assert captured["request"].metadata.workload.security.policy_snapshot_ref == "policy://snapshot"
+        assert captured["request"].metadata.workload.backend_target == "sim:local"
 
 
 class TestStateMapping:

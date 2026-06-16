@@ -1134,26 +1134,6 @@ fn workload_to_proto(workload: &WorkloadContract) -> eigen::api::v1::WorkloadCon
         kind,
         execution_profile: workload.execution_profile.clone(),
         replayable: workload.replayable,
-        artifact_lineage: Some(eigen::api::v1::WorkloadArtifactLineage {
-            execution_ref: workload.artifact_lineage.execution_ref.clone(),
-            parent_ref: workload.artifact_lineage.parent_ref.clone(),
-            policy_snapshot_ref: workload.artifact_lineage.policy_snapshot_ref.clone(),
-            root_ref: workload.artifact_lineage.root_ref.clone(),
-        }),
-        observability: Some(eigen::api::v1::WorkloadObservability {
-            emit_metrics: workload.observability.emit_metrics,
-            trace_id: workload.observability.trace_id.clone(),
-            trace_ref: workload.observability.trace_ref.clone(),
-            traceparent: workload.observability.traceparent.clone(),
-        }),
-        security: Some(eigen::api::v1::WorkloadSecurity {
-            fail_closed: workload.security.fail_closed,
-            policy_snapshot_ref: workload.security.policy_snapshot_ref.clone(),
-            project_id: workload.security.project_id.clone(),
-            service_identity: workload.security.service_identity.clone(),
-            tenant_id: workload.security.tenant_id.clone(),
-        }),
-        backend_target: workload.backend_target.clone(),
     }
 }
 
