@@ -374,3 +374,18 @@ This service boundary is intentionally separate from `src/services/system-api/`:
 - `eigen-kernel` / QRTX is the primary runtime caller.
 - `eigen-compiler` may call the service only through the bounded advisory scoring path.
 - Internal offline workflows such as model loading, dataset ingestion, and privacy-governed training remain inside the same internal service boundary and must not be exposed through public ingress.
+
+---
+
+### 8.6 Offline training dataset ingestion
+
+The internal Neuro-Symbolic Service MAY expose a CLI-only ingestion path for KB-backed training datasets.
+
+That workflow MUST:
+
+- remain inside `src/services/neuro-symbolic-service/`,
+- require a stable manifest with dataset version and record schema version,
+- validate ownership, provenance, redaction, and policy snapshot evidence,
+- fail closed on missing or mismatched integrity digests,
+- preserve replay-safe dataset records for later training runs,
+- avoid public ingress and live model discovery on the request path.

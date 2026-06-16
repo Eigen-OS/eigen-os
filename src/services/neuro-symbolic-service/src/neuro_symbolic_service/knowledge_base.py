@@ -43,6 +43,106 @@ _SENSITIVE_KEYS = {
     "user_id",
 }
 
+_REDACTED_VALUE = "[REDACTED]"
+_MASKED_EMAIL_VALUE = "[REDACTED_EMAIL]"
+_MASKED_PHONE_VALUE = "[REDACTED_PHONE]"
+_MASKED_IDENTIFIER_VALUE = "[REDACTED_ID]"
+_REDACT_DELETE_KEYS = {
+    "authorization",
+    "auth_header",
+    "bearer",
+    "cookie",
+    "credentials",
+    "credential",
+    "password",
+    "passwd",
+    "pwd",
+    "secret",
+    "session_cookie",
+    "session_token",
+    "token",
+    "api_key",
+    "access_token",
+    "refresh_token",
+    "id_token",
+    "raw_authorization",
+    "raw_auth_header",
+    "body",
+    "payload",
+    "raw_payload",
+    "raw_request_body",
+    "request_body",
+    "stack_trace",
+    "trace_dump",
+}
+_REDACT_MASK_EMAIL_KEYS = {"email", "email_address", "contact_email", "e_mail"}
+_REDACT_MASK_PHONE_KEYS = {"phone", "phone_number", "mobile", "msisdn", "contact_phone"}
+_REDACT_MASK_IDENTIFIER_KEYS = {
+    "id",
+    "identifier",
+    "internal_id",
+    "internal_identifier",
+    "subject_id",
+    "user_id",
+    "tenant_id",
+    "project_id",
+    "request_id",
+    "trace_id",
+    "session_id",
+    "correlation_id",
+    "device_id",
+    "account_id",
+}
+_EMAIL_RE = re.compile(r"(?i)\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b")
+_PHONE_RE = re.compile(r"(?i)(?<!\d)(?:\+?\d{1,3}[-.\s]?)?(?:\(?\d{2,4}\)?[-.\s]?){1,3}\d{2,4}(?!\d)")
+_BEARER_RE = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{8,}\b")
+_UUID_RE = re.compile(r"(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b")
+
+def _redact_scalar_text(text: str, path: str, redactions: set[str]) -> str:
+    original = text
+    text = _BEARER_RE.sub(_REDACTED_VALUE, text)
+    text = _EMAIL_RE.sub(_MASKED_EMAIL_VALUE, text)
+    text = _PHONE_RE.sub(_MASKED_PHONE_VALUE, text)
+    text = _UUID_RE.sub(_MASKED_IDENTIFIER_VALUE, text)
+    if text != original:
+        redactions.add(path)
+    return text
+
+
+def _redact_json_value(value: Any, path: str, redactions: set[str]):
+    if isinstance(value, dict):
+        redacted: dict[str, object] = {}
+        for key, nested in value.items():
+            key_lower = str(key).strip().lower()
+            nested_path = f"{path}.{key}" if path else str(key)
+            if key_lower in _REDACT_DELETE_KEYS:
+                redacted[key] = _REDACTED_VALUE
+                redactions.add(nested_path)
+                continue
+            if key_lower in _REDACT_MASK_EMAIL_KEYS:
+                redacted[key] = _MASKED_EMAIL_VALUE
+                redactions.add(nested_path)
+                continue
+            if key_lower in _REDACT_MASK_PHONE_KEYS:
+                redacted[key] = _MASKED_PHONE_VALUE
+                redactions.add(nested_path)
+                continue
+            if key_lower in _REDACT_MASK_IDENTIFIER_KEYS or key_lower.endswith("_id"):
+                if isinstance(nested, (dict, list)):
+                    redacted[key] = _redact_json_value(nested, nested_path, redactions)
+                else:
+                    redacted[key] = _MASKED_IDENTIFIER_VALUE
+                    redactions.add(nested_path)
+                continue
+            redacted[key] = _redact_json_value(nested, nested_path, redactions)
+        return redacted
+    if isinstance(value, list):
+        return [_redact_json_value(item, f"{path}[{idx}]", redactions) for idx, item in enumerate(value)]
+    if isinstance(value, str):
+        return _redact_scalar_text(value, path, redactions)
+    return value
+
+
 _DEFAULT_STORAGE_MODE = "memory"
 _DEFAULT_RETENTION_SECONDS = 60 * 60 * 24 * 90
 _DEFAULT_ANON_SALT = "eigen-kb-anon-salt"
@@ -71,6 +171,8 @@ _INDEX_STATUS_REBUILDING = "rebuilding"
 _INDEX_STATUS_DEGRADED = "degraded"
 _INDEX_STATUS_UNAVAILABLE = "unavailable"
 _OKB_INDEX_MODES = ("structural", "vector")
+_TRAINING_DATASET_MANIFEST_SCHEMA = "neuro-symbolic.training-dataset.manifest.v1"
+_TRAINING_DATASET_RECORD_SCHEMA = "neuro-symbolic.training-dataset.record.v1"
 
 
 class KnowledgeBaseUnavailable(RuntimeError):
@@ -462,7 +564,7 @@ class KnowledgeBaseService:
         self._decision_logs: list[_StoredDecisionLog] = []
         self._learning_evidence: list[dict[str, Any]] = []
         self._learning_models: dict[tuple[str, str, str], dict[str, Any]] = {}
-        self._learning_datasets: dict[str, dict[str, Any]] = {}
+        self._learning_datasets: dict[tuple[str, str, str], dict[str, Any]] = {}
         self._learning_command_index: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
         self._sequence = 0
         self._okb_indexes: dict[str, _IndexState] = {
@@ -1096,7 +1198,7 @@ class KnowledgeBaseService:
             ]
             runtime_decisions = [item for item in scoped if item["evidence_kind"] == "runtime"]
             benchmark_runs = [item for item in scoped if item["evidence_kind"] == "benchmark"]
-            learning_evidence = [item for item in scoped if item["evidence_kind"] in {"learning", "optimizer", "runtime", "benchmark"}]
+            learning_evidence = [item for item in scoped if item["evidence_kind"] in {"learning", "optimizer", "runtime", "benchmark", "dataset"}]
             triggered = (
                 len(learning_evidence) >= policy["trigger_min_records"]
                 and len(runtime_decisions) >= policy["trigger_min_runtime_decisions"]
@@ -1109,6 +1211,7 @@ class KnowledgeBaseService:
             )
             summary = {
                 "dataset_id": dataset_id,
+                "dataset_version": target_model_version or policy["policy_version"],
                 "tenant_id": envelope["tenant_id"],
                 "project_id": envelope["project_id"],
                 "policy_version": policy["policy_version"],
@@ -1137,9 +1240,340 @@ class KnowledgeBaseService:
             }
             summary["dataset_hash"] = _stable_hash(summary)
             summary["evidence_hashes"] = [item["evidence_hash"] for item in sorted_evidence]
-            self._learning_datasets[dataset_id] = summary
+            self._learning_datasets.setdefault((envelope["tenant_id"], envelope["project_id"], dataset_id), {})[summary["dataset_version"]] = summary
         record_kb_query("learning_datasets", hit=bool(scoped))
         return summary
+
+    def ingest_training_dataset(self, manifest: dict[str, Any], *, caller_identity: str | None = None) -> dict[str, Any]:
+        if self._storage_mode == "disabled":
+            raise KnowledgeBaseUnavailable("knowledge base storage unavailable")
+
+        effective_caller = str(caller_identity or os.getenv("NEURO_SYMBOLIC_CLI_CALLER_IDENTITY", "")).strip()
+        if not effective_caller:
+            raise ValueError("caller identity is required")
+        if not isinstance(manifest, dict):
+            raise ValueError("training dataset manifest must be a mapping")
+
+        active_policy_version = self._require_explicit_policy_snapshot(None, operation="ingest_training_dataset")
+        manifest_payload = json.loads(_stable_json(manifest))
+
+        schema_version = str(manifest_payload.get("schema_version", "")).strip()
+        if schema_version != _TRAINING_DATASET_MANIFEST_SCHEMA:
+            raise ValueError("unsupported training dataset manifest schema_version")
+        contract_version = str(manifest_payload.get("contract_version", "")).strip()
+        if contract_version != _KB_CONTRACT_VERSION:
+            raise ValueError("unsupported training dataset contract_version")
+
+        dataset_id = str(manifest_payload.get("dataset_id", "")).strip()
+        dataset_version = str(manifest_payload.get("dataset_version", "")).strip()
+        record_schema_version = str(manifest_payload.get("record_schema_version", "")).strip()
+        tenant_id = str(manifest_payload.get("tenant_id", "")).strip()
+        project_id = str(manifest_payload.get("project_id", "")).strip()
+        policy_snapshot_version = str(manifest_payload.get("policy_snapshot_version", "")).strip()
+        manifest_digest_sha256 = str(manifest_payload.get("manifest_digest_sha256", "")).strip().lower()
+        if not all([dataset_id, dataset_version, record_schema_version, tenant_id, project_id, policy_snapshot_version, manifest_digest_sha256]):
+            raise ValueError("dataset_id, dataset_version, record_schema_version, tenant_id, project_id, policy_snapshot_version, and manifest_digest_sha256 are required")
+        if policy_snapshot_version != active_policy_version:
+            raise KnowledgeBaseUnavailable("policy snapshot mismatch")
+        if not re.fullmatch(r"[0-9a-f]{64}", manifest_digest_sha256):
+            raise ValueError("manifest_digest_sha256 must be a SHA-256 hex digest")
+
+        ownership = manifest_payload.get("ownership")
+        if not isinstance(ownership, dict):
+            raise ValueError("ownership is required")
+        owner_identity = str(ownership.get("service_identity", "")).strip()
+        requested_by = str(ownership.get("requested_by", "")).strip()
+        service_role = str(ownership.get("service_role", "")).strip()
+        if not owner_identity or not requested_by or not service_role:
+            raise ValueError("ownership.service_identity, ownership.requested_by, and ownership.service_role are required")
+        if owner_identity != effective_caller:
+            raise KnowledgeBaseUnavailable("caller identity mismatch")
+
+        provenance = manifest_payload.get("provenance")
+        if not isinstance(provenance, dict):
+            raise ValueError("provenance is required")
+        provenance_source_ref = str(provenance.get("source_ref", "")).strip()
+        provenance_captured_at = str(provenance.get("captured_at", "")).strip()
+        provenance_signed_by = str(provenance.get("signed_by", "")).strip()
+        provenance_signature_algorithm = str(provenance.get("signature_algorithm", "")).strip()
+        provenance_signature = str(provenance.get("signature", "")).strip()
+        provenance_source_digest = str(provenance.get("source_digest_sha256", "")).strip().lower()
+        if not all([provenance_source_ref, provenance_captured_at, provenance_signed_by, provenance_signature_algorithm, provenance_signature, provenance_source_digest]):
+            raise ValueError("provenance.source_ref, provenance.captured_at, provenance.signed_by, provenance.signature_algorithm, provenance.signature, and provenance.source_digest_sha256 are required")
+        if not re.fullmatch(r"[0-9a-f]{64}", provenance_source_digest):
+            raise ValueError("provenance.source_digest_sha256 must be a SHA-256 hex digest")
+        computed_provenance_digest = hashlib.sha256(_stable_json({k: v for k, v in provenance.items() if k != "source_digest_sha256"}).encode("utf-8")).hexdigest()
+        if computed_provenance_digest != provenance_source_digest:
+            raise KnowledgeBaseUnavailable("provenance digest mismatch")
+
+        redaction = manifest_payload.get("redaction")
+        if not isinstance(redaction, dict):
+            raise ValueError("redaction is required")
+        if not bool(redaction.get("applied", False)) or not bool(redaction.get("validated", False)):
+            raise KnowledgeBaseUnavailable("dataset redaction must be applied and validated")
+        redaction_rules = redaction.get("rules")
+        if not isinstance(redaction_rules, list) or not any(str(rule).strip() for rule in redaction_rules):
+            raise ValueError("redaction.rules are required")
+        redaction_digest = str(redaction.get("redaction_digest_sha256", "")).strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", redaction_digest):
+            raise ValueError("redaction.redaction_digest_sha256 must be a SHA-256 hex digest")
+        computed_redaction_digest = hashlib.sha256(_stable_json({k: v for k, v in redaction.items() if k != "redaction_digest_sha256"}).encode("utf-8")).hexdigest()
+        if computed_redaction_digest != redaction_digest:
+            raise KnowledgeBaseUnavailable("redaction digest mismatch")
+
+        records = manifest_payload.get("records")
+        if not isinstance(records, list) or not records:
+            raise ValueError("records must be a non-empty list")
+
+        normalized_records: list[dict[str, Any]] = []
+        record_digests: list[str] = []
+        for idx, record in enumerate(records):
+            if not isinstance(record, dict):
+                raise ValueError(f"records[{idx}] must be a mapping")
+            record_id = str(record.get("record_id", "")).strip()
+            record_schema = str(record.get("schema_version", "")).strip()
+            payload = record.get("payload")
+            if not record_id or record_schema != record_schema_version:
+                raise ValueError(f"records[{idx}].record_id and schema_version are required")
+            if not isinstance(payload, (dict, list, str, int, float, bool)):
+                raise ValueError(f"records[{idx}].payload must be JSON-serializable")
+            redacted_payload = _redact_json_value(payload, "$", set())
+            if redacted_payload != payload:
+                raise KnowledgeBaseUnavailable(f"records[{idx}] must be redacted before ingestion")
+            content_digest = str(record.get("content_digest_sha256", "")).strip().lower()
+            if not re.fullmatch(r"[0-9a-f]{64}", content_digest):
+                raise ValueError(f"records[{idx}].content_digest_sha256 must be a SHA-256 hex digest")
+            computed_content_digest = hashlib.sha256(_stable_json(redacted_payload).encode("utf-8")).hexdigest()
+            if computed_content_digest != content_digest:
+                raise KnowledgeBaseUnavailable(f"records[{idx}] content digest mismatch")
+
+            record_provenance = record.get("provenance")
+            if not isinstance(record_provenance, dict):
+                raise ValueError(f"records[{idx}].provenance is required")
+            record_provenance_ref = str(record_provenance.get("source_ref", "")).strip()
+            record_provenance_captured_at = str(record_provenance.get("captured_at", "")).strip()
+            record_provenance_requested_by = str(record_provenance.get("requested_by", "")).strip()
+            record_provenance_source_digest = str(record_provenance.get("source_digest_sha256", "")).strip().lower()
+            if not all([record_provenance_ref, record_provenance_captured_at, record_provenance_requested_by, record_provenance_source_digest]):
+                raise ValueError(f"records[{idx}].provenance.source_ref, captured_at, requested_by, and source_digest_sha256 are required")
+            if not re.fullmatch(r"[0-9a-f]{64}", record_provenance_source_digest):
+                raise ValueError(f"records[{idx}].provenance.source_digest_sha256 must be a SHA-256 hex digest")
+            computed_record_provenance_digest = hashlib.sha256(_stable_json({k: v for k, v in record_provenance.items() if k != "source_digest_sha256"}).encode("utf-8")).hexdigest()
+            if computed_record_provenance_digest != record_provenance_source_digest:
+                raise KnowledgeBaseUnavailable(f"records[{idx}] provenance digest mismatch")
+
+            record_redaction = record.get("redaction")
+            if not isinstance(record_redaction, dict):
+                raise ValueError(f"records[{idx}].redaction is required")
+            if not bool(record_redaction.get("validated", False)) or not bool(record_redaction.get("applied", False)):
+                raise KnowledgeBaseUnavailable(f"records[{idx}] redaction must be applied and validated")
+            record_redaction_digest = str(record_redaction.get("redaction_digest_sha256", "")).strip().lower()
+            if not re.fullmatch(r"[0-9a-f]{64}", record_redaction_digest):
+                raise ValueError(f"records[{idx}].redaction.redaction_digest_sha256 must be a SHA-256 hex digest")
+            computed_record_redaction_digest = hashlib.sha256(_stable_json({k: v for k, v in record_redaction.items() if k != "redaction_digest_sha256"}).encode("utf-8")).hexdigest()
+            if computed_record_redaction_digest != record_redaction_digest:
+                raise KnowledgeBaseUnavailable(f"records[{idx}] redaction digest mismatch")
+
+            normalized_record = {
+                "record_id": record_id,
+                "schema_version": record_schema,
+                "content_digest_sha256": content_digest,
+                "payload": redacted_payload,
+                "provenance": {
+                    "source_ref": record_provenance_ref,
+                    "captured_at": record_provenance_captured_at,
+                    "requested_by": record_provenance_requested_by,
+                    "source_digest_sha256": str(record_provenance.get("source_digest_sha256", "")).strip().lower(),
+                },
+                "redaction": {
+                    "applied": True,
+                    "validated": True,
+                    "redaction_digest_sha256": record_redaction_digest,
+                    "rules": [str(rule).strip() for rule in (record_redaction.get("rules") or []) if str(rule).strip()],
+                },
+            }
+            normalized_records.append(normalized_record)
+            record_digests.append(content_digest)
+
+        normalized_manifest = {
+            "schema_version": schema_version,
+            "contract_version": contract_version,
+            "dataset_id": dataset_id,
+            "dataset_version": dataset_version,
+            "record_schema_version": record_schema_version,
+            "tenant_id": tenant_id,
+            "project_id": project_id,
+            "policy_snapshot_version": policy_snapshot_version,
+            "ownership": {
+                "service_identity": owner_identity,
+                "requested_by": requested_by,
+                "service_role": service_role,
+            },
+            "provenance": {
+                "source_ref": provenance_source_ref,
+                "captured_at": provenance_captured_at,
+                "signed_by": provenance_signed_by,
+                "signature_algorithm": provenance_signature_algorithm,
+                "signature": provenance_signature,
+                "source_digest_sha256": provenance_source_digest,
+            },
+            "redaction": {
+                "applied": True,
+                "validated": True,
+                "rules": [str(rule).strip() for rule in redaction_rules if str(rule).strip()],
+                "redaction_digest_sha256": redaction_digest,
+            },
+            "records": normalized_records,
+            "manifest_digest_sha256": manifest_digest_sha256,
+        }
+        computed_manifest_digest = hashlib.sha256(_stable_json({k: v for k, v in normalized_manifest.items() if k != "manifest_digest_sha256"}).encode("utf-8")).hexdigest()
+        if computed_manifest_digest != manifest_digest_sha256:
+            raise KnowledgeBaseUnavailable("manifest digest mismatch")
+
+        dataset_digest_source = {
+            "dataset_id": dataset_id,
+            "dataset_version": dataset_version,
+            "tenant_id": tenant_id,
+            "project_id": project_id,
+            "policy_snapshot_version": policy_snapshot_version,
+            "ownership": normalized_manifest["ownership"],
+            "provenance": normalized_manifest["provenance"],
+            "redaction": normalized_manifest["redaction"],
+            "record_digests": record_digests,
+        }
+        dataset_digest_sha256 = hashlib.sha256(_stable_json(dataset_digest_source).encode("utf-8")).hexdigest()
+        now = datetime.now(timezone.utc)
+        dataset_summary = {
+            "dataset_id": dataset_id,
+            "dataset_version": dataset_version,
+            "tenant_id": tenant_id,
+            "project_id": project_id,
+            "policy_snapshot_version": policy_snapshot_version,
+            "record_schema_version": record_schema_version,
+            "ownership": normalized_manifest["ownership"],
+            "provenance": normalized_manifest["provenance"],
+            "redaction": normalized_manifest["redaction"],
+            "record_count": len(normalized_records),
+            "records": normalized_records,
+            "record_digests": record_digests,
+            "manifest_digest_sha256": manifest_digest_sha256,
+            "dataset_digest_sha256": dataset_digest_sha256,
+            "queryable_ref": f"kb://datasets/{dataset_id}/{dataset_version}",
+            "created_at": now.isoformat(),
+            "updated_at": now.isoformat(),
+        }
+
+        with self._lock:
+            self._gc_locked()
+            dataset_versions = self._learning_datasets.setdefault((tenant_id, project_id, dataset_id), {})
+            existing = dataset_versions.get(dataset_version)
+            if existing is not None:
+                if existing.get("manifest_digest_sha256") != manifest_digest_sha256:
+                    raise KnowledgeBaseUnavailable("dataset version already exists with different content")
+                return json.loads(_stable_json(existing))
+
+            evidence = self._learning_store_evidence(
+                source="cli",
+                evidence_kind="dataset",
+                envelope={"tenant_id": tenant_id, "project_id": project_id},
+                evidence_payload=normalized_manifest,
+                model_version=dataset_version,
+                training_set_hash=dataset_digest_sha256,
+                evaluation_bundle_hash=manifest_digest_sha256,
+                promotion_policy_version=policy_snapshot_version,
+                lifecycle_state="DRAFT",
+                quarantine_state="none",
+                gate_results={
+                    "manifest_digest_sha256": manifest_digest_sha256,
+                    "record_count": len(normalized_records),
+                    "record_schema_version": record_schema_version,
+                },
+                metadata={
+                    "dataset_id": dataset_id,
+                    "dataset_version": dataset_version,
+                    "requested_by": requested_by,
+                    "service_identity": owner_identity,
+                    "service_role": service_role,
+                    "source_ref": provenance_source_ref,
+                    "source_digest_sha256": provenance_source_digest,
+                    "record_count": len(normalized_records),
+                    "manifest_digest_sha256": manifest_digest_sha256,
+                    "redaction_digest_sha256": redaction_digest,
+                },
+                command="ingest_training_dataset",
+                decision="accepted",
+                capability_scope=(),
+            )
+            dataset_summary.update(
+                {
+                    "evidence_id": evidence["evidence_id"],
+                    "evidence_ref": evidence["queryable_ref"],
+                }
+            )
+            dataset_versions[dataset_version] = dataset_summary
+
+        append_security_audit_event(
+            {
+                "audit_kind": "immutable_dataset_ingest",
+                "operation": "ingest_training_dataset",
+                "dataset_id": dataset_id,
+                "dataset_version": dataset_version,
+                "tenant_id": tenant_id,
+                "project_id": project_id,
+                "policy_snapshot_version": policy_snapshot_version,
+                "caller_identity": owner_identity,
+                "requested_by": requested_by,
+                "service_role": service_role,
+                "provenance_source_ref": provenance_source_ref,
+                "provenance_source_digest_sha256": provenance_source_digest,
+                "manifest_digest_sha256": manifest_digest_sha256,
+                "dataset_digest_sha256": dataset_digest_sha256,
+                "record_count": len(normalized_records),
+                "record_schema_version": record_schema_version,
+                "redaction_rules": normalized_manifest["redaction"]["rules"],
+                "immutable": True,
+            }
+        )
+        record_kb_query("learning_datasets", hit=True)
+        return json.loads(_stable_json(dataset_summary))
+
+    def get_training_dataset(self, payload: dict[str, Any], context: grpc.ServicerContext | None = None) -> dict[str, Any]:
+        if self._storage_mode == "disabled":
+            raise KnowledgeBaseUnavailable("knowledge base storage unavailable")
+        envelope = self._payload_envelope(payload)
+        dataset_id = str(payload.get("dataset_id", "")).strip()
+        dataset_version = str(payload.get("dataset_version", "")).strip()
+        if not dataset_id:
+            raise ValueError("dataset_id is required")
+        sec_ctx, policy_version = self._retrieval_security_context(context, operation="get_training_dataset")
+        with self._lock:
+            self._gc_locked()
+            dataset = self._learning_dataset_lookup(envelope["tenant_id"], envelope["project_id"], dataset_id, dataset_version=dataset_version)
+            if dataset is None:
+                self._audit_retrieval_decision(
+                    context=context,
+                    sec_ctx=sec_ctx,
+                    policy_version=policy_version,
+                    operation="get_training_dataset",
+                    decision="deny",
+                    reason="KB_DATASET_NOT_FOUND",
+                    hit=False,
+                    resource_name=dataset_id,
+                )
+                raise KnowledgeBaseUnavailable("dataset unavailable")
+        self._audit_retrieval_decision(
+            context=context,
+            sec_ctx=sec_ctx,
+            policy_version=policy_version,
+            operation="get_training_dataset",
+            decision="allow",
+            reason="KB_DATASET_FOUND",
+            hit=True,
+            resource_name=dataset_id,
+        )
+        record_kb_query("learning_datasets", hit=True)
+        return json.loads(_stable_json(dataset))
+
 
     def start_training(self, payload: dict[str, Any]) -> dict[str, Any]:
         if self._storage_mode == "disabled":
@@ -1147,13 +1581,14 @@ class KnowledgeBaseService:
         envelope = self._payload_envelope(payload)
         model_version = str(payload.get("model_version", "")).strip()
         dataset_id = str(payload.get("dataset_id", "")).strip()
+        dataset_version = str(payload.get("dataset_version", "")).strip()
         policy = self._normalize_learning_policy(payload)
         if not model_version or not dataset_id:
             raise ValueError("model_version and dataset_id are required")
         with self._lock:
             self._gc_locked()
-            dataset = self._learning_datasets.get(dataset_id)
-            if dataset is None or dataset["tenant_id"] != envelope["tenant_id"] or dataset["project_id"] != envelope["project_id"]:
+            dataset = self._learning_dataset_lookup(envelope["tenant_id"], envelope["project_id"], dataset_id, dataset_version=dataset_version)
+            if dataset is None:
                 raise KnowledgeBaseUnavailable("dataset unavailable")
             result = self._learning_transition_result(
                 tenant_id=envelope["tenant_id"],
@@ -1162,9 +1597,18 @@ class KnowledgeBaseService:
                 from_state="DRAFT",
                 to_state="TRAINED",
                 policy=policy,
-                gate_results={"dataset_hash": dataset["dataset_hash"]},
+                gate_results={"dataset_hash": dataset["dataset_digest_sha256"]},
                 queryable_ref=f"kb://models/{model_version}",
                 evidence_ref=dataset["queryable_ref"],
+            )
+           result.update(
+                {
+                    "dataset_id": dataset["dataset_id"],
+                    "dataset_version": dataset["dataset_version"],
+                    "dataset_digest_sha256": dataset["dataset_digest_sha256"],
+                    "dataset_manifest_digest_sha256": dataset["manifest_digest_sha256"],
+                    "dataset_record_count": dataset["record_count"],
+                }
             )
         record_kb_query("learning_models", hit=True)
         return result
@@ -1175,14 +1619,15 @@ class KnowledgeBaseService:
         envelope = self._payload_envelope(payload)
         model_version = str(payload.get("model_version", "")).strip()
         dataset_id = str(payload.get("dataset_id", "")).strip()
+        dataset_version = str(payload.get("dataset_version", "")).strip()
         policy = self._normalize_learning_policy(payload)
         gate_results = dict(payload.get("gate_results") or {})
         if not model_version or not dataset_id:
             raise ValueError("model_version and dataset_id are required")
         with self._lock:
             self._gc_locked()
-            dataset = self._learning_datasets.get(dataset_id)
-            if dataset is None or dataset["tenant_id"] != envelope["tenant_id"] or dataset["project_id"] != envelope["project_id"]:
+            dataset = self._learning_dataset_lookup(envelope["tenant_id"], envelope["project_id"], dataset_id, dataset_version=dataset_version)
+            if dataset is None:
                 raise KnowledgeBaseUnavailable("dataset unavailable")
             result = self._learning_transition_result(
                 tenant_id=envelope["tenant_id"],
@@ -1197,6 +1642,15 @@ class KnowledgeBaseService:
             )
             result["shadow_validated"] = bool(payload.get("shadow_validated", False))
             result["canary_passed"] = bool(payload.get("canary_passed", False))
+            result.update(
+                {
+                    "dataset_id": dataset["dataset_id"],
+                    "dataset_version": dataset["dataset_version"],
+                    "dataset_digest_sha256": dataset["dataset_digest_sha256"],
+                    "dataset_manifest_digest_sha256": dataset["manifest_digest_sha256"],
+                    "dataset_record_count": dataset["record_count"],
+                }
+            )
         record_kb_query("learning_models", hit=True)
         return result
 
@@ -2491,6 +2945,15 @@ class KnowledgeBaseService:
             for key, value in self._learning_models.items()
             if _parse_iso_datetime(value["updated_at"]) >= cutoff
         }
+        self._learning_datasets = {
+            key: {
+                version: summary
+                for version, summary in versions.items()
+                if _parse_iso_datetime(summary["updated_at"]) >= cutoff
+            }
+            for key, versions in self._learning_datasets.items()
+            if any(_parse_iso_datetime(summary["updated_at"]) >= cutoff for summary in versions.values())
+        }
 
         if len(self._records) != before_record_count or len(self._decision_logs) != before_decision_count:
             self._rebuild_indexes_locked(tenant_id=None, project_id=None, reason="gc")
@@ -2670,6 +3133,17 @@ class KnowledgeBaseService:
             "lineage": self._learning_collect_lineage(envelope=scope, model_version=model["model_version"]),
             "updated_at": model["updated_at"],
         }
+
+    def _learning_dataset_lookup(self, tenant_id: str, project_id: str, dataset_id: str, *, dataset_version: str = "") -> dict[str, Any] | None:
+        versions = self._learning_datasets.get((tenant_id, project_id, dataset_id))
+        if not versions:
+            return None
+        if dataset_version:
+            return versions.get(dataset_version)
+        if len(versions) == 1:
+            return next(iter(versions.values()))
+        raise ValueError("dataset_version is required when multiple versions exist")
+
 
     def _learning_public_view(self, item: dict[str, Any]) -> dict[str, Any]:
         return {
