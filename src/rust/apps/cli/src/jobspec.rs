@@ -23,6 +23,15 @@ pub const JOBSPEC_API_VERSION: &str = "eigen.os/v1";
 pub const LEGACY_JOBSPEC_API_VERSION: &str = "eigen.os/v0.1";
 pub const JOBSPEC_CONTRACT_VERSION: &str = "1.0.0";
 pub const JOBSPEC_KIND: &str = "QuantumJob";
+pub const JOBSPEC_WORKLOAD_KINDS: [&str; 6] = [
+    "QuantumJob",
+    "HybridWorkflow",
+    "DistributedJob",
+    "BenchmarkJob",
+    "PipelineJob",
+    "ReplayJob",
+];
+pub const JOBSPEC_WORKLOAD_KIND_DEFAULT: &str = "QuantumJob";
 pub const EIGEN_LANG_RUNTIME_HINTS_VERSION: &str = "1.1.0";
 pub const EIGEN_LANG_RUNTIME_DIAGNOSTICS_VERSION: &str = "1.0.0";
 pub const EIGEN_LANG_EXECUTION_ANNOTATIONS_VERSION: &str = "1.0.0";
@@ -110,6 +119,43 @@ pub struct JobRuntimeSpec {
     pub compiler_options: BTreeMap<String, String>,
     pub metadata: BTreeMap<String, String>,
     pub dependencies: Vec<String>,
+    pub workload: WorkloadContract,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkloadContract {
+    pub kind: String,
+    pub execution_profile: String,
+    pub replayable: bool,
+    pub artifact_lineage: WorkloadArtifactLineage,
+    pub observability: WorkloadObservability,
+    pub security: WorkloadSecurity,
+    pub backend_target: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct WorkloadArtifactLineage {
+    pub execution_ref: String,
+    pub parent_ref: String,
+    pub policy_snapshot_ref: String,
+    pub root_ref: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct WorkloadObservability {
+    pub emit_metrics: bool,
+    pub trace_id: String,
+    pub trace_ref: String,
+    pub traceparent: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct WorkloadSecurity {
+    pub fail_closed: bool,
+    pub policy_snapshot_ref: String,
+    pub project_id: String,
+    pub service_identity: String,
+    pub tenant_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -122,6 +168,7 @@ pub struct SubmitJobRequest {
     pub compiler_options: BTreeMap<String, String>,
     pub metadata: BTreeMap<String, String>,
     pub dependencies: Vec<String>,
+    pub workload: WorkloadContract,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -183,6 +230,24 @@ pub fn parse_and_validate_jobspec(yaml: &str) -> Result<JobSpec, JobSpecValidati
     let mut compiler_options = BTreeMap::new();
     let mut runtime_metadata = BTreeMap::new();
     let mut dependencies = Vec::new();
+
+    let mut workload_kind = JOBSPEC_WORKLOAD_KIND_DEFAULT.to_string();
+    let mut workload_execution_profile = String::new();
+    let mut workload_replayable: Option<bool> = None;
+    let mut workload_backend_target = String::new();
+    let mut workload_artifact_root_ref = String::new();
+    let mut workload_artifact_parent_ref = String::new();
+    let mut workload_artifact_policy_snapshot_ref = String::new();
+    let mut workload_artifact_execution_ref = String::new();
+    let mut workload_observability_emit_metrics: Option<bool> = None;
+    let mut workload_observability_trace_id = String::new();
+    let mut workload_observability_trace_ref = String::new();
+    let mut workload_observability_traceparent = String::new();
+    let mut workload_security_fail_closed: Option<bool> = None;
+    let mut workload_security_policy_snapshot_ref = String::new();
+    let mut workload_security_project_id = String::new();
+    let mut workload_security_service_identity = String::new();
+    let mut workload_security_tenant_id = String::new();
 
     let mut section = "";
     let mut subsection = "";
@@ -280,6 +345,10 @@ pub fn parse_and_validate_jobspec(yaml: &str) -> Result<JobSpec, JobSpecValidati
                 subsection = "dependencies";
                 continue;
             }
+            if trimmed == "workload:" {
+                subsection = "workload";
+                continue;
+            }
         }
 
         if section == "spec" && indent >= 4 {
@@ -308,6 +377,77 @@ pub fn parse_and_validate_jobspec(yaml: &str) -> Result<JobSpec, JobSpecValidati
                             program_buf.clear();
                         } else {
                             program_inline = Some(v);
+                        }
+                    }
+                }
+                "workload" => {
+                    if let Some(v) = value_for(trimmed, "kind:") {
+                        workload_kind = v;
+                        continue;
+                    }
+                    if let Some(v) = value_for(trimmed, "execution_profile:") {
+                        workload_execution_profile = v;
+                        continue;
+                    }
+                    if let Some(v) = value_for(trimmed, "replayable:") {
+                        if let Ok(parsed) = v.parse::<bool>() {
+                            workload_replayable = Some(parsed);
+                        }
+                        continue;
+                    }
+                    if let Some(v) = value_for(trimmed, "backend_target:") {
+                        workload_backend_target = v;
+                        continue;
+                    }
+                    if trimmed == "artifact_lineage:" {
+                        subsection = "workload_artifact_lineage";
+                        continue;
+                    }
+                    if trimmed == "observability:" {
+                        subsection = "workload_observability";
+                        continue;
+                    }
+                    if trimmed == "security:" {
+                        subsection = "workload_security";
+                        continue;
+                    }
+                }
+                "workload_artifact_lineage" => {
+                    if let Some(v) = value_for(trimmed, "root_ref:") {
+                        workload_artifact_root_ref = v;
+                    } else if let Some(v) = value_for(trimmed, "parent_ref:") {
+                        workload_artifact_parent_ref = v;
+                    } else if let Some(v) = value_for(trimmed, "policy_snapshot_ref:") {
+                        workload_artifact_policy_snapshot_ref = v;
+                    } else if let Some(v) = value_for(trimmed, "execution_ref:") {
+                        workload_artifact_execution_ref = v;
+                    }
+                }
+                "workload_observability" => {
+                    if let Some(v) = value_for(trimmed, "traceparent:") {
+                        workload_observability_traceparent = v;
+                    } else if let Some(v) = value_for(trimmed, "trace_id:") {
+                        workload_observability_trace_id = v;
+                    } else if let Some(v) = value_for(trimmed, "trace_ref:") {
+                        workload_observability_trace_ref = v;
+                    } else if let Some(v) = value_for(trimmed, "emit_metrics:") {
+                        if let Ok(parsed) = v.parse::<bool>() {
+                            workload_observability_emit_metrics = Some(parsed);
+                        }
+                    }
+                }
+                "workload_security" => {
+                    if let Some(v) = value_for(trimmed, "tenant_id:") {
+                        workload_security_tenant_id = v;
+                    } else if let Some(v) = value_for(trimmed, "project_id:") {
+                        workload_security_project_id = v;
+                    } else if let Some(v) = value_for(trimmed, "service_identity:") {
+                        workload_security_service_identity = v;
+                    } else if let Some(v) = value_for(trimmed, "policy_snapshot_ref:") {
+                        workload_security_policy_snapshot_ref = v;
+                    } else if let Some(v) = value_for(trimmed, "fail_closed:") {
+                        if let Ok(parsed) = v.parse::<bool>() {
+                            workload_security_fail_closed = Some(parsed);
                         }
                     }
                 }
@@ -369,6 +509,29 @@ pub fn parse_and_validate_jobspec(yaml: &str) -> Result<JobSpec, JobSpecValidati
         });
     }
 
+    if !JOBSPEC_WORKLOAD_KINDS.contains(&workload_kind.as_str()) {
+        violations.push(FieldViolation {
+            field: "spec.workload.kind".to_string(),
+            description: format!("must be one of {}", JOBSPEC_WORKLOAD_KINDS.join(", ")),
+        });
+        workload_kind = JOBSPEC_WORKLOAD_KIND_DEFAULT.to_string();
+    }
+    if workload_execution_profile.trim().is_empty() {
+        workload_execution_profile = match workload_kind.as_str() {
+            "QuantumJob" => "quantum",
+            "HybridWorkflow" => "hybrid",
+            "DistributedJob" => "distributed",
+            "BenchmarkJob" => "benchmark",
+            "PipelineJob" => "pipeline",
+            "ReplayJob" => "replay",
+            _ => "quantum",
+        }
+        .to_string();
+    }
+    let workload_replayable = workload_replayable.unwrap_or_else(|| workload_kind != "QuantumJob");
+    let workload_observability_emit_metrics = workload_observability_emit_metrics.unwrap_or(false);
+    let workload_security_fail_closed = workload_security_fail_closed.unwrap_or(workload_kind == "ReplayJob");
+
     if !violations.is_empty() {
         return Err(JobSpecValidationError::new(violations));
     }
@@ -385,11 +548,36 @@ pub fn parse_and_validate_jobspec(yaml: &str) -> Result<JobSpec, JobSpecValidati
             program_inline,
             program_path,
             entrypoint,
-            target,
+            target: target.clone(),
             priority,
             compiler_options,
             metadata: runtime_metadata,
             dependencies,
+            workload: WorkloadContract {
+                kind: workload_kind,
+                execution_profile: workload_execution_profile,
+                replayable: workload_replayable,
+                artifact_lineage: WorkloadArtifactLineage {
+                    execution_ref: workload_artifact_execution_ref,
+                    parent_ref: workload_artifact_parent_ref,
+                    policy_snapshot_ref: workload_artifact_policy_snapshot_ref,
+                    root_ref: workload_artifact_root_ref,
+                },
+                observability: WorkloadObservability {
+                    emit_metrics: workload_observability_emit_metrics,
+                    trace_id: workload_observability_trace_id,
+                    trace_ref: workload_observability_trace_ref,
+                    traceparent: workload_observability_traceparent,
+                },
+                security: WorkloadSecurity {
+                    fail_closed: workload_security_fail_closed,
+                    policy_snapshot_ref: workload_security_policy_snapshot_ref,
+                    project_id: workload_security_project_id,
+                    service_identity: workload_security_service_identity,
+                    tenant_id: workload_security_tenant_id,
+                },
+                backend_target: workload_backend_target,
+            },
         },
     })
 }
@@ -453,6 +641,10 @@ pub fn map_to_submit_job_request_with_packaging(
 
     let mut metadata = job.spec.metadata.clone();
     metadata.insert("source_sha256".to_string(), sha256.clone());
+    metadata.insert(
+        "jobspec_workload".to_string(),
+        workload_json(&job.spec.workload),
+    );
 
     Ok(SubmitJobRequest {
         jobspec_api_version: job.api_version.clone(),
@@ -467,6 +659,7 @@ pub fn map_to_submit_job_request_with_packaging(
         compiler_options: job.spec.compiler_options.clone(),
         metadata,
         dependencies: job.spec.dependencies.clone(),
+        workload: job.spec.workload.clone(),
     })
 }
 
@@ -503,7 +696,8 @@ pub fn canonical_jobspec_json_from_request(
             "\"metadata\":{metadata},",
             "\"priority\":{priority},",
             "\"program\":{{\"entrypoint\":\"{entrypoint}\",\"sha256\":\"{sha256}\",\"source\":\"{source}\"}},",
-            "\"target\":\"{target}\"",
+            "\"target\":\"{target}\",",
+            "\"workload\":{workload}",
             "}},",
             "\"version\":\"{version}\"",
             "}}"
@@ -520,6 +714,7 @@ pub fn canonical_jobspec_json_from_request(
         sha256 = json_escape(sha256),
         source = json_escape(source),
         target = json_escape(&req.target),
+        workload = workload_json(&req.workload),
         version = JOBSPEC_CONTRACT_VERSION,
     );
     let digest = sha256_hex(base.as_bytes());
@@ -548,6 +743,44 @@ fn string_vec_json(values: &[String]) -> String {
         .map(|v| format!("\"{}\"", json_escape(v)))
         .collect();
     format!("[{}]", parts.join(","))
+}
+
+fn workload_json(workload: &WorkloadContract) -> String {
+    let artifact = &workload.artifact_lineage;
+    let observability = &workload.observability;
+    let security = &workload.security;
+    format!(
+        r#"{{"artifact_lineage":{{"execution_ref":"{}","parent_ref":"{}","policy_snapshot_ref":"{}","root_ref":"{}"}},"backend_target":"{}","execution_profile":"{}","kind":"{}","observability":{{"emit_metrics":{},"trace_id":"{}","trace_ref":"{}","traceparent":"{}"}},"replayable":{},"security":{{"fail_closed":{},"policy_snapshot_ref":"{}","project_id":"{}","service_identity":"{}","tenant_id":"{}"}}}}"#,
+        json_escape(&artifact.execution_ref),
+        json_escape(&artifact.parent_ref),
+        json_escape(&artifact.policy_snapshot_ref),
+        json_escape(&artifact.root_ref),
+        json_escape(&workload.backend_target),
+        json_escape(&workload.execution_profile),
+        json_escape(&workload.kind),
+        workload.observability.emit_metrics,
+        json_escape(&observability.trace_id),
+        json_escape(&observability.trace_ref),
+        json_escape(&observability.traceparent),
+        workload.replayable,
+        security.fail_closed,
+        json_escape(&security.policy_snapshot_ref),
+        json_escape(&security.project_id),
+        json_escape(&security.service_identity),
+        json_escape(&security.tenant_id),
+    )
+}
+
+fn default_workload_contract() -> WorkloadContract {
+    WorkloadContract {
+        kind: JOBSPEC_WORKLOAD_KIND_DEFAULT.to_string(),
+        execution_profile: "quantum".to_string(),
+        replayable: false,
+        artifact_lineage: WorkloadArtifactLineage::default(),
+        observability: WorkloadObservability::default(),
+        security: WorkloadSecurity::default(),
+        backend_target: String::new(),
+    }
 }
 
 fn runtime() -> Result<&'static Runtime, GrpcLikeError> {
@@ -887,6 +1120,43 @@ fn build_api_envelope(
     }
 }
 
+fn workload_to_proto(workload: &WorkloadContract) -> eigen::api::v1::WorkloadContract {
+    let kind = match workload.kind.as_str() {
+        "QuantumJob" => 1,
+        "HybridWorkflow" => 2,
+        "DistributedJob" => 3,
+        "BenchmarkJob" => 4,
+        "PipelineJob" => 5,
+        "ReplayJob" => 6,
+        _ => 1,
+    };
+    eigen::api::v1::WorkloadContract {
+        kind,
+        execution_profile: workload.execution_profile.clone(),
+        replayable: workload.replayable,
+        artifact_lineage: Some(eigen::api::v1::WorkloadArtifactLineage {
+            execution_ref: workload.artifact_lineage.execution_ref.clone(),
+            parent_ref: workload.artifact_lineage.parent_ref.clone(),
+            policy_snapshot_ref: workload.artifact_lineage.policy_snapshot_ref.clone(),
+            root_ref: workload.artifact_lineage.root_ref.clone(),
+        }),
+        observability: Some(eigen::api::v1::WorkloadObservability {
+            emit_metrics: workload.observability.emit_metrics,
+            trace_id: workload.observability.trace_id.clone(),
+            trace_ref: workload.observability.trace_ref.clone(),
+            traceparent: workload.observability.traceparent.clone(),
+        }),
+        security: Some(eigen::api::v1::WorkloadSecurity {
+            fail_closed: workload.security.fail_closed,
+            policy_snapshot_ref: workload.security.policy_snapshot_ref.clone(),
+            project_id: workload.security.project_id.clone(),
+            service_identity: workload.security.service_identity.clone(),
+            tenant_id: workload.security.tenant_id.clone(),
+        }),
+        backend_target: workload.backend_target.clone(),
+    }
+}
+
 fn build_submit_proto_request(
     req: &SubmitJobRequest,
     options: &PublicSubmitOptions,
@@ -914,6 +1184,7 @@ fn build_submit_proto_request(
         compiler_options: req.compiler_options.clone().into_iter().collect::<HashMap<_, _>>(),
         metadata: req.metadata.clone().into_iter().collect::<HashMap<_, _>>(),
         dependencies: req.dependencies.clone(),
+        workload: Some(workload_to_proto(&req.workload)),
         tenant: None,
         reservation_id: String::new(),
     }
@@ -1943,6 +2214,7 @@ spec:
             compiler_options: BTreeMap::new(),
             metadata: BTreeMap::new(),
             dependencies: Vec::new(),
+            workload: default_workload_contract(),
         };
         let first = canonical_jobspec_digest_from_request(&req, JOBSPEC_API_VERSION);
         let second = canonical_jobspec_digest_from_request(&req, JOBSPEC_API_VERSION);
@@ -2233,6 +2505,7 @@ spec:
             compiler_options: BTreeMap::new(),
             metadata: BTreeMap::new(),
             dependencies: Vec::new(),
+            workload: default_workload_contract(),
         };
 
         let err = validate_submit_request_against_system_api_schema(&req).unwrap_err();
@@ -2261,6 +2534,7 @@ spec:
             compiler_options: BTreeMap::new(),
             metadata: BTreeMap::new(),
             dependencies: Vec::new(),
+            workload: default_workload_contract(),
         };
         let envelope = build_submit_request_envelope_json(&req);
         assert!(envelope.contains("\"name\":\"bell\""));

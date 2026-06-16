@@ -332,6 +332,8 @@ kind: QuantumJob
 
 Canonical descriptor: `job.yaml`
 
+Workload-family semantics are carried under `spec.workload` and remain orthogonal to AQO IR.
+
 > **Fix applied:** prior `eigen.os/v0.1` reference is invalid for Eigen OS 1.x baseline and conflicts with the JobSpec contract.
 
 ---

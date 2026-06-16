@@ -3369,6 +3369,7 @@ mod tests {
                 trace_id: "".to_string(),
                 retry_policy: "".to_string(),
                 security_context: "".to_string(),
+                workload: Some(Default::default()),
                 ..Default::default()
             }),
             name: name.to_string(),
@@ -3397,6 +3398,7 @@ mod tests {
                 trace_id: "".to_string(),
                 retry_policy: "".to_string(),
                 security_context: "".to_string(),
+                workload: Some(Default::default()),
                 ..Default::default()
             }),
             job_id: job_id.to_string(),
@@ -3457,6 +3459,7 @@ mod tests {
                     trace_id: "".to_string(),
                     retry_policy: "".to_string(),
                     security_context: "".to_string(),
+                    workload: Some(Default::default()),
                     ..Default::default()
                 }),
                 job_id: response.job_id.clone(),
@@ -3505,6 +3508,7 @@ mod tests {
                     trace_id: "".to_string(),
                     retry_policy: "".to_string(),
                     security_context: "".to_string(),
+                    workload: Some(Default::default()),
                     ..Default::default()
                 }),
                 job_id: response.job_id.clone(),
@@ -3624,6 +3628,7 @@ mod tests {
                 trace_id: "".to_string(),
                 retry_policy: "".to_string(),
                 security_context: "".to_string(),
+                workload: Some(Default::default()),
                 ..Default::default()
             }),
             job_id: job_id.to_string(),
@@ -3724,6 +3729,7 @@ mod tests {
                 trace_id: "".to_string(),
                 retry_policy: "".to_string(),
                 security_context: "".to_string(),
+                workload: Some(Default::default()),
             }),
         };
         NormalizedSubmission::from_request(&req).expect("submission")
@@ -3848,6 +3854,7 @@ mod tests {
                     trace_id: "".to_string(),
                     retry_policy: "".to_string(),
                     security_context: "".to_string(),
+                    workload: Some(Default::default()),
                     ..Default::default()
                 }),
                 job_id: response.job_id.clone(),
@@ -3890,6 +3897,7 @@ mod tests {
                     trace_id: "".to_string(),
                     retry_policy: "".to_string(),
                     security_context: "".to_string(),
+                    workload: Some(Default::default()),
                 }),
                 job_id: response.job_id.clone(),
             }))
@@ -4010,6 +4018,7 @@ mod tests {
                 trace_id: "".to_string(),
                 retry_policy: "".to_string(),
                 security_context: "".to_string(),
+                workload: Some(Default::default()),
             }),
             job_id: job_id.to_string(),
         }
