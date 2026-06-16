@@ -31,6 +31,22 @@ services:
       - driver-manager
     restart: unless-stopped
 
+  neuro-symbolic-service:
+    build:
+      context: ../../..
+      dockerfile: deploy/local/docker/Dockerfile.neuro-symbolic-service
+    container_name: eigen-neuro-symbolic-service
+    environment:
+      NEURO_SYMBOLIC_GRPC_BIND: 0.0.0.0:50081
+      NEURO_SYMBOLIC_METRICS_PORT: 50082
+      NEURO_SYMBOLIC_INTERNAL_TOKEN: dev-internal-token
+      NEURO_SYMBOLIC_ALLOWED_CALLERS: eigen-kernel,eigen-compiler
+      NEURO_SYMBOLIC_POLICY_SNAPSHOT_VERSION: 1.0.0
+      NEURO_SYMBOLIC_MODEL_VERSION: dpda-model-v1
+    ports:
+      - "50081:50081"
+      - "50082:50082"
+
   eigen-kernel:
     build:
       context: ../../..

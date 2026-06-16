@@ -5,6 +5,7 @@ This directory provides a simple local profile to run the Eigen OS MVP services 
 ## Services
 
 - `system-api` (`50051`, metrics `9090`)
+- `neuro-symbolic-service` (`50081`, metrics `50082`)
 - `eigen-kernel` (`50052`)
 - `eigen-compiler` (`50071`, metrics `9093`)
 - `driver-manager` (`50061`, metrics `9092`)

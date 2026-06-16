@@ -2,7 +2,7 @@
 - **Contract version:** `1.0.0`
 - **Phase:** Phase 1+ / Post-MVP strategic runtime capability
 - **Status:** Target architecture contract with documented implemented prerequisites; **no standalone NSC service is currently active in the production execution path**
-- **Applies to:** (future) `NeuroSymbolicService`, Compiler (Neuro-DPDA path), Kernel/QRTX, HWE, GNN Optimizer, Knowledge Base / OKB, Driver Manager, QFS lineage layer, Telemetry exporters
+- **Applies to:** `src/services/neuro-symbolic-service/` (deployable internal service), Compiler (Neuro-DPDA path), Kernel/QRTX, HWE, GNN Optimizer, Knowledge Base / OKB, Driver Manager, QFS lineage layer, Telemetry exporters
 
 This document defines the **normative target architecture**, contracts, responsibilities, integration boundaries, and implementation requirements for the Eigen OS **Neuro-Symbolic Core (NSC)**. It is aligned with:
 
@@ -40,6 +40,8 @@ into a unified decision framework for **compilation and execution optimization**
 NSC operates as a **bounded advisory orchestration layer** above deterministic baseline runtime behavior.
 
 **Deterministic baseline behavior remains authoritative at all times.**
+
+**Implementation note:** the repository’s deployable NSC boundary is the internal `src/services/neuro-symbolic-service/` package. Compiler-side use remains advisory-only and must not expose a public ingress path.
 
 ---
 
@@ -336,3 +338,16 @@ Kernel/QRTX remains authoritative for execution and lifecycle decisions.
 NSC MUST NOT be exposed through public ingress.
 
 Requests from public API boundaries must never reach NSC directly.
+
+---
+
+### 8.4 Deployment shape
+
+The implementation boundary for NSC is a **standalone internal service** packaged as `src/services/neuro-symbolic-service/`.
+
+This service boundary is intentionally separate from `src/services/system-api/`:
+
+- `system-api` remains the sole public ingress.
+- `eigen-kernel` / QRTX is the primary runtime caller.
+- `eigen-compiler` may call the service only through the bounded advisory scoring path.
+- Internal offline workflows such as model loading, dataset ingestion, and privacy-governed training remain inside the same internal service boundary and must not be exposed through public ingress.
