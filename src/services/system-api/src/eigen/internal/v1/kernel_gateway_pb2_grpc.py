@@ -5,7 +5,7 @@ import warnings
 
 from eigen.internal.v1 import kernel_gateway_pb2 as eigen_dot_internal_dot_v1_dot_kernel__gateway__pb2
 
-GRPC_GENERATED_VERSION = '1.81.0'
+GRPC_GENERATED_VERSION = '1.80.0'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 

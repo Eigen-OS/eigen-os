@@ -1,0 +1,14 @@
+apiVersion: eigen.os/v1
+kind: QuantumJob
+metadata:
+  name: pipelinejob
+spec:
+  target: sim:local
+  program:
+    source: |
+      @hybrid_program
+      def main():
+          return 1
+  workload:
+    kind: PipelineJob
+    

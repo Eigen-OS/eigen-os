@@ -19,6 +19,7 @@ from .proto_gen import ensure_generated
 
 ensure_generated()
 
+from eigen.api.v1 import job_service_pb2 as api_job_pb  # noqa: E402
 from eigen.internal.v1 import kernel_gateway_pb2 as kernel_pb  # noqa: E402
 from eigen.internal.v1 import kernel_gateway_pb2_grpc as kernel_pb_grpc  # noqa: E402
 
@@ -81,7 +82,7 @@ class KernelGatewayClient:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         self.close()
     
-    def _build_request_metadata(self, public_envelope: dict, source_service: str = "system-api") -> dict:
+    def _build_request_metadata(self, public_envelope: dict, source_service: str = "system-api", workload: object | None = None) -> dict:
         request_id = public_envelope.get("request_id") or str(uuid.uuid4())
         
         traceparent = public_envelope.get("traceparent") or self._synthetic_traceparent(request_id)
@@ -100,6 +101,7 @@ class KernelGatewayClient:
             "trace_id": public_envelope.get("trace_id", ""),
             "retry_policy": public_envelope.get("retry_policy", ""),
             "security_context": public_envelope.get("security_context", ""),
+            "workload": workload,
         }
 
     @staticmethod
@@ -109,8 +111,8 @@ class KernelGatewayClient:
         span_id = digest[32:48]
         return f"00-{trace_id}-{span_id}-01"
 
-    def _request_metadata_proto(self, public_envelope: dict) -> kernel_pb.RequestMetadata:
-        md = self._build_request_metadata(public_envelope)
+    def _request_metadata_proto(self, public_envelope: dict, workload: object | None = None) -> kernel_pb.RequestMetadata:
+        md = self._build_request_metadata(public_envelope, workload=workload)
         payload = {
             "contract_version": md["contract_version"],
             "request_id": md["request_id"],
@@ -125,6 +127,9 @@ class KernelGatewayClient:
             "retry_policy": md["retry_policy"],
             "security_context": md["security_context"],
         }
+        workload_obj = md.get("workload")
+        if workload_obj is not None:
+            payload["workload"] = self._workload_proto(workload_obj)
         deadline = md.get("deadline")
         if isinstance(deadline, Duration):
             payload["deadline"] = deadline
@@ -139,6 +144,95 @@ class KernelGatewayClient:
         except Exception:
             return "TASK_STATE_UNSPECIFIED"
     
+    @staticmethod
+    def _workload_proto(workload: object) -> kernel_pb.WorkloadContract:
+        kind_map = {
+            "QuantumJob": kernel_pb.WorkloadFamilyKind.WORKLOAD_FAMILY_KIND_QUANTUM_JOB,
+            "HybridWorkflow": kernel_pb.WorkloadFamilyKind.WORKLOAD_FAMILY_KIND_HYBRID_WORKFLOW,
+            "DistributedJob": kernel_pb.WorkloadFamilyKind.WORKLOAD_FAMILY_KIND_DISTRIBUTED_JOB,
+            "BenchmarkJob": kernel_pb.WorkloadFamilyKind.WORKLOAD_FAMILY_KIND_BENCHMARK_JOB,
+            "PipelineJob": kernel_pb.WorkloadFamilyKind.WORKLOAD_FAMILY_KIND_PIPELINE_JOB,
+            "ReplayJob": kernel_pb.WorkloadFamilyKind.WORKLOAD_FAMILY_KIND_REPLAY_JOB,
+        }
+        enum_to_role = {
+            "WORKLOAD_FAMILY_KIND_QUANTUM_JOB": "QuantumJob",
+            "WORKLOAD_FAMILY_KIND_HYBRID_WORKFLOW": "HybridWorkflow",
+            "WORKLOAD_FAMILY_KIND_DISTRIBUTED_JOB": "DistributedJob",
+            "WORKLOAD_FAMILY_KIND_BENCHMARK_JOB": "BenchmarkJob",
+            "WORKLOAD_FAMILY_KIND_PIPELINE_JOB": "PipelineJob",
+            "WORKLOAD_FAMILY_KIND_REPLAY_JOB": "ReplayJob",
+        }
+
+        if isinstance(workload, kernel_pb.WorkloadContract):
+            return workload
+
+        def _resolve_kind_name(raw_kind: object) -> str:
+            if isinstance(raw_kind, str):
+                return raw_kind
+            try:
+                enum_name = api_job_pb.WorkloadFamilyKind.Name(int(raw_kind))
+            except Exception:
+                return "QuantumJob"
+            return enum_to_role.get(enum_name, "QuantumJob")
+
+        if isinstance(workload, dict):
+            artifact = workload.get("artifact_lineage") or {}
+            observability = workload.get("observability") or {}
+            security = workload.get("security") or {}
+            kind_name = _resolve_kind_name(workload.get("kind", "QuantumJob"))
+            return kernel_pb.WorkloadContract(
+                kind=kind_map.get(kind_name, kernel_pb.WorkloadFamilyKind.WORKLOAD_FAMILY_KIND_QUANTUM_JOB),
+                execution_profile=str(workload.get("execution_profile", "")),
+                replayable=bool(workload.get("replayable", False)),
+                artifact_lineage=kernel_pb.WorkloadArtifactLineage(
+                    root_ref=str(artifact.get("root_ref", "")),
+                    parent_ref=str(artifact.get("parent_ref", "")),
+                    policy_snapshot_ref=str(artifact.get("policy_snapshot_ref", "")),
+                    execution_ref=str(artifact.get("execution_ref", "")),
+                ),
+                observability=kernel_pb.WorkloadObservability(
+                    traceparent=str(observability.get("traceparent", "")),
+                    trace_id=str(observability.get("trace_id", "")),
+                    trace_ref=str(observability.get("trace_ref", "")),
+                    emit_metrics=bool(observability.get("emit_metrics", False)),
+                ),
+                security=kernel_pb.WorkloadSecurity(
+                    tenant_id=str(security.get("tenant_id", "")),
+                    project_id=str(security.get("project_id", "")),
+                    service_identity=str(security.get("service_identity", "")),
+                    policy_snapshot_ref=str(security.get("policy_snapshot_ref", "")),
+                    fail_closed=bool(security.get("fail_closed", False)),
+                ),
+                backend_target=str(workload.get("backend_target", "")),
+            )
+
+        kind_name = _resolve_kind_name(getattr(workload, "kind", "QuantumJob"))
+        return kernel_pb.WorkloadContract(
+            kind=kind_map.get(kind_name, kernel_pb.WorkloadFamilyKind.WORKLOAD_FAMILY_KIND_QUANTUM_JOB),
+            execution_profile=str(getattr(workload, "execution_profile", "")),
+            replayable=bool(getattr(workload, "replayable", False)),
+            artifact_lineage=kernel_pb.WorkloadArtifactLineage(
+                root_ref=str(getattr(getattr(workload, "artifact_lineage", None), "root_ref", "")),
+                parent_ref=str(getattr(getattr(workload, "artifact_lineage", None), "parent_ref", "")),
+                policy_snapshot_ref=str(getattr(getattr(workload, "artifact_lineage", None), "policy_snapshot_ref", "")),
+                execution_ref=str(getattr(getattr(workload, "artifact_lineage", None), "execution_ref", "")),
+            ),
+            observability=kernel_pb.WorkloadObservability(
+                traceparent=str(getattr(getattr(workload, "observability", None), "traceparent", "")),
+                trace_id=str(getattr(getattr(workload, "observability", None), "trace_id", "")),
+                trace_ref=str(getattr(getattr(workload, "observability", None), "trace_ref", "")),
+                emit_metrics=bool(getattr(getattr(workload, "observability", None), "emit_metrics", False)),
+            ),
+            security=kernel_pb.WorkloadSecurity(
+                tenant_id=str(getattr(getattr(workload, "security", None), "tenant_id", "")),
+                project_id=str(getattr(getattr(workload, "security", None), "project_id", "")),
+                service_identity=str(getattr(getattr(workload, "security", None), "service_identity", "")),
+                policy_snapshot_ref=str(getattr(getattr(workload, "security", None), "policy_snapshot_ref", "")),
+                fail_closed=bool(getattr(getattr(workload, "security", None), "fail_closed", False)),
+            ),
+            backend_target=str(getattr(workload, "backend_target", "")),
+        )
+
     @staticmethod
     def _timestamp(value) -> Timestamp | None:
         if value is None:
@@ -162,13 +256,14 @@ class KernelGatewayClient:
         compiler_options: dict,
         metadata_kvs: dict,
         public_envelope: dict,
+        workload: object | None = None,
     ) -> dict:
         if self._closed or self._stub is None:
             self.connect()
 
         assert self._stub is not None
         request = kernel_pb.EnqueueJobRequest(
-            metadata=self._request_metadata_proto(public_envelope),
+            metadata=self._request_metadata_proto(public_envelope, workload=workload),
             name=name,
             program=program,
             program_format=program_format,
@@ -193,7 +288,7 @@ class KernelGatewayClient:
 
         assert self._stub is not None
         request = kernel_pb.GetJobStatusRequest(
-            metadata=self._request_metadata_proto(public_envelope),
+            metadata=self._request_metadata_proto(public_envelope, workload=workload),
             job_id=job_id,
         )
         logger.info("Getting job status for %s; request_id=%s", job_id, public_envelope.get("request_id"))
@@ -228,7 +323,7 @@ class KernelGatewayClient:
         assert self._stub is not None
 
         request = kernel_pb.CancelJobRequest(
-            metadata=self._request_metadata_proto(public_envelope),
+            metadata=self._request_metadata_proto(public_envelope, workload=workload),
             job_id=job_id,
         )
         response = await asyncio.to_thread(
@@ -252,7 +347,7 @@ class KernelGatewayClient:
 
         assert self._stub is not None
         request = kernel_pb.StreamJobUpdatesRequest(
-            metadata=self._request_metadata_proto(public_envelope),
+            metadata=self._request_metadata_proto(public_envelope, workload=workload),
             job_id=job_id,
             last_event_seq=int(last_event_seq),
         )

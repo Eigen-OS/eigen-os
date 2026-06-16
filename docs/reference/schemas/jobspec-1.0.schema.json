@@ -4,49 +4,230 @@
   "title": "Eigen OS JobSpec 1.0",
   "type": "object",
   "additionalProperties": false,
-  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "spec"
+  ],
   "properties": {
-    "apiVersion": { "const": "eigen.os/v1" },
-    "kind": { "const": "QuantumJob" },
+    "apiVersion": {
+      "const": "eigen.os/v1"
+    },
+    "kind": {
+      "const": "QuantumJob"
+    },
     "metadata": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name"],
+      "required": [
+        "name"
+      ],
       "properties": {
-        "name": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9._-]+$" },
-        "namespace": { "type": "string" },
-        "labels": { "type": "object", "additionalProperties": { "type": "string" } },
-        "annotations": { "type": "object", "additionalProperties": { "type": "string" } }
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9._-]+$"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
       }
     },
     "spec": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["target", "program"],
+      "required": [
+        "target",
+        "program"
+      ],
       "properties": {
-        "target": { "type": "string", "minLength": 1 },
-        "priority": { "type": "integer", "minimum": 0, "maximum": 100, "default": 50 },
-        "entrypoint": { "type": "string", "minLength": 1, "default": "main" },
+        "target": {
+          "type": "string",
+          "minLength": 1
+        },
+        "priority": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100,
+          "default": 50
+        },
+        "entrypoint": {
+          "type": "string",
+          "minLength": 1,
+          "default": "main"
+        },
         "program": {
           "type": "object",
           "additionalProperties": false,
-          "oneOf": [{ "required": ["path"] }, { "required": ["source"] }],
+          "oneOf": [
+            {
+              "required": [
+                "path"
+              ]
+            },
+            {
+              "required": [
+                "source"
+              ]
+            }
+          ],
           "properties": {
-            "path": { "type": "string", "minLength": 1, "not": { "pattern": "(^/|(^|/)\\.\\.(/|$))" } },
-            "source": { "type": "string", "minLength": 1 }
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "not": {
+                "pattern": "(^/|(^|/)\\.\\.(/|$))"
+              }
+            },
+            "source": {
+              "type": "string",
+              "minLength": 1
+            }
           }
         },
-        "compiler": { "type": "object", "additionalProperties": { "type": "string" } },
-        "compiler_options": { "type": "object", "additionalProperties": { "type": "string" } },
-        "metadata": { "type": "object", "additionalProperties": { "type": "string" } },
-        "dependencies": { "type": "array", "items": { "type": "string" } }
+        "compiler": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "compiler_options": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "dependencies": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "workload": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "QuantumJob",
+                "HybridWorkflow",
+                "DistributedJob",
+                "BenchmarkJob",
+                "PipelineJob",
+                "ReplayJob"
+              ]
+            },
+            "execution_profile": {
+              "type": "string"
+            },
+            "replayable": {
+              "type": "boolean"
+            },
+            "backend_target": {
+              "type": "string"
+            },
+            "artifact_lineage": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "root_ref": {
+                  "type": "string"
+                },
+                "parent_ref": {
+                  "type": "string"
+                },
+                "policy_snapshot_ref": {
+                  "type": "string"
+                },
+                "execution_ref": {
+                  "type": "string"
+                }
+              }
+            },
+            "observability": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "traceparent": {
+                  "type": "string"
+                },
+                "trace_id": {
+                  "type": "string"
+                },
+                "trace_ref": {
+                  "type": "string"
+                },
+                "emit_metrics": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "security": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "tenant_id": {
+                  "type": "string"
+                },
+                "project_id": {
+                  "type": "string"
+                },
+                "service_identity": {
+                  "type": "string"
+                },
+                "policy_snapshot_ref": {
+                  "type": "string"
+                },
+                "fail_closed": {
+                  "type": "boolean"
+                }
+              }
+            }
+          }
+        }
       }
     },
-    "scheduling": { "type": "object" },
-    "security": { "type": "object" },
-    "observability": { "type": "object" },
-    "runtime": { "type": "object" },
-    "resources": { "type": "object" },
-    "artifacts": { "type": "object" }
+    "scheduling": {
+      "type": "object"
+    },
+    "security": {
+      "type": "object"
+    },
+    "observability": {
+      "type": "object"
+    },
+    "runtime": {
+      "type": "object"
+    },
+    "resources": {
+      "type": "object"
+    },
+    "artifacts": {
+      "type": "object"
+    }
   }
 }

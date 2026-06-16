@@ -52,6 +52,51 @@ message SubmitJobRequest {
   repeated string dependencies = 9;
   TenantQuotaEnvelope tenant = 10;
   string reservation_id = 11;
+
+  // Normalized workload-family contract for hybrid and replayable workloads.
+  WorkloadContract workload = 13;
+}
+
+enum WorkloadFamilyKind {
+  WORKLOAD_FAMILY_KIND_UNSPECIFIED = 0;
+  WORKLOAD_FAMILY_KIND_QUANTUM_JOB = 1;
+  WORKLOAD_FAMILY_KIND_HYBRID_WORKFLOW = 2;
+  WORKLOAD_FAMILY_KIND_DISTRIBUTED_JOB = 3;
+  WORKLOAD_FAMILY_KIND_BENCHMARK_JOB = 4;
+  WORKLOAD_FAMILY_KIND_PIPELINE_JOB = 5;
+  WORKLOAD_FAMILY_KIND_REPLAY_JOB = 6;
+}
+
+message WorkloadArtifactLineage {
+  string root_ref = 1;
+  string parent_ref = 2;
+  string policy_snapshot_ref = 3;
+  string execution_ref = 4;
+}
+
+message WorkloadObservability {
+  string traceparent = 1;
+  string trace_id = 2;
+  string trace_ref = 3;
+  bool emit_metrics = 4;
+}
+
+message WorkloadSecurity {
+  string tenant_id = 1;
+  string project_id = 2;
+  string service_identity = 3;
+  string policy_snapshot_ref = 4;
+  bool fail_closed = 5;
+}
+
+message WorkloadContract {
+  WorkloadFamilyKind kind = 1;
+  string execution_profile = 2;
+  bool replayable = 3;
+  WorkloadArtifactLineage artifact_lineage = 4;
+  WorkloadObservability observability = 5;
+  WorkloadSecurity security = 6;
+  string backend_target = 7;
 }
 
 message SubmitJobResponse {

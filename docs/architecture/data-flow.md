@@ -135,6 +135,7 @@ spec:
 Normative rules:
 
 - JobSpec is declarative; it describes intent, not procedure.
+- The workload family lives under `spec.workload` and carries role/profile/replay lineage without changing AQO semantics.
 - Packaging MUST be deterministic (path normalization + stable hashing).
 - Validation occurs before orchestration begins.
 
@@ -158,6 +159,8 @@ Compiler behavior (MVP contract):
 Reference: `docs/reference/formats/aqo.md` (AQO v1.0)
 
 AQO is the canonical IR handed from compiler to runtime.
+
+Workflow semantics, replay policy, and benchmark/distributed orchestration metadata are not added as AQO top-level fields; they stay in JobSpec, runtime envelopes, result metadata, and lineage refs.
 
 Minimal example:
 
