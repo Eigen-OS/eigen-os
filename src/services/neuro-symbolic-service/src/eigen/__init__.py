@@ -1,1 +1,1 @@
-""Internal neuro-symbolic service package."""
+"""Internal neuro-symbolic service package."""

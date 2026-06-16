@@ -376,7 +376,7 @@ Responsibilities:
 
 The Knowledge Base (KB) stores reusable execution intelligence and records used by the platform and developer tooling.
 
-Public-facing APIs exist (`KnowledgeBaseService`), frozen at v1.0.0.
+KB-facing APIs now live in `neuro-symbolic-service` and are no longer owned by `system-api`.
 
 Target capabilities:
 

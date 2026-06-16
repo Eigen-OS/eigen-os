@@ -163,7 +163,7 @@ It integrates with:
 - QFS artifact layer (via kernel/QFS facade),
 - observability subsystem,
 - security-isolation subsystem,
-- future: neuro-symbolic-core (internal-only; accessed only through kernel-owned call paths), knowledge-base, HWE, optimizer services.
+- future: neuro-symbolic-core (internal-only; accessed only through kernel-owned call paths), HWE, optimizer services.
 
 System API MUST NOT call `NeuroSymbolicService` directly.
 
