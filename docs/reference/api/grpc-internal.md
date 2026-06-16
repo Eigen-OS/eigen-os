@@ -265,7 +265,7 @@ Operational flow:
 
 Internal-only DPDA model service used for advisory scoring of compilation plans. The deployable service boundary lives under `src/services/neuro-symbolic-service/`.
 
-This service is callable only by authenticated internal service identities. Public ingress paths MUST NOT expose a direct route to this service. Kernel/QRTX is the primary runtime caller; eigen-compiler may call this service only through the bounded advisory scoring path. `System API` MUST NOT call this service directly.
+This service is callable only by authenticated internal service identities. Public ingress paths MUST NOT expose a direct route to this service. Kernel/QRTX is the primary runtime caller; eigen-compiler may call this service only through the bounded advisory scoring path. `System API` MUST NOT call this service directly. Internal model registry activation and rollback are constrained by signed artifact verification, frozen policy snapshot binding, and internal service identity.
 
 #### Security and versioning requirements
 
