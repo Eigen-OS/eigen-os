@@ -81,7 +81,7 @@ REQUIRED_FIELD_MATRIX: dict[str, bool] = {
 }
 
 
-@dataclass(frozen=True)
+@dataclass
 class JobSpecValidationError(Exception):
     violations: tuple[FieldViolation, ...]
 
@@ -129,10 +129,6 @@ def _string_map(raw_map: Any, field: str, violations: list[FieldViolation]) -> d
     return out
 
 
-def _normalized_workload_kind(raw_kind: Any) -> str:
-    return raw_kind if isinstance(raw_kind, str) and raw_kind.strip() else JOBSPEC_WORKLOAD_KIND_DEFAULT
-
-
 def _normalize_workload_contract(
     workload_raw: Any,
     target: str,
@@ -140,14 +136,23 @@ def _normalize_workload_contract(
     annotations: dict[str, str],
     violations: list[FieldViolation],
 ) -> dict[str, Any]:
+    workload_declared = workload_raw is not None
     if workload_raw is None:
         workload_raw = {}
     if not isinstance(workload_raw, dict):
         violations.append(FieldViolation(field="spec.workload", description="must be a mapping"))
         workload_raw = {}
 
-    kind = _normalized_workload_kind(workload_raw.get("kind") or workload_raw.get("workload_kind"))
-    if kind not in JOBSPEC_WORKLOAD_KINDS:
+    kind = workload_raw.get("kind") or workload_raw.get("workload_kind")
+
+    if kind is None:
+        if workload_declared:
+            violations.append(FieldViolation(field="spec.workload.kind", description="field is required"))
+        kind = JOBSPEC_WORKLOAD_KIND_DEFAULT
+    elif not isinstance(kind, str) or not kind.strip():
+        violations.append(FieldViolation(field="spec.workload.kind", description="field is required"))
+        kind = JOBSPEC_WORKLOAD_KIND_DEFAULT
+    elif kind not in JOBSPEC_WORKLOAD_KINDS:
         violations.append(
             FieldViolation(
                 field="spec.workload.kind",
@@ -225,11 +230,11 @@ def _normalize_workload_contract(
         "policy_snapshot_ref": _string_field(
             security_raw, "policy_snapshot_ref", "spec.workload.security.policy_snapshot_ref"
         ),
-        "fail_closed": security_raw.get("fail_closed", True if kind == "ReplayJob" else False),
+        "fail_closed": security_raw.get("fail_closed", kind == "ReplayJob"),
     }
     if not isinstance(security["fail_closed"], bool):
         violations.append(FieldViolation(field="spec.workload.security.fail_closed", description="must be boolean"))
-        security["fail_closed"] = True if kind == "ReplayJob" else False
+        security["fail_closed"] = kind == "ReplayJob"
 
     backend_target = workload_raw.get("backend_target") or workload_raw.get("backendTarget") or target
     if backend_target is None:
@@ -245,7 +250,7 @@ def _normalize_workload_contract(
         "artifact_lineage": artifact_lineage,
         "observability": observability,
         "security": security,
-        "backend_target": backend_target.strip(),
+        "backend_target": backend_target.strip() if isinstance(backend_target, str) else target,
     }
 
 
@@ -341,7 +346,7 @@ def normalize_jobspec(jobspec_path: Path) -> dict[str, Any]:
     workload = _normalize_workload_contract(spec.get("workload"), target, metadata, annotations, violations)
     if not isinstance(target, str) or not target.strip():
         violations.append(FieldViolation(field="spec.target", description="field is required"))
-
+    
     priority = spec.get("priority", 50)
     if not isinstance(priority, int):
         violations.append(FieldViolation(field="spec.priority", description="must be int32"))
@@ -491,10 +496,6 @@ def parse_jobspec_to_submit_request(jobspec_path: Path) -> job_pb.SubmitJobReque
         kind=job_pb.WorkloadFamilyKind.Value(JOBSPEC_WORKLOAD_ENUM_NAMES[workload["kind"]]),
         execution_profile=workload["execution_profile"],
         replayable=workload["replayable"],
-        artifact_lineage=job_pb.WorkloadArtifactLineage(**workload["artifact_lineage"]),
-        observability=job_pb.WorkloadObservability(**workload["observability"]),
-        security=job_pb.WorkloadSecurity(**workload["security"]),
-        backend_target=workload["backend_target"],
     )
 
     return job_pb.SubmitJobRequest(
