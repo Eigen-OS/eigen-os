@@ -75,6 +75,7 @@ The minimum durable evidence set is:
 
 - schedule / reservation decision snapshots,
 - split / merge decision artifacts,
+- stage boundary events and stage handoff refs,
 - terminalization records,
 - append-only event streams for state transitions.
 

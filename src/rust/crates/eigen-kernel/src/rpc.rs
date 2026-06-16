@@ -159,11 +159,217 @@ impl fmt::Display for DagStageKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 enum StageStatus {
     Running,
     Succeeded,
     Failed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+enum WorkflowBoundaryKind {
+    WorkflowStarted,
+    StageEntered,
+    StageCompleted,
+    StageFailed,
+    WorkflowCompleted,
+}
+
+impl WorkflowBoundaryKind {
+    fn key(self) -> &'static str {
+        match self {
+            Self::WorkflowStarted => "workflow-started",
+            Self::StageEntered => "stage-entered",
+            Self::StageCompleted => "stage-completed",
+            Self::StageFailed => "stage-failed",
+            Self::WorkflowCompleted => "workflow-completed",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WorkflowBoundaryRecord {
+    boundary_id: String,
+    workflow_id: String,
+    job_id: String,
+    kind: WorkflowBoundaryKind,
+    stage_id: Option<String>,
+    stage_key: Option<String>,
+    order: Option<u32>,
+    state_before: Option<TaskState>,
+    state_after: Option<TaskState>,
+    input_ref: String,
+    output_ref: String,
+    artifact_ref: String,
+    lineage_ref: String,
+    replay_token: String,
+    timestamp: Timestamp,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HybridWorkflowStageNode {
+    stage_id: String,
+    stage_key: String,
+    order: u32,
+    state_before: TaskState,
+    state_after: TaskState,
+    status: StageStatus,
+    input_ref: String,
+    output_ref: String,
+    handoff_ref: String,
+    artifact_refs: BTreeMap<String, String>,
+    lineage_refs: BTreeMap<String, String>,
+    replay_token: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HybridWorkflowGraph {
+    workflow_id: String,
+    job_id: String,
+    root_lineage_ref: String,
+    stages: Vec<HybridWorkflowStageNode>,
+    boundaries: Vec<WorkflowBoundaryRecord>,
+    final_completion_ref: Option<String>,
+    final_failure_ref: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum HybridWorkflowValidationError {
+    MissingField { stage_id: String, field: String },
+    HandoffMismatch { stage_id: String, expected: String, actual: String },
+    StageOrderMismatch { expected: u32, actual: u32 },
+    TerminalityMismatch { stage_id: String, expected_terminal: String, actual_terminal: String },
+}
+
+impl std::fmt::Display for HybridWorkflowValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MissingField { stage_id, field } => write!(f, "stage {stage_id} is missing required field {field}"),
+            Self::HandoffMismatch { stage_id, expected, actual } => write!(
+                f,
+                "stage {stage_id} has a handoff mismatch (expected {expected}, got {actual})"
+            ),
+            Self::StageOrderMismatch { expected, actual } => {
+                write!(f, "stage order mismatch (expected {expected}, got {actual})")
+            }
+            Self::TerminalityMismatch { stage_id, expected_terminal, actual_terminal } => write!(
+                f,
+                "stage {stage_id} terminality mismatch (expected {expected_terminal}, got {actual_terminal})"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for HybridWorkflowValidationError {}
+
+impl HybridWorkflowGraph {
+    fn validate(&self) -> Result<(), HybridWorkflowValidationError> {
+        if self.workflow_id.is_empty() {
+            return Err(HybridWorkflowValidationError::MissingField {
+                stage_id: self.job_id.clone(),
+                field: "workflow_id".to_string(),
+            });
+        }
+        if self.stages.is_empty() {
+            return Err(HybridWorkflowValidationError::MissingField {
+                stage_id: self.job_id.clone(),
+                field: "stages".to_string(),
+            });
+        }
+
+        let mut previous_output_ref: Option<String> = None;
+        let mut previous_order: Option<u32> = None;
+        for stage in self.stages.iter() {
+            if stage.order == 0 {
+                return Err(HybridWorkflowValidationError::StageOrderMismatch {
+                    expected: 1,
+                    actual: stage.order,
+                });
+            }
+            if let Some(expected_order) = previous_order {
+                let actual_order = stage.order;
+                if actual_order <= expected_order {
+                    return Err(HybridWorkflowValidationError::StageOrderMismatch {
+                        expected: expected_order + 1,
+                        actual: actual_order,
+                    });
+                }
+            }
+            if stage.input_ref.is_empty() {
+                return Err(HybridWorkflowValidationError::MissingField {
+                    stage_id: stage.stage_id.clone(),
+                    field: "input_ref".to_string(),
+                });
+            }
+            if stage.output_ref.is_empty() {
+                return Err(HybridWorkflowValidationError::MissingField {
+                    stage_id: stage.stage_id.clone(),
+                    field: "output_ref".to_string(),
+                });
+            }
+            if stage.handoff_ref.is_empty() {
+                return Err(HybridWorkflowValidationError::MissingField {
+                    stage_id: stage.stage_id.clone(),
+                    field: "handoff_ref".to_string(),
+                });
+            }
+            let lineage_ref = stage
+                .lineage_refs
+                .get("workflow_lineage_ref")
+                .cloned()
+                .ok_or_else(|| HybridWorkflowValidationError::MissingField {
+                    stage_id: stage.stage_id.clone(),
+                    field: "workflow_lineage_ref".to_string(),
+                })?;
+            if lineage_ref.is_empty() {
+                return Err(HybridWorkflowValidationError::MissingField {
+                    stage_id: stage.stage_id.clone(),
+                    field: "workflow_lineage_ref".to_string(),
+                });
+            }
+            if previous_order.is_none() {
+                let expected_root = self.root_lineage_ref.clone();
+                let actual_root = stage
+                    .lineage_refs
+                    .get("workflow_root_lineage_ref")
+                    .cloned()
+                    .unwrap_or_default();
+                if actual_root != expected_root {
+                    return Err(HybridWorkflowValidationError::HandoffMismatch {
+                        stage_id: stage.stage_id.clone(),
+                        expected: expected_root,
+                        actual: actual_root,
+                    });
+                }
+            } else {
+                let actual = stage
+                    .artifact_refs
+                    .get("upstream_output_ref")
+                    .cloned()
+                    .unwrap_or_default();
+                let expected = previous_output_ref.clone().unwrap_or_default();
+                if actual != expected {
+                    return Err(HybridWorkflowValidationError::HandoffMismatch {
+                        stage_id: stage.stage_id.clone(),
+                        expected,
+                        actual,
+                    });
+                }
+            }
+
+            previous_output_ref = Some(stage.output_ref.clone());
+            previous_order = Some(stage.order);
+        }
+
+        if self.final_completion_ref.is_none() && self.final_failure_ref.is_none() {
+            return Err(HybridWorkflowValidationError::MissingField {
+                stage_id: self.job_id.clone(),
+                field: "final_completion_ref|final_failure_ref".to_string(),
+            });
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -178,6 +384,9 @@ struct StageRecord {
     completed_at: Option<Timestamp>,
     input: BTreeMap<String, String>,
     output: BTreeMap<String, String>,
+    artifact_refs: BTreeMap<String, String>,
+    lineage_refs: BTreeMap<String, String>,
+    handoff_ref: String,
     error_code: Option<String>,
     error_summary: Option<String>,
     error_details_ref: Option<String>,
@@ -344,8 +553,119 @@ impl NormalizedSubmission {
         input.insert("stage_key".to_string(), stage.key().to_string());
         input.insert("stage_index".to_string(), stage.index().to_string());
         input.insert("program_bytes".to_string(), self.program.len().to_string());
+        input.insert("workflow_id".to_string(), workflow_id_for(&self.job_id));
+        input.insert(
+            "workflow_root_lineage_ref".to_string(),
+            workflow_root_lineage_ref(&self.job_id),
+        );
+        input.insert(
+            "workflow_stage_input_ref".to_string(),
+            workflow_stage_input_ref(&self.job_id, stage),
+        );
+        input.insert(
+            "workflow_stage_handoff_ref".to_string(),
+            workflow_stage_handoff_ref(&self.job_id, stage),
+        );
+        input.insert(
+            "workflow_stage_lineage_ref".to_string(),
+            workflow_stage_lineage_ref(&self.job_id, stage),
+        );
         input
     }
+}
+
+fn workflow_id_for(job_id: &str) -> String {
+    format!("workflow-{job_id}")
+}
+
+fn workflow_root_lineage_ref(job_id: &str) -> String {
+    format!("qfs://jobs/{job_id}/workflow/lineage.jsonl")
+}
+
+fn workflow_stage_input_ref(job_id: &str, stage: DagStageKind) -> String {
+    format!(
+        "qfs://jobs/{job_id}/workflow/stages/{:02}-{}-input.json",
+        stage.index(),
+        stage.key()
+    )
+}
+
+fn workflow_stage_output_ref(job_id: &str, stage: DagStageKind) -> String {
+    format!(
+        "qfs://jobs/{job_id}/workflow/stages/{:02}-{}-output.json",
+        stage.index(),
+        stage.key()
+    )
+}
+
+fn workflow_stage_lineage_ref(job_id: &str, stage: DagStageKind) -> String {
+    format!(
+        "qfs://jobs/{job_id}/workflow/stages/{:02}-{}-lineage.json",
+        stage.index(),
+        stage.key()
+    )
+}
+
+fn workflow_stage_handoff_ref(job_id: &str, stage: DagStageKind) -> String {
+    format!(
+        "qfs://jobs/{job_id}/workflow/stages/{:02}-{}-handoff.json",
+        stage.index(),
+        stage.key()
+    )
+}
+
+fn workflow_stage_failure_ref(job_id: &str, stage: DagStageKind) -> String {
+    format!(
+        "qfs://jobs/{job_id}/workflow/stages/{:02}-{}-failure.json",
+        stage.index(),
+        stage.key()
+    )
+}
+
+fn workflow_completion_ref(job_id: &str) -> String {
+    format!("qfs://jobs/{job_id}/workflow/completion.json")
+}
+
+fn workflow_failure_ref(job_id: &str) -> String {
+    format!("qfs://jobs/{job_id}/workflow/failure.json")
+}
+
+fn workflow_boundary_ref(job_id: &str, stage: DagStageKind, kind: WorkflowBoundaryKind) -> String {
+    format!(
+        "qfs://jobs/{job_id}/workflow/boundaries/{:02}-{}-{}.json",
+        stage.index(),
+        stage.key(),
+        kind.key()
+    )
+}
+
+fn required_handoff_fields(stage: DagStageKind) -> &'static [&'static str] {
+    match stage {
+        DagStageKind::ValidateEnqueue => &[],
+        DagStageKind::Compile => &["upstream.qfs_submission_ref"],
+        DagStageKind::Optimize => &["upstream.compiled_artifact_ref"],
+        DagStageKind::Schedule => &["upstream.optimized_artifact_ref"],
+        DagStageKind::Execute => &["upstream.resource_plan_ref", "upstream.selected_backend"],
+        DagStageKind::Persist => &["upstream.counts_ref", "upstream.execution_ref"],
+        DagStageKind::RecordKnowledgeObservability => &["upstream.qfs_result_ref"],
+        DagStageKind::Finalize => &["upstream.observability_ref"],
+    }
+}
+
+fn workflow_output_ref_for_stage_output(job_id: &str, stage: DagStageKind) -> String {
+    workflow_stage_output_ref(job_id, stage)
+}
+
+fn workflow_handoff_token(job_id: &str, stage: DagStageKind, phase: &str, material: &BTreeMap<String, String>) -> String {
+    let mut normalized = serde_json::Map::new();
+    normalized.insert("job_id".to_string(), serde_json::Value::String(job_id.to_string()));
+    normalized.insert("stage_key".to_string(), serde_json::Value::String(stage.key().to_string()));
+    normalized.insert("stage_index".to_string(), serde_json::Value::from(stage.index()));
+    normalized.insert("phase".to_string(), serde_json::Value::String(phase.to_string()));
+    for (key, value) in material {
+        normalized.insert(key.clone(), serde_json::Value::String(value.clone()));
+    }
+    hash_bytes_hex(&serde_json::to_vec(&normalized).unwrap_or_default())
 }
 
 #[derive(Debug, Clone)]
@@ -359,6 +679,11 @@ struct JobRuntimeRecord {
     deadline_at: Option<Timestamp>,
     completed_at: Option<Timestamp>,
     stage_records: Vec<StageRecord>,
+    workflow_events: Vec<WorkflowBoundaryRecord>,
+    workflow_id: String,
+    workflow_root_lineage_ref: String,
+    workflow_completion_ref: Option<String>,
+    workflow_failure_ref: Option<String>,
     counts: BTreeMap<String, i64>,
     metadata: BTreeMap<String, String>,
     qfs_result_ref: Option<String>,
@@ -447,6 +772,9 @@ impl JobRuntimeRecord {
                     },
                     "input": stage.input,
                     "output": stage.output,
+                    "artifact_refs": stage.artifact_refs,
+                    "lineage_refs": stage.lineage_refs,
+                    "handoff_ref": stage.handoff_ref,
                     "error_code": stage.error_code,
                     "error_summary": stage.error_summary,
                     "error_details_ref": stage.error_details_ref,
@@ -454,12 +782,74 @@ impl JobRuntimeRecord {
             })
             .collect();
 
+        let HybridWorkflowGraph {
+            workflow_id,
+            job_id,
+            root_lineage_ref,
+            stages,
+            boundaries,
+            final_completion_ref,
+            final_failure_ref,
+        } = self.workflow_graph();
+        let workflow_json = serde_json::json!({
+            "workflow_id": workflow_id,
+            "job_id": job_id,
+            "root_lineage_ref": root_lineage_ref,
+            "stages": stages
+                .into_iter()
+                .map(|stage| {
+                    serde_json::json!({
+                        "stage_id": stage.stage_id,
+                        "stage_key": stage.stage_key,
+                        "order": stage.order,
+                        "state_before": stage.state_before as i32,
+                        "state_after": stage.state_after as i32,
+                        "status": match stage.status {
+                            StageStatus::Running => "running",
+                            StageStatus::Succeeded => "succeeded",
+                            StageStatus::Failed => "failed",
+                        },
+                        "input_ref": stage.input_ref,
+                        "output_ref": stage.output_ref,
+                        "handoff_ref": stage.handoff_ref,
+                        "artifact_refs": stage.artifact_refs,
+                        "lineage_refs": stage.lineage_refs,
+                        "replay_token": stage.replay_token,
+                    })
+                })
+                .collect::<Vec<_>>(),
+            "boundaries": boundaries
+                .into_iter()
+                .map(|boundary| {
+                    serde_json::json!({
+                        "boundary_id": boundary.boundary_id,
+                        "workflow_id": boundary.workflow_id,
+                        "job_id": boundary.job_id,
+                        "kind": boundary.kind.key(),
+                        "stage_id": boundary.stage_id,
+                        "stage_key": boundary.stage_key,
+                        "order": boundary.order,
+                        "state_before": boundary.state_before.map(|state| state as i32),
+                        "state_after": boundary.state_after.map(|state| state as i32),
+                        "input_ref": boundary.input_ref,
+                        "output_ref": boundary.output_ref,
+                        "artifact_ref": boundary.artifact_ref,
+                        "lineage_ref": boundary.lineage_ref,
+                        "replay_token": boundary.replay_token,
+                    })
+                })
+                .collect::<Vec<_>>(),
+            "final_completion_ref": final_completion_ref,
+            "final_failure_ref": final_failure_ref,
+        });
+
         serde_json::to_vec(&serde_json::json!({
             "job_id": self.job_id,
             "submission": self.stable_summary_map(),
             "state": self.state as i32,
             "current_stage": self.current_stage.map(|s| s.key()),
             "stage_records": stage_json,
+            "workflow": workflow_json,
             "counts": self.counts,
             "metadata": self.metadata,
             "qfs_result_ref": self.qfs_result_ref,
@@ -478,6 +868,96 @@ impl JobRuntimeRecord {
         self.stage_records
             .iter()
             .find(|stage| stage.stage_key == "schedule" && matches!(stage.status, StageStatus::Succeeded))
+    }
+}
+
+impl JobRuntimeRecord {
+    fn record_workflow_boundary(
+        &mut self,
+        stage: DagStageKind,
+        kind: WorkflowBoundaryKind,
+        input_ref: String,
+        output_ref: String,
+        artifact_ref: String,
+        lineage_ref: String,
+        state_before: Option<TaskState>,
+        state_after: Option<TaskState>,
+    ) {
+        let boundary_id = workflow_boundary_ref(&self.job_id, stage, kind);
+        let mut material = BTreeMap::from([
+            ("boundary_id".to_string(), boundary_id.clone()),
+            ("workflow_id".to_string(), self.workflow_id.clone()),
+            ("job_id".to_string(), self.job_id.clone()),
+            ("kind".to_string(), kind.key().to_string()),
+            ("stage_id".to_string(), stage_id(&self.job_id, stage)),
+            ("stage_key".to_string(), stage.key().to_string()),
+            ("input_ref".to_string(), input_ref.clone()),
+            ("output_ref".to_string(), output_ref.clone()),
+            ("artifact_ref".to_string(), artifact_ref.clone()),
+            ("lineage_ref".to_string(), lineage_ref.clone()),
+        ]);
+        let replay_token = workflow_handoff_token(&self.job_id, stage, kind.key(), &material);
+        self.workflow_events.push(WorkflowBoundaryRecord {
+            boundary_id,
+            workflow_id: self.workflow_id.clone(),
+            job_id: self.job_id.clone(),
+            kind,
+            stage_id: Some(stage_id(&self.job_id, stage)),
+            stage_key: Some(stage.key().to_string()),
+            order: Some(stage.index()),
+            state_before,
+            state_after,
+            input_ref,
+            output_ref,
+            artifact_ref,
+            lineage_ref,
+            replay_token,
+            timestamp: ts_now(),
+        });
+    }
+
+    fn workflow_graph(&self) -> HybridWorkflowGraph {
+        let stages = self
+            .stage_records
+            .iter()
+            .map(|stage| {
+                let mut artifact_refs = stage.artifact_refs.clone();
+                artifact_refs
+                    .entry("workflow_handoff_ref".to_string())
+                    .or_insert_with(|| stage.handoff_ref.clone());
+                HybridWorkflowStageNode {
+                    stage_id: stage.stage_id.clone(),
+                    stage_key: stage.stage_key.clone(),
+                    order: stage.order,
+                    state_before: stage.state_before,
+                    state_after: stage.state_after,
+                    status: stage.status,
+                    input_ref: stage
+                        .artifact_refs
+                        .get("workflow_input_ref")
+                        .cloned()
+                        .unwrap_or_default(),
+                    output_ref: stage
+                        .artifact_refs
+                        .get("workflow_output_ref")
+                        .cloned()
+                        .unwrap_or_default(),
+                    handoff_ref: stage.handoff_ref.clone(),
+                    artifact_refs,
+                    lineage_refs: stage.lineage_refs.clone(),
+                    replay_token: stage.replay_token.clone(),
+                }
+            })
+            .collect();
+        HybridWorkflowGraph {
+            workflow_id: self.workflow_id.clone(),
+            job_id: self.job_id.clone(),
+            root_lineage_ref: self.workflow_root_lineage_ref.clone(),
+            stages,
+            boundaries: self.workflow_events.clone(),
+            final_completion_ref: self.workflow_completion_ref.clone(),
+            final_failure_ref: self.workflow_failure_ref.clone(),
+        }
     }
 }
 
@@ -565,6 +1045,7 @@ impl KernelRuntimeStore {
         }
 
         let now = ts_now();
+        let workflow_id = workflow_id_for(&submission.job_id);
         let record = JobRuntimeRecord {
             job_id: submission.job_id.clone(),
             submission: submission.clone(),
@@ -575,6 +1056,38 @@ impl KernelRuntimeStore {
             deadline_at: submission.deadline_at.clone(),
             completed_at: None,
             stage_records: Vec::new(),
+            workflow_events: vec![WorkflowBoundaryRecord {
+                boundary_id: workflow_boundary_ref(
+                    &submission.job_id,
+                    DagStageKind::ValidateEnqueue,
+                    WorkflowBoundaryKind::WorkflowStarted,
+                ),
+                workflow_id: workflow_id.clone(),
+                job_id: submission.job_id.clone(),
+                kind: WorkflowBoundaryKind::WorkflowStarted,
+                stage_id: None,
+                stage_key: None,
+                order: None,
+                state_before: None,
+                state_after: Some(TaskState::Pending),
+                input_ref: workflow_stage_input_ref(&submission.job_id, DagStageKind::ValidateEnqueue),
+                output_ref: String::new(),
+                artifact_ref: workflow_root_lineage_ref(&submission.job_id),
+                lineage_ref: workflow_root_lineage_ref(&submission.job_id),
+                replay_token: hash_bytes_hex(
+                    format!(
+                        "workflow-start:{}:{}",
+                        submission.job_id,
+                        workflow_root_lineage_ref(&submission.job_id)
+                    )
+                    .as_bytes(),
+                ),
+                timestamp: ts_now(),
+            }],
+            workflow_id,
+            workflow_root_lineage_ref: workflow_root_lineage_ref(&submission.job_id),
+            workflow_completion_ref: None,
+            workflow_failure_ref: None,
             counts: BTreeMap::new(),
             metadata: BTreeMap::new(),
             qfs_result_ref: None,
@@ -675,6 +1188,11 @@ impl KernelRuntimeStore {
         let stage = job.current_stage.unwrap_or(DagStageKind::ValidateEnqueue);
         let stage_id = stage_id(job_id, stage);
         let state_before = job.state;
+        let input_ref = workflow_stage_input_ref(job_id, stage);
+        let handoff_ref = workflow_stage_handoff_ref(job_id, stage);
+        let lineage_ref = workflow_stage_lineage_ref(job_id, stage);
+        let failure_ref = workflow_stage_failure_ref(job_id, stage);
+        let workflow_failure_ref = workflow_failure_ref(job_id);
 
         if let Some(record) = job.stage_records.iter_mut().find(|record| record.stage_id == stage_id) {
             record.status = StageStatus::Failed;
@@ -682,6 +1200,15 @@ impl KernelRuntimeStore {
             record.error_code = Some(error_code.to_string());
             record.error_summary = Some(error_summary.to_string());
             record.error_details_ref = Some(error_details_ref.to_string());
+            record
+                .artifact_refs
+                .insert("workflow_failure_ref".to_string(), failure_ref.clone());
+            record
+                .artifact_refs
+                .insert("workflow_output_ref".to_string(), failure_ref.clone());
+            record
+                .lineage_refs
+                .insert("workflow_lineage_ref".to_string(), lineage_ref.clone());
             record.completed_at = Some(ts_now());
             record.replay_token = hash_bytes_hex(&stage_digest_bytes(record));
         } else {
@@ -698,8 +1225,34 @@ impl KernelRuntimeStore {
                     ("job_id".to_string(), job_id.to_string()),
                     ("error_code".to_string(), error_code.to_string()),
                     ("error_summary".to_string(), error_summary.to_string()),
+                    ("workflow_stage_input_ref".to_string(), input_ref.clone()),
+                    ("workflow_stage_handoff_ref".to_string(), handoff_ref.clone()),
+                    ("workflow_stage_lineage_ref".to_string(), lineage_ref.clone()),
+                    ("workflow_root_lineage_ref".to_string(), job.workflow_root_lineage_ref.clone()),
                 ]),
-                output: BTreeMap::new(),
+                output: BTreeMap::from([
+                    ("workflow_failure_ref".to_string(), failure_ref.clone()),
+                    ("workflow_output_ref".to_string(), failure_ref.clone()),
+                ]),
+                artifact_refs: BTreeMap::from([
+                    ("workflow_input_ref".to_string(), input_ref.clone()),
+                    ("workflow_output_ref".to_string(), failure_ref.clone()),
+                    ("workflow_handoff_ref".to_string(), handoff_ref.clone()),
+                    ("workflow_failure_ref".to_string(), failure_ref.clone()),
+                    ("workflow_lineage_ref".to_string(), lineage_ref.clone()),
+                    (
+                        "workflow_root_lineage_ref".to_string(),
+                        job.workflow_root_lineage_ref.clone(),
+                    ),
+                ]),
+                lineage_refs: BTreeMap::from([
+                    ("workflow_lineage_ref".to_string(), lineage_ref.clone()),
+                    (
+                        "workflow_root_lineage_ref".to_string(),
+                        job.workflow_root_lineage_ref.clone(),
+                    ),
+                ]),
+                handoff_ref: handoff_ref.clone(),
                 error_code: Some(error_code.to_string()),
                 error_summary: Some(error_summary.to_string()),
                 error_details_ref: Some(error_details_ref.to_string()),
@@ -714,6 +1267,27 @@ impl KernelRuntimeStore {
         job.error_code = Some(error_code.to_string());
         job.error_summary = Some(error_summary.to_string());
         job.error_details_ref = Some(error_details_ref.to_string());
+        job.workflow_failure_ref = Some(workflow_failure_ref.clone());
+        job.record_workflow_boundary(
+            stage,
+            WorkflowBoundaryKind::StageFailed,
+            input_ref,
+            failure_ref.clone(),
+            failure_ref.clone(),
+            lineage_ref,
+            Some(state_before),
+            Some(TaskState::Error),
+        );
+        job.record_workflow_boundary(
+            stage,
+            WorkflowBoundaryKind::WorkflowCompleted,
+            workflow_stage_input_ref(job_id, stage),
+            workflow_failure_ref.clone(),
+            workflow_failure_ref.clone(),
+            workflow_stage_lineage_ref(job_id, stage),
+            Some(state_before),
+            Some(TaskState::Error),
+        );
         Ok(job.clone())
     }
 
@@ -758,8 +1332,125 @@ impl KernelRuntimeStore {
             return Ok(stage_id);
         }
 
+        let root_lineage_ref = input
+            .get("workflow_root_lineage_ref")
+            .cloned()
+            .unwrap_or_else(|| workflow_root_lineage_ref(job_id));
+        let input_ref = input
+            .get("workflow_stage_input_ref")
+            .cloned()
+            .unwrap_or_else(|| workflow_stage_input_ref(job_id, stage));
+        let handoff_ref = input
+            .get("workflow_stage_handoff_ref")
+            .cloned()
+            .unwrap_or_else(|| workflow_stage_handoff_ref(job_id, stage));
+        let lineage_ref = input
+            .get("workflow_stage_lineage_ref")
+            .cloned()
+            .unwrap_or_else(|| workflow_stage_lineage_ref(job_id, stage));
+
+        let missing_fields: Vec<&str> = required_handoff_fields(stage)
+            .iter()
+            .copied()
+            .filter(|field| !input.contains_key(*field))
+            .collect();
+        if !missing_fields.is_empty() {
+            let error_code = "WORKFLOW_HANDOFF_CORRUPTION";
+            let error_summary = format!(
+                "{} stage missing required handoff refs: {}",
+                stage.key(),
+                missing_fields.join(", ")
+            );
+            let failure_ref = workflow_stage_failure_ref(job_id, stage);
+            let workflow_failure_ref = workflow_failure_ref(job_id);
+
+            job.current_stage = Some(stage);
+            job.updated_at = ts_now();
+            job.completed_at = Some(ts_now());
+            job.state = TaskState::Error;
+            job.error_code = Some(error_code.to_string());
+            job.error_summary = Some(error_summary.clone());
+            job.error_details_ref = Some(failure_ref.clone());
+            job.reservation_state = Some("released".to_string());
+            job.workflow_failure_ref = Some(workflow_failure_ref.clone());
+            job.stage_records.push(StageRecord {
+                stage_id: stage_id.clone(),
+                stage_key: stage.key().to_string(),
+                order: stage.index(),
+                state_before,
+                state_after: TaskState::Error,
+                status: StageStatus::Failed,
+                started_at: ts_now(),
+                completed_at: Some(ts_now()),
+                input: input.clone(),
+                output: BTreeMap::from([
+                    ("workflow_failure_ref".to_string(), failure_ref.clone()),
+                    ("workflow_output_ref".to_string(), failure_ref.clone()),
+                ]),
+                artifact_refs: BTreeMap::from([
+                    ("workflow_input_ref".to_string(), input_ref.clone()),
+                    ("workflow_output_ref".to_string(), failure_ref.clone()),
+                    ("workflow_handoff_ref".to_string(), handoff_ref.clone()),
+                    ("workflow_failure_ref".to_string(), failure_ref.clone()),
+                    ("workflow_lineage_ref".to_string(), lineage_ref.clone()),
+                    ("workflow_root_lineage_ref".to_string(), root_lineage_ref.clone()),
+                    ("upstream_output_ref".to_string(), input_ref.clone()),
+                ]),
+                lineage_refs: BTreeMap::from([
+                    ("workflow_lineage_ref".to_string(), lineage_ref.clone()),
+                    ("workflow_root_lineage_ref".to_string(), root_lineage_ref.clone()),
+                ]),
+                handoff_ref: handoff_ref.clone(),
+                error_code: Some(error_code.to_string()),
+                error_summary: Some(error_summary.clone()),
+                error_details_ref: Some(failure_ref.clone()),
+                replay_token: String::new(),
+            });
+            job.record_workflow_boundary(
+                stage,
+                WorkflowBoundaryKind::StageFailed,
+                input_ref.clone(),
+                failure_ref.clone(),
+                failure_ref.clone(),
+                lineage_ref.clone(),
+                Some(state_before),
+                Some(TaskState::Error),
+            );
+            job.record_workflow_boundary(
+                stage,
+                WorkflowBoundaryKind::WorkflowCompleted,
+                input_ref,
+                workflow_failure_ref.clone(),
+                workflow_failure_ref,
+                lineage_ref,
+                Some(state_before),
+                Some(TaskState::Error),
+            );
+            return Err(Status::failed_precondition(error_summary));
+        }
+
+        let previous_output_ref = job
+            .stage_records
+            .iter()
+            .rev()
+            .find_map(|record| record.artifact_refs.get("workflow_output_ref").cloned());
+
         job.current_stage = Some(stage);
         job.updated_at = ts_now();
+        let mut artifact_refs = BTreeMap::from([
+            ("workflow_input_ref".to_string(), input_ref.clone()),
+            ("workflow_handoff_ref".to_string(), handoff_ref.clone()),
+            ("workflow_lineage_ref".to_string(), lineage_ref.clone()),
+            ("workflow_root_lineage_ref".to_string(), root_lineage_ref.clone()),
+        ]);
+        if let Some(previous_output_ref) = previous_output_ref {
+            artifact_refs.insert("upstream_output_ref".to_string(), previous_output_ref);
+        }
+
+        let mut lineage_refs = BTreeMap::from([
+            ("workflow_lineage_ref".to_string(), lineage_ref.clone()),
+            ("workflow_root_lineage_ref".to_string(), root_lineage_ref.clone()),
+        ]);
         job.stage_records.push(StageRecord {
             stage_id: stage_id.clone(),
             stage_key: stage.key().to_string(),
@@ -771,11 +1462,24 @@ impl KernelRuntimeStore {
             completed_at: None,
             input,
             output: BTreeMap::new(),
+            artifact_refs,
+            lineage_refs,
+            handoff_ref: handoff_ref.clone(),
             error_code: None,
             error_summary: None,
             error_details_ref: None,
             replay_token: String::new(),
         });
+        job.record_workflow_boundary(
+            stage,
+            WorkflowBoundaryKind::StageEntered,
+            input_ref,
+            String::new(),
+            handoff_ref,
+            lineage_ref,
+            Some(state_before),
+            Some(state_before),
+        );
         Ok(stage_id)
     }
 
@@ -790,16 +1494,116 @@ impl KernelRuntimeStore {
         let job = jobs
             .get_mut(job_id)
             .ok_or_else(|| Status::not_found("job not found"))?;
-        let stage = job
-            .stage_records
-            .iter_mut()
-            .find(|record| record.stage_id == stage_id)
-            .ok_or_else(|| Status::failed_precondition("stage record not found"))?;
-        stage.status = StageStatus::Succeeded;
-        stage.state_after = state_after;
-        stage.output = output;
-        stage.completed_at = Some(ts_now());
-        stage.replay_token = hash_bytes_hex(&stage_digest_bytes(stage));
+        let (stage_kind, input_ref, handoff_ref, lineage_ref, state_before, output_ref, completion_ref) = {
+            let stage = job
+                .stage_records
+                .iter_mut()
+                .find(|record| record.stage_id == stage_id)
+                .ok_or_else(|| Status::failed_precondition("stage record not found"))?;
+            let stage_kind = parse_stage_kind(&stage.stage_key).unwrap_or(DagStageKind::ValidateEnqueue);
+            let input_ref = stage
+                .artifact_refs
+                .get("workflow_input_ref")
+                .cloned()
+                .unwrap_or_else(|| workflow_stage_input_ref(job_id, stage_kind));
+            let handoff_ref = stage.handoff_ref.clone();
+            let lineage_ref = stage
+                .lineage_refs
+                .get("workflow_lineage_ref")
+                .cloned()
+                .unwrap_or_else(|| workflow_stage_lineage_ref(job_id, stage_kind));
+            let output_ref = workflow_output_ref_for_stage_output(job_id, stage_kind);
+            let mut output = output;
+            output.insert("workflow_output_ref".to_string(), output_ref.clone());
+            output.insert("workflow_handoff_ref".to_string(), handoff_ref.clone());
+            output.insert("workflow_lineage_ref".to_string(), lineage_ref.clone());
+            output.insert(
+                "workflow_root_lineage_ref".to_string(),
+                stage
+                    .lineage_refs
+                    .get("workflow_root_lineage_ref")
+                    .cloned()
+                    .unwrap_or_else(|| workflow_root_lineage_ref(job_id)),
+            );
+            let completion_ref = if matches!(state_after, TaskState::Done) {
+                let completion_ref = workflow_completion_ref(job_id);
+                output.insert("workflow_completion_ref".to_string(), completion_ref.clone());
+                Some(completion_ref)
+            } else {
+                None
+            };
+
+            stage.status = StageStatus::Succeeded;
+            stage.state_after = state_after;
+            stage.output = output;
+            stage
+                .artifact_refs
+                .insert("workflow_input_ref".to_string(), input_ref.clone());
+            stage
+                .artifact_refs
+                .insert("workflow_output_ref".to_string(), output_ref.clone());
+            stage
+                .artifact_refs
+                .insert("workflow_handoff_ref".to_string(), handoff_ref.clone());
+            stage
+                .artifact_refs
+                .insert("workflow_lineage_ref".to_string(), lineage_ref.clone());
+            stage
+                .artifact_refs
+                .entry("workflow_root_lineage_ref".to_string())
+                .or_insert_with(|| {
+                    stage
+                        .lineage_refs
+                        .get("workflow_root_lineage_ref")
+                        .cloned()
+                        .unwrap_or_else(|| workflow_root_lineage_ref(job_id))
+                });
+            if let Some(ref completion_ref) = completion_ref {
+                stage
+                    .artifact_refs
+                    .insert("workflow_completion_ref".to_string(), completion_ref.clone());
+            }
+            stage
+                .lineage_refs
+                .insert("workflow_lineage_ref".to_string(), lineage_ref.clone());
+            stage
+                .lineage_refs
+                .insert(
+                    "workflow_root_lineage_ref".to_string(),
+                    stage
+                        .lineage_refs
+                        .get("workflow_root_lineage_ref")
+                        .cloned()
+                        .unwrap_or_else(|| workflow_root_lineage_ref(job_id)),
+                );
+            stage.completed_at = Some(ts_now());
+            stage.replay_token = hash_bytes_hex(&stage_digest_bytes(stage));
+            (stage_kind, input_ref, handoff_ref, lineage_ref, stage.state_before, output_ref, completion_ref)
+        };
+
+        job.record_workflow_boundary(
+            stage_kind,
+            WorkflowBoundaryKind::StageCompleted,
+            input_ref,
+            output_ref.clone(),
+            handoff_ref,
+            lineage_ref.clone(),
+            Some(state_before),
+            Some(state_after),
+        );
+        if let Some(completion_ref) = completion_ref {
+            job.workflow_completion_ref = Some(completion_ref.clone());
+            job.record_workflow_boundary(
+                stage_kind,
+                WorkflowBoundaryKind::WorkflowCompleted,
+                workflow_stage_input_ref(job_id, stage_kind),
+                completion_ref.clone(),
+                completion_ref,
+                workflow_stage_lineage_ref(job_id, stage_kind),
+                Some(state_before),
+                Some(state_after),
+            );
+        }
 
         job.state = state_after;
         job.updated_at = ts_now();
@@ -822,18 +1626,68 @@ impl KernelRuntimeStore {
         let job = jobs
             .get_mut(job_id)
             .ok_or_else(|| Status::not_found("job not found"))?;
-        let stage = job
-            .stage_records
-            .iter_mut()
-            .find(|record| record.stage_id == stage_id)
-            .ok_or_else(|| Status::failed_precondition("stage record not found"))?;
-        stage.status = StageStatus::Failed;
-        stage.state_after = terminal_state;
-        stage.error_code = Some(error_code.to_string());
-        stage.error_summary = Some(error_summary.to_string());
-        stage.error_details_ref = Some(error_details_ref.to_string());
-        stage.completed_at = Some(ts_now());
-        stage.replay_token = hash_bytes_hex(&stage_digest_bytes(stage));
+        let (stage_kind, input_ref, handoff_ref, lineage_ref, failure_ref) = {
+            let stage = job
+                .stage_records
+                .iter_mut()
+                .find(|record| record.stage_id == stage_id)
+                .ok_or_else(|| Status::failed_precondition("stage record not found"))?;
+            let stage_kind = parse_stage_kind(&stage.stage_key).unwrap_or(DagStageKind::ValidateEnqueue);
+            let input_ref = stage
+                .artifact_refs
+                .get("workflow_input_ref")
+                .cloned()
+                .unwrap_or_else(|| workflow_stage_input_ref(job_id, stage_kind));
+            let handoff_ref = stage.handoff_ref.clone();
+            let lineage_ref = stage
+                .lineage_refs
+                .get("workflow_lineage_ref")
+                .cloned()
+                .unwrap_or_else(|| workflow_stage_lineage_ref(job_id, stage_kind));
+            let failure_ref = workflow_stage_failure_ref(job_id, stage_kind);
+            stage.status = StageStatus::Failed;
+            stage.state_after = terminal_state;
+            stage.error_code = Some(error_code.to_string());
+            stage.error_summary = Some(error_summary.to_string());
+            stage.error_details_ref = Some(error_details_ref.to_string());
+            stage
+                .artifact_refs
+                .insert("workflow_failure_ref".to_string(), failure_ref.clone());
+            stage
+                .artifact_refs
+                .insert("workflow_output_ref".to_string(), failure_ref.clone());
+            stage
+                .artifact_refs
+                .insert("workflow_handoff_ref".to_string(), handoff_ref.clone());
+            stage
+                .artifact_refs
+                .insert("workflow_lineage_ref".to_string(), lineage_ref.clone());
+            stage.completed_at = Some(ts_now());
+            stage.replay_token = hash_bytes_hex(&stage_digest_bytes(stage));
+            (stage_kind, input_ref, handoff_ref, lineage_ref, failure_ref)
+        };
+
+        job.workflow_failure_ref = Some(workflow_failure_ref(job_id));
+        job.record_workflow_boundary(
+            stage_kind,
+            WorkflowBoundaryKind::StageFailed,
+            input_ref,
+            failure_ref.clone(),
+            failure_ref.clone(),
+            lineage_ref,
+            Some(TaskState::Running),
+            Some(terminal_state),
+        );
+        job.record_workflow_boundary(
+            stage_kind,
+            WorkflowBoundaryKind::WorkflowCompleted,
+            workflow_stage_input_ref(job_id, stage_kind),
+            workflow_failure_ref(job_id),
+            workflow_failure_ref(job_id),
+            workflow_stage_lineage_ref(job_id, stage_kind),
+            Some(TaskState::Running),
+            Some(terminal_state),
+        );
 
         job.state = terminal_state;
         job.updated_at = ts_now();
@@ -841,6 +1695,8 @@ impl KernelRuntimeStore {
         job.error_code = Some(error_code.to_string());
         job.error_summary = Some(error_summary.to_string());
         job.error_details_ref = Some(error_details_ref.to_string());
+        job.reservation_state = Some("released".to_string());
+        let _ = handoff_ref;
         Ok(())
     }
 
@@ -962,6 +1818,14 @@ impl KernelRuntimeStore {
         if job.is_terminal() {
             return Ok(job.clone());
         }
+        let stage = job.current_stage.unwrap_or(DagStageKind::ValidateEnqueue);
+        let stage_id = stage_id(job_id, stage);
+        let state_before = job.state;
+        let input_ref = workflow_stage_input_ref(job_id, stage);
+        let lineage_ref = workflow_stage_lineage_ref(job_id, stage);
+        let failure_ref = workflow_stage_failure_ref(job_id, stage);
+        let workflow_failure_ref = workflow_failure_ref(job_id);
+
         job.state = TaskState::Timeout;
         job.cancel_requested = true;
         job.cancel_reason = Some("deadline_exceeded".to_string());
@@ -970,8 +1834,93 @@ impl KernelRuntimeStore {
         job.error_code = Some("DEADLINE_EXCEEDED".to_string());
         job.error_summary = Some("deadline exceeded while orchestrating the job".to_string());
         job.error_details_ref = Some(format!("qfs://jobs/{job_id}/errors/deadline.json"));
+        job.workflow_failure_ref = Some(workflow_failure_ref.clone());
         job.completed_at = Some(ts_now());
         job.updated_at = ts_now();
+        
+        if let Some(record) = job.stage_records.iter_mut().find(|record| record.stage_id == stage_id) {
+            record.status = StageStatus::Failed;
+            record.state_after = TaskState::Timeout;
+            record.error_code = Some("DEADLINE_EXCEEDED".to_string());
+            record.error_summary = Some("deadline exceeded while orchestrating the job".to_string());
+            record.error_details_ref = Some(format!("qfs://jobs/{job_id}/errors/deadline.json"));
+            record
+                .artifact_refs
+                .insert("workflow_failure_ref".to_string(), failure_ref.clone());
+            record
+                .artifact_refs
+                .insert("workflow_output_ref".to_string(), failure_ref.clone());
+            record.completed_at = Some(ts_now());
+            record.replay_token = hash_bytes_hex(&stage_digest_bytes(record));
+        } else {
+            job.stage_records.push(StageRecord {
+                stage_id: stage_id.clone(),
+                stage_key: stage.key().to_string(),
+                order: stage.index(),
+                state_before,
+                state_after: TaskState::Timeout,
+                status: StageStatus::Failed,
+                started_at: ts_now(),
+                completed_at: Some(ts_now()),
+                input: BTreeMap::from([
+                    ("job_id".to_string(), job_id.to_string()),
+                    ("reason".to_string(), "deadline_exceeded".to_string()),
+                    ("workflow_stage_input_ref".to_string(), input_ref.clone()),
+                    ("workflow_stage_lineage_ref".to_string(), lineage_ref.clone()),
+                    ("workflow_root_lineage_ref".to_string(), job.workflow_root_lineage_ref.clone()),
+                ]),
+                output: BTreeMap::from([
+                    ("workflow_failure_ref".to_string(), failure_ref.clone()),
+                    ("workflow_output_ref".to_string(), failure_ref.clone()),
+                ]),
+                artifact_refs: BTreeMap::from([
+                    ("workflow_input_ref".to_string(), input_ref.clone()),
+                    ("workflow_output_ref".to_string(), failure_ref.clone()),
+                    ("workflow_handoff_ref".to_string(), workflow_stage_handoff_ref(job_id, stage)),
+                    ("workflow_failure_ref".to_string(), failure_ref.clone()),
+                    ("workflow_lineage_ref".to_string(), lineage_ref.clone()),
+                    (
+                        "workflow_root_lineage_ref".to_string(),
+                        job.workflow_root_lineage_ref.clone(),
+                    ),
+                    ("upstream_output_ref".to_string(), input_ref.clone()),
+                ]),
+                lineage_refs: BTreeMap::from([
+                    ("workflow_lineage_ref".to_string(), lineage_ref.clone()),
+                    (
+                        "workflow_root_lineage_ref".to_string(),
+                        job.workflow_root_lineage_ref.clone(),
+                    ),
+                    ("upstream_output_ref".to_string(), input_ref.clone()),
+                ]),
+                handoff_ref: workflow_stage_handoff_ref(job_id, stage),
+                error_code: Some("DEADLINE_EXCEEDED".to_string()),
+                error_summary: Some("deadline exceeded while orchestrating the job".to_string()),
+                error_details_ref: Some(format!("qfs://jobs/{job_id}/errors/deadline.json")),
+                replay_token: String::new(),
+            });
+        }
+
+        job.record_workflow_boundary(
+            stage,
+            WorkflowBoundaryKind::StageFailed,
+            input_ref,
+            failure_ref.clone(),
+            failure_ref.clone(),
+            lineage_ref,
+            Some(state_before),
+            Some(TaskState::Timeout),
+        );
+        job.record_workflow_boundary(
+            stage,
+            WorkflowBoundaryKind::WorkflowCompleted,
+            workflow_stage_input_ref(job_id, stage),
+            workflow_failure_ref.clone(),
+            workflow_failure_ref,
+            workflow_stage_lineage_ref(job_id, stage),
+            Some(state_before),
+            Some(TaskState::Timeout),
+        );
         Ok(job.clone())
     }
 
@@ -3076,6 +4025,9 @@ fn stage_snapshot_bytes(stage: &StageRecord) -> Vec<u8> {
         "completed_at": stage.completed_at.as_ref().map(ts_to_json),
         "input": stage.input,
         "output": stage.output,
+        "artifact_refs": stage.artifact_refs,
+        "lineage_refs": stage.lineage_refs,
+        "handoff_ref": stage.handoff_ref,
         "error_code": stage.error_code,
         "error_summary": stage.error_summary,
         "error_details_ref": stage.error_details_ref,
@@ -3097,10 +4049,11 @@ fn stage_digest_bytes(stage: &StageRecord) -> Vec<u8> {
             StageStatus::Succeeded => "succeeded",
             StageStatus::Failed => "failed",
         },
-        "started_at": ts_to_json(&stage.started_at),
-        "completed_at": stage.completed_at.as_ref().map(ts_to_json),
         "input": stage.input,
         "output": stage.output,
+        "artifact_refs": stage.artifact_refs,
+        "lineage_refs": stage.lineage_refs,
+        "handoff_ref": stage.handoff_ref,
         "error_code": stage.error_code,
         "error_summary": stage.error_summary,
         "error_details_ref": stage.error_details_ref,
@@ -3319,7 +4272,7 @@ mod tests {
         root.to_string_lossy().into_owned()
     }
     use crate::proto::RequestMetadata;
-    use std::collections::BTreeSet;
+    use std::collections::{BTreeMap, BTreeSet};
     use prost_types::Duration as ProtoDuration;
     use tokio_stream::StreamExt;
     use tonic::Request;
@@ -4000,6 +4953,93 @@ mod tests {
         assert!(!rationale.attributes.contains_key("request_id"));
         assert!(!rationale.attributes.contains_key("compiler_options"));
         assert!(!rationale.attributes.contains_key("metadata_kvs"));
+    }
+
+
+    #[tokio::test]
+    async fn hybrid_workflow_graph_is_deterministic_for_identical_runs() {
+        let (svc_a, runtime_a) = make_service(None);
+        let (svc_b, runtime_b) = make_service(None);
+
+        let response_a = svc_a
+            .enqueue_job(Request::new(make_request("hybrid-replay")))
+            .await
+            .expect("enqueue should succeed")
+            .into_inner();
+        let response_b = svc_b
+            .enqueue_job(Request::new(make_request("hybrid-replay")))
+            .await
+            .expect("enqueue should succeed")
+            .into_inner();
+
+        let job_a = wait_for_terminal(runtime_a, &response_a.job_id).await;
+        let job_b = wait_for_terminal(runtime_b, &response_b.job_id).await;
+
+        assert_eq!(job_a.workflow_id, job_b.workflow_id);
+        assert_eq!(job_a.workflow_root_lineage_ref, job_b.workflow_root_lineage_ref);
+        assert_eq!(job_a.snapshot_digest(), job_b.snapshot_digest());
+
+        let graph_a = job_a.workflow_graph();
+        let graph_b = job_b.workflow_graph();
+        assert_eq!(graph_a.workflow_id, graph_b.workflow_id);
+        assert_eq!(graph_a.job_id, graph_b.job_id);
+        assert_eq!(graph_a.root_lineage_ref, graph_b.root_lineage_ref);
+        assert_eq!(graph_a.stages, graph_b.stages);
+        assert_eq!(graph_a.boundaries.len(), graph_b.boundaries.len());
+        for (boundary_a, boundary_b) in graph_a.boundaries.iter().zip(graph_b.boundaries.iter()) {
+            assert_eq!(boundary_a.boundary_id, boundary_b.boundary_id);
+            assert_eq!(boundary_a.workflow_id, boundary_b.workflow_id);
+            assert_eq!(boundary_a.job_id, boundary_b.job_id);
+            assert_eq!(boundary_a.kind, boundary_b.kind);
+            assert_eq!(boundary_a.stage_id, boundary_b.stage_id);
+            assert_eq!(boundary_a.stage_key, boundary_b.stage_key);
+            assert_eq!(boundary_a.order, boundary_b.order);
+            assert_eq!(boundary_a.state_before, boundary_b.state_before);
+            assert_eq!(boundary_a.state_after, boundary_b.state_after);
+            assert_eq!(boundary_a.input_ref, boundary_b.input_ref);
+            assert_eq!(boundary_a.output_ref, boundary_b.output_ref);
+            assert_eq!(boundary_a.artifact_ref, boundary_b.artifact_ref);
+            assert_eq!(boundary_a.lineage_ref, boundary_b.lineage_ref);
+            assert_eq!(boundary_a.replay_token, boundary_b.replay_token);
+        }
+        assert!(graph_a.stages.len() >= 2);
+        assert!(graph_a.final_completion_ref.as_deref().map(|value| !value.is_empty()).unwrap_or(false));
+        assert!(graph_a.validate().is_ok());
+    }
+
+    #[tokio::test]
+    async fn missing_handoff_refs_record_a_stage_level_failure() {
+        let runtime = KernelRuntimeStore::default();
+        let submission = NormalizedSubmission::from_request(&make_request("handoff-corruption"))
+            .expect("submission should normalize");
+        let job_id = submission.job_id.clone();
+        let _ = runtime
+            .create_or_get_job(submission)
+            .expect("job should be created");
+
+        let err = runtime
+            .begin_stage(&job_id, DagStageKind::Compile, TaskState::Compiling, BTreeMap::new())
+            .expect_err("compile should fail without required handoff refs");
+        assert_eq!(err.code(), tonic::Code::FailedPrecondition);
+        assert!(err.message().contains("missing required handoff refs"));
+
+        let job = runtime.get(&job_id).expect("job should exist");
+        assert_eq!(job.state, TaskState::Error);
+        assert_eq!(job.error_code.as_deref(), Some("WORKFLOW_HANDOFF_CORRUPTION"));
+        assert!(job.workflow_failure_ref.as_deref().map(|value| !value.is_empty()).unwrap_or(false));
+
+        let stage = job.stage_records.last().expect("stage record should be present");
+        assert_eq!(stage.stage_key, DagStageKind::Compile.key());
+        assert_eq!(stage.status, StageStatus::Failed);
+        assert_eq!(stage.error_code.as_deref(), Some("WORKFLOW_HANDOFF_CORRUPTION"));
+        assert!(stage.output.contains_key("workflow_failure_ref"));
+        assert!(stage.artifact_refs.contains_key("workflow_handoff_ref"));
+        assert!(stage.artifact_refs.contains_key("workflow_lineage_ref"));
+
+        let graph = job.workflow_graph();
+        assert!(graph.final_failure_ref.as_deref().map(|value| !value.is_empty()).unwrap_or(false));
+        assert!(graph.boundaries.iter().any(|boundary| matches!(boundary.kind, WorkflowBoundaryKind::StageFailed)));
+        assert!(graph.validate().is_ok());
     }
 
     fn make_rationale_request(job_id: &str) -> GetDispatchRationaleRequest {

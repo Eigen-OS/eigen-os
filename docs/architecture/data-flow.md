@@ -162,6 +162,8 @@ AQO is the canonical IR handed from compiler to runtime.
 
 Workflow semantics, replay policy, and benchmark/distributed orchestration metadata are not added as AQO top-level fields; they stay in JobSpec, runtime envelopes, result metadata, and lineage refs.
 
+HybridWorkflow execution is represented in the kernel as a shared workflow graph with explicit stage nodes, stage-to-stage handoff refs, and replay-safe boundary events. Stage transitions are reconstructed from runtime envelopes and QFS lineage refs rather than from AQO payload shape.
+
 Minimal example:
 
 ```json
