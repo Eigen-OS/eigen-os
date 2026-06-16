@@ -431,7 +431,8 @@ Responsibilities:
 - symbolic reasoning integration,
 - policy inference,
 - explainability augmentation,
-- adaptive orchestration reasoning.
+- adaptive orchestration reasoning,
+- internal deployable service boundary (`src/services/neuro-symbolic-service/`).
 
 ---
 
@@ -622,6 +623,7 @@ flowchart LR
     GNN[gnn-optimizer]
     KB["knowledge-base / OKB"]
     NSC[neuro-symbolic-core]
+    NSC[neuro-symbolic-core\ninternal service]
   end
 
   SysAPI --> Kernel

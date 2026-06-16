@@ -163,12 +163,15 @@ It integrates with:
 - QFS artifact layer (via kernel/QFS facade),
 - observability subsystem,
 - security-isolation subsystem,
-- future: neuro-symbolic-core, knowledge-base, HWE, optimizer services.
+- future: neuro-symbolic-core (internal-only; accessed only through kernel-owned call paths), knowledge-base, HWE, optimizer services.
+
+System API MUST NOT call `NeuroSymbolicService` directly.
 
 #### Boundary invariants
 
 - System API is the only public ingress.
 - System API MUST NOT talk to vendor backends.
+- System API MUST NOT call `NeuroSymbolicService` directly.
 - System API MUST NOT execute user code.
 - System API MUST enforce payload limits and validation before forwarding.
 - System API MUST propagate trace context deterministically.

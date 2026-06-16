@@ -41,6 +41,7 @@ This API layer directly implements the architecture defined in Eigen OS Target S
 | QRTX                        | Central orchestration |
 | Compilation Service         | Neuro-DPDA compiler |
 | Optimizer Service           | GNN routing & placement |
+| Neuro-Symbolic Service      | Internal-only DPDA advisory scoring |
 | Driver Manager              | Hardware abstraction |
 | QFS                         | Artifact and state persistence |
 | Knowledge Base              | Long-term learning memory |
@@ -262,17 +263,18 @@ Operational flow:
 
 #### Purpose
 
-Internal-only DPDA model service used for advisory scoring of compilation plans.
+Internal-only DPDA model service used for advisory scoring of compilation plans. The deployable service boundary lives under `src/services/neuro-symbolic-service/`.
 
-This service is callable only by authenticated internal service identities. Public ingress paths MUST NOT expose a direct route to this service.
+This service is callable only by authenticated internal service identities. Public ingress paths MUST NOT expose a direct route to this service. Kernel/QRTX is the primary runtime caller; eigen-compiler may call this service only through the bounded advisory scoring path. `System API` MUST NOT call this service directly.
 
 #### Security and versioning requirements
 
-- All requests MUST include an authenticated internal service identity.
+- All requests MUST include an authenticated internal service identity. Kernel/QRTX is the primary runtime caller; eigen-compiler may call only through the bounded advisory interface.
 - Transport MUST use mTLS in deployment; service identity tokens MAY be used as the request-level assertion.
 - Each request MUST include a SemVer contract envelope.
 - Requests without a valid internal identity MUST fail closed with `UNAUTHENTICATED`.
 - Unsupported contract versions MUST be rejected before model scoring.
+- The request path MUST remain kernel-owned for runtime decisions and compiler-advisory only for compile-time scoring.
 
 #### Service definition
 

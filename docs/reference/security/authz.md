@@ -70,8 +70,13 @@ Internal service-to-service calls MUST authenticate workload identity and author
 - System API to Kernel/QRTX lifecycle calls,
 - Kernel/QRTX to Compiler calls,
 - Kernel/QRTX to Driver Manager calls,
+- Kernel/QRTX to NeuroSymbolicService calls,
+- Compiler to NeuroSymbolicService advisory calls,
 - Kernel/QRTX to QFS persistence calls,
+- Kernel/QRTX / eigen-compiler to NeuroSymbolicService advisory calls,
 - runtime and benchmark services emitting observability or knowledge-base records.
+
+NeuroSymbolicService MUST fail closed when the service identity, tenant/project binding, or policy snapshot version is missing. Public ingress principals are not authorized to reach this service directly.
 
 ---
 

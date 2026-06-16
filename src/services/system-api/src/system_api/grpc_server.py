@@ -11,7 +11,7 @@ import grpc
 from google.rpc import code_pb2, status_pb2, error_details_pb2
 from grpc_status import rpc_status
 
-from .grpc_impl import DeviceService, JobService, KnowledgeBaseService
+from .grpc_impl import DeviceService, JobService
 from .knowledge_base import KnowledgeBaseService
 from .observability import trace_id_from_traceparent
 from .proto_gen import ensure_generated
@@ -203,7 +203,7 @@ def serve(bind: str | None = None) -> grpc.Server:
     kb_service = KnowledgeBaseService(kb_pb=kb_pb, types_pb=types_pb)
     
     job_pb_grpc.add_JobServiceServicer_to_server(
-        JobService(job_pb=job_pb, types_pb=types_pb, kb_service=kb_service),
+        JobService(job_pb=job_pb, types_pb=types_pb),
         server,
     )
     dev_pb_grpc.add_DeviceServiceServicer_to_server(

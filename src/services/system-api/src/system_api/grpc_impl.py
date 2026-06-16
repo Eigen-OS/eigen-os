@@ -82,7 +82,6 @@ from .observability import (
     record_submit_job_outcome,
     trace_id_from_traceparent,
 )
-from .knowledge_base import KnowledgeBaseService, KnowledgeBaseUnavailable
 from .qfs_store import QFS_STORE
 from .security import (
     SecurityContext,
@@ -409,10 +408,9 @@ class _ReservationRecord:
 class JobService:
     """Implementation of eigen.api.v1.JobService."""
 
-    def __init__(self, job_pb, types_pb, kb_service: KnowledgeBaseService | None = None):
+    def __init__(self, job_pb, types_pb):
         self._job_pb = job_pb
         self._types_pb = types_pb
-        self._kb_service = kb_service
         self._idempotency: dict[str, _IdempotencyRecord] = {}
         self._idempotency_ttl_sec = max(float(os.getenv("SYSTEM_API_IDEMPOTENCY_TTL_SECONDS", "86400")), 1.0)
         self._idempotency_store_path = Path(

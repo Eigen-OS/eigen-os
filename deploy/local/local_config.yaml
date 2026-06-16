@@ -15,3 +15,7 @@ services:
   driver_manager:
     grpc: 0.0.0.0:50061
     metrics: 0.0.0.0:9092
+  
+  neuro_symbolic_service:
+    grpc: 0.0.0.0:50081
+    metrics: 0.0.0.0:50082
