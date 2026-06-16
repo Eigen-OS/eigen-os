@@ -1320,6 +1320,72 @@ class KnowledgeBaseService:
         computed_redaction_digest = hashlib.sha256(_stable_json({k: v for k, v in redaction.items() if k != "redaction_digest_sha256"}).encode("utf-8")).hexdigest()
         if computed_redaction_digest != redaction_digest:
             raise KnowledgeBaseUnavailable("redaction digest mismatch")
+        
+        selection = manifest_payload.get("selection")
+        normalized_selection: dict[str, Any] | None = None
+        if selection is not None:
+            if not isinstance(selection, dict):
+                raise ValueError("selection must be an object")
+            selection_trace_ids = _audit_string_list(selection.get("trace_ids") or selection.get("selected_trace_ids"))
+            selection_replay_ids = _audit_string_list(selection.get("replay_ids"))
+            selection_id = str(selection.get("selection_id", "")).strip()
+            selected_by = str(selection.get("selected_by", "")).strip()
+            selection_reason = str(selection.get("selection_reason", "")).strip()
+            selection_policy_snapshot_version = str(selection.get("policy_snapshot_version", policy_snapshot_version)).strip() or policy_snapshot_version
+            selection_tenant_id = str(selection.get("tenant_id", tenant_id)).strip() or tenant_id
+            selection_project_id = str(selection.get("project_id", project_id)).strip() or project_id
+            if not selection_id or not selected_by or not selection_reason or not selection_trace_ids or not selection_replay_ids:
+                raise ValueError("selection.selection_id, selected_by, selection_reason, trace_ids, and replay_ids are required")
+            if selection_tenant_id != tenant_id or selection_project_id != project_id:
+                raise KnowledgeBaseUnavailable("selection must remain tenant-scoped")
+            if selection_policy_snapshot_version != policy_snapshot_version:
+                raise KnowledgeBaseUnavailable("selection policy snapshot version mismatch")
+            normalized_selection = {
+                "selection_id": selection_id,
+                "selected_by": selected_by,
+                "selection_reason": selection_reason,
+                "trace_ids": selection_trace_ids,
+                "replay_ids": selection_replay_ids,
+                "tenant_id": selection_tenant_id,
+                "project_id": selection_project_id,
+                "policy_snapshot_version": selection_policy_snapshot_version,
+            }
+
+        approval = manifest_payload.get("approval")
+        normalized_approval: dict[str, Any] | None = None
+        if approval is not None:
+            if not isinstance(approval, dict):
+                raise ValueError("approval must be an object")
+            approval_id = str(approval.get("approval_id", "")).strip()
+            approved_by = str(approval.get("approved_by", "")).strip()
+            approved_at = str(approval.get("approved_at", "")).strip()
+            decision = str(approval.get("decision", "")).strip().lower()
+            ticket_ref = str(approval.get("ticket_ref", "")).strip()
+            approval_policy_snapshot_version = str(approval.get("policy_snapshot_version", policy_snapshot_version)).strip() or policy_snapshot_version
+            approval_tenant_id = str(approval.get("tenant_id", tenant_id)).strip() or tenant_id
+            approval_project_id = str(approval.get("project_id", project_id)).strip() or project_id
+            approval_replay_ids = _audit_string_list(approval.get("replay_ids"))
+            if not approval_replay_ids and normalized_selection is not None:
+                approval_replay_ids = list(normalized_selection["replay_ids"])
+            if not all([approval_id, approved_by, approved_at, ticket_ref]) or decision != "approved" or not approval_replay_ids:
+                raise ValueError("approval.approval_id, approved_by, approved_at, decision, ticket_ref, and replay_ids are required")
+            if approval_tenant_id != tenant_id or approval_project_id != project_id:
+                raise KnowledgeBaseUnavailable("approval must remain tenant-scoped")
+            if approval_policy_snapshot_version != policy_snapshot_version:
+                raise KnowledgeBaseUnavailable("approval policy snapshot version mismatch")
+            if normalized_selection is not None and not set(normalized_selection["replay_ids"]).issubset(set(approval_replay_ids)):
+                raise KnowledgeBaseUnavailable("approval replay_ids must cover all selected replay identifiers")
+            normalized_approval = {
+                "approval_id": approval_id,
+                "approved_by": approved_by,
+                "approved_at": approved_at,
+                "decision": decision,
+                "ticket_ref": ticket_ref,
+                "policy_snapshot_version": approval_policy_snapshot_version,
+                "tenant_id": approval_tenant_id,
+                "project_id": approval_project_id,
+                "replay_ids": approval_replay_ids,
+            }
 
         records = manifest_payload.get("records")
         if not isinstance(records, list) or not records:
@@ -1392,6 +1458,24 @@ class KnowledgeBaseService:
                     "rules": [str(rule).strip() for rule in (record_redaction.get("rules") or []) if str(rule).strip()],
                 },
             }
+            trace_id = str(record.get("trace_id", "")).strip()
+            replay_id = str(record.get("replay_id", "")).strip()
+            source_kind = str(record.get("source_kind", "")).strip()
+            if trace_id:
+                normalized_record["trace_id"] = trace_id
+                normalized_record["trace_ref"] = f"nsc://trace/{trace_id}"
+            if replay_id:
+                normalized_record["replay_id"] = replay_id
+                if trace_id:
+                    normalized_record["replay_ref"] = f"nsc://replay/{trace_id}/{replay_id}"
+            if str(record.get("tenant_id", "")).strip():
+                normalized_record["tenant_id"] = str(record.get("tenant_id", "")).strip()
+            if str(record.get("project_id", "")).strip():
+                normalized_record["project_id"] = str(record.get("project_id", "")).strip()
+            if str(record.get("policy_snapshot_version", "")).strip():
+                normalized_record["policy_snapshot_version"] = str(record.get("policy_snapshot_version", "")).strip()
+            if source_kind:
+                normalized_record["source_kind"] = source_kind
             normalized_records.append(normalized_record)
             record_digests.append(content_digest)
 
@@ -1426,6 +1510,13 @@ class KnowledgeBaseService:
             "records": normalized_records,
             "manifest_digest_sha256": manifest_digest_sha256,
         }
+        source_kind = str(manifest_payload.get("source_kind", "")).strip()
+        if source_kind:
+            normalized_manifest["source_kind"] = source_kind
+        if normalized_selection is not None:
+            normalized_manifest["selection"] = normalized_selection
+        if normalized_approval is not None:
+            normalized_manifest["approval"] = normalized_approval
         computed_manifest_digest = hashlib.sha256(_stable_json({k: v for k, v in normalized_manifest.items() if k != "manifest_digest_sha256"}).encode("utf-8")).hexdigest()
         if computed_manifest_digest != manifest_digest_sha256:
             raise KnowledgeBaseUnavailable("manifest digest mismatch")
@@ -1441,6 +1532,12 @@ class KnowledgeBaseService:
             "redaction": normalized_manifest["redaction"],
             "record_digests": record_digests,
         }
+        if normalized_selection is not None:
+            dataset_digest_source["selection"] = normalized_selection
+            dataset_digest_source["trace_ids"] = list(normalized_selection["trace_ids"])
+            dataset_digest_source["replay_ids"] = list(normalized_selection["replay_ids"])
+        if normalized_approval is not None:
+            dataset_digest_source["approval"] = normalized_approval
         dataset_digest_sha256 = hashlib.sha256(_stable_json(dataset_digest_source).encode("utf-8")).hexdigest()
         now = datetime.now(timezone.utc)
         dataset_summary = {
@@ -1462,6 +1559,14 @@ class KnowledgeBaseService:
             "created_at": now.isoformat(),
             "updated_at": now.isoformat(),
         }
+        if "source_kind" in normalized_manifest:
+            dataset_summary["source_kind"] = normalized_manifest["source_kind"]
+        if normalized_selection is not None:
+            dataset_summary["selection"] = normalized_selection
+            dataset_summary["trace_ids"] = list(normalized_selection["trace_ids"])
+            dataset_summary["replay_ids"] = list(normalized_selection["replay_ids"])
+        if normalized_approval is not None:
+            dataset_summary["approval"] = normalized_approval
 
         with self._lock:
             self._gc_locked()
@@ -1471,6 +1576,25 @@ class KnowledgeBaseService:
                 if existing.get("manifest_digest_sha256") != manifest_digest_sha256:
                     raise KnowledgeBaseUnavailable("dataset version already exists with different content")
                 return json.loads(_stable_json(existing))
+
+            evidence_metadata = {
+                "dataset_id": dataset_id,
+                "dataset_version": dataset_version,
+                "requested_by": requested_by,
+                "service_identity": owner_identity,
+                "service_role": service_role,
+                "source_ref": provenance_source_ref,
+                "source_digest_sha256": provenance_source_digest,
+                "record_count": len(normalized_records),
+                "manifest_digest_sha256": manifest_digest_sha256,
+                "redaction_digest_sha256": redaction_digest,
+            }
+            if normalized_selection is not None:
+                evidence_metadata["selection_id"] = normalized_selection["selection_id"]
+                evidence_metadata["replay_ids"] = list(normalized_selection["replay_ids"])
+                evidence_metadata["trace_ids"] = list(normalized_selection["trace_ids"])
+            if normalized_approval is not None:
+                evidence_metadata["approval_id"] = normalized_approval["approval_id"]
 
             evidence = self._learning_store_evidence(
                 source="cli",
@@ -1488,18 +1612,7 @@ class KnowledgeBaseService:
                     "record_count": len(normalized_records),
                     "record_schema_version": record_schema_version,
                 },
-                metadata={
-                    "dataset_id": dataset_id,
-                    "dataset_version": dataset_version,
-                    "requested_by": requested_by,
-                    "service_identity": owner_identity,
-                    "service_role": service_role,
-                    "source_ref": provenance_source_ref,
-                    "source_digest_sha256": provenance_source_digest,
-                    "record_count": len(normalized_records),
-                    "manifest_digest_sha256": manifest_digest_sha256,
-                    "redaction_digest_sha256": redaction_digest,
-                },
+                metadata=evidence_metadata,
                 command="ingest_training_dataset",
                 decision="accepted",
                 capability_scope=(),
@@ -1601,7 +1714,7 @@ class KnowledgeBaseService:
                 queryable_ref=f"kb://models/{model_version}",
                 evidence_ref=dataset["queryable_ref"],
             )
-           result.update(
+            result.update(
                 {
                     "dataset_id": dataset["dataset_id"],
                     "dataset_version": dataset["dataset_version"],

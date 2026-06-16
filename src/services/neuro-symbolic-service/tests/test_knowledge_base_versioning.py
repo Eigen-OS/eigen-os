@@ -14,6 +14,7 @@ from eigen.api.v1 import types_pb2 as types_pb  # noqa: E402
 from neuro_symbolic_service.knowledge_base_versioned import KnowledgeBaseService  # noqa: E402
 from neuro_symbolic_service.knowledge_base import KnowledgeBaseUnavailable  # noqa: E402
 from neuro_symbolic_service.main import main as neuro_main  # noqa: E402
+from neuro_symbolic_service.production_trace_training import ProductionTraceTrainingError, prepare_training_dataset_manifest  # noqa: E402
 
 
 def _ts(value: str) -> Timestamp:
@@ -293,6 +294,152 @@ def _training_dataset_manifest() -> dict[str, object]:
     return manifest
 
 
+def _production_trace_training_bundle() -> dict[str, object]:
+    trace_payload_1 = {
+        "tenant": "tenant-a",
+        "project": "project-a",
+        "decision": "accepted",
+        "features": {
+            "compiler": "dpda",
+            "label": "stable",
+            "masked_email": "[REDACTED_EMAIL]",
+            "masked_token": "[REDACTED]",
+        },
+        "notes": ["redacted", "tenant-scoped"],
+    }
+    trace_payload_2 = {
+        "tenant": "tenant-a",
+        "project": "project-a",
+        "decision": "review",
+        "features": {
+            "compiler": "dpda",
+            "label": "stable",
+            "masked_email": "[REDACTED_EMAIL]",
+            "masked_token": "[REDACTED]",
+        },
+        "notes": ["redacted", "tenant-scoped"],
+    }
+
+    record_provenance_1 = _with_digest(
+        {
+            "source_ref": "qfs://production-traces/raw/trace-1.json",
+            "captured_at": "2026-06-16T09:00:00+00:00",
+            "requested_by": "neuro-symbolic-service",
+        },
+        "source_digest_sha256",
+    )
+    record_provenance_2 = _with_digest(
+        {
+            "source_ref": "qfs://production-traces/raw/trace-2.json",
+            "captured_at": "2026-06-16T09:01:00+00:00",
+            "requested_by": "neuro-symbolic-service",
+        },
+        "source_digest_sha256",
+    )
+    record_redaction = _with_digest(
+        {
+            "applied": True,
+            "validated": True,
+            "rules": ["secret", "pii", "tenant-id"],
+        },
+        "redaction_digest_sha256",
+    )
+
+    records = [
+        {
+            "record_id": "trace-1",
+            "schema_version": "neuro-symbolic.production-trace-training.record.v1",
+            "trace_id": "trace-1",
+            "replay_id": "replay-1",
+            "tenant_id": "tenant-a",
+            "project_id": "project-a",
+            "policy_snapshot_version": "1.0.0",
+            "payload": trace_payload_1,
+            "provenance": record_provenance_1,
+            "redaction": record_redaction,
+            "content_digest_sha256": _json_digest(trace_payload_1),
+        },
+        {
+            "record_id": "trace-2",
+            "schema_version": "neuro-symbolic.production-trace-training.record.v1",
+            "trace_id": "trace-2",
+            "replay_id": "replay-2",
+            "tenant_id": "tenant-a",
+            "project_id": "project-a",
+            "policy_snapshot_version": "1.0.0",
+            "payload": trace_payload_2,
+            "provenance": record_provenance_2,
+            "redaction": record_redaction,
+            "content_digest_sha256": _json_digest(trace_payload_2),
+        },
+    ]
+
+    provenance = _with_digest(
+        {
+            "source_ref": "qfs://production-traces/raw/batch-2026-06-16.jsonl",
+            "captured_at": "2026-06-16T09:00:00+00:00",
+            "signed_by": "neuro-symbolic-service",
+            "signature_algorithm": "HS256",
+            "signature": "sig-trace-batch-001",
+        },
+        "source_digest_sha256",
+    )
+    redaction = _with_digest(
+        {
+            "applied": True,
+            "validated": True,
+            "rules": ["secret", "pii", "tenant-id"],
+        },
+        "redaction_digest_sha256",
+    )
+    selection = {
+        "selection_id": "selection-2026-06-16",
+        "selected_by": "neuro-symbolic-service",
+        "selection_reason": "tenant-scoped production traces approved for replay-safe retraining",
+        "trace_ids": ["trace-1", "trace-2"],
+        "replay_ids": ["replay-1", "replay-2"],
+        "tenant_id": "tenant-a",
+        "project_id": "project-a",
+        "policy_snapshot_version": "1.0.0",
+    }
+    selection["selection_digest_sha256"] = _json_digest(selection)
+    approval = {
+        "approval_id": "approval-2026-06-16",
+        "approved_by": "privacy-review-board",
+        "approved_at": "2026-06-16T09:05:00+00:00",
+        "decision": "approved",
+        "ticket_ref": "GOV-2026-0616",
+        "tenant_id": "tenant-a",
+        "project_id": "project-a",
+        "policy_snapshot_version": "1.0.0",
+        "replay_ids": ["replay-1", "replay-2"],
+    }
+    approval["approval_digest_sha256"] = _json_digest(approval)
+
+    bundle = {
+        "schema_version": "neuro-symbolic.production-trace-training.bundle.v1",
+        "contract_version": "1.0.0",
+        "dataset_id": "production-trace-batch-2026-06-16",
+        "dataset_version": "2026.06.16",
+        "record_schema_version": "neuro-symbolic.production-trace-training.record.v1",
+        "tenant_id": "tenant-a",
+        "project_id": "project-a",
+        "policy_snapshot_version": "1.0.0",
+        "source_kind": "production_execution_traces",
+        "ownership": {
+            "service_identity": "neuro-symbolic-service",
+            "requested_by": "neuro-symbolic-service",
+            "service_role": "internal-ingest",
+        },
+        "selection": selection,
+        "approval": approval,
+        "provenance": provenance,
+        "redaction": redaction,
+        "records": records,
+    }
+    bundle["manifest_digest_sha256"] = _json_digest(bundle)
+    return bundle
+
 def test_training_dataset_ingestion_round_trip_and_replayability(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(
         "SYSTEM_API_POLICY_SNAPSHOT_JSON",
@@ -428,3 +575,74 @@ def test_training_dataset_cli_ingest_command(monkeypatch: pytest.MonkeyPatch, tm
     assert summary["dataset_version"] == "2026.06.16"
     assert summary["record_count"] == 2
     assert summary["evidence_ref"].startswith("kb://learning/")
+
+
+def test_production_trace_training_requires_redaction_tenant_scope_and_approval() -> None:
+    bundle = _production_trace_training_bundle()
+
+    manifest = prepare_training_dataset_manifest(bundle, caller_identity="neuro-symbolic-service")
+    assert manifest["dataset_id"] == "production-trace-batch-2026-06-16"
+    assert manifest["selection"]["trace_ids"] == ["trace-1", "trace-2"]
+    assert manifest["approval"]["replay_ids"] == ["replay-1", "replay-2"]
+    assert manifest["records"][0]["replay_ref"] == "nsc://replay/trace-1/replay-1"
+    assert manifest["records"][0]["trace_ref"] == "nsc://trace/trace-1"
+
+    unredacted_bundle = json.loads(json.dumps(bundle))
+    unredacted_bundle["records"][0]["payload"]["features"]["masked_email"] = "alice@example.com"
+    with pytest.raises(ProductionTraceTrainingError):
+        prepare_training_dataset_manifest(unredacted_bundle, caller_identity="neuro-symbolic-service")
+
+    foreign_scope_bundle = json.loads(json.dumps(bundle))
+    foreign_scope_bundle["records"][1]["tenant_id"] = "tenant-b"
+    with pytest.raises(ProductionTraceTrainingError):
+        prepare_training_dataset_manifest(foreign_scope_bundle, caller_identity="neuro-symbolic-service")
+
+    missing_approval_bundle = json.loads(json.dumps(bundle))
+    missing_approval_bundle.pop("approval")
+    with pytest.raises(ProductionTraceTrainingError):
+        prepare_training_dataset_manifest(missing_approval_bundle, caller_identity="neuro-symbolic-service")
+
+
+def test_production_trace_training_is_replayable_and_cli_ingestable(monkeypatch: pytest.MonkeyPatch, tmp_path, capsys) -> None:
+    monkeypatch.setenv(
+        "SYSTEM_API_POLICY_SNAPSHOT_JSON",
+        json.dumps(
+            {
+                "version": "1.0.0",
+                "issuer": "eigen-auth",
+                "audience": "eigen-api",
+                "role_permissions": {"readonly": ["jobs:read"]},
+                "service_permissions": {"neuro-symbolic-service": ["kb:ingest"]},
+                "sandbox_profiles": ["default"],
+            },
+            sort_keys=True,
+        ),
+    )
+    bundle = _production_trace_training_bundle()
+    bundle_path = tmp_path / "production-trace-bundle.json"
+    bundle_path.write_text(json.dumps(bundle, indent=2), encoding="utf-8")
+
+    first = prepare_training_dataset_manifest(bundle, caller_identity="neuro-symbolic-service")
+    second = prepare_training_dataset_manifest(json.loads(bundle_path.read_text(encoding="utf-8")), caller_identity="neuro-symbolic-service")
+    assert first["manifest_digest_sha256"] == second["manifest_digest_sha256"]
+    assert first["dataset_digest_sha256"] == second["dataset_digest_sha256"]
+
+    exit_code = neuro_main([
+        "ingest-production-traces",
+        "--manifest",
+        str(bundle_path),
+        "--caller-identity",
+        "neuro-symbolic-service",
+    ])
+    output = capsys.readouterr().out.strip()
+    summary = json.loads(output)
+
+    assert exit_code == 0
+    assert summary["dataset_id"] == "production-trace-batch-2026-06-16"
+    assert summary["tenant_id"] == "tenant-a"
+    assert summary["policy_snapshot_version"] == "1.0.0"
+    assert summary["trace_ids"] == ["trace-1", "trace-2"]
+    assert summary["replay_ids"] == ["replay-1", "replay-2"]
+    assert summary["approval"]["approval_id"] == "approval-2026-06-16"
+    assert summary["selection"]["selection_id"] == "selection-2026-06-16"
+    assert summary["records"][0]["payload"]["features"]["masked_email"] == "[REDACTED_EMAIL]"
