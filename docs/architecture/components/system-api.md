@@ -142,7 +142,7 @@ The System API SHALL evolve into a **strict gateway** providing:
 - policy-driven authorization,
 - tenant isolation enforcement at ingress,
 - audit-safe security context propagation,
-- release readiness blocked until the production readiness gate evidence bundle validates redaction, tenant isolation, policy enforcement, explainability, audit, and fail-closed behavior.
+- release readiness is blocked until the production readiness gate evidence bundle validates redaction, tenant isolation, policy enforcement, explainability, audit, and fail-closed behavior.
 
 #### Observability ingress
 
