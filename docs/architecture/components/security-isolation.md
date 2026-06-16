@@ -70,7 +70,7 @@ Eigen OS security is a multi-layer model:
 2. **Compiler safety:** AST-only processing, forbidden constructs, resource limits.
 3. **Kernel enforcement (target):** policy gating before scheduling/execution, deterministic security decisions, replay evidence.
 4. **Execution boundary (Driver Manager):** isolation from vendor SDKs, credential confinement, normalized error handling.
-5. **Internal intelligent services (NeuroSymbolicService / related advisory services):** internal-only, kernel-owned call paths, fail-closed policy and snapshot binding.
+5. **Internal intelligent services (NeuroSymbolicService / related advisory services):** internal-only, kernel-owned call paths, fail-closed policy and snapshot binding, including CLI-only offline dataset ingestion and replay-safe KB corpus writes.
 6. **Data plane security (QFS):** artifact integrity, retention, access control, provenance.
 7. **Observability security:** no secrets in telemetry, bounded labels, audit-grade event logging.
 

@@ -75,8 +75,10 @@ Internal service-to-service calls MUST authenticate workload identity and author
 - Kernel/QRTX to QFS persistence calls,
 - Kernel/QRTX / eigen-compiler to NeuroSymbolicService advisory calls,
 - runtime and benchmark services emitting observability or knowledge-base records.
+- runtime and benchmark services emitting observability or knowledge-base records,
+- CLI-only offline dataset ingestion into the KB-backed training corpus.
 
-NeuroSymbolicService MUST fail closed when the service identity, tenant/project binding, policy snapshot version, signed model registry evidence, or model artifact digest is missing. Public ingress principals are not authorized to reach this service directly. Model loading and rollback inside NeuroSymbolicService MUST remain internal-only and MUST preserve deterministic baseline behavior when verification fails.
+NeuroSymbolicService MUST fail closed when the service identity, tenant/project binding, or policy snapshot version is missing. Public ingress principals are not authorized to reach this service directly. CLI dataset ingestion MUST also reject missing ownership, provenance, redaction, or manifest digest evidence.
 
 ---
 

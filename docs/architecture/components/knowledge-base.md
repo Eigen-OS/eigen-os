@@ -259,3 +259,41 @@ Similarity queries MUST:
 - recover a missing scope from the primary store,
 - never return cross-tenant/project candidates,
 - expose the current health snapshot in diagnostics.
+
+## 12. KB-backed training datasets
+
+Neuro-Symbolic Service may ingest offline training datasets into the KB-backed corpus for replay-safe later training runs.
+
+### 12.1 Dataset manifest requirements
+
+A training dataset manifest MUST include:
+
+- `schema_version`
+- `contract_version`
+- `dataset_id`
+- `dataset_version`
+- `record_schema_version`
+- `tenant_id`
+- `project_id`
+- `policy_snapshot_version`
+- `ownership`
+- `provenance`
+- `redaction`
+- `records`
+- `manifest_digest_sha256`
+
+### 12.2 Validation rules
+
+Ingestion MUST fail closed unless:
+
+- the manifest schema matches the documented version,
+- ownership resolves to the internal ingest caller,
+- provenance digests are present and verifiable,
+- redaction has been applied and validated,
+- every record is already redacted,
+- every record digest matches the canonical payload,
+- the active policy snapshot version matches the manifest.
+
+### 12.3 Replayability
+
+The corpus MUST preserve the dataset version, record digests, provenance, and redaction metadata so the same manifest can be re-ingested deterministically and later consumed by the training pipeline without live lookups.
