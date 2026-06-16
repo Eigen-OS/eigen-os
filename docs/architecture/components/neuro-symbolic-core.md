@@ -351,3 +351,7 @@ This service boundary is intentionally separate from `src/services/system-api/`:
 - `eigen-kernel` / QRTX is the primary runtime caller.
 - `eigen-compiler` may call the service only through the bounded advisory scoring path.
 - Internal offline workflows such as model loading, dataset ingestion, and privacy-governed training remain inside the same internal service boundary and must not be exposed through public ingress.
+
+### 8.5 Mandatory preprocessing redaction layer
+
+All inputs that can reach learning, replay, audit, or export pipelines MUST pass through a mandatory preprocessing redaction layer before persistence, indexing, replay, or external emission.

@@ -288,24 +288,29 @@
     {
       "name": "Knowledge Base decision lineage and continuous learning loop",
       "contract_version": "1.0.0",
-      "owner": "Knowledge Base; Compiler; GNN Optimizer; Benchmark service; Kernel/QRTX",
+      "owner": "Knowledge Base; Compiler; GNN Optimizer; Benchmark service; Kernel/QRTX; Neuro-Symbolic Service",
       "sources": [
         "docs/architecture/components/knowledge-base.md",
         "docs/architecture/components/compiler.md",
         "docs/architecture/components/observability.md",
+        "docs/architecture/components/neuro-symbolic-core.md",
         "docs/reference/intelligent-runtime-observability-contract.md",
         "docs/reference/orchestration-observability-contract.md",
         "docs/reference/benchmark-observability-contract.md"
       ],
       "proto_schema_files": [
         "proto/eigen/api/v1/knowledge_base_service.proto",
+        "src/services/neuro-symbolic-service/src/neuro_symbolic_service/knowledge_base.py",
+        "src/services/neuro-symbolic-service/src/neuro_symbolic_service/knowledge_base_versioned.py",
+        "src/services/neuro-symbolic-service/src/neuro_symbolic_service/observability.py",
         "proto/eigen/internal/v1/kernel_gateway.proto",
         "proto/eigen/internal/v1/optimizer_service.proto"
       ],
       "planned_proto_schema_files": [],
       "conformance_tests": [
-        "src/services/system-api/tests/test_knowledge_base_service.py",
-        "src/services/system-api/tests/test_knowledge_base_contract_fixture.py",
+        "src/services/neuro-symbolic-service/tests/test_knowledge_base_service.py",
+        "src/services/neuro-symbolic-service/tests/test_knowledge_base_contract_fixture.py",
+        "src/services/neuro-symbolic-service/tests/test_knowledge_base_versioning.py",
         "src/services/benchmark-service/tests/test_optimizer_evaluation_harness.py",
         "src/services/system-api/tests/test_observability_smoke.py"
       ],
@@ -315,21 +320,24 @@
     {
       "name": "Continuous learning control plane and dataset assembly governance",
       "contract_version": "1.0.0",
-      "owner": "Knowledge Base; Benchmark service; System API; Architecture/Governance",
+      "owner": "Knowledge Base; Benchmark service; Neuro-Symbolic Service; Architecture/Governance",
       "sources": [
         "docs/architecture/components/knowledge-base.md",
+        "docs/architecture/components/neuro-symbolic-core.md",
         "docs/development/wave-8/product-1.0-wave-8-execution-plan.md",
         "docs/development/wave-8/product-1.0-wave-8-issue-pack.md"
       ],
       "proto_schema_files": [
-        "src/services/system-api/src/system_api/knowledge_base.py",
-        "src/services/system-api/src/system_api/observability.py"
+        "src/services/neuro-symbolic-service/src/neuro_symbolic_service/knowledge_base.py",
+        "src/services/neuro-symbolic-service/src/neuro_symbolic_service/knowledge_base_versioned.py",
+        "src/services/neuro-symbolic-service/src/neuro_symbolic_service/observability.py"
       ],
       "planned_proto_schema_files": [],
       "conformance_tests": [
-        "src/services/system-api/tests/test_knowledge_base_service.py",
-        "src/services/system-api/tests/test_learning_control_plane_contract_fixture.py",
-        "src/services/system-api/tests/test_knowledge_base_contract_fixture.py"
+        "src/services/neuro-symbolic-service/tests/test_knowledge_base_service.py",
+        "src/services/neuro-symbolic-service/tests/test_learning_control_plane_contract_fixture.py",
+        "src/services/neuro-symbolic-service/tests/test_knowledge_base_contract_fixture.py",
+        "src/services/neuro-symbolic-service/tests/test_knowledge_base_versioning.py"
       ],
       "implementation_status": "implemented",
       "compatibility_status": "compatible"
@@ -337,19 +345,21 @@
     {
       "name": "OKB deterministic reuse and query backend",
       "contract_version": "1.0.0",
-      "owner": "Knowledge Base; Compiler; GNN Optimizer",
+      "owner": "Knowledge Base; Compiler; GNN Optimizer; Neuro-Symbolic Service",
       "sources": [
         "docs/architecture/components/knowledge-base.md",
-        "docs/reference/api/explain-backend-selection.md"
+        "docs/reference/api/explain-backend-selection.md",
+        "docs/architecture/components/neuro-symbolic-core.md"
       ],
       "proto_schema_files": [
-        "src/services/system-api/src/system_api/knowledge_base.py",
-        "proto/eigen/internal/v1/optimizer_service.proto"
+        "src/services/neuro-symbolic-service/src/neuro_symbolic_service/knowledge_base.py",
+        "src/services/neuro-symbolic-service/src/neuro_symbolic_service/knowledge_base_versioned.py"
       ],
       "planned_proto_schema_files": [],
       "conformance_tests": [
-        "src/services/system-api/tests/test_knowledge_base_service.py",
-        "src/services/system-api/tests/test_optimizer_contract_fixture.py",
+        "src/services/neuro-symbolic-service/tests/test_knowledge_base_service.py",
+        "src/services/neuro-symbolic-service/tests/test_knowledge_base_contract_fixture.py",
+        "src/services/neuro-symbolic-service/tests/test_knowledge_base_versioning.py",
         "src/services/benchmark-service/tests/test_optimizer_evaluation_harness.py"
       ],
       "implementation_status": "implemented",
@@ -709,18 +719,21 @@
     {
       "name": "Knowledge Base public API",
       "contract_version": "1.0.0",
-      "owner": "Knowledge Base; System API",
+      "owner": "Knowledge Base; Neuro-Symbolic Service",
       "sources": [
-        "docs/architecture/components/knowledge-base.md"
+        "docs/architecture/components/knowledge-base.md",
+        "docs/architecture/components/neuro-symbolic-core.md"
       ],
       "proto_schema_files": [
         "proto/eigen/api/v1/knowledge_base_service.proto",
-        "src/services/system-api/src/system_api/knowledge_base.py"
+        "src/services/neuro-symbolic-service/src/neuro_symbolic_service/knowledge_base.py",
+        "src/services/neuro-symbolic-service/src/neuro_symbolic_service/knowledge_base_versioned.py"
       ],
       "planned_proto_schema_files": [],
       "conformance_tests": [
-        "src/services/system-api/tests/test_knowledge_base_service.py",
-        "src/services/system-api/tests/test_knowledge_base_contract_fixture.py",
+        "src/services/neuro-symbolic-service/tests/test_knowledge_base_service.py",
+        "src/services/neuro-symbolic-service/tests/test_knowledge_base_contract_fixture.py",
+        "src/services/neuro-symbolic-service/tests/test_knowledge_base_versioning.py",
         "src/services/benchmark-service/tests/test_run_lifecycle.py"
       ],
       "implementation_status": "implemented",
