@@ -171,7 +171,7 @@ def load_security_config() -> SecurityConfig:
         static_token_subject=os.getenv("SYSTEM_API_AUTH_SUBJECT", "static-token-user"),
         static_token_roles=tuple(
             part.strip().lower()
-            for part in os.getenv("SYSTEM_API_AUTH_ROLES", "admin").split(",")
+            for part in os.getenv("SYSTEM_API_AUTH_ROLES", "").split(",")
             if part.strip()
         ),
         static_token_tenant=os.getenv("SYSTEM_API_AUTH_TENANT", ""),
@@ -319,7 +319,9 @@ def auth_context(context: grpc.ServicerContext) -> tuple[str, tuple[str, ...], s
     cfg = load_security_config()
     md = _metadata(context)
     if cfg.auth_mode == _AUTH_STATIC_TOKEN:
-        tenant = md.get("x-eigen-tenant", "") or cfg.static_token_tenant
+        # In static-token mode, allow an explicit tenant claim from metadata;
+        # otherwise fall back to the configured bound tenant.
+        tenant = md.get("x-eigen-tenant", "").strip() or cfg.static_token_tenant
         raw_roles = md.get("x-eigen-roles", "")
         roles = tuple(role.strip().lower() for role in raw_roles.split(",") if role.strip())
         return cfg.static_token_subject, roles or cfg.static_token_roles, tenant
@@ -423,28 +425,25 @@ def enforce_authz(context: grpc.ServicerContext, *, required_permission: str) ->
     raw_roles = md.get("x-eigen-roles", "")
     granted = {
         item.strip().lower()
-        for blob in (raw_permissions, raw_roles)
-        for item in blob.split(",")
+        for item in raw_permissions.split(",")
         if item.strip()
     }
+ 
+    # Use the authenticated request roles as the baseline.
+    # For static_token mode, auth_context() falls back to SYSTEM_API_AUTH_ROLES
+    # when x-eigen-roles is not provided, but explicit request roles win.
+    subject, roles, tenant = auth_context(context)
+    granted.update(roles)
 
-    # In static_token mode, explicitly configured token roles are baseline claims.
-    # Per-request metadata can still add explicit permissions/roles for tests/dev.
-    env_roles = os.getenv("SYSTEM_API_AUTH_ROLES")
-    if env_roles is not None:
-        granted.update(role.lower() for role in cfg.static_token_roles)
-        for role in cfg.static_token_roles:
-            granted.update(_ROLE_PERMISSIONS.get(role.lower(), set()))
 
     # Versioned policy snapshot is the authoritative runtime baseline.
-    for role in tuple(granted):
+    for role in tuple(roles):
         granted.update(snapshot.role_permissions.get(role, set()))
 
     need = required_permission.strip().lower()
     scope, _, action = need.partition(":")
     wildcard = f"{scope}:*"
 
-    subject, _, tenant = auth_context(context)
     if not subject.strip() or not tenant.strip():
         _security_audit(
             "authz",
