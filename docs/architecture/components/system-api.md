@@ -141,7 +141,8 @@ The System API SHALL evolve into a **strict gateway** providing:
 - production-grade identity (OIDC/JWT) in addition to dev modes,
 - policy-driven authorization,
 - tenant isolation enforcement at ingress,
-- audit-safe security context propagation.
+- audit-safe security context propagation,
+- release readiness blocked until the production readiness gate evidence bundle validates redaction, tenant isolation, policy enforcement, explainability, audit, and fail-closed behavior.
 
 #### Observability ingress
 

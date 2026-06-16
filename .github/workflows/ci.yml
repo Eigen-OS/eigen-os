@@ -467,6 +467,21 @@ jobs:
       - name: Run Phase-9A gate bundle
         run: bash scripts/ci/check-phase9a-gates.sh
         
+  production-readiness-gate:
+    name: Production readiness gate (issue #677)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate production readiness gate artifacts
+        run: python3 scripts/ci/check-production-readiness-gate.py
+
   phase2-contract-compatibility:
     name: Phase-2 contract compatibility suite
     runs-on: ubuntu-latest

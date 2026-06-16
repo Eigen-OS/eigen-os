@@ -134,4 +134,17 @@ CI MUST run the security conformance suite that exercises the mandatory regressi
 - missing context
 - malicious prompt injection
 
-Any regression in one of these gates MUST fail the build. The suite MUST remain aligned with the normative behavior described in the security architecture component docs and the System API security baseline.
+---
+
+## 9. Production readiness gate alignment
+
+The security conformance suite is a release blocker, not a best-effort check. A release candidate MUST remain blocked until the following are evidenced:
+
+- redaction validated
+- tenant isolation validated
+- policy enforcement validated
+- explainability validated
+- audit validated
+- fail-closed validated
+
+The evidence set MUST include the security architecture baseline, the System API security baseline, and the CI conformance suite that exercises cross-tenant access, policy bypass, retrieval bypass, missing context, token leakage, and prompt injection regressions.

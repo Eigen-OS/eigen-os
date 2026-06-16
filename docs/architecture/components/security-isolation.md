@@ -219,9 +219,24 @@ Security & Isolation is cross-cutting and integrates with:
 
 ---
 
-## 5. Interfaces
+## 5. Production Readiness Gate (release blocker)
 
-### 5.1 System API Interfaces (implemented)
+Release candidates MUST remain blocked until the following are validated and evidenced:
+
+- Redaction validated: no secrets, bearer tokens, or raw payloads appear in logs, traces, metrics, audit artifacts, or externally visible explainability payloads.
+- Tenant isolation validated: cross-tenant read, write, stream, result, and device access are denied deterministically.
+- Policy enforcement validated: authn/authz decisions use the active versioned policy snapshot and fail closed when policy evidence is missing or unavailable.
+- Explainability validated: dispatch and backend rationale are exposed only through authorized paths and are redacted when policy requires.
+- Audit validated: every allow/deny decision is written to the immutable audit sink with bounded, secret-free metadata and replay markers.
+- Fail-closed validated: any missing security evidence, unavailable policy, unavailable audit sink, or ambiguous isolation state defaults to deny, not allow.
+
+If any item is missing, unverified, or not traceable to an evidence artifact, the release candidate remains blocked.
+
+---
+
+## 6. Interfaces
+
+### 6.1 System API Interfaces (implemented)
 
 Authn/authz enforced in request handling via middleware-like functions:
 
@@ -249,7 +264,7 @@ System API SHALL provide:
 
 ---
 
-### 5.2 Kernel Security Interfaces (target; not wired today)
+### 6.2 Kernel Security Interfaces (target; not wired today)
 
 A placeholder crate exists:
 
@@ -280,7 +295,7 @@ check_execution(task, device, context) -> Result<SecurityDecision, SecurityError
 
 ---
 
-### 5.3 Driver Manager Security Interfaces (current + target)
+### 6.3 Driver Manager Security Interfaces (current + target)
 
 #### Current baseline
 
@@ -300,7 +315,7 @@ check_execution(task, device, context) -> Result<SecurityDecision, SecurityError
 
 ---
 
-### 5.4 QFS Security Interfaces (target alignment)
+### 6.4 QFS Security Interfaces (target alignment)
 
 QFS SHALL support:
 
@@ -311,16 +326,16 @@ QFS SHALL support:
 
 ---
 
-## 6. Security Context Propagation
+## 7. Security Context Propagation
 
-### 6.1 Implemented now
+### 7.1 Implemented now
 
 - `traceparent` propagation exists
 - partial propagation of `x-eigen-sub`, `x-eigen-roles`, `x-eigen-tenant` exists in **System API only**
 
 ---
 
-### 6.2 Required target behavior
+### 7.2 Required target behavior
 
 Security metadata SHALL propagate deterministically across:
 
@@ -336,7 +351,7 @@ Security metadata SHALL propagate deterministically across:
 
 ---
 
-## 7. Isolation Policy Surface (Alignment with JobSpec)
+## 8. Isolation Policy Surface (Alignment with JobSpec)
 
 JobSpec defines security controls (see `docs/reference/jobspec.md`):
 
@@ -358,11 +373,11 @@ If a deployment cannot enforce a requested constraint, it MUST:
 
 ---
 
-## 8. Error Semantics (Normative)
+## 9. Error Semantics (Normative)
 
 Eigen OS uses **gRPC status-first semantics** (no `success=false` wrappers).
 
-### 8.1 Implemented outputs
+### 9.1 Implemented outputs
 
 - `UNAUTHENTICATED`
 - `PERMISSION_DENIED`
@@ -372,7 +387,7 @@ Eigen OS uses **gRPC status-first semantics** (no `success=false` wrappers).
 
 ---
 
-### 8.2 Required structured details (target)
+### 9.2 Required structured details (target)
 
 Security-related responses SHOULD attach:
 
@@ -383,15 +398,16 @@ Security-related responses SHOULD attach:
 
 ---
 
-### 8.3 Failure handling stance
+### 9.3 Failure handling stance
+
 Authorization MUST be **fail-closed** by default when policy cannot be evaluated.
 Auth provider outages may be configured as fail-open only in explicit dev profiles (non-production).
 
 ---
 
-## 9. Storage / State
+## 10. Storage / State
 
-### 9.1 Implemented now
+### 10.1 Implemented now
 
 - env-driven auth configuration
 - in-memory metrics counters
@@ -401,7 +417,7 @@ Auth provider outages may be configured as fail-open only in explicit dev profil
 
 ---
 
-### 9.2 Required target storage
+### 10.2 Required target storage
 
 #### Policy storage
 
@@ -423,9 +439,9 @@ Auth provider outages may be configured as fail-open only in explicit dev profil
 
 ---
 
-## 10. Failure Modes
+## 11. Failure Modes
 
-### 10.1 Implemented now
+### 11.1 Implemented now
 
 - authn failures → `UNAUTHENTICATED`
 - authz failures → `PERMISSION_DENIED`
@@ -434,7 +450,7 @@ Auth provider outages may be configured as fail-open only in explicit dev profil
 
 ---
 
-### 10.2 Required target failure taxonomy
+### 11.2 Required target failure taxonomy
 
 #### Authentication
 
@@ -467,7 +483,7 @@ Auth provider outages may be configured as fail-open only in explicit dev profil
 
 ---
 
-### 10.3 Recovery and fallback (required)
+### 11.3 Recovery and fallback (required)
 
 - fail-closed authorization
 - bounded degraded modes (explicitly configured)
@@ -478,7 +494,7 @@ Auth provider outages may be configured as fail-open only in explicit dev profil
 
 ---
 
-## 11. Observability (Security Telemetry)
+## 12. Observability (Security Telemetry)
 
 Security telemetry must align with global observability rules:
 
@@ -489,7 +505,7 @@ Security telemetry must align with global observability rules:
 
 ---
 
-### 11.1 Implemented metrics (examples)
+### 12.1 Implemented metrics (examples)
 
 - `eigen_api_authz_denied_total`
 - `eigen_api_requests_total`
@@ -497,7 +513,7 @@ Security telemetry must align with global observability rules:
 
 ---
 
-### 11.2 Required target metrics
+### 12.2 Required target metrics
 
 #### Authn/Authz
 
@@ -532,7 +548,7 @@ security_replay_verification_failures_total{reason}
 
 ---
 
-### 11.3 Logging (required shape)
+### 12.3 Logging (required shape)
 
 #### Implemented now
 
@@ -549,7 +565,7 @@ security_replay_verification_failures_total{reason}
 
 ---
 
-### 11.4 Tracing (required)
+### 12.4 Tracing (required)
 
 Security tracing spans MUST include attributes (as trace attributes, not metric labels):
 
@@ -566,7 +582,7 @@ Tracing MUST span:
 
 ---
 
-## 12. Dashboards and Alerts (Target)
+## 13. Dashboards and Alerts (Target)
 
 #### Dashboards
 
@@ -589,7 +605,7 @@ Tracing MUST span:
 
 ---
 
-## 13. Security and Compliance Controls (Target)
+## 14. Security and Compliance Controls (Target)
 
 #### Identity and access
 
@@ -614,7 +630,8 @@ Tracing MUST span:
 
 ---
 
-## 14. Architectural Invariants (Mandatory)
+## 15. Architectural Invariants (Mandatory)
+
 1. **Public ingress invariant:** only system-api is externally reachable.
 2. **No user code execution invariant:** compiler and services do not execute user code server-side.
 3. **Fail-safe invariant:** authorization is fail-closed by default when policy cannot be evaluated.
@@ -624,7 +641,7 @@ Tracing MUST span:
 
 ---
 
-## 15. Alignment Summary
+## 16. Alignment Summary
 
 #### Implemented and aligned (MVP baseline)
 
