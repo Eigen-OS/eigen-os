@@ -385,7 +385,25 @@ That workflow MUST:
 
 - remain inside `src/services/neuro-symbolic-service/`,
 - require a stable manifest with dataset version and record schema version,
-- validate ownership, provenance, redaction, and policy snapshot evidence,
+- validate ownership, provenance, redaction, approval, replay identifiers, and policy snapshot evidence,
 - fail closed on missing or mismatched integrity digests,
 - preserve replay-safe dataset records for later training runs,
 - avoid public ingress and live model discovery on the request path.
+
+---
+
+### 8.7 Privacy-safe production-trace retraining
+
+Production execution traces MAY feed the training corpus only after an offline governance bundle has been selected and approved.
+
+The bundle MUST be tenant-scoped and MUST include:
+
+- tenant/project binding,
+- record-level provenance digests,
+- replay identifiers,
+- explicit selection metadata,
+- explicit approval metadata,
+- redaction validation evidence,
+- policy snapshot version.
+
+Cross-tenant mixing is prohibited. Any missing or mismatched provenance, approval, replay, or redaction evidence MUST fail closed before a dataset manifest is emitted.

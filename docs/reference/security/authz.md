@@ -90,6 +90,8 @@ Authorization failures MUST use canonical error semantics:
 - authenticated principals lacking required scope map to `PERMISSION_DENIED`,
 - tenant/project/resource policy denials must include a stable reason code when exposed through structured error details.
 
+NeuroSymbolicService MUST fail closed when the service identity, tenant/project binding, or policy snapshot version is missing. Public ingress principals are not authorized to reach this service directly. CLI dataset ingestion MUST also reject missing ownership, provenance, redaction, approval, replay identifiers, or manifest digest evidence.
+
 All denial behavior must follow `docs/reference/error-model.md` and `docs/reference/error-mapping.md`.
 
 ---

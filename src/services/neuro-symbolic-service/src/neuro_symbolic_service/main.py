@@ -14,6 +14,7 @@ from eigen.api.v1 import types_pb2 as types_pb
 
 from .grpc_server import serve
 from .knowledge_base import KnowledgeBaseService
+from .production_trace_training import prepare_training_dataset_manifest
 from .observability import JsonFormatter, start_metrics_server
 
 
@@ -33,6 +34,15 @@ def _ingest_dataset(manifest_path: Path, *, caller_identity: str) -> int:
     return 0
 
 
+def _ingest_production_traces(manifest_path: Path, *, caller_identity: str) -> int:
+    service = KnowledgeBaseService(kb_pb=kb_pb, types_pb=types_pb)
+    bundle = _load_manifest(manifest_path)
+    dataset_manifest = prepare_training_dataset_manifest(bundle, caller_identity=caller_identity)
+    summary = service.ingest_training_dataset(dataset_manifest, caller_identity=caller_identity)
+    print(json.dumps(summary, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="neuro-symbolic-service")
     subparsers = parser.add_subparsers(dest="command")
@@ -40,6 +50,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     ingest = subparsers.add_parser("ingest-dataset", help="Ingest a KB-backed training dataset manifest")
     ingest.add_argument("--manifest", required=True, type=Path, help="Path to the dataset manifest JSON")
     ingest.add_argument(
+        "--caller-identity",
+        default=os.getenv("NEURO_SYMBOLIC_CLI_CALLER_IDENTITY", os.getenv("NEURO_SYMBOLIC_SERVICE_IDENTITY", "neuro-symbolic-service")),
+        help="Internal caller identity that must match the manifest ownership",
+    )
+
+    production = subparsers.add_parser(
+        "ingest-production-traces",
+        help="Promote redacted production execution traces into the KB-backed training corpus",
+    )
+    production.add_argument("--manifest", required=True, type=Path, help="Path to the production trace bundle JSON")
+    production.add_argument(
         "--caller-identity",
         default=os.getenv("NEURO_SYMBOLIC_CLI_CALLER_IDENTITY", os.getenv("NEURO_SYMBOLIC_SERVICE_IDENTITY", "neuro-symbolic-service")),
         help="Internal caller identity that must match the manifest ownership",
@@ -58,6 +79,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "ingest-dataset":
         return _ingest_dataset(args.manifest, caller_identity=args.caller_identity)
+    if args.command == "ingest-production-traces":
+        return _ingest_production_traces(args.manifest, caller_identity=args.caller_identity)
     return _serve()
 
     server = serve()

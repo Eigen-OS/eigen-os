@@ -320,6 +320,8 @@ service NeuroSymbolicService {
 - Every scoring request MUST also emit an immutable audit record containing caller identity, tenant, active policy snapshot version, model version, retrieval sources, and final decision.
 - The explainability envelope MUST be derived from the minimized/redacted feature vector and the immutable policy snapshot, not from raw payloads.
 - Responses MUST remain bounded and MUST NOT return raw secrets, bearer tokens, or unredacted payload fragments.
+- Offline production-trace training is handled by the internal Neuro-DPDA service boundary via the KB-backed ingestion CLI/module path, not by a request-time RPC.
+- That offline path MUST only accept redacted, tenant-scoped bundles with explicit selection, approval, provenance, and replay metadata.
 
 #### Determinism requirements
 
