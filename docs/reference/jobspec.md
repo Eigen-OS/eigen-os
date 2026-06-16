@@ -93,6 +93,8 @@ PipelineJob
 ReplayJob
 ```
 
+`HybridWorkflow` jobs are replayed as explicit multi-stage runtime graphs. Stage handoff is represented through runtime envelope fields and lineage refs, not by adding orchestration semantics to AQO. Each stage boundary must remain reconstructable from stage input/output refs, handoff refs, and QFS lineage metadata.
+
 ---
 
 # 3. Design Principles
