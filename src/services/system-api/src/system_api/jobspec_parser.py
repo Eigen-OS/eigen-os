@@ -30,6 +30,31 @@ JOBSPEC_VERSION = "1.0.0"
 JOBSPEC_API_VERSION = "eigen.os/v1"
 LEGACY_JOBSPEC_API_VERSION = "eigen.os/v0.1"
 JOBSPEC_KIND = "QuantumJob"
+JOBSPEC_WORKLOAD_KINDS = (
+    "QuantumJob",
+    "HybridWorkflow",
+    "DistributedJob",
+    "BenchmarkJob",
+    "PipelineJob",
+    "ReplayJob",
+)
+JOBSPEC_WORKLOAD_KIND_DEFAULT = "QuantumJob"
+JOBSPEC_WORKLOAD_EXECUTION_PROFILES = {
+    "QuantumJob": "quantum",
+    "HybridWorkflow": "hybrid",
+    "DistributedJob": "distributed",
+    "BenchmarkJob": "benchmark",
+    "PipelineJob": "pipeline",
+    "ReplayJob": "replay",
+}
+JOBSPEC_WORKLOAD_ENUM_NAMES = {
+    "QuantumJob": "WORKLOAD_FAMILY_KIND_QUANTUM_JOB",
+    "HybridWorkflow": "WORKLOAD_FAMILY_KIND_HYBRID_WORKFLOW",
+    "DistributedJob": "WORKLOAD_FAMILY_KIND_DISTRIBUTED_JOB",
+    "BenchmarkJob": "WORKLOAD_FAMILY_KIND_BENCHMARK_JOB",
+    "PipelineJob": "WORKLOAD_FAMILY_KIND_PIPELINE_JOB",
+    "ReplayJob": "WORKLOAD_FAMILY_KIND_REPLAY_JOB",
+}
 ACCEPTED_API_VERSIONS = {JOBSPEC_API_VERSION, LEGACY_JOBSPEC_API_VERSION}
 
 REQUIRED_FIELD_MATRIX: dict[str, bool] = {
@@ -102,6 +127,126 @@ def _string_map(raw_map: Any, field: str, violations: list[FieldViolation]) -> d
             return {}
         out[k] = v
     return out
+
+
+def _normalized_workload_kind(raw_kind: Any) -> str:
+    return raw_kind if isinstance(raw_kind, str) and raw_kind.strip() else JOBSPEC_WORKLOAD_KIND_DEFAULT
+
+
+def _normalize_workload_contract(
+    workload_raw: Any,
+    target: str,
+    metadata: dict[str, str],
+    annotations: dict[str, str],
+    violations: list[FieldViolation],
+) -> dict[str, Any]:
+    if workload_raw is None:
+        workload_raw = {}
+    if not isinstance(workload_raw, dict):
+        violations.append(FieldViolation(field="spec.workload", description="must be a mapping"))
+        workload_raw = {}
+
+    kind = _normalized_workload_kind(workload_raw.get("kind") or workload_raw.get("workload_kind"))
+    if kind not in JOBSPEC_WORKLOAD_KINDS:
+        violations.append(
+            FieldViolation(
+                field="spec.workload.kind",
+                description=f"must be one of {', '.join(JOBSPEC_WORKLOAD_KINDS)}",
+            )
+        )
+        kind = JOBSPEC_WORKLOAD_KIND_DEFAULT
+
+    execution_profile = workload_raw.get("execution_profile") or workload_raw.get("executionProfile")
+    if execution_profile is None:
+        execution_profile = JOBSPEC_WORKLOAD_EXECUTION_PROFILES[kind]
+    elif not isinstance(execution_profile, str):
+        violations.append(FieldViolation(field="spec.workload.execution_profile", description="must be string"))
+        execution_profile = JOBSPEC_WORKLOAD_EXECUTION_PROFILES[kind]
+
+    replayable = workload_raw.get("replayable")
+    if replayable is None:
+        replayable = kind != "QuantumJob"
+    elif not isinstance(replayable, bool):
+        violations.append(FieldViolation(field="spec.workload.replayable", description="must be boolean"))
+        replayable = kind != "QuantumJob"
+
+    def _require_subdict(value: Any, field: str) -> dict[str, Any]:
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            violations.append(FieldViolation(field=field, description="must be a mapping"))
+            return {}
+        return value
+
+    artifact_lineage_raw = _require_subdict(
+        workload_raw.get("artifact_lineage") or workload_raw.get("artifactLineage"),
+        "spec.workload.artifact_lineage",
+    )
+    observability_raw = _require_subdict(
+        workload_raw.get("observability"),
+        "spec.workload.observability",
+    )
+    security_raw = _require_subdict(
+        workload_raw.get("security"),
+        "spec.workload.security",
+    )
+
+    def _string_field(raw: dict[str, Any], key: str, field: str) -> str:
+        value = raw.get(key, "")
+        if value is None:
+            return ""
+        if not isinstance(value, str):
+            violations.append(FieldViolation(field=field, description="must be string"))
+            return ""
+        return value.strip()
+
+    artifact_lineage = {
+        "root_ref": _string_field(artifact_lineage_raw, "root_ref", "spec.workload.artifact_lineage.root_ref"),
+        "parent_ref": _string_field(artifact_lineage_raw, "parent_ref", "spec.workload.artifact_lineage.parent_ref"),
+        "policy_snapshot_ref": _string_field(
+            artifact_lineage_raw, "policy_snapshot_ref", "spec.workload.artifact_lineage.policy_snapshot_ref"
+        ),
+        "execution_ref": _string_field(artifact_lineage_raw, "execution_ref", "spec.workload.artifact_lineage.execution_ref"),
+    }
+    observability = {
+        "traceparent": _string_field(observability_raw, "traceparent", "spec.workload.observability.traceparent"),
+        "trace_id": _string_field(observability_raw, "trace_id", "spec.workload.observability.trace_id"),
+        "trace_ref": _string_field(observability_raw, "trace_ref", "spec.workload.observability.trace_ref"),
+        "emit_metrics": observability_raw.get("emit_metrics", False),
+    }
+    if not isinstance(observability["emit_metrics"], bool):
+        violations.append(FieldViolation(field="spec.workload.observability.emit_metrics", description="must be boolean"))
+        observability["emit_metrics"] = False
+
+    security = {
+        "tenant_id": _string_field(security_raw, "tenant_id", "spec.workload.security.tenant_id"),
+        "project_id": _string_field(security_raw, "project_id", "spec.workload.security.project_id"),
+        "service_identity": _string_field(security_raw, "service_identity", "spec.workload.security.service_identity"),
+        "policy_snapshot_ref": _string_field(
+            security_raw, "policy_snapshot_ref", "spec.workload.security.policy_snapshot_ref"
+        ),
+        "fail_closed": security_raw.get("fail_closed", True if kind == "ReplayJob" else False),
+    }
+    if not isinstance(security["fail_closed"], bool):
+        violations.append(FieldViolation(field="spec.workload.security.fail_closed", description="must be boolean"))
+        security["fail_closed"] = True if kind == "ReplayJob" else False
+
+    backend_target = workload_raw.get("backend_target") or workload_raw.get("backendTarget") or target
+    if backend_target is None:
+        backend_target = ""
+    if not isinstance(backend_target, str):
+        violations.append(FieldViolation(field="spec.workload.backend_target", description="must be string"))
+        backend_target = target
+
+    return {
+        "kind": kind,
+        "execution_profile": execution_profile,
+        "replayable": replayable,
+        "artifact_lineage": artifact_lineage,
+        "observability": observability,
+        "security": security,
+        "backend_target": backend_target.strip(),
+    }
 
 
 def _canonical_json(value: Any) -> str:
@@ -193,6 +338,7 @@ def normalize_jobspec(jobspec_path: Path) -> dict[str, Any]:
 
     spec = _require_dict(root.get("spec"), "spec", violations)
     target = spec.get("target", "")
+    workload = _normalize_workload_contract(spec.get("workload"), target, metadata, annotations, violations)
     if not isinstance(target, str) or not target.strip():
         violations.append(FieldViolation(field="spec.target", description="field is required"))
 
@@ -288,6 +434,7 @@ def normalize_jobspec(jobspec_path: Path) -> dict[str, Any]:
             "compiler_options": compiler_options,
             "metadata": submit_metadata,
             "dependencies": dependencies,
+            "workload": workload,
         },
         "scheduling": root.get("scheduling") or {},
         "security": root.get("security") or {},
@@ -335,7 +482,19 @@ def parse_jobspec_to_submit_request(jobspec_path: Path) -> job_pb.SubmitJobReque
             "jobspec_scheduling": _canonical_json(normalized["scheduling"]),
             "jobspec_security": _canonical_json(normalized["security"]),
             "jobspec_observability": _canonical_json(normalized["observability"]),
+            "jobspec_workload": _canonical_json(normalized["spec"]["workload"]),
         }
+    )
+
+    workload = normalized["spec"]["workload"]
+    workload_proto = job_pb.WorkloadContract(
+        kind=job_pb.WorkloadFamilyKind.Value(JOBSPEC_WORKLOAD_ENUM_NAMES[workload["kind"]]),
+        execution_profile=workload["execution_profile"],
+        replayable=workload["replayable"],
+        artifact_lineage=job_pb.WorkloadArtifactLineage(**workload["artifact_lineage"]),
+        observability=job_pb.WorkloadObservability(**workload["observability"]),
+        security=job_pb.WorkloadSecurity(**workload["security"]),
+        backend_target=workload["backend_target"],
     )
 
     return job_pb.SubmitJobRequest(
@@ -345,6 +504,7 @@ def parse_jobspec_to_submit_request(jobspec_path: Path) -> job_pb.SubmitJobReque
         compiler_options=normalized["spec"]["compiler_options"],
         metadata=public_metadata,
         dependencies=normalized["spec"]["dependencies"],
+        workload=workload_proto,
         eigen_lang=types_pb.EigenLangSource(
             source=source_bytes,
             entrypoint=program["entrypoint"],

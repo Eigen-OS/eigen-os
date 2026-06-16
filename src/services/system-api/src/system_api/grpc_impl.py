@@ -1842,6 +1842,7 @@ class JobService:
                         compiler_options=dict(request.compiler_options),
                         metadata_kvs=dict(request.metadata),
                         public_envelope=public_envelope,
+                        workload=request.workload,
                     )
                 )
             except Exception as exc:

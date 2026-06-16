@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from eigen.api.v1 import job_service_pb2 as job_pb
+
 from system_api.jobspec_parser import (
     JobSpecValidationError,
     canonical_jobspec_digest,
@@ -34,9 +36,23 @@ def test_jobspec_positive_fixtures_are_mapped_deterministically() -> None:
         assert list(req.dependencies) == normalized["spec"]["dependencies"]
         assert req.eigen_lang.entrypoint == normalized["spec"]["program"]["entrypoint"]
         assert req.eigen_lang.sha256 == sha256(bytes(req.eigen_lang.source)).hexdigest()
+        assert req.workload.kind == job_pb.WorkloadFamilyKind.Value(
+            {
+                "QuantumJob": "WORKLOAD_FAMILY_KIND_QUANTUM_JOB",
+                "HybridWorkflow": "WORKLOAD_FAMILY_KIND_HYBRID_WORKFLOW",
+                "DistributedJob": "WORKLOAD_FAMILY_KIND_DISTRIBUTED_JOB",
+                "BenchmarkJob": "WORKLOAD_FAMILY_KIND_BENCHMARK_JOB",
+                "PipelineJob": "WORKLOAD_FAMILY_KIND_PIPELINE_JOB",
+                "ReplayJob": "WORKLOAD_FAMILY_KIND_REPLAY_JOB",
+            }[normalized["spec"]["workload"]["kind"]]
+        )
+        assert req.workload.execution_profile == normalized["spec"]["workload"]["execution_profile"]
+        assert req.workload.replayable == normalized["spec"]["workload"]["replayable"]
+        assert req.workload.backend_target == normalized["spec"]["workload"]["backend_target"]
         assert req.metadata["jobspec_version"] == "1.0.0"
         assert req.metadata["jobspec_digest"] == normalized["digest"]
         assert req.metadata["source_sha256"] == req.eigen_lang.sha256
+        assert json.loads(req.metadata["jobspec_workload"]) == normalized["spec"]["workload"]
         assert req.metadata["jobspec_yaml"]
 
 
@@ -78,6 +94,26 @@ def test_jobspec_future_compatible_sections_are_preserved_in_internal_metadata()
     assert json.loads(req.metadata["jobspec_observability"])["future_hint"] == "accepted-by-normalizer"
 
 
+def test_jobspec_workload_family_fixtures_cover_all_supported_roles() -> None:
+    cases = [
+        ("workload_family_hybrid", "HybridWorkflow"),
+        ("workload_family_distributed", "DistributedJob"),
+        ("workload_family_benchmark", "BenchmarkJob"),
+        ("workload_family_pipeline", "PipelineJob"),
+        ("workload_family_replay", "ReplayJob"),
+    ]
+
+    for case_name, expected_kind in cases:
+        case_path = FIXTURES_ROOT / "positive" / case_name / "job.yaml"
+        normalized = normalize_jobspec(case_path)
+        req = parse_jobspec_to_submit_request(case_path)
+
+        assert normalized["spec"]["workload"]["kind"] == expected_kind
+        assert req.metadata["jobspec_workload"]
+        assert json.loads(req.metadata["jobspec_workload"]) == normalized["spec"]["workload"]
+        assert req.workload.execution_profile == normalized["spec"]["workload"]["execution_profile"]
+
+
 def test_jobspec_negative_path_traversal_is_rejected() -> None:
     for case_path in [
         FIXTURES_ROOT / "negative" / "path_traversal" / "job.yaml",
@@ -98,3 +134,13 @@ def test_jobspec_negative_missing_target_is_rejected() -> None:
 
     fields = {v.field for v in exc.value.violations}
     assert "spec.target" in fields
+
+
+def test_jobspec_negative_unsupported_workload_kind_is_rejected() -> None:
+    case_path = FIXTURES_ROOT / "negative" / "unsupported_workload_kind" / "job.yaml"
+
+    with pytest.raises(JobSpecValidationError) as exc:
+        parse_jobspec_to_submit_request(case_path)
+
+    fields = {v.field for v in exc.value.violations}
+    assert "spec.workload.kind" in fields

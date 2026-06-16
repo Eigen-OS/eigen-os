@@ -67,9 +67,25 @@ apiVersion: eigen.os/v1
 kind: QuantumJob
 ```
 
-Future-compatible kinds MAY include:
+`kind` remains the public compatibility anchor for JobSpec. The workload-family
+contract is carried under `spec.workload.kind`, where the role-specific profile is
+selected deterministically without pushing orchestration semantics into AQO.
+
+## Workload Family Contract
 
 ```yaml
+spec:
+  workload:
+    kind: HybridWorkflow
+    execution_profile: hybrid
+    replayable: true
+    backend_target: sim:local
+```
+
+Supported workload-family kinds:
+
+```yaml
+QuantumJob
 HybridWorkflow
 DistributedJob
 BenchmarkJob
@@ -150,6 +166,8 @@ metadata:
 
 spec:
   target: sim:local
+  workload:
+    kind: QuantumJob
 
   program:
     path: program.eigen.py
@@ -204,6 +222,14 @@ artifacts:
 | `spec` | yes | object | Execution specification |
 | `spec.target` | yes | string | Runtime target |
 | `spec.program` | yes | object | Program definition |
+| `spec.workload` | no | object | Workload family contract |
+| `spec.workload.kind` | no | string | Role-specific workload profile |
+| `spec.workload.execution_profile` | no | string | Execution profile name |
+| `spec.workload.replayable` | no | bool | Replayability hint |
+| `spec.workload.backend_target` | no | string | Backend target override |
+| `spec.workload.artifact_lineage` | no | object | Artifact lineage refs |
+| `spec.workload.observability` | no | object | Workload observability refs |
+| `spec.workload.security` | no | object | Workload security context |
 | `spec.compiler` | no | object | Compiler behavior |
 | `spec.parameters` | no | object | Runtime parameters |
 | `spec.dependencies` | no | array<string> | Deterministic dependencies |

@@ -73,6 +73,7 @@ class DelegationHandler:
         compiler_options: dict,
         metadata_kvs: dict,
         public_envelope: dict,
+        workload: object | None = None,
     ) -> tuple[str, str]:
         """
         Delegate SubmitJob to Kernel/QRTX.
