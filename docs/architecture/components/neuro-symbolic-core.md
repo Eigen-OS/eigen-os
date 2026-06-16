@@ -144,7 +144,8 @@ Ecosystem and governance groundwork:
 
 - plugin architecture includes `optimizer` plugin category,
 - governance framework and RFC/ADR workflow exist,
-- runtime tracing and structured logging exist.
+- runtime tracing and structured logging exist,
+- internal model registry activation uses signed artifact verification and frozen policy snapshot binding.
 
 Intelligent-adjacent behavior:
 
@@ -163,7 +164,6 @@ Intelligent-adjacent behavior:
 - production GNN optimizer runtime,
 - OKB-driven optimization retrieval on the request path,
 - explainability engine producing stable NSC decision artifacts,
-- model registry + signed model lifecycle,
 - confidence-aware policy gating and deterministic rollback controller.
 
 The implemented NSC compiler path MUST still capture an immutable policy snapshot at service start and use that frozen snapshot for all inference requests. Live policy lookups MUST NOT be part of request-time scoring.
@@ -314,6 +314,23 @@ Capture stable decision artifacts for audit and replay.
 
 ---
 
+### 7.5 Internal model registry and signed loading contract
+
+#### Responsibility
+
+Publish, verify, activate, and roll back internal Neuro-DPDA model artifacts inside the deployable NSC service boundary.
+
+#### Requirements
+
+- model artifacts MUST have stable version identifiers, digests, and signature metadata,
+- model activation MUST be bound to the frozen policy snapshot version and internal service identity,
+- loading MUST verify the artifact digest before activation,
+- loading MUST verify the registry signature before activation,
+- missing artifact, missing policy snapshot, bad signature, or identity mismatch MUST fail closed,
+- rollback MUST be auditable and MUST preserve deterministic baseline behavior when activation cannot be verified.
+
+---
+
 ## 8. Integration Boundaries
 
 ### 8.1 Compiler integration
@@ -341,7 +358,13 @@ Requests from public API boundaries must never reach NSC directly.
 
 ---
 
-### 8.4 Deployment shape
+### 8.4 Mandatory preprocessing redaction layer
+
+All data that can enter model loading, knowledge retrieval, decision logging, or replay packaging paths MUST pass through a mandatory preprocessing redaction layer before persistence or external emission.
+
+---
+
+### 8.5 Deployment shape
 
 The implementation boundary for NSC is a **standalone internal service** packaged as `src/services/neuro-symbolic-service/`.
 
@@ -351,7 +374,3 @@ This service boundary is intentionally separate from `src/services/system-api/`:
 - `eigen-kernel` / QRTX is the primary runtime caller.
 - `eigen-compiler` may call the service only through the bounded advisory scoring path.
 - Internal offline workflows such as model loading, dataset ingestion, and privacy-governed training remain inside the same internal service boundary and must not be exposed through public ingress.
-
-### 8.5 Mandatory preprocessing redaction layer
-
-All inputs that can reach learning, replay, audit, or export pipelines MUST pass through a mandatory preprocessing redaction layer before persistence, indexing, replay, or external emission.

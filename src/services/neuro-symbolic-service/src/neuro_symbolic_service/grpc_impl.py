@@ -16,7 +16,7 @@ import grpc
 from eigen.internal.v1 import neuro_symbolic_service_pb2 as nsc_pb
 from eigen.internal.v1 import neuro_symbolic_service_pb2_grpc as nsc_pb_grpc
 
-from .observability import record_decision, record_denial, record_request
+from .observability import append_security_audit_event, record_decision, record_denial, record_request
 
 _LOG = logging.getLogger("neuro_symbolic_service")
 
@@ -88,6 +88,48 @@ _SECRET_PATH_RE = re.compile(
 )
 
 
+_MODEL_REGISTRY_DEFAULT_REGISTRY_VERSION = "1.0.0"
+_MODEL_REGISTRY_DEFAULT_SERVICE_IDENTITY = "neuro-symbolic-service"
+_MODEL_REGISTRY_DEFAULT_SIGNATURE_KEY_ID = "internal-neuro-dpda-key"
+_MODEL_REGISTRY_ENV_JSON = "NEURO_SYMBOLIC_MODEL_REGISTRY_JSON"
+_MODEL_REGISTRY_ENV_PATH = "NEURO_SYMBOLIC_MODEL_REGISTRY_PATH"
+_MODEL_REGISTRY_ENV_SIGNING_KEY = "NEURO_SYMBOLIC_MODEL_REGISTRY_SIGNING_KEY"
+_MODEL_REGISTRY_ENV_SERVICE_IDENTITY = "NEURO_SYMBOLIC_SERVICE_IDENTITY"
+_MODEL_REGISTRY_ENV_ARTIFACT_ROOT = "NEURO_SYMBOLIC_MODEL_ARTIFACT_ROOT"
+
+
+@dataclass(frozen=True)
+class ModelRegistryEntry:
+    model_version: str
+    artifact_path: str
+    artifact_sha256: str
+    signature: str
+    signature_key_id: str
+    policy_snapshot_version: str
+    service_identity: str
+    tenant_id: str
+    project_id: str
+    active: bool
+
+
+@dataclass(frozen=True)
+class ModelRegistryState:
+    registry_version: str
+    service_identity: str
+    tenant_id: str
+    project_id: str
+    policy_snapshot_version: str
+    active_model_version: str
+    active_model_artifact_sha256: str
+    active_model_signature_key_id: str
+    activation_state: str
+    activation_reason: str
+    registry_source: str
+    artifact_path: str | None
+    signature_key_id: str | None
+    verified: bool
+
+
 @dataclass(frozen=True)
 class FeatureRedactionResult:
     feature_vector: bytes
@@ -106,6 +148,211 @@ def _stable_json(value: object) -> str:
 
 def _hex_digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def _stable_hash(payload: Any) -> str:
+    return f"sha256:{hashlib.sha256(_stable_json(payload).encode('utf-8')).hexdigest()}"
+
+
+def _audit_model_registry_event(*, audit_kind: str, operation: str, state: ModelRegistryState, model_version: str, reason: str) -> None:
+    append_security_audit_event(
+        {
+            "audit_kind": audit_kind,
+            "operation": operation,
+            "model_version": model_version,
+            "caller_identity": state.service_identity,
+            "tenant": state.tenant_id,
+            "project_id": state.project_id,
+            "policy_snapshot_version": state.policy_snapshot_version,
+            "registry_version": state.registry_version,
+            "registry_source": state.registry_source,
+            "activation_state": state.activation_state,
+            "reason": reason,
+            "immutable": True,
+        }
+    )
+
+
+def _model_registry_signing_payload(*, model_version: str, artifact_sha256: str, policy_snapshot_version: str, service_identity: str, tenant_id: str, project_id: str, artifact_path: str) -> str:
+    return _stable_json(
+        {
+            "artifact_path": artifact_path,
+            "artifact_sha256": artifact_sha256,
+            "model_version": model_version,
+            "policy_snapshot_version": policy_snapshot_version,
+            "project_id": project_id,
+            "service_identity": service_identity,
+            "tenant_id": tenant_id,
+        }
+    )
+
+
+def _resolve_registry_path(path_str: str) -> Path:
+    return Path(path_str).expanduser().resolve()
+
+
+def _read_model_registry_payload() -> tuple[dict[str, Any] | None, str]:
+    raw_json = os.getenv(_MODEL_REGISTRY_ENV_JSON, "").strip()
+    raw_path = os.getenv(_MODEL_REGISTRY_ENV_PATH, "").strip()
+    if raw_json:
+        return json.loads(raw_json), f"env:{_MODEL_REGISTRY_ENV_JSON}"
+    if raw_path:
+        path = _resolve_registry_path(raw_path)
+        return json.loads(path.read_text(encoding="utf-8")), f"file:{path}"
+    return None, "baseline"
+
+
+def _artifact_root_from_env() -> Path | None:
+    raw = os.getenv(_MODEL_REGISTRY_ENV_ARTIFACT_ROOT, "").strip()
+    if not raw:
+        return None
+    return _resolve_registry_path(raw)
+
+
+def _service_identity_from_env() -> str:
+    return os.getenv(_MODEL_REGISTRY_ENV_SERVICE_IDENTITY, _MODEL_REGISTRY_DEFAULT_SERVICE_IDENTITY).strip() or _MODEL_REGISTRY_DEFAULT_SERVICE_IDENTITY
+
+
+def _registry_signing_key() -> str:
+    return os.getenv(_MODEL_REGISTRY_ENV_SIGNING_KEY, "").strip()
+
+
+def _hash_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _load_model_registry_state(*, active_policy_snapshot_version: str, requested_model_version: str | None = None) -> tuple[ModelRegistryState, ModelRegistryEntry | None]:
+    payload, source = _read_model_registry_payload()
+    service_identity = _service_identity_from_env()
+    baseline_state = ModelRegistryState(
+        registry_version=_MODEL_REGISTRY_DEFAULT_REGISTRY_VERSION,
+        service_identity=service_identity,
+        tenant_id="",
+        project_id="",
+        policy_snapshot_version=active_policy_snapshot_version,
+        active_model_version=_MODEL_VERSION_DEFAULT,
+        active_model_artifact_sha256="",
+        active_model_signature_key_id="",
+        activation_state="baseline",
+        activation_reason="model registry disabled",
+        registry_source=source,
+        artifact_path=None,
+        signature_key_id=None,
+        verified=False,
+    )
+    if payload is None:
+        return baseline_state, None
+
+    if not isinstance(payload, dict):
+        raise ValueError("model registry payload must be a JSON object")
+
+    registry_version = str(payload.get("registry_version", "")).strip() or _MODEL_REGISTRY_DEFAULT_REGISTRY_VERSION
+    registry_service_identity = str(payload.get("service_identity", "")).strip() or service_identity
+    registry_tenant_id = str(payload.get("tenant_id", "")).strip()
+    registry_project_id = str(payload.get("project_id", "")).strip()
+    registry_policy_snapshot_version = str(payload.get("policy_snapshot_version", "")).strip()
+    active_model_version = str(payload.get("active_model_version", "")).strip()
+    models = payload.get("models", [])
+    if not isinstance(models, list) or not models:
+        raise ValueError("model registry models must be a non-empty list")
+    if registry_service_identity != service_identity:
+        raise ValueError("model registry service identity does not match the internal service identity")
+    if not registry_policy_snapshot_version:
+        raise ValueError("model registry policy snapshot version is required")
+    if registry_policy_snapshot_version != active_policy_snapshot_version:
+        raise ValueError("model registry policy snapshot version does not match the active policy snapshot")
+
+    signing_key = _registry_signing_key()
+    if not signing_key:
+        raise ValueError("model registry signing key is required")
+
+    models_by_version: dict[str, dict[str, Any]] = {}
+    for item in models:
+        if not isinstance(item, dict):
+            raise ValueError("model registry entries must be objects")
+        version = str(item.get("model_version", "")).strip()
+        artifact_path = str(item.get("artifact_path", "")).strip()
+        artifact_sha256 = str(item.get("artifact_sha256", "")).strip().lower()
+        signature = str(item.get("signature", "")).strip().lower()
+        signature_key_id = str(item.get("signature_key_id", "")).strip() or _MODEL_REGISTRY_DEFAULT_SIGNATURE_KEY_ID
+        entry_service_identity = str(item.get("service_identity", "")).strip() or registry_service_identity
+        entry_tenant_id = str(item.get("tenant_id", "")).strip() or registry_tenant_id
+        entry_project_id = str(item.get("project_id", "")).strip() or registry_project_id
+        entry_policy_snapshot_version = str(item.get("policy_snapshot_version", "")).strip() or registry_policy_snapshot_version
+        active = bool(item.get("active", False))
+        if not all([version, artifact_path, artifact_sha256, signature, entry_service_identity, entry_policy_snapshot_version]):
+            raise ValueError("model registry entry is missing required fields")
+        if not re.fullmatch(r"[0-9a-f]{64}", artifact_sha256):
+            raise ValueError("model registry artifact_sha256 must be a SHA-256 hex digest")
+        if not re.fullmatch(r"[0-9a-f]{64}", signature):
+            raise ValueError("model registry signature must be a SHA-256 hex digest")
+        models_by_version[version] = {
+            "model_version": version,
+            "artifact_path": artifact_path,
+            "artifact_sha256": artifact_sha256,
+            "signature": signature,
+            "signature_key_id": signature_key_id,
+            "service_identity": entry_service_identity,
+            "tenant_id": entry_tenant_id,
+            "project_id": entry_project_id,
+            "policy_snapshot_version": entry_policy_snapshot_version,
+            "active": active,
+        }
+
+    selected_version = (requested_model_version or active_model_version or next((m["model_version"] for m in models_by_version.values() if m["active"]), "")).strip()
+    if not selected_version:
+        raise ValueError("model registry active_model_version is required")
+    if selected_version not in models_by_version:
+        raise ValueError("model registry active_model_version not found in models")
+
+    entry = models_by_version[selected_version]
+    artifact_path = Path(entry["artifact_path"])
+    if not artifact_path.is_absolute():
+        artifact_root = _artifact_root_from_env()
+        if artifact_root is not None:
+            artifact_path = artifact_root / artifact_path
+        elif source.startswith("file:"):
+            artifact_path = Path(source.removeprefix("file:")).parent / artifact_path
+    artifact_path = artifact_path.resolve()
+    if not artifact_path.exists():
+        raise ValueError("model registry artifact is missing")
+    artifact_sha256 = _hash_file(artifact_path)
+    if artifact_sha256 != entry["artifact_sha256"]:
+        raise ValueError("model registry artifact digest mismatch")
+
+    expected_signature = hmac.new(
+        signing_key.encode("utf-8"),
+        _model_registry_signing_payload(
+            model_version=entry["model_version"],
+            artifact_sha256=entry["artifact_sha256"],
+            policy_snapshot_version=entry["policy_snapshot_version"],
+            service_identity=entry["service_identity"],
+            tenant_id=entry["tenant_id"],
+            project_id=entry["project_id"],
+            artifact_path=str(entry["artifact_path"]),
+        ).encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(expected_signature, entry["signature"]):
+        raise ValueError("model registry signature verification failed")
+
+    state = ModelRegistryState(
+        registry_version=registry_version,
+        service_identity=service_identity,
+        tenant_id=entry["tenant_id"],
+        project_id=entry["project_id"],
+        policy_snapshot_version=entry["policy_snapshot_version"],
+        active_model_version=entry["model_version"],
+        active_model_artifact_sha256=entry["artifact_sha256"],
+        active_model_signature_key_id=entry["signature_key_id"],
+        activation_state="active",
+        activation_reason="model registry verified",
+        registry_source=source,
+        artifact_path=str(artifact_path),
+        signature_key_id=entry["signature_key_id"],
+        verified=True,
+    )
+    return state, ModelRegistryEntry(**entry)
 
 
 def _float_from_digest(digest: bytes, start: int = 0) -> float:
@@ -263,6 +510,7 @@ def _explainability_envelope(
     redacted_fields: Iterable[str],
     feature_schema_version: str,
     model_hint: str,
+    model_activation_state: str,
 ) -> dict[str, object]:
     return {
         "request_id": request_id,
@@ -270,6 +518,7 @@ def _explainability_envelope(
         "project_id": project_id,
         "policy_snapshot_version": policy_snapshot_version,
         "model_version": model_version,
+        "model_activation_state": model_activation_state,
         "confidence": confidence,
         "feature_set": {
             "schema_version": feature_schema_version,
@@ -291,6 +540,91 @@ class NeuroSymbolicService(nsc_pb_grpc.NeuroSymbolicServiceServicer):
     def __init__(self, *, policy_snapshot_version: str | None = None):
         self._policy_snapshot_version = (policy_snapshot_version or _policy_snapshot_version()).strip() or _POLICY_SNAPSHOT_DEFAULT
         self._model_version = os.getenv("NEURO_SYMBOLIC_MODEL_VERSION", _MODEL_VERSION_DEFAULT).strip() or _MODEL_VERSION_DEFAULT
+        self._model_activation_state = "baseline"
+        self._model_registry_state = ModelRegistryState(
+            registry_version=_MODEL_REGISTRY_DEFAULT_REGISTRY_VERSION,
+            service_identity=_service_identity_from_env(),
+            tenant_id="",
+            project_id="",
+            policy_snapshot_version=self._policy_snapshot_version,
+            active_model_version=self._model_version,
+            active_model_artifact_sha256="",
+            active_model_signature_key_id="",
+            activation_state="baseline",
+            activation_reason="model registry disabled",
+            registry_source="baseline",
+            artifact_path=None,
+            signature_key_id=None,
+            verified=False,
+        )
+        self._model_registry_entry: ModelRegistryEntry | None = None
+        self._activate_model_registry()
+
+    def _activate_model_registry(self, *, requested_model_version: str | None = None, operation: str = "activation") -> None:
+        try:
+            state, entry = _load_model_registry_state(active_policy_snapshot_version=self._policy_snapshot_version, requested_model_version=requested_model_version)
+        except Exception as exc:
+            self._model_version = _MODEL_VERSION_DEFAULT
+            self._model_activation_state = "baseline_fallback"
+            self._model_registry_state = ModelRegistryState(
+                registry_version=_MODEL_REGISTRY_DEFAULT_REGISTRY_VERSION,
+                service_identity=_service_identity_from_env(),
+                tenant_id="",
+                project_id="",
+                policy_snapshot_version=self._policy_snapshot_version,
+                active_model_version=_MODEL_VERSION_DEFAULT,
+                active_model_artifact_sha256="",
+                active_model_signature_key_id="",
+                activation_state="baseline_fallback",
+                activation_reason=str(exc),
+                registry_source="baseline_fallback",
+                artifact_path=None,
+                signature_key_id=None,
+                verified=False,
+            )
+            self._model_registry_entry = None
+            _audit_model_registry_event(
+                audit_kind="model_registry_activation",
+                operation=operation,
+                state=self._model_registry_state,
+                model_version=self._model_version,
+                reason=str(exc),
+            )
+            return
+
+        self._model_registry_state = state
+        self._model_registry_entry = entry
+        self._model_version = state.active_model_version
+        self._model_activation_state = state.activation_state
+        _audit_model_registry_event(
+            audit_kind="model_registry_rollback" if operation != "activation" else "model_registry_activation",
+            operation=operation,
+            state=state,
+            model_version=self._model_version,
+            reason=state.activation_reason,
+        )
+
+    def activate_model_version(self, model_version: str) -> bool:
+        model_version = model_version.strip()
+        if not model_version:
+            self._model_version = _MODEL_VERSION_DEFAULT
+            self._model_activation_state = "baseline_fallback"
+            _audit_model_registry_event(
+                audit_kind="model_registry_rollback",
+                operation="rollback",
+                state=self._model_registry_state,
+                model_version=self._model_version,
+                reason="model version is required",
+            )
+            return False
+        self._activate_model_registry(requested_model_version=model_version, operation="rollback")
+        return self._model_version == model_version
+
+    def rollback_model_version(self, model_version: str) -> bool:
+        return self.activate_model_version(model_version)
+
+    def model_registry_snapshot(self) -> ModelRegistryState:
+        return self._model_registry_state
 
     def ScoreCompilationPlan(self, request, context: grpc.ServicerContext):
         identity = _require_internal_identity(context, method_name="ScoreCompilationPlan")
@@ -390,6 +724,24 @@ class NeuroSymbolicService(nsc_pb_grpc.NeuroSymbolicServiceServicer):
             redacted_fields=redaction.redacted_fields,
             feature_schema_version=feature_schema_version,
             model_hint=request.model_hint,
+            model_activation_state=self._model_activation_state,
+        )
+
+        append_security_audit_event(
+            {
+                "audit_kind": "model_scoring",
+                "operation": "ScoreCompilationPlan",
+                "request_id": request_id,
+                "caller_identity": identity.caller_id,
+                "tenant": tenant_id,
+                "project_id": project_id,
+                "policy_snapshot_version": self._policy_snapshot_version,
+                "model_version": self._model_version,
+                "model_activation_state": self._model_activation_state,
+                "feature_digest_sha256": feature_digest_sha256,
+                "replay_digest": replay_digest,
+                "immutable": True,
+            }
         )
 
         _LOG.info(
