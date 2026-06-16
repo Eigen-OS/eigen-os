@@ -50,7 +50,7 @@
     },
     {
       "path": "proto/eigen/internal/v1/optimizer_service.proto",
-      "sha256": "6205ff539d0c5e7a92730ad5507ec4f870497350445d4dc6b85800d93cc3c05f"
+      "sha256": "bb658a8407b01d3512b79c905c34e452d512ef09990f1c38532c5d52b4f51960"
     },
     {
       "path": "src/services/system-api/tests/fixtures/contracts/optimizer_v1/service_contract_v1_0_0.json",

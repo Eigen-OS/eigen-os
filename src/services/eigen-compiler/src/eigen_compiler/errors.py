@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Sequence
 
 import grpc
+
+logger = logging.getLogger(__name__)
 
 try:
     from google.rpc import error_details_pb2, status_pb2
@@ -52,6 +55,6 @@ def abort_invalid_argument(
     st.details.add().Pack(bad_request)
     try:
         context.set_trailing_metadata((("grpc-status-details-bin", st.SerializeToString()),))
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("failed to attach grpc status details metadata: %s", exc)
     context.abort(grpc.StatusCode.INVALID_ARGUMENT, message)
