@@ -79,6 +79,8 @@ The minimum durable evidence set is:
 - terminalization records,
 - append-only event streams for state transitions.
 
+For `PipelineJob`, QFS lineage MUST keep the stage DAG, the canonical handoff ref for each stage, the replay cursor state, and the stage-local failure record together so stage-by-stage replay can resume from a documented boundary without inventing intermediate state or mutating AQO semantics. Durable outputs from a failed stage remain addressable, but downstream handoff refs MUST be treated as invalid once the kernel records the failure boundary.
+
 QFS is not a general-purpose database API exposed to end users. Public APIs expose **artifact references**, not raw storage internals.
 
 ---

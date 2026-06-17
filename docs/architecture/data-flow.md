@@ -164,6 +164,8 @@ Workflow semantics, replay policy, and benchmark/distributed orchestration metad
 
 HybridWorkflow execution is represented in the kernel as a shared workflow graph with explicit stage nodes, stage-to-stage handoff refs, and replay-safe boundary events. Stage transitions are reconstructed from runtime envelopes and QFS lineage refs rather than from AQO payload shape.
 
+PipelineJob execution follows the same kernel-owned boundary model, but the graph is artifact-handoff oriented rather than compute-stage oriented: each stage consumes explicit input refs, emits explicit output refs, and records a canonical handoff ref plus stage-local failure semantics in QFS lineage. Replay resumes from the recorded stage boundary and never from AQO payload mutation.
+
 Minimal example:
 
 ```json
