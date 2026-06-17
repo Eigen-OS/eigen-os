@@ -167,6 +167,25 @@ def _canonical_json_text(payload: dict[str, object]) -> str:
     return _canonical_json_bytes(payload).decode("utf-8")
 
 
+def _relabel_violations(
+    violations: tuple[FieldViolation, ...],
+    *,
+    stage: str,
+    rule: str,
+    pass_name: str,
+) -> tuple[FieldViolation, ...]:
+    return tuple(
+        FieldViolation(
+            field=violation.field,
+            description=violation.description,
+            stage=violation.stage or stage,
+            rule=violation.rule or rule,
+            pass_name=violation.pass_name or pass_name,
+        )
+        for violation in violations
+    )
+
+
 def _sanitize_security_context(value: str) -> str:
     if not value:
         return ""
@@ -920,6 +939,14 @@ def compile_eigen_lang(
     
     def _resolve_and_validate_profile() -> object:
         try:
+            workload_profile, selection_violations = resolve_workload_profile(
+                normalized_options,
+                has_expectation=has_expectation,
+                has_minimize=has_minimize,
+            )
+            if selection_violations:
+                raise CompilerValidationError(violations=selection_violations)
+            
             profile_violations = validate_workload_profile(
                 workload_profile,
                 normalized_options,
