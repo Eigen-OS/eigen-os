@@ -14,7 +14,7 @@ from pathlib import Path
 from time import perf_counter
 from typing import Callable, Iterator, TypeVar
 
-from .errors import FieldViolation, annotate_violations
+from .errors import FieldViolation
 from .validation import (
     backend_contract_payload,
     resolve_workload_profile,
@@ -144,16 +144,6 @@ class CompilerPassPipeline:
 @dataclass
 class CompilerValidationError(Exception):
     violations: tuple[FieldViolation, ...]
-
-
-def _relabel_violations(
-    violations: tuple[FieldViolation, ...],
-    *,
-    stage: str,
-    rule: str,
-    pass_name: str,
-) -> tuple[FieldViolation, ...]:
-    return annotate_violations(violations, stage=stage, rule=rule, pass_name=pass_name)
 
 
 def _run_stage(stage: str, observer: StageObserver | None, fn: Callable[[], T]) -> T:
@@ -930,14 +920,6 @@ def compile_eigen_lang(
     
     def _resolve_and_validate_profile() -> object:
         try:
-            workload_profile, profile_selection_violations = resolve_workload_profile(
-                normalized_options,
-                has_expectation=has_expectation,
-                has_minimize=has_minimize,
-            )
-            if profile_selection_violations:
-                raise CompilerValidationError(violations=profile_selection_violations)
-
             profile_violations = validate_workload_profile(
                 workload_profile,
                 normalized_options,
