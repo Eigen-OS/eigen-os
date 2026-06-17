@@ -890,65 +890,7 @@ class JobService:
             ),
         ]
 
-    def _mk_vqe_updates(self, *, job_id: str, trace_id: str | None, max_iters: int, topology: dict[str, str]) -> list:
-        updates = [
-            self._mk_update(
-                job_id=job_id,
-                state=self._types_pb.JOB_STATE_PENDING,
-                stage="QUEUED",
-                progress=0.0,
-                message="pending",
-                event_seq=1,
-                topology=topology,
-            ),
-            self._mk_update(
-                job_id=job_id,
-                state=self._types_pb.JOB_STATE_COMPILING,
-                stage="COMPILED",
-                progress=0.2,
-                message="compiling",
-                event_seq=2,
-                topology=topology,
-            ),
-            self._mk_update(
-                job_id=job_id,
-                state=self._types_pb.JOB_STATE_RUNNING,
-                stage="DISPATCHED",
-                progress=0.35,
-                message=self._msg_with_trace("dispatched", trace_id),
-                event_seq=3,
-                topology=topology,
-            ),
-        ]
-
-        simulated_iters = max(2, min(max_iters, 3))
-        for idx in range(1, simulated_iters + 1):
-            progress = min(0.4 + (0.45 * idx / simulated_iters), 0.9)
-            updates.append(
-                self._mk_update(
-                    job_id=job_id,
-                    state=self._types_pb.JOB_STATE_RUNNING,
-                    stage="RUNNING",
-                    progress=progress,
-                    message=self._msg_with_trace(f"vqe_iteration iteration={idx}", trace_id),
-                    event_seq=len(updates) + 1,
-                    topology=topology,
-                )
-            )
-
-        updates.append(
-            self._mk_update(
-                job_id=job_id,
-                state=self._types_pb.JOB_STATE_DONE,
-                stage="COMPLETED",
-                progress=1.0,
-                message=self._msg_with_trace("completed", trace_id),
-                event_seq=len(updates) + 1,
-                topology=topology,
-            )
-        )
-        return updates
-
+    
     def _append_update(self, record: _JobRecord, *, state: int, stage: str, progress: float, message: str) -> None:
         record.updates.append(
             self._mk_update(
@@ -1107,14 +1049,7 @@ class JobService:
             self._finalize_terminal_state(record)
             return
         if len(record.updates) == 1 and record.run_duration_sec <= 0:
-            if record.max_iters > 0:
-                record.updates = self._mk_vqe_updates(
-                    job_id=record.job_id,
-                    trace_id=record.trace_id,
-                    max_iters=record.max_iters,
-                    topology=record.topology,
-                )
-            elif record.should_fail:
+            if record.should_fail:
                 record.updates = self._mk_error_updates(
                     job_id=record.job_id,
                     summary=record.error_summary,
@@ -1392,17 +1327,6 @@ class JobService:
             "trace_ref": f"trace://{trace_id}" if trace_id else "",
         }
 
-        max_iters = 0
-        if metadata.get("max_iters", "").strip():
-            try:
-                max_iters = max(int(metadata["max_iters"]), 0)
-            except ValueError:
-                max_iters = 0
-        if max_iters > 0:
-            simulated_history_len = max(2, max_iters)
-            objective_history = [round(-1.0 - (0.08 * idx), 6) for idx in range(simulated_history_len)]
-            results_metadata["objective_history"] = json.dumps(objective_history)
-
         counts = {} if should_fail else {"00": 512, "11": 512}
 
         if should_fail:
@@ -1449,7 +1373,7 @@ class JobService:
             finalized=False,
             temp_refs=[],
             trace_id=trace_id,
-            max_iters=max_iters,
+            max_iters=0,
             dispatch_rationale=dispatch_rationale,
             topology=topology,
             batch_manifest_ref="",
