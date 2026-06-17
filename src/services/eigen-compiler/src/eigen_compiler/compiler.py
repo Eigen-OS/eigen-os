@@ -5,14 +5,14 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
-import re
 import os
-from math import isfinite
-from dataclasses import dataclass, asdict
+import re
 from contextlib import contextmanager
+from dataclasses import asdict, dataclass
+from math import isfinite
+from pathlib import Path
 from time import perf_counter
 from typing import Callable, Iterator, TypeVar
-from pathlib import Path
 
 from .errors import FieldViolation
 
@@ -21,28 +21,74 @@ AQO_VERSION = "1.0.0"
 _ALLOWED_IMPORT_PREFIXES = ("eigen_lang",)
 _FORBIDDEN_MODULE_ROOTS = {"os", "sys", "subprocess"}
 _FORBIDDEN_CALLS = {"exec", "eval", "compile"}
-T = TypeVar("T")
+_ALLOWED_SANDBOX_PROFILES = {"default", "restricted", "strict"}
 
-StageObserver = Callable[[str, float, str], None]
-_AQO_ALLOWED_TOP_LEVEL_FIELDS = {"version", "qubits", "operations", "parameters", "metadata", "checksums", "topology", "annotations"}
-_AQO_ALLOWED_OPS = {"RX", "RY", "RZ", "CX", "CZ", "SWAP", "CCX", "CCZ", "X", "Y", "Z", "H", "S", "T", "MEASURE", "RESET"}
+_AQO_ALLOWED_TOP_LEVEL_FIELDS = {
+    "version",
+    "qubits",
+    "operations",
+    "parameters",
+    "metadata",
+    "checksums",
+    "topology",
+    "annotations",
+}
+
+_AQO_ALLOWED_OPS = {
+    "RX",
+    "RY",
+    "RZ",
+    "CX",
+    "CZ",
+    "SWAP",
+    "CCX",
+    "CCZ",
+    "X",
+    "Y",
+    "Z",
+    "H",
+    "S",
+    "T",
+    "MEASURE",
+    "RESET",
+}
 _AQO_ROTATION_OPS = {"RX", "RY", "RZ"}
 _AQO_MEASUREMENT_BASIS = {"X", "Y", "Z"}
-_AQO_NON_PARAMETERIZED_OPS = {"CX", "CZ", "SWAP", "CCX", "CCZ", "X", "Y", "Z", "H", "S", "T", "RESET"}
-_AQO_ARITY = {"RX": 1, "RY": 1, "RZ": 1, "CX": 2, "CZ": 2, "SWAP": 2, "CCX": 3, "CCZ": 3, "X": 1, "Y": 1, "Z": 1, "H": 1, "S": 1, "T": 1, "MEASURE": 1, "RESET": 1}
-_ALLOWED_SANDBOX_PROFILES = {"default", "restricted", "strict"}
-_SENSITIVE_HEADER_RE = re.compile(
-    r"(?i)\b(?:authorization|proxy-authorization|x-api-key|x-auth-token|x-access-token|cookie|set-cookie)\s*:\s*.+"
-)
-_BEARER_RE = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{8,}\b")
+_AQO_NON_PARAMETERIZED_OPS = {
+    "CX",
+    "CZ",
+    "SWAP",
+    "CCX",
+    "CCZ",
+    "X",
+    "Y",
+    "Z",
+    "H",
+    "S",
+    "T",
+    "RESET",
+}
+_AQO_ARITY = {
+    "RX": 1,
+    "RY": 1,
+    "RZ": 1,
+    "CX": 2,
+    "CZ": 2,
+    "SWAP": 2,
+    "CCX": 3,
+    "CCZ": 3,
+    "X": 1,
+    "Y": 1,
+    "Z": 1,
+    "H": 1,
+    "S": 1,
+    "T": 1,
+    "MEASURE": 1,
+    "RESET": 1,
+}
 
-
-def _sanitize_security_context(value: str) -> str:
-    if not value:
-        return ""
-    redacted = _SENSITIVE_HEADER_RE.sub("[REDACTED]", value)
-    redacted = _BEARER_RE.sub("[REDACTED]", redacted)
-    return redacted
+T = TypeVar("T")
+StageObserver = Callable[[str, float, str], None]
 
 
 @dataclass(frozen=True)
@@ -62,6 +108,7 @@ class CompileRequestContext:
 class CompilationResult:
     aqo_json: bytes
     metadata: dict[str, str]
+
 
 @dataclass(frozen=True)
 class DistributedCompileConfig:
@@ -94,6 +141,22 @@ def _canonical_json_bytes(payload: dict[str, object]) -> bytes:
     return json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
 
 
+def _canonical_json_text(payload: dict[str, object]) -> str:
+    return _canonical_json_bytes(payload).decode("utf-8")
+
+
+def _sanitize_security_context(value: str) -> str:
+    if not value:
+        return ""
+    sensitive_header_re = re.compile(
+        r"(?i)\b(?:authorization|proxy-authorization|x-api-key|x-auth-token|x-access-token|cookie|set-cookie)\s*:\s*.+"
+    )
+    bearer_re = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{8,}\b")
+    redacted = sensitive_header_re.sub("[REDACTED]", value)
+    redacted = bearer_re.sub("[REDACTED]", redacted)
+    return redacted
+
+
 def _literal_scalar(node: ast.AST) -> str | int | float | None:
     if not isinstance(node, ast.Constant):
         return None
@@ -124,8 +187,17 @@ def _validate_parameters_object(parameters: object) -> tuple[FieldViolation, ...
     return tuple(violations)
 
 
+def _validate_optional_object(value: object, field: str) -> tuple[FieldViolation, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, dict):
+        return (FieldViolation(field=field, description=f"{field} must be an object"),)
+    return ()
+
+
 def _validate_aqo_payload(aqo: dict[str, object]) -> tuple[FieldViolation, ...]:
     violations: list[FieldViolation] = []
+
     unknown_fields = set(aqo) - _AQO_ALLOWED_TOP_LEVEL_FIELDS
     for field in sorted(unknown_fields):
         violations.append(FieldViolation(field=field, description="unknown AQO top-level field"))
@@ -143,6 +215,10 @@ def _validate_aqo_payload(aqo: dict[str, object]) -> tuple[FieldViolation, ...]:
         operations = []
 
     violations.extend(_validate_parameters_object(aqo.get("parameters")))
+    violations.extend(_validate_optional_object(aqo.get("metadata"), "metadata"))
+    violations.extend(_validate_optional_object(aqo.get("checksums"), "checksums"))
+    violations.extend(_validate_optional_object(aqo.get("topology"), "topology"))
+    violations.extend(_validate_optional_object(aqo.get("annotations"), "annotations"))
 
     for idx, op in enumerate(operations):
         if not isinstance(op, dict):
@@ -163,7 +239,7 @@ def _validate_aqo_payload(aqo: dict[str, object]) -> tuple[FieldViolation, ...]:
             violations.append(FieldViolation(field=f"operations[{idx}].q", description="qubit index out of range"))
 
         expected_arity = _AQO_ARITY[op_name]
-        if op_name in {"MEASURE"}:
+        if op_name == "MEASURE":
             c = op.get("c")
             if not isinstance(c, list) or len(c) != len(q) or not all(isinstance(item, int) and item >= 0 for item in c):
                 violations.append(FieldViolation(field=f"operations[{idx}].c", description="MEASURE requires matching classical indices"))
@@ -174,8 +250,6 @@ def _validate_aqo_payload(aqo: dict[str, object]) -> tuple[FieldViolation, ...]:
                 violations.append(FieldViolation(field=f"operations[{idx}].basis", description="unsupported measurement basis"))
             if "params" in op and op["params"]:
                 violations.append(FieldViolation(field=f"operations[{idx}].params", description="MEASURE must not include params"))
-            if len(q) < 1:
-                violations.append(FieldViolation(field=f"operations[{idx}].q", description="MEASURE requires at least one qubit"))
             continue
 
         if len(q) != expected_arity:
@@ -209,14 +283,6 @@ def _encode_aqo_payload(aqo: dict[str, object]) -> bytes:
             violations=(FieldViolation(field="operations", description="AQO canonical round-trip failed"),)
         )
     return aqo_bytes
-
-
-def _canonical_json_bytes(payload: dict[str, object]) -> bytes:
-    return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-
-
-def _canonical_json_text(payload: dict[str, object]) -> str:
-    return _canonical_json_bytes(payload).decode("utf-8")
 
 
 def _normalize_options(options: dict[str, str] | None) -> dict[str, str]:
@@ -256,9 +322,7 @@ def _resolve_source_bytes(source: bytes, source_ref: str | None) -> tuple[bytes,
         return source, "source"
     if not source_ref:
         raise CompilerValidationError(
-            violations=(
-                FieldViolation(field="source", description="source or source_ref is required"),
-            )
+            violations=(FieldViolation(field="source", description="source or source_ref is required"),)
         )
 
     normalized_ref = source_ref
@@ -266,21 +330,18 @@ def _resolve_source_bytes(source: bytes, source_ref: str | None) -> tuple[bytes,
         if normalized_ref.startswith(prefix):
             normalized_ref = normalized_ref[len(prefix) :]
             break
+
     qfs_root = Path(os.getenv("EIGEN_QFS_ROOT", "/var/lib/eigen/circuit_fs")).resolve()
     ref_path = (qfs_root / normalized_ref.lstrip("/")).resolve()
     if qfs_root != ref_path and qfs_root not in ref_path.parents:
         raise CompilerValidationError(
-            violations=(
-                FieldViolation(field="source_ref", description="source_ref escapes QFS root"),
-            )
+            violations=(FieldViolation(field="source_ref", description="source_ref escapes QFS root"),)
         )
     try:
         return ref_path.read_bytes(), "source_ref"
     except FileNotFoundError:
         raise CompilerValidationError(
-            violations=(
-                FieldViolation(field="source_ref", description=f"source_ref not found: {source_ref}"),
-            )
+            violations=(FieldViolation(field="source_ref", description=f"source_ref not found: {source_ref}"),)
         )
 
 
@@ -298,12 +359,7 @@ def _parse_python_source(source: bytes) -> ast.AST:
         return ast.parse(source.decode("utf-8"))
     except (UnicodeDecodeError, SyntaxError):
         raise CompilerValidationError(
-            violations=(
-                FieldViolation(
-                    field="source",
-                    description="source must be valid UTF-8 Python syntax",
-                ),
-            )
+            violations=(FieldViolation(field="source", description="source must be valid UTF-8 Python syntax"),)
         )
 
 
@@ -313,7 +369,7 @@ def _reject_dynamic_control_flow(tree: ast.AST) -> tuple[FieldViolation, ...]:
         return (
             FieldViolation(
                 field="source",
-                description="dynamic runtime control flow is not supported in Eigen-Lang MVP",
+                description="dynamic runtime control flow is not supported in Eigen-Lang",
             ),
         )
     return ()
@@ -329,7 +385,7 @@ def _reject_forbidden_imports(tree: ast.AST) -> tuple[FieldViolation, ...]:
                     violations.append(
                         FieldViolation(
                             field="source",
-                            description=f"import '{alias.name}' is not allowed in Eigen-Lang MVP",
+                            description=f"import '{alias.name}' is not allowed in Eigen-Lang",
                         )
                     )
         elif isinstance(node, ast.ImportFrom):
@@ -339,7 +395,7 @@ def _reject_forbidden_imports(tree: ast.AST) -> tuple[FieldViolation, ...]:
                 violations.append(
                     FieldViolation(
                         field="source",
-                        description=f"import from '{module}' is not allowed in Eigen-Lang MVP",
+                        description=f"import from '{module}' is not allowed in Eigen-Lang",
                     )
                 )
     return tuple(violations)
@@ -363,7 +419,7 @@ def _reject_forbidden_calls(tree: ast.AST) -> tuple[FieldViolation, ...]:
             violations.append(
                 FieldViolation(
                     field="source",
-                    description=f"call '{name}' is not allowed in Eigen-Lang MVP",
+                    description=f"call '{name}' is not allowed in Eigen-Lang",
                 )
             )
         elif isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
@@ -372,7 +428,7 @@ def _reject_forbidden_calls(tree: ast.AST) -> tuple[FieldViolation, ...]:
                 violations.append(
                     FieldViolation(
                         field="source",
-                        description=f"dynamic I/O call '{module_root}.{name}' is not allowed in Eigen-Lang MVP",
+                        description=f"dynamic I/O call '{module_root}.{name}' is not allowed in Eigen-Lang",
                     )
                 )
     return tuple(violations)
@@ -390,18 +446,12 @@ def _enforce_resource_limits(tree: ast.AST) -> tuple[FieldViolation, ...]:
         node_count += 1
         if node_count > max_ast_nodes:
             return (
-                FieldViolation(
-                    field="source",
-                    description=f"AST node limit exceeded ({max_ast_nodes})",
-                ),
+                FieldViolation(field="source", description=f"AST node limit exceeded ({max_ast_nodes})"),
             )
         max_depth_seen = max(max_depth_seen, depth)
         if max_depth_seen > max_nesting_depth:
             return (
-                FieldViolation(
-                    field="source",
-                    description=f"AST depth limit exceeded ({max_nesting_depth})",
-                ),
+                FieldViolation(field="source", description=f"AST depth limit exceeded ({max_nesting_depth})"),
             )
         for child in ast.iter_child_nodes(node):
             stack.append((child, depth + 1))
@@ -466,43 +516,143 @@ def _collect_params(tree: ast.AST) -> tuple[dict[str, dict[str, object]], tuple[
     return params, tuple(violations)
 
 
+def _resolve_int_expr(expr: ast.AST, *, context: str) -> int:
+    value = _literal_scalar(expr)
+    if isinstance(value, int):
+        return value
+    raise CompilerValidationError(
+        violations=(FieldViolation(field="source", description=f"{context} must be a literal integer"),)
+    )
+
+
+def _resolve_theta_expr(expr: ast.AST, params: dict[str, dict[str, object]]) -> int | float | str:
+    if isinstance(expr, ast.Name) and expr.id in params:
+        return params[expr.id]["name"]  # symbolic parameter name
+    scalar = _literal_scalar(expr)
+    if isinstance(scalar, (int, float, str)):
+        return scalar
+    raise CompilerValidationError(
+        violations=(FieldViolation(field="source", description="theta must be a literal or Param reference"),)
+    )
+
+
+def _extract_qubits_from_args(args: list[ast.AST], *, arity: int, name: str) -> list[int]:
+    if len(args) != arity:
+        raise CompilerValidationError(
+            violations=(FieldViolation(field="source", description=f"{name} expects {arity} qubit argument(s)"),)
+        )
+    return [_resolve_int_expr(arg, context=f"{name} qubit index") for arg in args]
+
+
 def _collect_operations(tree: ast.AST, params: dict[str, dict[str, object]]) -> tuple[list[dict], int]:
     operations: list[dict] = []
     qubit_count = 1
-    gate_ops = {"rx": "RX", "ry": "RY", "rz": "RZ"}
 
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
 
         name = _call_name(node.func)
-        if name in gate_ops:
-            op: dict[str, object] = {"op": gate_ops[name], "q": [0]}
-            theta_expr = next((kw.value for kw in node.keywords if kw.arg == "theta"), None)
-            if isinstance(theta_expr, ast.Name) and theta_expr.id in params:
-                op["params"] = {"theta": params[theta_expr.id]["name"]}
-            elif isinstance(theta_expr, ast.Constant) and isinstance(theta_expr.value, (int, float)):
-                op["params"] = {"theta": float(theta_expr.value)}
-            operations.append(op)
-        elif name == "cx":
-            operations.append({"op": "CX", "q": [0, 1]})
-            qubit_count = max(qubit_count, 2)
+        if name is None:
+            continue
 
-    operations.append({"op": "MEASURE", "q": list(range(qubit_count)), "c": list(range(qubit_count))})
+        lowered: dict[str, object] | None = None
+        positional_qubits = [arg for arg in node.args]
+        if name in {"rx", "ry", "rz"}:
+            q = _extract_qubits_from_args(positional_qubits[:1], arity=1, name=name.upper())
+            theta_expr = next((kw.value for kw in node.keywords if kw.arg == "theta"), None)
+            if theta_expr is None and len(node.args) >= 2:
+                theta_expr = node.args[1]
+            if theta_expr is None:
+                raise CompilerValidationError(
+                    violations=(FieldViolation(field="source", description=f"{name.upper()} requires theta"),)
+                )
+            lowered = {"op": name.upper(), "q": q, "params": {"theta": _resolve_theta_expr(theta_expr, params)}}
+        elif name in {"x", "y", "z", "h", "s", "t", "reset"}:
+            q = _extract_qubits_from_args(positional_qubits[:1], arity=1, name=name.upper())
+            lowered = {"op": name.upper(), "q": q}
+        elif name in {"cx", "cz", "swap"}:
+            q = _extract_qubits_from_args(positional_qubits[:2], arity=2, name=name.upper())
+            lowered = {"op": name.upper(), "q": q}
+        elif name in {"ccx", "ccz"}:
+            q = _extract_qubits_from_args(positional_qubits[:3], arity=3, name=name.upper())
+            lowered = {"op": name.upper(), "q": q}
+        elif name == "measure":
+            q = [_resolve_int_expr(arg, context="MEASURE qubit index") for arg in positional_qubits]
+            if not q:
+                raise CompilerValidationError(
+                    violations=(FieldViolation(field="source", description="MEASURE requires at least one qubit"),)
+                )
+            c_args = [kw.value for kw in node.keywords if kw.arg == "c"]
+            if c_args:
+                c_expr = c_args[0]
+                if not isinstance(c_expr, (ast.List, ast.Tuple)):
+                    raise CompilerValidationError(
+                        violations=(FieldViolation(field="source", description="MEASURE c must be a literal list"),)
+                    )
+                c = [_resolve_int_expr(item, context="MEASURE classical index") for item in c_expr.elts]
+            else:
+                c = list(range(len(q)))
+            basis_args = [kw.value for kw in node.keywords if kw.arg == "basis"]
+            basis = None
+            if basis_args:
+                basis = _literal_scalar(basis_args[0])
+                if basis not in _AQO_MEASUREMENT_BASIS:
+                    raise CompilerValidationError(
+                        violations=(FieldViolation(field="source", description="unsupported measurement basis"),)
+                    )
+            lowered = {"op": "MEASURE", "q": q, "c": c}
+            if basis is not None:
+                lowered["basis"] = basis
+        elif name == "measure_all":
+            q = list(range(qubit_count))
+            lowered = {"op": "MEASURE", "q": q, "c": list(range(qubit_count))}
+        else:
+            continue
+
+        if lowered["q"]:
+            qubit_count = max(qubit_count, max(lowered["q"]) + 1)
+        if lowered.get("c"):
+            qubit_count = max(qubit_count, max(lowered["c"]) + 1)
+        operations.append(lowered)
+
+    if not operations or operations[-1].get("op") != "MEASURE":
+        operations.append({"op": "MEASURE", "q": list(range(qubit_count)), "c": list(range(qubit_count))})
+
     return operations, qubit_count
 
 
 def _distributed_compile_config(options: dict[str, str] | None) -> DistributedCompileConfig:
-    options = _normalize_options(options)
-    enabled = options.get("distributed.enabled", "false").lower() == "true"
-    target = options.get("distributed.target") or None
+    opts = _normalize_options(options)
+    enabled = opts.get("distributed.enabled", "false").lower() == "true"
+    target = opts.get("distributed.target") or None
 
     partition_count: int | None = None
-    if "distributed.partition_count" in options:
-        partition_count = int(options["distributed.partition_count"])
+    if "distributed.partition_count" in opts:
+        raw = opts["distributed.partition_count"]
+        try:
+            partition_count = int(raw)
+        except ValueError:
+            raise CompilerValidationError(
+                violations=(
+                    FieldViolation(
+                        field="options.distributed.partition_count",
+                        description="distributed.partition_count must be an integer",
+                    ),
+                )
+            )
+        if partition_count < 1:
+            raise CompilerValidationError(
+                violations=(
+                    FieldViolation(
+                        field="options.distributed.partition_count",
+                        description="distributed.partition_count must be greater than zero",
+                    ),
+                )
+            )
 
-    queue_provider = options.get("distributed.queue_provider") or None
-    topology_hint = options.get("distributed.topology_hint") or None
+    queue_provider = opts.get("distributed.queue_provider") or None
+    topology_hint = opts.get("distributed.topology_hint") or None
     return DistributedCompileConfig(
         enabled=enabled,
         target=target,
@@ -510,6 +660,71 @@ def _distributed_compile_config(options: dict[str, str] | None) -> DistributedCo
         queue_provider=queue_provider,
         topology_hint=topology_hint,
     )
+
+
+def _build_aqo_payload(
+    *,
+    qubits: int,
+    operations: list[dict],
+    params: dict[str, dict[str, object]],
+    source_digest: str,
+    source_precedence: str,
+    source_ref: str | None,
+    request_digest: str,
+    has_expectation: bool,
+    has_minimize: bool,
+    distributed: DistributedCompileConfig,
+) -> dict[str, object]:
+    aqo: dict[str, object] = {
+        "version": AQO_VERSION,
+        "qubits": qubits,
+        "operations": operations,
+    }
+
+    if params:
+        aqo["parameters"] = {
+            param["name"]: param["default"] for _, param in sorted(params.items(), key=lambda item: item[1]["name"])
+        }
+
+    metadata: dict[str, object] = {
+        "compiler": "eigen-compiler",
+        "compiler_contract_version": "1.0.0",
+        "eigen_lang_version": "1.0",
+        "source_sha256": source_digest,
+        "source_precedence": source_precedence,
+        "request_sha256": request_digest,
+    }
+    if source_ref:
+        metadata["source_ref"] = source_ref
+
+    if metadata:
+        aqo["metadata"] = metadata
+
+    checksums: dict[str, object] = {
+        "source_sha256": source_digest,
+        "request_sha256": request_digest,
+    }
+    aqo["checksums"] = checksums
+
+    annotations: dict[str, object] = {}
+    if has_expectation:
+        annotations["expectation"] = {"kind": "ExpectationValue"}
+    if has_minimize:
+        annotations["hybrid_plan_marker"] = {"kind": "minimize", "expanded_by": "kernel"}
+    if annotations:
+        aqo["annotations"] = annotations
+
+    if distributed.enabled:
+        aqo["topology"] = {
+            "version": "1.0.0",
+            "enabled": True,
+            "target": distributed.target or "cluster",
+            "partition_count": distributed.partition_count or 1,
+            "queue_provider": distributed.queue_provider or "",
+            "topology_hint": distributed.topology_hint or "data_parallel",
+        }
+
+    return aqo
 
 
 def compile_eigen_lang(
@@ -558,48 +773,11 @@ def compile_eigen_lang(
         "eigen_dpda",
         observer,
         lambda: any(
-            isinstance(node, ast.Call) and _call_name(node.func) == "ExpectationValue"
-            for node in ast.walk(tree)
+            isinstance(node, ast.Call) and _call_name(node.func) == "ExpectationValue" for node in ast.walk(tree)
         ),
     )
     distributed = _distributed_compile_config(options)
 
-    aqo = _run_stage(
-        "eigen_dpda",
-        observer,
-        lambda: {
-            "version": AQO_VERSION,
-            "qubits": qubits,
-            "operations": operations,
-        },
-    )
-    if params:
-        aqo["parameters"] = {
-            param["name"]: param["default"] for _, param in sorted(params.items(), key=lambda item: item[1]["name"])
-        }
-    if has_expectation:
-        aqo["expectation"] = {"kind": "ExpectationValue"}
-    if has_minimize:
-        aqo["hybrid_plan_marker"] = {"kind": "minimize", "expanded_by": "kernel"}
-    if distributed.enabled:
-        aqo["distributed_execution"] = {
-            "version": "1.0.0",
-            "target": distributed.target or "cluster",
-            "partition_count": distributed.partition_count or 1,
-            "hints": {
-                "version": "1.0.0",
-                "topology_hint": distributed.topology_hint or "data_parallel",
-            },
-        }
-        if distributed.queue_provider:
-            aqo["distributed_execution"]["queue_provider"] = distributed.queue_provider
-
-    aqo_bytes = _run_stage(
-        "canonicalize_aqo",
-        observer,
-        lambda: json.dumps(aqo, sort_keys=True, separators=(",", ":")).encode("utf-8"),
-    )
-    aqo_digest = hashlib.sha256(aqo_bytes).hexdigest()
     request_payload = {
         "options": normalized_options,
         "request_context": asdict(normalized_request_context),
@@ -610,6 +788,26 @@ def compile_eigen_lang(
     request_digest = hashlib.sha256(_canonical_json_bytes(request_payload)).hexdigest()
     options_json = _canonical_json_bytes(normalized_options).decode("utf-8")
     request_context_json = _canonical_json_bytes(asdict(normalized_request_context)).decode("utf-8")
+
+    aqo = _run_stage(
+        "eigen_dpda",
+        observer,
+        lambda: _build_aqo_payload(
+            qubits=qubits,
+            operations=operations,
+            params=params,
+            source_digest=source_digest,
+            source_precedence=source_precedence,
+            source_ref=source_ref,
+            request_digest=request_digest,
+            has_expectation=has_expectation,
+            has_minimize=has_minimize,
+            distributed=distributed,
+        ),
+    )
+
+    aqo_bytes = _run_stage("canonicalize_aqo", observer, lambda: _encode_aqo_payload(aqo))
+    aqo_digest = hashlib.sha256(aqo_bytes).hexdigest()
 
     decision_lineage = {
         "contract_version": "1.0.0",
@@ -702,3 +900,22 @@ def compile_eigen_lang(
     metadata["explainability_json"] = _canonical_json_text(explainability)
 
     return CompilationResult(aqo_json=aqo_bytes, metadata=metadata)
+
+
+@contextmanager
+def stage_observer_logger(logger, request_context: CompileRequestContext) -> Iterator[StageObserver]:
+    def _observer(stage: str, elapsed_seconds: float, outcome: str) -> None:
+        logger.info(
+            "compiler_stage",
+            extra={
+                "stage": stage,
+                "elapsed_ms": round(elapsed_seconds * 1000.0, 3),
+                "outcome": outcome,
+                "request_id": request_context.request_id,
+                "trace_id": request_context.trace_id,
+                "traceparent": request_context.traceparent,
+                "sandbox_profile": request_context.sandbox_profile,
+            },
+        )
+
+    yield _observer
