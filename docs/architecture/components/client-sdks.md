@@ -148,7 +148,8 @@ Implemented now:
 - gRPC transport to `eigen.api.v1`,
 - server-streaming job updates (`StreamJobUpdates`),
 - status/results polling,
-- CLI-based submission flows with Product 1.0 public envelope normalization for file-backed and inline JobSpecs.
+- CLI-based submission flows with Product 1.0 public envelope normalization for file-backed and inline JobSpecs,
+- human-friendly terminal rendering for submit/status/watch/results/explain output, with pretty-printed payloads and aligned metadata blocks.
 
 Not implemented as a released SDK feature:
 
