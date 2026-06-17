@@ -668,7 +668,6 @@ def _build_aqo_payload(
     operations: list[dict],
     params: dict[str, dict[str, object]],
     source_digest: str,
-    source_precedence: str,
     source_ref: str | None,
     request_digest: str,
     has_expectation: bool,
@@ -691,11 +690,8 @@ def _build_aqo_payload(
         "compiler_contract_version": "1.0.0",
         "eigen_lang_version": "1.0",
         "source_sha256": source_digest,
-        "source_precedence": source_precedence,
         "request_sha256": request_digest,
     }
-    if source_ref:
-        metadata["source_ref"] = source_ref
 
     if metadata:
         aqo["metadata"] = metadata
@@ -778,6 +774,20 @@ def compile_eigen_lang(
     )
     distributed = _distributed_compile_config(options)
 
+    aqo_request_payload = {
+        "options": normalized_options,
+        "request_context": asdict(normalized_request_context),
+        "source_sha256": source_digest,
+    }
+    aqo_request_digest = hashlib.sha256(_canonical_json_bytes(aqo_request_payload)).hexdigest()
+
+    semantic_request_payload = {
+        "options": normalized_options,
+        "request_context": asdict(normalized_request_context),
+        "source_sha256": source_digest,
+    }
+    aqo_request_digest = hashlib.sha256(_canonical_json_bytes(semantic_request_payload)).hexdigest()
+
     request_payload = {
         "options": normalized_options,
         "request_context": asdict(normalized_request_context),
@@ -797,9 +807,8 @@ def compile_eigen_lang(
             operations=operations,
             params=params,
             source_digest=source_digest,
-            source_precedence=source_precedence,
-            source_ref=source_ref,
-            request_digest=request_digest,
+            source_ref=None,
+            request_digest=aqo_request_digest,
             has_expectation=has_expectation,
             has_minimize=has_minimize,
             distributed=distributed,
