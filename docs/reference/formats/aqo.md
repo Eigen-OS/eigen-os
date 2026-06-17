@@ -323,3 +323,5 @@ Recommended observability fields:
 | `transport_format` | JSON / transport encoding |
 
 Observability values must remain bounded and must not leak secrets or unbounded identifiers.
+
+Compiler pass traces, rewrite summaries, and lowering diagnostics belong in compiler metadata rather than as new AQO top-level fields.
