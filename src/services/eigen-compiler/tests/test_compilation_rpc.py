@@ -295,9 +295,11 @@ def test_compile_circuit_rejects_backend_target_mismatch(grpc_addr: str) -> None
     bad = _extract_bad_request(e.value)
     fields = {v.field for v in bad.field_violations}
     assert "options.spec.workload.backend_target" in fields
+    descriptions = [v.description for v in bad.field_violations]
     assert any(
-        "distributed cluster backends" in v.description or "unsupported backend target" in v.description
-        for v in bad.field_violations
+        "DistributedJob requires a distributed backend target" in desc
+        or "unsupported backend target" in desc
+        for desc in descriptions
     )
 
 
