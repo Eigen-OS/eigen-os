@@ -33,6 +33,10 @@ def render_metrics_text() -> str:
         return "\n".join(lines) + "\n"
 
 
+def _request_context(request) -> object:
+    return getattr(request, "context", None)
+
+
 class NeuroSymbolicService(_BaseNeuroSymbolicService):
     """Decorator that records compiler boundary suggestion outcomes."""
 
@@ -40,6 +44,7 @@ class NeuroSymbolicService(_BaseNeuroSymbolicService):
         response = super().ScoreCompilationPlan(request, context)
         outcome = _DECISION_TO_OUTCOME.get(int(response.decision), "rejected")
         record_suggestion_outcome(outcome)
+        request_context = _request_context(request)
         _LOG.info(
             "compiler advisor suggestion outcome recorded",
             extra={
@@ -47,6 +52,11 @@ class NeuroSymbolicService(_BaseNeuroSymbolicService):
                 "request_id": getattr(response, "request_id", ""),
                 "tenant_id": getattr(response, "tenant_id", ""),
                 "project_id": getattr(response, "project_id", ""),
+                "subject_id": getattr(request_context, "subject_id", ""),
+                "workload_id": getattr(request_context, "workload_id", ""),
+                "authz_decision_id": getattr(request_context, "authz_decision_id", ""),
+                "trace_id": getattr(request_context, "trace_id", ""),
+                "traceparent": getattr(request_context, "traceparent", ""),
                 "policy_snapshot_version": getattr(response, "policy_snapshot_version", ""),
                 "model_version": getattr(response, "model_version", ""),
                 "decision": int(response.decision),
