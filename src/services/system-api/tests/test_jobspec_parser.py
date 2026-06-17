@@ -138,3 +138,21 @@ def test_missing_workload_context_defaults_to_quantumjob() -> None:
     assert req.workload.kind == WORKLOAD_KIND_VALUES["QuantumJob"]
     assert req.workload.execution_profile == "quantum"
     assert json.loads(req.metadata["jobspec_workload"]) == normalized["spec"]["workload"]
+
+
+def test_distributed_job_workload_is_preserved_opaquely() -> None:
+    case_path = FIXTURES_ROOT / "positive" / "workload_family_distributed" / "job.yaml"
+
+    normalized = normalize_jobspec(case_path)
+    req = parse_jobspec_to_submit_request(case_path)
+
+    assert normalized["spec"]["workload"]["kind"] == "DistributedJob"
+    assert normalized["spec"]["workload"]["topology"] == {
+        "cluster_id": "cluster:auto",
+        "partition_count": 2,
+        "partition_ids": ["partition-0", "partition-1"],
+        "preferred_workers": ["worker-a", "worker-b"],
+    }
+    assert "jobspec_topology" not in req.metadata
+    assert json.loads(req.metadata["jobspec_workload"]) == normalized["spec"]["workload"]
+        
