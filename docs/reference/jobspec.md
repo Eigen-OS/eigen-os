@@ -99,6 +99,8 @@ ReplayJob
 
 `BenchmarkJob` is the reproducible measurement profile. Its canonical runtime contract is fail-closed and requires fixed seed metadata, stable backend/target selection, and isolated benchmark telemetry. The benchmark envelope MUST preserve the exact execution context in lineage metadata and result artifacts so repeated runs can be compared without ambiguity. Missing seed metadata or ambiguous target selection MUST be rejected deterministically.
 
+`PipelineJob` is the explicit multi-stage artifact handoff profile. It declares a directed acyclic handoff contract under `spec.workload.pipeline`, but kernel/QRTX owns DAG execution, ordering, and replay materialization. Each stage MUST declare `stage_id`, `input_refs`, `output_refs`, a canonical `handoff_ref`, `depends_on` edges, and `failure_semantics`; the handoff ref MUST point at one of that stage's outputs. The kernel MUST reject missing outputs, broken handoff references, unknown dependencies, or out-of-order stage boundaries. Failure semantics are stage-local and deterministic: stages may retain durable outputs in QFS, while downstream handoffs are invalidated when a stage fails. Stage-by-stage replay is expressed through `spec.workload.pipeline.replay`, and inspection metadata is preserved in QFS lineage refs so replay can resume deterministically without leaking orchestration semantics into AQO top-level fields.
+
 ---
 
 # 3. Design Principles

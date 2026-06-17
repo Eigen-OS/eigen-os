@@ -694,6 +694,8 @@ flowchart TB
 
 ### A.3 Ingress decision pipeline (status-first)
 
+The ingress layer is forward-only: it validates and normalizes JobSpec envelopes, but kernel/QRTX owns workload DAG execution, stage ordering, and replay semantics for PipelineJob and HybridWorkflow profiles.
+
 ![Ingress decision pipeline](https://i.imgur.com/vNkJe2b.png)
 
 <details>

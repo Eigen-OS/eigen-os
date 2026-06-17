@@ -778,9 +778,66 @@ impl JobRuntimeRecord {
                     "error_code": stage.error_code,
                     "error_summary": stage.error_summary,
                     "error_details_ref": stage.error_details_ref,
+                    "input_refs": stage.pipeline_input_refs(),
+                    "output_refs": stage.pipeline_output_refs(),
+                    "depends_on": stage
+                        .artifact_refs
+                        .get("upstream_output_ref")
+                        .cloned()
+                        .map(|value| vec![value])
+                        .unwrap_or_default(),
+                    "failure_semantics": stage.pipeline_failure_semantics(),
                 })
             })
             .collect();
+
+        let mut pipeline_stage_json: Vec<serde_json::Value> = Vec::with_capacity(self.stage_records.len());
+        let mut previous_output_ref: Option<String> = None;
+        for stage in &self.stage_records {
+            let depends_on = previous_output_ref.clone().into_iter().collect::<Vec<_>>();
+            previous_output_ref = stage
+                .artifact_refs
+                .get("workflow_output_ref")
+                .cloned()
+                .or_else(|| stage.output.get("workflow_output_ref").cloned());
+            pipeline_stage_json.push(serde_json::json!({
+                "stage_id": stage.stage_id,
+                "stage_key": stage.stage_key,
+                "order": stage.order,
+                "state_before": stage.state_before as i32,
+                "state_after": stage.state_after as i32,
+                "status": match stage.status {
+                    StageStatus::Running => "running",
+                    StageStatus::Succeeded => "succeeded",
+                    StageStatus::Failed => "failed",
+                },
+                "input_refs": stage.pipeline_input_refs(),
+                "output_refs": stage.pipeline_output_refs(),
+                "handoff_ref": stage.handoff_ref,
+                "depends_on": depends_on,
+                "artifact_refs": stage.artifact_refs,
+                "lineage_refs": stage.lineage_refs,
+                "replay_token": stage.replay_token,
+                "failure_semantics": stage.pipeline_failure_semantics(),
+            }));
+        }
+
+        let pipeline_json = serde_json::json!({
+            "kind": "PipelineJob",
+            "job_id": self.job_id,
+            "workflow_id": self.workflow_id,
+            "root_lineage_ref": self.workflow_root_lineage_ref,
+            "replay_cursor": self
+                .stage_records
+                .iter()
+                .rev()
+                .find(|stage| matches!(stage.status, StageStatus::Succeeded))
+                .map(|stage| stage.stage_id.clone())
+                .unwrap_or_default(),
+            "stages": pipeline_stage_json,
+            "final_completion_ref": self.workflow_completion_ref,
+            "final_failure_ref": self.workflow_failure_ref,
+        });
 
         let HybridWorkflowGraph {
             workflow_id,
@@ -849,6 +906,7 @@ impl JobRuntimeRecord {
             "state": self.state as i32,
             "current_stage": self.current_stage.map(|s| s.key()),
             "stage_records": stage_json,
+            "pipeline": pipeline_json,
             "workflow": workflow_json,
             "counts": self.counts,
             "metadata": self.metadata,
@@ -958,6 +1016,59 @@ impl JobRuntimeRecord {
             final_completion_ref: self.workflow_completion_ref.clone(),
             final_failure_ref: self.workflow_failure_ref.clone(),
         }
+    }
+}
+
+impl StageRecord {
+    fn pipeline_input_refs(&self) -> Vec<String> {
+        let mut refs = Vec::new();
+        for key in [
+            "workflow_input_ref",
+            "upstream_output_ref",
+            "workflow_lineage_ref",
+            "workflow_root_lineage_ref",
+        ] {
+            if let Some(value) = self.artifact_refs.get(key) {
+                if !value.is_empty() && !refs.contains(value) {
+                    refs.push(value.clone());
+                }
+            }
+        }
+        refs
+    }
+
+    fn pipeline_output_refs(&self) -> Vec<String> {
+        let mut refs = Vec::new();
+        for key in [
+            "workflow_output_ref",
+            "workflow_handoff_ref",
+            "workflow_failure_ref",
+            "workflow_completion_ref",
+        ] {
+            if let Some(value) = self.artifact_refs.get(key).or_else(|| self.output.get(key)) {
+                if !value.is_empty() && !refs.contains(value) {
+                    refs.push(value.clone());
+                }
+            }
+        }
+        refs
+    }
+
+    fn pipeline_failure_semantics(&self) -> serde_json::Value {
+        serde_json::json!({
+            "retains_outputs": true,
+            "invalidates_downstream_handoffs": matches!(self.status, StageStatus::Failed),
+            "resume_boundary": if matches!(self.status, StageStatus::Failed) {
+                "failed-stage"
+            } else {
+                "last-successful-stage"
+            },
+            "terminal_state": match self.status {
+                StageStatus::Running => "running",
+                StageStatus::Succeeded => "succeeded",
+                StageStatus::Failed => "failed",
+            },
+        })
     }
 }
 
