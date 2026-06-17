@@ -38,6 +38,18 @@ def _extract_bad_request(err: grpc.RpcError) -> error_details_pb2.BadRequest:
     return bad
 
 
+def _extract_error_info(err: grpc.RpcError) -> error_details_pb2.ErrorInfo:
+    st = rpc_status.from_call(err)
+    assert st is not None
+    info = error_details_pb2.ErrorInfo()
+    assert len(st.details) >= 2
+    for detail in st.details:
+        if detail.Is(error_details_pb2.ErrorInfo.DESCRIPTOR):
+            assert detail.Unpack(info)
+            return info
+    raise AssertionError("expected ErrorInfo in grpc status details")
+
+
 def test_compile_circuit_happy_path(grpc_addr: str) -> None:
     channel = grpc.insecure_channel(grpc_addr)
     stub = comp_pb_grpc.CompilationServiceStub(channel)
@@ -60,6 +72,17 @@ def test_compile_circuit_happy_path(grpc_addr: str) -> None:
     assert len(resp.circuit.data) > 0
     assert resp.metadata["distributed.execution_metadata_version"] == "1.0.0"
     assert resp.metadata["distributed.enabled"] == "false"
+
+
+def test_compile_circuit_exposes_diagnostics_payload(grpc_addr: str) -> None:
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = comp_pb_grpc.CompilationServiceStub(channel)
+    resp = stub.CompileCircuit(comp_pb.CompileCircuitRequest(language="eigen-lang", source=b"from eigen_lang import hybrid_program\n@hybrid_program(target=\"sim\")\ndef main():\n    ry(0, theta=1.0)\n"))
+    diagnostics = json.loads(resp.metadata["compiler_diagnostics_json"])
+    assert diagnostics["contract_version"] == "1.0.0"
+    assert diagnostics["stage_order"] == ["parse", "validate_ast", "annotate", "lower_to_ir", "eigen_dpda", "canonicalize_aqo", "emit"]
+    assert diagnostics["backend_contract"]["backend_target_class"] == "implicit"
+    assert diagnostics["explainability"]["decision"] == "compiler_to_optimizer_handoff"
 
 
 def test_compile_circuit_emits_distributed_metadata_hints(grpc_addr: str) -> None:
@@ -293,14 +316,16 @@ def test_compile_circuit_rejects_backend_target_mismatch(grpc_addr: str) -> None
 
     assert e.value.code() == grpc.StatusCode.INVALID_ARGUMENT
     bad = _extract_bad_request(e.value)
+    info = _extract_error_info(e.value)
     fields = {v.field for v in bad.field_violations}
     assert "options.spec.workload.backend_target" in fields
     descriptions = [v.description for v in bad.field_violations]
-    assert any(
-        "DistributedJob requires a distributed backend target" in desc
-        or "unsupported backend target" in desc
-        for desc in descriptions
-    )
+    assert info.metadata["stage"] == "eigen_dpda"
+    assert info.metadata["rule"] == "compiler.profile.distributed.target_mismatch"
+    diagnostics = json.loads(info.metadata["diagnostics_json"])
+    assert diagnostics[0]["stage"] == "eigen_dpda"
+    assert diagnostics[0]["rule"] == "compiler.profile.distributed.target_mismatch"
+    assert any("distributed backend target" in v.description or "unsupported backend target" in v.description for v in bad.field_violations)
 
 
 @pytest.mark.parametrize(
@@ -357,8 +382,12 @@ def test_compile_circuit_rejects_profile_specific_constraints(
 
     assert e.value.code() == grpc.StatusCode.INVALID_ARGUMENT
     bad = _extract_bad_request(e.value)
+    info = _extract_error_info(e.value)
     assert expected_fields <= {v.field for v in bad.field_violations}
     assert any(expected_snippet in v.description for v in bad.field_violations)
+    assert info.metadata["stage"] == "eigen_dpda" or info.metadata["stage"] == "request_validation"
+    diagnostics = json.loads(info.metadata["diagnostics_json"])
+    assert diagnostics
 
 
 def _nsc_request(

@@ -201,6 +201,16 @@ Required details:
 
 - `google.rpc.BadRequest`
 
+Compiler validation failures SHOULD also include:
+
+- `google.rpc.ErrorInfo` with `reason="EIGEN_COMPILER_VALIDATION_FAILED"`,
+- `metadata.stage`,
+- `metadata.rule`,
+- `metadata.pass_name`,
+- `metadata.diagnostics_json`.
+
+The compiler service uses these fields to provide stage-level attribution for parsing, validation, lowering, and emission decisions while keeping the transport status itself on `INVALID_ARGUMENT`.
+
 ---
 
 ### 2.2 FAILED_PRECONDITION

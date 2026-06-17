@@ -17,7 +17,7 @@ from typing import Callable
 import grpc
 
 from .compiler import CompilerValidationError, compile_eigen_lang
-from .errors import abort_invalid_argument
+from .errors import abort_invalid_argument, annotate_violations
 from .validation import validate_compile_circuit, validate_compile_job
 
 
@@ -223,6 +223,13 @@ def _validation_reason(violations) -> str:
     return "invalid_argument"
 
 
+def _diagnostic_stage(violations) -> str:
+    for violation in violations:
+        if getattr(violation, "stage", ""):
+            return str(violation.stage)
+    return "request_validation"
+
+
 def _render_counter_family(name: str, counter: Counter[tuple[tuple[str, str], ...]]) -> list[str]:
     lines = [f"# TYPE {name} counter"]
     for labels, value in sorted(counter.items(), key=lambda item: item[0]):
@@ -376,7 +383,7 @@ class CompilationService:
             context,
         )
 
-        violations = validate_compile_circuit(request)
+        violations = annotate_violations(violations, stage="request_validation", rule="compiler.request.validation", pass_name="request_validation")
 
         if violations:
             _record_rpc("CompileCircuit", "failure")
@@ -436,7 +443,7 @@ class CompilationService:
             _record_rpc("CompileCircuit", "failure")
 
             _record_validation_failure(
-                "compile",
+                _diagnostic_stage(exc.violations),
                 _validation_reason(exc.violations),
             )
 
@@ -457,6 +464,7 @@ class CompilationService:
         )
 
         violations = validate_compile_job(request)
+        violations = annotate_violations(violations, stage="request_validation", rule="compiler.request.validation", pass_name="request_validation")
 
         if violations:
             _record_rpc("CompileJob", "failure")
@@ -488,7 +496,7 @@ class CompilationService:
             _record_rpc("CompileJob", "failure")
 
             _record_validation_failure(
-                "compile",
+                _diagnostic_stage(exc.violations),
                 _validation_reason(exc.violations),
             )
 
