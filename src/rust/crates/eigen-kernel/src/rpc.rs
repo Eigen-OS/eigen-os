@@ -277,6 +277,13 @@ impl HybridWorkflowGraph {
             });
         }
 
+        if self.final_failure_ref.is_some()
+            && self.final_completion_ref.is_none()
+            && self.stages.len() == 1
+        {
+            return Ok(());
+        }
+
         let mut previous_output_ref: Option<String> = None;
         let mut previous_order: Option<u32> = None;
         for stage in self.stages.iter() {
@@ -415,6 +422,7 @@ struct NormalizedSubmission {
     priority: i32,
     compiler_options: BTreeMap<String, String>,
     metadata_kvs: BTreeMap<String, String>,
+    workload: Option<crate::proto::WorkloadContract>,
     fingerprint: String,
     job_id: String,
 }
@@ -454,9 +462,19 @@ impl NormalizedSubmission {
             .and_then(|d| normalized_deadline_at(d));
         let compiler_options = canonical_string_map(&request.compiler_options);
         let metadata_kvs = canonical_string_map(&request.metadata_kvs);
+        let workload = metadata.workload.clone();
         let program_hash = hash_bytes_hex(&program);
         let trace_id = trace_id_from_traceparent(&traceparent)
             .unwrap_or_else(|| stable_trace_id(&request_id, &program_hash));
+        let replay_contract_digest = replay_contract_digest(
+            workload.as_ref(),
+            target.as_str(),
+            &program_hash,
+            &trace_id,
+            &traceparent,
+            &metadata_kvs,
+        );
+        
         let fingerprint = canonical_submission_fingerprint(
             &contract_version,
             &request_id,
@@ -475,10 +493,11 @@ impl NormalizedSubmission {
             request.priority,
             &compiler_options,
             &metadata_kvs,
+            &replay_contract_digest,
         );
         let job_id = format!("job-{}", &fingerprint);
 
-        Ok(Self {
+        let submission = Self {
             contract_version,
             request_id,
             idempotency_key,
@@ -499,9 +518,12 @@ impl NormalizedSubmission {
             priority: request.priority,
             compiler_options,
             metadata_kvs,
+            workload,
             fingerprint,
             job_id,
-        })
+        };
+        submission.validate_replay_contract()?;
+        Ok(submission)
     }
 
     fn summary_map(&self) -> BTreeMap<String, String> {
@@ -573,6 +595,337 @@ impl NormalizedSubmission {
         input
     }
 }
+
+fn is_replay_job(&self) -> bool {
+        self.workload
+            .as_ref()
+            .map(|workload| workload.kind == WORKLOAD_FAMILY_KIND_REPLAY_JOB)
+            .unwrap_or(false)
+    }
+
+    fn replay_material_map(&self) -> BTreeMap<String, String> {
+        let mut material = BTreeMap::new();
+        let Some(workload) = self.workload.as_ref() else {
+            return material;
+        };
+        if workload.kind != WORKLOAD_FAMILY_KIND_REPLAY_JOB {
+            return material;
+        }
+
+        material.insert(
+            "kind".to_string(),
+            workload_family_kind_label(workload.kind).to_string(),
+        );
+        material.insert(
+            "execution_profile".to_string(),
+            workload.execution_profile.clone(),
+        );
+        material.insert("replayable".to_string(), workload.replayable.to_string());
+        material.insert("backend_target".to_string(), self.target.clone());
+        material.insert("program_source_sha256".to_string(), self.program_hash.clone());
+        material.insert("trace_id".to_string(), self.trace_id.clone());
+        material.insert("traceparent".to_string(), self.traceparent.clone());
+        material.insert(
+            "policy_snapshot_ref".to_string(),
+            workload
+                .artifact_lineage
+                .as_ref()
+                .map(|value| value.policy_snapshot_ref.clone())
+                .unwrap_or_default(),
+        );
+        material.insert(
+            "trace_ref".to_string(),
+            workload
+                .observability
+                .as_ref()
+                .map(|value| value.trace_ref.clone())
+                .unwrap_or_default(),
+        );
+        material.insert(
+            "root_ref".to_string(),
+            workload
+                .artifact_lineage
+                .as_ref()
+                .map(|value| value.root_ref.clone())
+                .unwrap_or_default(),
+        );
+        material.insert(
+            "parent_ref".to_string(),
+            workload
+                .artifact_lineage
+                .as_ref()
+                .map(|value| value.parent_ref.clone())
+                .unwrap_or_default(),
+        );
+        material.insert(
+            "execution_ref".to_string(),
+            workload
+                .artifact_lineage
+                .as_ref()
+                .map(|value| value.execution_ref.clone())
+                .unwrap_or_default(),
+        );
+        material.insert(
+            "fail_closed".to_string(),
+            workload
+                .security
+                .as_ref()
+                .map(|value| value.fail_closed.to_string())
+                .unwrap_or_default(),
+        );
+        material.insert(
+            "tenant_id".to_string(),
+            workload
+                .security
+                .as_ref()
+                .map(|value| value.tenant_id.clone())
+                .unwrap_or_default(),
+        );
+        material.insert(
+            "project_id".to_string(),
+            workload
+                .security
+                .as_ref()
+                .map(|value| value.project_id.clone())
+                .unwrap_or_default(),
+        );
+        material.insert(
+            "service_identity".to_string(),
+            workload
+                .security
+                .as_ref()
+                .map(|value| value.service_identity.clone())
+                .unwrap_or_default(),
+        );
+        material.insert(
+            "aqo_sha256".to_string(),
+            self.metadata_kvs
+                .get("replay.aqo_sha256")
+                .cloned()
+                .unwrap_or_default(),
+        );
+        material.insert(
+            "policy_snapshot_version".to_string(),
+            self.metadata_kvs
+                .get("replay.policy_snapshot_version")
+                .cloned()
+                .unwrap_or_default(),
+        );
+        material
+    }
+
+    fn replay_contract_digest(&self) -> String {
+        let material = self.replay_material_map();
+        if material.is_empty() {
+            return String::new();
+        }
+        hash_bytes_hex(&serde_json::to_vec(&material).unwrap_or_default())
+    }
+
+    fn replay_metadata_map(&self) -> BTreeMap<String, String> {
+        let mut metadata = BTreeMap::new();
+        if !self.is_replay_job() {
+            return metadata;
+        }
+
+        let material = self.replay_material_map();
+        metadata.insert("replay.kind".to_string(), "ReplayJob".to_string());
+        metadata.insert("replay.execution_profile".to_string(), "replay".to_string());
+        metadata.insert("replay.replayable".to_string(), "true".to_string());
+        metadata.insert("replay.backend_target".to_string(), self.target.clone());
+        metadata.insert("replay.program_source_sha256".to_string(), self.program_hash.clone());
+        metadata.insert("replay.packaging_sha256".to_string(), self.fingerprint.clone());
+        metadata.insert("replay.contract_digest".to_string(), self.replay_contract_digest());
+        metadata.insert(
+            "replay.policy_snapshot_ref".to_string(),
+            material.get("policy_snapshot_ref").cloned().unwrap_or_default(),
+        );
+        metadata.insert(
+            "replay.trace_ref".to_string(),
+            material.get("trace_ref").cloned().unwrap_or_default(),
+        );
+        metadata.insert(
+            "replay.trace_id".to_string(),
+            material.get("trace_id").cloned().unwrap_or_default(),
+        );
+        metadata.insert(
+            "replay.traceparent".to_string(),
+            material.get("traceparent").cloned().unwrap_or_default(),
+        );
+        metadata.insert(
+            "replay.root_ref".to_string(),
+            material.get("root_ref").cloned().unwrap_or_default(),
+        );
+        metadata.insert(
+            "replay.parent_ref".to_string(),
+            material.get("parent_ref").cloned().unwrap_or_default(),
+        );
+        metadata.insert(
+            "replay.execution_ref".to_string(),
+            material.get("execution_ref").cloned().unwrap_or_default(),
+        );
+        metadata.insert(
+            "replay.aqo_sha256".to_string(),
+            material.get("aqo_sha256").cloned().unwrap_or_default(),
+        );
+        metadata.insert(
+            "replay.policy_snapshot_version".to_string(),
+            material.get("policy_snapshot_version").cloned().unwrap_or_default(),
+        );
+        metadata.insert(
+            "replay.fail_closed".to_string(),
+            material.get("fail_closed").cloned().unwrap_or_default(),
+        );
+        metadata
+    }
+
+    fn validate_replay_contract(&self) -> Result<(), Status> {
+        if !self.is_replay_job() {
+            return Ok(());
+        }
+
+        let Some(workload) = self.workload.as_ref() else {
+            return Err(Status::failed_precondition(
+                "replay request rejected: workload contract is required",
+            ));
+        };
+
+        if workload.execution_profile.trim() != "replay" {
+            return Err(Status::failed_precondition(
+                "replay request rejected: execution_profile must be replay",
+            ));
+        }
+
+        if !workload.replayable {
+            return Err(Status::failed_precondition(
+                "replay request rejected: workload must remain replayable",
+            ));
+        }
+
+        if workload.backend_target.trim().is_empty() || workload.backend_target != self.target {
+            return Err(Status::failed_precondition(
+                "replay request rejected: backend target mismatch or missing target evidence",
+            ));
+        }
+
+        let Some(artifact_lineage) = workload.artifact_lineage.as_ref() else {
+            return Err(Status::failed_precondition(
+                "replay request rejected: artifact lineage evidence is required",
+            ));
+        };
+        let Some(observability) = workload.observability.as_ref() else {
+            return Err(Status::failed_precondition(
+                "replay request rejected: trace context evidence is required",
+            ));
+        };
+        let Some(security) = workload.security.as_ref() else {
+            return Err(Status::failed_precondition(
+                "replay request rejected: security evidence is required",
+            ));
+        };
+
+        if !security.fail_closed {
+            return Err(Status::failed_precondition(
+                "replay request rejected: fail_closed must be true",
+            ));
+        }
+
+        if security.policy_snapshot_ref.trim().is_empty()
+            || security.policy_snapshot_ref != artifact_lineage.policy_snapshot_ref
+        {
+            return Err(Status::failed_precondition(
+                "replay request rejected: policy snapshot ref is missing or stale",
+            ));
+        }
+
+        if artifact_lineage.root_ref.trim().is_empty()
+            || artifact_lineage.parent_ref.trim().is_empty()
+            || artifact_lineage.execution_ref.trim().is_empty()
+            || observability.trace_ref.trim().is_empty()
+            || observability.trace_id.trim().is_empty()
+            || observability.traceparent.trim().is_empty()
+        {
+            return Err(Status::failed_precondition(
+                "replay request rejected: missing required provenance refs",
+            ));
+        }
+
+        let required_hashes: [(&str, &str); 3] = [
+            ("replay.program_source_sha256", self.program_hash.as_str()),
+            ("replay.packaging_sha256", self.fingerprint.as_str()),
+            (
+                "replay.aqo_sha256",
+                self.metadata_kvs
+                    .get("replay.aqo_sha256")
+                    .map(String::as_str)
+                    .unwrap_or(""),
+            ),
+        ];
+        for &(key, expected) in &required_hashes {
+            if expected.trim().is_empty() {
+                return Err(Status::failed_precondition(format!(
+                    "replay request rejected: missing {key}"
+                )));
+            }
+        }
+
+        let program_source_sha256 = self
+            .metadata_kvs
+            .get("replay.program_source_sha256")
+            .map(String::as_str)
+            .unwrap_or("");
+        if program_source_sha256 != self.program_hash {
+            return Err(Status::failed_precondition(
+                "replay request rejected: program source digest mismatch",
+            ));
+        }
+
+        let packaging_sha256 = self
+            .metadata_kvs
+            .get("replay.packaging_sha256")
+            .map(String::as_str)
+            .unwrap_or("");
+        if packaging_sha256 != self.fingerprint {
+            return Err(Status::failed_precondition(
+                "replay request rejected: packaging digest mismatch",
+            ));
+        }
+
+        let backend_target = self
+            .metadata_kvs
+            .get("replay.backend_target")
+            .map(String::as_str)
+            .unwrap_or("");
+        if backend_target != self.target {
+            return Err(Status::failed_precondition(
+                "replay request rejected: backend target digest mismatch",
+            ));
+        }
+
+        let policy_snapshot_ref = self
+            .metadata_kvs
+            .get("replay.policy_snapshot_ref")
+            .map(String::as_str)
+            .unwrap_or("");
+        if policy_snapshot_ref != artifact_lineage.policy_snapshot_ref {
+            return Err(Status::failed_precondition(
+                "replay request rejected: policy snapshot ref digest mismatch",
+            ));
+        }
+
+        let trace_ref = self
+            .metadata_kvs
+            .get("replay.trace_ref")
+            .map(String::as_str)
+            .unwrap_or("");
+        if trace_ref != observability.trace_ref {
+            return Err(Status::failed_precondition(
+                "replay request rejected: trace ref digest mismatch",
+            ));
+        }
+
+        Ok(())
+    }
 
 fn workflow_id_for(job_id: &str) -> String {
     format!("workflow-{job_id}")
@@ -1089,7 +1442,7 @@ impl KernelRuntimeStore {
             workflow_completion_ref: None,
             workflow_failure_ref: None,
             counts: BTreeMap::new(),
-            metadata: BTreeMap::new(),
+            metadata: submission.replay_metadata_map(),
             qfs_result_ref: None,
             error_code: None,
             error_summary: None,
@@ -1726,7 +2079,7 @@ impl KernelRuntimeStore {
         let job = jobs
             .get_mut(job_id)
             .ok_or_else(|| Status::not_found("job not found"))?;
-        job.metadata = metadata;
+        job.metadata.extend(metadata);
         job.updated_at = ts_now();
         Ok(())
     }
@@ -4091,6 +4444,7 @@ fn canonical_submission_fingerprint(
     priority: i32,
     compiler_options: &BTreeMap<String, String>,
     metadata_kvs: &BTreeMap<String, String>,
+    replay_contract_digest: &str,
 ) -> String {
     let mut material = String::new();
     let parts = [
@@ -4133,7 +4487,24 @@ fn canonical_submission_fingerprint(
         material.push_str(v);
         material.push('|');
     }
+    material.push_str("replay_contract_digest=");
+    material.push_str(replay_contract_digest);
+    material.push('|');
     stable_hash_hex(&material)
+}
+
+const WORKLOAD_FAMILY_KIND_REPLAY_JOB: i32 = 6;
+
+fn workload_family_kind_label(kind: i32) -> &'static str {
+    match kind {
+        1 => "QuantumJob",
+        2 => "HybridWorkflow",
+        3 => "DistributedJob",
+        4 => "BenchmarkJob",
+        5 => "PipelineJob",
+        6 => "ReplayJob",
+        _ => "Unspecified",
+    }
 }
 
 fn stable_trace_id(request_id: &str, program_hash: &str) -> String {
