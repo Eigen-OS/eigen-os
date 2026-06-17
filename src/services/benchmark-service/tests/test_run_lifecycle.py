@@ -12,7 +12,10 @@ emitted: list[dict[str, Any]] = []
 
 def test_run_state_machine_allows_happy_path_and_blocks_reverse_transition() -> None:
     service = BenchmarkRunService()
-    run = service.start_run(idempotency_key="job-1", config={"dataset": "d1", "seed": 7})
+    run = service.start_run(
+        idempotency_key="job-1",
+        config={"dataset": "d1", "dataset_version": "2026.04.27", "backend": "simulator", "seed": 7},
+    )
 
     service.transition(run_id=run.run_id, new_state=RunState.PREPARING)
     service.transition(run_id=run.run_id, new_state=RunState.RUNNING)
@@ -31,8 +34,14 @@ def test_run_state_machine_allows_happy_path_and_blocks_reverse_transition() -> 
 
 def test_start_run_is_idempotent_for_duplicate_request_key() -> None:
     service = BenchmarkRunService()
-    first = service.start_run(idempotency_key="dup-key", config={"dataset": "same", "seed": 11})
-    second = service.start_run(idempotency_key="dup-key", config={"dataset": "same", "seed": 11})
+    first = service.start_run(
+        idempotency_key="dup-key",
+        config={"dataset": "same", "dataset_version": "2026.04.27", "backend": "simulator", "seed": 11},
+    )
+    second = service.start_run(
+        idempotency_key="dup-key",
+        config={"dataset": "same", "dataset_version": "2026.04.27", "backend": "simulator", "seed": 11},
+    )
 
     assert first.run_id == second.run_id
     assert first.snapshot.request_hash == second.snapshot.request_hash
@@ -41,7 +50,10 @@ def test_start_run_is_idempotent_for_duplicate_request_key() -> None:
 
 def test_retry_is_idempotent_and_requires_terminal_source() -> None:
     service = BenchmarkRunService()
-    run = service.start_run(idempotency_key="retryable", config={"dataset": "d2"})
+    run = service.start_run(
+        idempotency_key="retryable",
+        config={"dataset": "d2", "dataset_version": "2026.04.27", "backend": "simulator", "seed": 17},
+    )
 
     try:
         service.retry_run(run_id=run.run_id, retry_key="retry-1")
@@ -62,11 +74,20 @@ def test_retry_is_idempotent_and_requires_terminal_source() -> None:
 
 def test_snapshot_is_immutable_and_deterministic() -> None:
     service = BenchmarkRunService()
-    run_a = service.start_run(idempotency_key="snapshot-a", config={"b": 2, "a": 1})
-    run_b = service.start_run(idempotency_key="snapshot-b", config={"a": 1, "b": 2})
+    run_a = service.start_run(
+        idempotency_key="snapshot-a",
+        config={"dataset": "bench-a", "dataset_version": "2026.04.27", "backend": "simulator", "seed": 23},
+    )
+    run_b = service.start_run(
+        idempotency_key="snapshot-b",
+        config={"dataset": "bench-a", "dataset_version": "2026.04.27", "backend": "simulator", "seed": 23},
+    )
 
-    assert run_a.snapshot.payload == '{"a":1,"b":2}'
+    assert run_a.snapshot.payload == '{"backend":"simulator","dataset":"bench-a","dataset_version":"2026.04.27","seed":23,"target":"simulator"}'
     assert run_a.snapshot.request_hash == run_b.snapshot.request_hash
+    assert run_a.snapshot.measurement_digest == run_b.snapshot.measurement_digest
+    assert run_a.snapshot.execution_context == run_b.snapshot.execution_context
+    assert run_a.snapshot.artifacts["metrics_artifact_digest"] == run_b.snapshot.artifacts["metrics_artifact_digest"]
 
     try:
         run_a.snapshot.payload = "mutated"
@@ -79,7 +100,10 @@ def test_snapshot_is_immutable_and_deterministic() -> None:
 def test_run_lifecycle_emits_kb_replay_payloads() -> None:
     emitted: list[dict[str, Any]] = []
     service = BenchmarkRunService(kb_sink=emitted.append)
-    run = service.start_run(idempotency_key="kb-key", config={"dataset": "d3", "seed": 19})
+    run = service.start_run(
+        idempotency_key="kb-key",
+        config={"dataset": "d3", "dataset_version": "2026.04.27", "backend": "simulator", "seed": 19},
+    )
     service.transition(run_id=run.run_id, new_state=RunState.PREPARING)
     service.transition(run_id=run.run_id, new_state=RunState.FAILED)
     retry = service.retry_run(run_id=run.run_id, retry_key="kb-retry")
@@ -92,4 +116,6 @@ def test_run_lifecycle_emits_kb_replay_payloads() -> None:
     assert emitted[3]["attributes"]["kind"] == "retry"
     assert emitted[3]["parent_run_id"] == run.run_id
     assert emitted[3]["record_id"] == f"benchmark:{retry.run_id}"
+    assert emitted[3]["trace_scope"] == "benchmark"
+    assert emitted[3]["artifacts"]["metrics_artifact_digest"] == run.snapshot.measurement_digest
     

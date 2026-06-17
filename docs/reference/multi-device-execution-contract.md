@@ -486,6 +486,8 @@ Implementations MAY represent a single-device or placeholder execution path as a
 single-shard split plan, but that path MUST still emit the same versioned split
 manifest, shard lineage, and merge validation metadata as multi-shard runs.
 
+JobSpec workloads MAY provide bounded distributed hints under `spec.workload.topology` for `DistributedJob` profiles only. These hints are execution metadata, not AQO semantics, and must be preserved in replay-safe lineage/dispatch records without changing top-level AQO fields.
+
 ## 16.2 Replay-safe manifest rules
 
 - `created_at_ms` MUST be provided by the caller that creates the plan and MUST be treated as part of the replayed manifest identity.

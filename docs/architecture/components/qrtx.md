@@ -55,8 +55,9 @@ eigen_kernel_contract_info{version="1.0.0"} 1
 
 QRTX is the authoritative coordinator for a job’s runtime lifecycle. It:
 
-- validates/normalizes internal execution requests (after System API validation),
+- validates/normalizes internal execution requests (after System API validation), including distributed topology metadata carried through `jobspec_workload`,
 - orchestrates the Product 1.0 DAG and all downstream handoff points,
+- executes PipelineJob artifact-handoff DAGs with deterministic stage replay and stage-local failure semantics,
 - materializes split-plan manifests for multi-device execution using caller-supplied replay metadata,
 - validates partial shard outcomes and merge decisions using canonical Resource Manager contracts,
 - enforces lifecycle transitions,
@@ -88,6 +89,7 @@ It integrates with:
 - `resource-manager` (internal allocation and reservation authority)
 - future: `hwe`, `gnn-optimizer`, `knowledge-base`, `neuro-symbolic-core`
 - multi-device merge coordination and replay-safe lineage refs are persisted to QFS using the same deterministic parent/shard identity model as the split-plan manifest
+- PipelineJob stage DAG snapshots, replay cursors, and handoff refs are likewise persisted to QFS so stage-by-stage replay remains kernel-authoritative
 
 Canonical runtime pipeline:
 

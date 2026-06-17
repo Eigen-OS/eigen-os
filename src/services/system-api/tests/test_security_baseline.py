@@ -18,6 +18,7 @@ from grpc_status import rpc_status
 from system_api.grpc_impl import JobService
 from system_api.grpc_server import serve
 from system_api.observability import start_metrics_server
+from system_api.observability import trace_id_from_traceparent
 from system_api.proto_gen import ensure_generated
 from system_api.security import security_context
 from system_api.security import validate_recommendation_gateway
@@ -428,6 +429,119 @@ def test_submit_job_stamps_normalized_security_context_metadata(monkeypatch: pyt
     assert metadata["security_subject"] == "ingress-user"
     assert sec.decision_authority == "policy_engine"
     assert sec.model_output_mode == "recommendation_only"
+
+
+@pytest.mark.parametrize("workload_kind", [
+    "QuantumJob",
+    "HybridWorkflow",
+    "DistributedJob",
+    "BenchmarkJob",
+    "PipelineJob",
+    "ReplayJob",
+])
+def test_submit_job_trace_and_audit_snapshot_are_identical_across_workload_kinds(
+    monkeypatch: pytest.MonkeyPatch,
+    workload_kind: str,
+) -> None:
+    monkeypatch.setenv("SYSTEM_API_AUTH_MODE", "static_token")
+    monkeypatch.setenv("SYSTEM_API_AUTH_TOKEN", "context-token")
+    monkeypatch.setenv("SYSTEM_API_AUTH_SUBJECT", "ingress-user")
+    monkeypatch.setenv("SYSTEM_API_AUTH_ROLES", "user,readonly")
+    monkeypatch.setenv("SYSTEM_API_AUTH_TENANT", "tenant-a")
+    monkeypatch.setenv("SYSTEM_API_SERVICE_IDENTITY", "system-api")
+    monkeypatch.setenv("SYSTEM_API_SERVICE_ROLE", "public-ingress")
+    monkeypatch.setenv("SYSTEM_API_SANDBOX_PROFILE", "restricted")
+
+    traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+    trace_id = trace_id_from_traceparent(traceparent)
+    workload = {
+        "kind": workload_kind,
+        "execution_profile": workload_kind.lower().replace("workflow", "").replace("job", ""),
+        "replayable": workload_kind != "QuantumJob",
+        "artifact_lineage": {
+            "root_ref": "qfs://root",
+            "parent_ref": "qfs://parent",
+            "policy_snapshot_ref": "policy://snapshot-v1",
+            "execution_ref": "qfs://exec",
+        },
+        "observability": {
+            "traceparent": traceparent,
+            "trace_id": trace_id,
+            "trace_ref": "trace://ref",
+            "emit_metrics": True,
+        },
+        "security": {
+            "tenant_id": "tenant-a",
+            "project_id": "project-b",
+            "service_identity": "system-api",
+            "policy_snapshot_ref": "policy://snapshot-v1",
+            "fail_closed": workload_kind == "ReplayJob",
+        },
+        "backend_target": "sim:local",
+    }
+
+    request = job_pb.SubmitJobRequest(
+        name=f"{workload_kind.lower()}-security-audit",
+        target="sim:local",
+        metadata={"jobspec_workload": json.dumps(workload, sort_keys=True)},
+        envelope=types_pb.ApiRequestEnvelope(
+            contract_version="1.0.0",
+            request_id="req-security-audit",
+            traceparent=traceparent,
+        ),
+        eigen_lang=types_pb.EigenLangSource(source=b"def main():\n    return 1", entrypoint="main"),
+    )
+
+    class _Context:
+        def invocation_metadata(self):
+            return (
+                ("authorization", "Bearer context-token"),
+                ("x-eigen-service", "system-api"),
+                ("x-eigen-service-role", "public-ingress"),
+                ("x-eigen-sandbox-profile", "restricted"),
+            )
+
+        def abort(self, code, details):
+            raise RuntimeError(f"{code}: {details}")
+
+    service = JobService(job_pb=job_pb, types_pb=types_pb)
+    sec = security_context(_Context(), method_name="JobService.SubmitJob")
+    created_at = Timestamp()
+    created_at.FromDatetime(datetime.now(timezone.utc))
+    record = service._build_job_record(
+        request,
+        job_id="job-security-audit",
+        created_at=created_at,
+        trace_id=trace_id,
+        request_id="req-security-audit",
+        traceparent=traceparent,
+        security=sec,
+        owner_subject=sec.subject,
+        owner_tenant=sec.tenant or "tenant-a",
+        owner_project="project-b",
+    )
+
+    snapshot = json.loads(record.results_metadata["security_context"])
+    assert snapshot == {
+        "auth_mode": "static_token",
+        "policy_version": "1.0.0",
+        "request_id": "req-security-audit",
+        "roles": ["readonly", "user"],
+        "sandbox_profile": "restricted",
+        "service_identity": "system-api",
+        "service_role": "public-ingress",
+        "subject": "ingress-user",
+        "tenant": "tenant-a",
+        "trace_id": trace_id,
+        "traceparent": traceparent,
+    }
+    assert record.results_metadata["traceparent"] == traceparent
+    assert record.results_metadata["trace_id"] == trace_id
+    assert record.results_metadata["trace_ref"] == f"trace://{trace_id}"
+    assert record.results_metadata["security_policy_version"] == "1.0.0"
+    assert record.results_metadata["security_service_identity"] == "system-api"
+    assert record.results_metadata["security_service_role"] == "public-ingress"
+    assert record.results_metadata["security_subject"] == "ingress-user"
 
 
 def test_security_conformance_suite_blocks_mandatory_security_gates(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:

@@ -10,6 +10,9 @@ from typing import Any
 
 RUN_CONTRACT_VERSION = "1.0.0"
 SNAPSHOT_VERSION = "1.0.0"
+BENCHMARK_PROFILE_KIND = "BenchmarkJob"
+BENCHMARK_TELEMETRY_SCOPE = "benchmark"
+BENCHMARK_ARTIFACT_PREFIX = "qfs://benchmarks"
 
 
 class RunState(str, Enum):
@@ -41,8 +44,11 @@ class BenchmarkRunSnapshot:
     snapshot_version: str
     run_id: str
     request_hash: str
+    measurement_digest: str
     created_at: str
     payload: str
+    execution_context: dict[str, Any]
+    artifacts: dict[str, Any]
 
 
 @dataclass(slots=True)
@@ -87,10 +93,13 @@ class BenchmarkRunService:
         if existing_retry is not None:
             return self._runs[existing_retry]
 
+        source_context = source_run.snapshot.execution_context
         retry_config = {
-            "retry_of": run_id,
-            "source_snapshot_hash": source_run.snapshot.request_hash,
-            "retry_key": retry_key,
+            "dataset": source_context["dataset"],
+            "dataset_version": source_context["dataset_version"],
+            "backend": source_context["backend"],
+            "target": source_context["target"],
+            "seed": source_context["seed"],
         }
         retry_run_id = self._stable_run_id("retry", retry_key, retry_config)
         retry_run = self._create_run(
@@ -127,15 +136,58 @@ class BenchmarkRunService:
         idempotency_key: str,
         config: dict[str, Any],
     ) -> BenchmarkRun:
-        canonical_payload = json.dumps(config, sort_keys=True, separators=(",", ":"))
+        target = str(config.get("target") or config.get("backend") or "")
+        execution_context = {
+            "profile_kind": BENCHMARK_PROFILE_KIND,
+            "profile_version": RUN_CONTRACT_VERSION,
+            "dataset": str(config.get("dataset", "")),
+            "dataset_version": str(config.get("dataset_version", "")),
+            "backend": str(config.get("backend", "")),
+            "target": target,
+            "seed": int(config.get("seed", 0)),
+            "selection_policy": "backend_locked" if target == str(config.get("backend", "")) else "explicit_target",
+            "trace_scope": BENCHMARK_TELEMETRY_SCOPE,
+            "telemetry_scope": BENCHMARK_TELEMETRY_SCOPE,
+        }
+        canonical_payload = json.dumps(
+            {
+                "dataset": execution_context["dataset"],
+                "dataset_version": execution_context["dataset_version"],
+                "backend": execution_context["backend"],
+                "target": execution_context["target"],
+                "seed": execution_context["seed"],
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
         request_hash = hashlib.sha256(canonical_payload.encode("utf-8")).hexdigest()
+        measurement_digest = hashlib.sha256(
+            json.dumps(execution_context, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        artifacts = {
+            "metrics_artifact_ref": f"{BENCHMARK_ARTIFACT_PREFIX}/{run_id}/metrics/summary.json",
+            "metrics_artifact_digest": measurement_digest,
+            "lineage_ref": f"{BENCHMARK_ARTIFACT_PREFIX}/{run_id}/lineage.json",
+            "telemetry_ref": f"{BENCHMARK_ARTIFACT_PREFIX}/{run_id}/telemetry/isolated.jsonl",
+            "normalized_metrics": {
+                "dataset": execution_context["dataset"],
+                "dataset_version": execution_context["dataset_version"],
+                "backend": execution_context["backend"],
+                "target": execution_context["target"],
+                "seed": execution_context["seed"],
+                "request_hash": request_hash,
+            },
+        }
         snapshot = BenchmarkRunSnapshot(
             contract_version=RUN_CONTRACT_VERSION,
             snapshot_version=SNAPSHOT_VERSION,
             run_id=run_id,
             request_hash=request_hash,
+            measurement_digest=measurement_digest,
             created_at=self._now_fn().astimezone(timezone.utc).isoformat(),
             payload=canonical_payload,
+            execution_context=execution_context,
+            artifacts=artifacts,
         )
         run = BenchmarkRun(
             run_id=run_id,
@@ -156,6 +208,11 @@ class BenchmarkRunService:
     def _emit_kb_record(self, run: BenchmarkRun, *, kind: str, source_run_id: str | None, retry_key: str | None) -> None:
         if self._kb_sink is None:
             return
+        
+        source_measurement_digest = run.snapshot.measurement_digest
+        if source_run_id is not None and source_run_id in self._runs:
+            source_measurement_digest = self._runs[source_run_id].snapshot.measurement_digest
+
         payload = {
             "contract_version": RUN_CONTRACT_VERSION,
             "record_id": f"benchmark:{run.run_id}",
@@ -165,32 +222,38 @@ class BenchmarkRunService:
             "idempotency_key": run.idempotency_key,
             "state": run.state.value,
             "request_hash": run.snapshot.request_hash,
+            "measurement_digest": source_measurement_digest,
             "created_at": run.snapshot.created_at,
             "trace_id": f"trace_{run.run_id[:8]}",
+            "trace_scope": BENCHMARK_TELEMETRY_SCOPE,
             "tenant_id": "tenant-default",
             "project_id": "project-default",
-            "replay_bundle_ref": f"qfs://benchmarks/{run.run_id}/replay_bundle.json",
+            "replay_bundle_ref": f"{BENCHMARK_ARTIFACT_PREFIX}/{run.run_id}/replay_bundle.json",
             "attributes": {
                 "kind": kind,
-                "scope": "benchmark",
+                "scope": BENCHMARK_TELEMETRY_SCOPE,
                 "source_run_id": source_run_id or "",
                 "retry_key": retry_key or "",
                 "request_hash": run.snapshot.request_hash,
+                "measurement_digest": run.snapshot.measurement_digest,
                 "state": run.state.value,
+                "workload_kind": BENCHMARK_PROFILE_KIND,
             },
             "provenance": {
-                "runtime_ref": f"qfs://benchmarks/{run.run_id}/runtime.json",
-                "checkpoint_ref": f"qfs://benchmarks/{run.run_id}/checkpoint.json",
+                "runtime_ref": f"{BENCHMARK_ARTIFACT_PREFIX}/{run.run_id}/runtime.json",
+                "checkpoint_ref": f"{BENCHMARK_ARTIFACT_PREFIX}/{run.run_id}/checkpoint.json",
                 "compiler_ref": "",
                 "optimizer_ref": "",
             },
             "lineage": {
                 "model_version": RUN_CONTRACT_VERSION,
                 "training_set_hash": run.snapshot.request_hash,
-                "evaluation_bundle_hash": run.snapshot.request_hash,
+                "evaluation_bundle_hash": source_measurement_digest,
                 "promotion_policy_version": RUN_CONTRACT_VERSION,
                 "promotion_outcome": run.state.value,
             },
+            "execution_context": run.snapshot.execution_context,
+            "artifacts": run.snapshot.artifacts,
         }
         self._kb_sink(payload)
         

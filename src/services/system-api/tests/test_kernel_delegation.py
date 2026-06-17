@@ -23,11 +23,22 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from eigen.api.v1 import job_service_pb2 as job_pb
 from eigen.internal.v1 import kernel_gateway_pb2 as kernel_pb
 from system_api.kernel_client import KernelGatewayClient, KernelClientConfig
+from system_api.observability import trace_id_from_traceparent
 from system_api.grpc_delegation import DelegationHandler
 
 
 def _run(awaitable):
     return asyncio.run(awaitable)
+
+
+WORKLOAD_KIND_CASES = (
+    ("QuantumJob", 1, "quantum", False),
+    ("HybridWorkflow", 2, "hybrid", True),
+    ("DistributedJob", 3, "distributed", True),
+    ("BenchmarkJob", 4, "benchmark", True),
+    ("PipelineJob", 5, "pipeline", True),
+    ("ReplayJob", 6, "replay", True),
+)
 
 
 class TestMetadataNormalization:
@@ -81,6 +92,88 @@ class TestMetadataNormalization:
         # Verify request_id was generated
         assert internal_metadata["request_id"] is not None
         assert len(internal_metadata["request_id"]) > 0
+
+
+@pytest.mark.parametrize(("kind", "enum_value", "execution_profile", "replayable"), WORKLOAD_KIND_CASES)
+def test_request_metadata_proto_preserves_unified_security_and_trace_context_for_all_workload_kinds(
+    kind: str,
+    enum_value: int,
+    execution_profile: str,
+    replayable: bool,
+) -> None:
+    traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+    trace_id = trace_id_from_traceparent(traceparent)
+    public_envelope = {
+        "contract_version": "1.0.0",
+        "request_id": "req-12345",
+        "idempotency_key": "idempotent-key-001",
+        "traceparent": traceparent,
+        "trace_id": trace_id,
+        "tenant_id": "tenant-a",
+        "project_id": "project-b",
+        "auth_subject": "ingress-user",
+        "auth_role": "readonly",
+        "security_context": "policy://snapshot-v1",
+    }
+    workload_payload = {
+        "kind": kind,
+        "execution_profile": execution_profile,
+        "replayable": replayable,
+        "artifact_lineage": {
+            "root_ref": "qfs://root",
+            "parent_ref": "qfs://parent",
+            "policy_snapshot_ref": "qfs://policy",
+            "execution_ref": "qfs://exec",
+        },
+        "observability": {
+            "traceparent": traceparent,
+            "trace_id": trace_id,
+            "trace_ref": "trace://ref",
+            "emit_metrics": True,
+        },
+        "security": {
+            "tenant_id": "tenant-a",
+            "project_id": "project-b",
+            "service_identity": "system-api",
+            "policy_snapshot_ref": "policy://snapshot-v1",
+            "fail_closed": kind == "ReplayJob",
+        },
+        "backend_target": "sim:local",
+    }
+
+    client = KernelGatewayClient()
+    metadata = client._request_metadata_proto(public_envelope, workload=workload_payload)
+
+    assert metadata.contract_version == "1.0.0"
+    assert metadata.request_id == "req-12345"
+    assert metadata.idempotency_key == "idempotent-key-001"
+    assert metadata.traceparent == traceparent
+    assert metadata.trace_id == trace_id
+    assert metadata.tenant_id == "tenant-a"
+    assert metadata.project_id == "project-b"
+    assert metadata.subject == "ingress-user"
+    assert metadata.role == "readonly"
+    assert metadata.security_context == "policy://snapshot-v1"
+
+    workload = metadata.workload
+    assert workload is not None
+    assert workload.kind == enum_value
+    assert workload.execution_profile == execution_profile
+    assert workload.replayable is replayable
+    assert workload.artifact_lineage.root_ref == "qfs://root"
+    assert workload.artifact_lineage.parent_ref == "qfs://parent"
+    assert workload.artifact_lineage.policy_snapshot_ref == "qfs://policy"
+    assert workload.artifact_lineage.execution_ref == "qfs://exec"
+    assert workload.observability.traceparent == traceparent
+    assert workload.observability.trace_id == trace_id
+    assert workload.observability.trace_ref == "trace://ref"
+    assert workload.observability.emit_metrics is True
+    assert workload.security.tenant_id == "tenant-a"
+    assert workload.security.project_id == "project-b"
+    assert workload.security.service_identity == "system-api"
+    assert workload.security.policy_snapshot_ref == "policy://snapshot-v1"
+    assert workload.security.fail_closed is (kind == "ReplayJob")
+    assert workload.backend_target == "sim:local"
 
 
 class TestSubmitJobDelegation:

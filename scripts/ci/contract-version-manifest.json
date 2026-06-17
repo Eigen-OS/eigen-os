@@ -6,7 +6,7 @@
     },
     {
       "path": "proto/eigen/api/v1/job_service.proto",
-      "sha256": "b36e9937c72c8a327c3d7d8d719966974702c822998fae85786afe84e719738c"
+      "sha256": "48a761c3d440a392e8edd2066e035202268f61ac037ae9d2ebbccc3b834874f6"
     },
     {
       "path": "proto/eigen/api/v1/knowledge_base_service.proto",
@@ -26,7 +26,7 @@
     },
     {
       "path": "proto/eigen/internal/v1/kernel_gateway.proto",
-      "sha256": "e688f29b5ccb0fead69bd4c9a4ec63899dfead8cdf96b510efffc4c05b014ad6"
+      "sha256": "36267af3a26b3ad583a11eee62712448d5f4a330d2d3f452e91cc6a8dfc8fdee"
     },
     {
       "path": "proto/eigen/internal/v1/types.proto",
