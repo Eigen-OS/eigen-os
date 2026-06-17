@@ -183,6 +183,30 @@ def _normalize_workload_contract(
             return {}
         return value
 
+    def _require_str(raw: dict[str, Any], key: str, field: str) -> str:
+        value = raw.get(key, "")
+        if value is None:
+            return ""
+        if not isinstance(value, str):
+            violations.append(FieldViolation(field=field, description="must be string"))
+            return ""
+        return value.strip()
+
+    def _require_str_list(raw: dict[str, Any], key: str, field: str) -> list[str]:
+        value = raw.get(key, [])
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            violations.append(FieldViolation(field=field, description="must be list<string>"))
+            return []
+        out: list[str] = []
+        for idx, item in enumerate(value):
+            if not isinstance(item, str) or not item.strip():
+                violations.append(FieldViolation(field=f"{field}[{idx}]", description="must be non-empty string"))
+            else:
+                out.append(item.strip())
+        return out
+
     artifact_lineage_raw = _require_subdict(
         workload_raw.get("artifact_lineage") or workload_raw.get("artifactLineage"),
         "spec.workload.artifact_lineage",
@@ -196,27 +220,18 @@ def _normalize_workload_contract(
         "spec.workload.security",
     )
 
-    def _string_field(raw: dict[str, Any], key: str, field: str) -> str:
-        value = raw.get(key, "")
-        if value is None:
-            return ""
-        if not isinstance(value, str):
-            violations.append(FieldViolation(field=field, description="must be string"))
-            return ""
-        return value.strip()
-
     artifact_lineage = {
-        "root_ref": _string_field(artifact_lineage_raw, "root_ref", "spec.workload.artifact_lineage.root_ref"),
-        "parent_ref": _string_field(artifact_lineage_raw, "parent_ref", "spec.workload.artifact_lineage.parent_ref"),
-        "policy_snapshot_ref": _string_field(
+        "root_ref": _require_str(artifact_lineage_raw, "root_ref", "spec.workload.artifact_lineage.root_ref"),
+        "parent_ref": _require_str(artifact_lineage_raw, "parent_ref", "spec.workload.artifact_lineage.parent_ref"),
+        "policy_snapshot_ref": _require_str(
             artifact_lineage_raw, "policy_snapshot_ref", "spec.workload.artifact_lineage.policy_snapshot_ref"
         ),
-        "execution_ref": _string_field(artifact_lineage_raw, "execution_ref", "spec.workload.artifact_lineage.execution_ref"),
+        "execution_ref": _require_str(artifact_lineage_raw, "execution_ref", "spec.workload.artifact_lineage.execution_ref"),
     }
     observability = {
-        "traceparent": _string_field(observability_raw, "traceparent", "spec.workload.observability.traceparent"),
-        "trace_id": _string_field(observability_raw, "trace_id", "spec.workload.observability.trace_id"),
-        "trace_ref": _string_field(observability_raw, "trace_ref", "spec.workload.observability.trace_ref"),
+        "traceparent": _require_str(observability_raw, "traceparent", "spec.workload.observability.traceparent"),
+        "trace_id": _require_str(observability_raw, "trace_id", "spec.workload.observability.trace_id"),
+        "trace_ref": _require_str(observability_raw, "trace_ref", "spec.workload.observability.trace_ref"),
         "emit_metrics": observability_raw.get("emit_metrics", False),
     }
     if not isinstance(observability["emit_metrics"], bool):
@@ -224,10 +239,10 @@ def _normalize_workload_contract(
         observability["emit_metrics"] = False
 
     security = {
-        "tenant_id": _string_field(security_raw, "tenant_id", "spec.workload.security.tenant_id"),
-        "project_id": _string_field(security_raw, "project_id", "spec.workload.security.project_id"),
-        "service_identity": _string_field(security_raw, "service_identity", "spec.workload.security.service_identity"),
-        "policy_snapshot_ref": _string_field(
+        "tenant_id": _require_str(security_raw, "tenant_id", "spec.workload.security.tenant_id"),
+        "project_id": _require_str(security_raw, "project_id", "spec.workload.security.project_id"),
+        "service_identity": _require_str(security_raw, "service_identity", "spec.workload.security.service_identity"),
+        "policy_snapshot_ref": _require_str(
             security_raw, "policy_snapshot_ref", "spec.workload.security.policy_snapshot_ref"
         ),
         "fail_closed": security_raw.get("fail_closed", kind == "ReplayJob"),
@@ -236,6 +251,14 @@ def _normalize_workload_contract(
         violations.append(FieldViolation(field="spec.workload.security.fail_closed", description="must be boolean"))
         security["fail_closed"] = kind == "ReplayJob"
 
+    topology_raw = None
+    for topology_key in ("topology", "execution_topology", "topology_hints"):
+        if topology_key in workload_raw:
+            topology_raw = workload_raw.get(topology_key)
+            break
+
+    topology: dict[str, Any] | None = topology_raw if isinstance(topology_raw, dict) else None
+
     backend_target = workload_raw.get("backend_target") or workload_raw.get("backendTarget") or target
     if backend_target is None:
         backend_target = ""
@@ -243,7 +266,7 @@ def _normalize_workload_contract(
         violations.append(FieldViolation(field="spec.workload.backend_target", description="must be string"))
         backend_target = target
 
-    return {
+    result = {
         "kind": kind,
         "execution_profile": execution_profile,
         "replayable": replayable,
@@ -252,6 +275,9 @@ def _normalize_workload_contract(
         "security": security,
         "backend_target": backend_target.strip() if isinstance(backend_target, str) else target,
     }
+    if topology is not None:
+        result["topology"] = topology
+    return result
 
 
 def _canonical_json(value: Any) -> str:
