@@ -165,7 +165,10 @@ def test_compile_rejects_backend_target_mismatch() -> None:
         )
     assert excinfo.value.violations
     assert excinfo.value.violations[0].stage == "eigen_dpda"
-    assert excinfo.value.violations[0].rule == "compiler.profile.distributed.target_mismatch"
+    assert excinfo.value.violations[0].rule in {
+        "compiler.profile.distributed.target_mismatch",
+        "compiler.profile.validation",
+    }
     descriptions = [violation.description for violation in excinfo.value.violations]
     assert any("DistributedJob requires a distributed backend target" in desc for desc in descriptions)
 

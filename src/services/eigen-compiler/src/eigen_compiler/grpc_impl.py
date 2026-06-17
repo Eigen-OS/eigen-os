@@ -383,7 +383,12 @@ class CompilationService:
             context,
         )
 
-        violations = annotate_violations(violations, stage="request_validation", rule="compiler.request.validation", pass_name="request_validation")
+        violations = annotate_violations(
+            validate_compile_circuit(request),
+            stage="request_validation",
+            rule="compiler.request.validation",
+            pass_name="request_validation",
+        )
 
         if violations:
             _record_rpc("CompileCircuit", "failure")
@@ -463,8 +468,12 @@ class CompilationService:
             context,
         )
 
-        violations = validate_compile_job(request)
-        violations = annotate_violations(violations, stage="request_validation", rule="compiler.request.validation", pass_name="request_validation")
+        violations = annotate_violations(
+            validate_compile_job(request),
+            stage="request_validation",
+            rule="compiler.request.validation",
+            pass_name="request_validation",
+        )
 
         if violations:
             _record_rpc("CompileJob", "failure")

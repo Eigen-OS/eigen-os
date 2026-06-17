@@ -385,7 +385,8 @@ def test_compile_circuit_rejects_profile_specific_constraints(
     info = _extract_error_info(e.value)
     assert expected_fields <= {v.field for v in bad.field_violations}
     assert any(expected_snippet in v.description for v in bad.field_violations)
-    assert info.metadata["stage"] == "eigen_dpda" or info.metadata["stage"] == "request_validation"
+    assert info.metadata["stage"] in {"request_validation", "eigen_dpda"}
+    assert info.metadata["rule"]
     diagnostics = json.loads(info.metadata["diagnostics_json"])
     assert diagnostics
 

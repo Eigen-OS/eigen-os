@@ -406,7 +406,15 @@ def validate_workload_profile(
     violations: list[FieldViolation] = []
 
     def add(rule: str, field: str, description: str) -> None:
-        violations.append(_profile_violation(rule, field, description))
+        violations.append(
+            FieldViolation(
+                field=field,
+                description=description,
+                stage="eigen_dpda",
+                rule=rule,
+                pass_name="eigen_dpda",
+            )
+        )
 
     distributed_enabled = _parse_bool(normalized.get("distributed.enabled", "false")) is True
     seed_value = _first_option(normalized, "spec.workload.seed", "workload.seed", "benchmark.seed")
@@ -626,6 +634,13 @@ def validate_workload_profile(
                 "compiler.profile.replay.no_adaptive_rewrite",
                 "source",
                 "ReplayJob forbids minimize-based adaptive rewrites",
+            )
+
+        if profile.kind == "DistributedJob" and backend_target_class != "distributed":
+            add(
+                "compiler.profile.distributed.target_mismatch",
+                "options.spec.workload.backend_target",
+                f"DistributedJob requires a distributed backend target, got '{declared_backend_target or 'implicit'}'",
             )
         if declared_backend_target and backend_target_class == "unknown":
             add(
