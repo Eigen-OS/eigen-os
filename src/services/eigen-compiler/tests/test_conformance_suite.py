@@ -13,6 +13,8 @@ from eigen_compiler.proto_gen import ensure_generated
 ensure_generated()
 
 GOLDEN_ROOT = Path(__file__).parent / "golden"
+EXPECTED_STAGE_ORDER = ["parse", "validate_ast", "annotate", "lower_to_ir", "eigen_dpda", "canonicalize_aqo", "emit"]
+EXPECTED_PASS_ORDER = ["lower_to_ir", "rewrite_ir", "validate_lowering", "canonicalize_aqo"]
 
 
 def _normalize_aqo(aqo: dict[str, object]) -> dict[str, object]:
@@ -27,17 +29,231 @@ def _normalize_aqo(aqo: dict[str, object]) -> dict[str, object]:
     return normalized
 
 
+def _capture_stage_events() -> tuple[list[tuple[str, str]], callable]:
+    events: list[tuple[str, str]] = []
+
+    def observer(stage: str, elapsed_seconds: float, outcome: str) -> None:
+        events.append((stage, outcome))
+
+    return events, observer
+
+
 @pytest.mark.parametrize("case_dir", sorted(GOLDEN_ROOT.iterdir()), ids=lambda p: p.name)
 def test_golden_cases_match_expected_aqo(case_dir: Path) -> None:
     source = (case_dir / "program.eigen.py").read_bytes()
     expected = json.loads((case_dir / "expected.aqo.json").read_text(encoding="utf-8"))
 
-    first = compile_eigen_lang(source).aqo_json
+    compiled = compile_eigen_lang(source)
+    first = compiled.aqo_json
     second = compile_eigen_lang(source).aqo_json
     assert first == second
 
     actual = json.loads(first.decode("utf-8"))
     assert _normalize_aqo(actual) == _normalize_aqo(expected)
+    diagnostics = json.loads(compiled.metadata["compiler_diagnostics_json"])
+    assert diagnostics["stage_order"] == EXPECTED_STAGE_ORDER
+    pass_pipeline = json.loads(compiled.metadata["compiler_passes_json"])
+    assert [item["name"] for item in pass_pipeline["passes"]] == EXPECTED_PASS_ORDER
+    assert [item["kind"] for item in pass_pipeline["passes"]] == ["lowering", "rewrite", "validation", "lowering"]
+
+
+def test_compile_emits_full_stage_trace_for_valid_source() -> None:
+    source = (
+        b"from eigen_lang import hybrid_program\n\n"
+        b"@hybrid_program(target=\"sim\", shots=1000)\n"
+        b"def main():\n"
+        b"    ry(0, theta=1.570796)\n"
+    )
+
+    stages, observer = _capture_stage_events()
+    compiled = compile_eigen_lang(source, observer=observer)
+
+    assert [stage for stage, _ in stages] == [
+        "parse",
+        "validate_ast",
+        "annotate",
+        "lower_to_ir",
+        "eigen_dpda",
+        "eigen_dpda",
+        "eigen_dpda",
+        "eigen_dpda",
+        "canonicalize_aqo",
+        "emit",
+    ]
+    assert [outcome for _, outcome in stages] == ["success"] * len(stages)
+    diagnostics = json.loads(compiled.metadata["compiler_diagnostics_json"])
+    assert diagnostics["stage_order"] == EXPECTED_STAGE_ORDER
+    assert diagnostics["workload_profile"] == "QuantumJob"
+
+
+@pytest.mark.parametrize(
+    "source, options, expected_stages",
+    [
+        (
+            b"from eigen_lang import hybrid_program\n\ndef broken(:\n    pass\n",
+            None,
+            [("parse", "failure")],
+        ),
+        (
+            b"import os\nfrom eigen_lang import hybrid_program\n\n@hybrid_program()\ndef main():\n    ry(0, theta=1.0)\n",
+            None,
+            [("parse", "success"), ("validate_ast", "failure")],
+        ),
+        (
+            b"from eigen_lang import hybrid_program\n\n@hybrid_program()\ndef main():\n    ry(0)\n",
+            None,
+            [("parse", "success"), ("validate_ast", "success"), ("annotate", "success"), ("lower_to_ir", "failure")],
+        ),
+        (
+            b"from eigen_lang import hybrid_program\n\n@hybrid_program()\ndef main():\n    ry(0, theta=1.0)\n",
+            {
+                "spec.workload.kind": "DistributedJob",
+                "distributed.enabled": "true",
+                "distributed.target": "cluster",
+                "distributed.partition_count": "2",
+                "spec.workload.backend_target": "sim:local",
+            },
+            [
+                ("parse", "success"),
+                ("validate_ast", "success"),
+                ("annotate", "success"),
+                ("lower_to_ir", "success"),
+                ("eigen_dpda", "success"),
+                ("eigen_dpda", "success"),
+                ("eigen_dpda", "failure"),
+            ],
+        ),
+    ],
+)
+def test_compile_reports_stage_specific_failures(
+    source: bytes,
+    options: dict[str, str] | None,
+    expected_stages: list[tuple[str, str]],
+) -> None:
+    stages, observer = _capture_stage_events()
+
+    with pytest.raises(CompilerValidationError):
+        compile_eigen_lang(source, options=options, observer=observer)
+
+    assert stages == expected_stages
+
+
+def test_compile_accepts_forward_compatible_options_without_changing_profile() -> None:
+    source = (
+        b"from eigen_lang import hybrid_program\n\n"
+        b"@hybrid_program(target=\"sim\", shots=1000)\n"
+        b"def main():\n"
+        b"    ry(0, theta=1.570796)\n"
+    )
+
+    compiled = compile_eigen_lang(
+        source,
+        options={
+            "future.compiler.hint": "enabled",
+            "future.workload.profile": "v2",
+        },
+    )
+    options_json = json.loads(compiled.metadata["options_json"])
+    diagnostics = json.loads(compiled.metadata["compiler_diagnostics_json"])
+
+    assert options_json["future.compiler.hint"] == "enabled"
+    assert options_json["future.workload.profile"] == "v2"
+    assert diagnostics["workload_profile"] == "QuantumJob"
+
+
+@pytest.mark.parametrize(
+    "profile, source, options, source_ref",
+    [
+        (
+            "QuantumJob",
+            b"from eigen_lang import hybrid_program\n\n@hybrid_program(target=\"sim\", shots=1000)\ndef main():\n    ry(0, theta=1.570796)\n",
+            {},
+            None,
+        ),
+        (
+            "HybridWorkflow",
+            b"from eigen_lang import Param, ExpectationValue, hybrid_program, minimize\n\n@hybrid_program(target=\"sim\", shots=1000)\ndef vqe_program():\n    theta = Param(\"theta\")\n    ry(0, theta=theta)\n    cost = ExpectationValue(\"ansatz\", \"observable\")\n    minimize(cost, [0.1])\n",
+            {},
+            None,
+        ),
+        (
+            "DistributedJob",
+            b"from eigen_lang import hybrid_program\n\n@hybrid_program()\ndef main():\n    ry(0, theta=1.0)\n",
+            {
+                "distributed.enabled": "true",
+                "distributed.target": "cluster",
+                "distributed.partition_count": "4",
+                "distributed.queue_provider": "memory",
+                "distributed.topology_hint": "pipeline",
+            },
+            None,
+        ),
+        (
+            "BenchmarkJob",
+            b"from eigen_lang import hybrid_program\n\n@hybrid_program(target=\"sim\")\ndef main():\n    ry(0, theta=1.0)\n",
+            {
+                "spec.workload.kind": "BenchmarkJob",
+                "spec.workload.seed": "17",
+                "spec.workload.backend_target": "sim:local",
+            },
+            None,
+        ),
+        (
+            "PipelineJob",
+            b"from eigen_lang import hybrid_program\n\n@hybrid_program(target=\"sim\")\ndef main():\n    ry(0, theta=1.0)\n",
+            {
+                "spec.workload.kind": "PipelineJob",
+                "spec.workload.pipeline.handoff_ref": "handoffs/stage-1",
+                "spec.workload.pipeline.stage_id": "stage-1",
+            },
+            "jobs/job-1/input/program.eigen.py",
+        ),
+        (
+            "ReplayJob",
+            b"from eigen_lang import hybrid_program\n\n@hybrid_program(target=\"sim\")\ndef main():\n    ry(0, theta=1.0)\n",
+            {
+                "spec.workload.kind": "ReplayJob",
+                "spec.workload.replay.enabled": "true",
+            },
+            "jobs/job-2/input/program.eigen.py",
+        ),
+    ],
+)
+def test_compile_covers_all_workload_family_profiles(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    profile: str,
+    source: bytes,
+    options: dict[str, str],
+    source_ref: str | None,
+) -> None:
+    if source_ref is not None:
+        qfs_root = tmp_path / "circuit_fs"
+        source_path = qfs_root / source_ref
+        source_path.parent.mkdir(parents=True, exist_ok=True)
+        source_path.write_bytes(source)
+        monkeypatch.setenv("EIGEN_QFS_ROOT", str(qfs_root))
+        compiled = compile_eigen_lang(b"", source_ref=source_ref, options=options)
+        assert compiled.metadata["source_precedence"] == "source_ref"
+    else:
+        compiled = compile_eigen_lang(source, options=options)
+        assert compiled.metadata["source_precedence"] == "source"
+
+    workload_profile = json.loads(compiled.metadata["workload_profile_json"])
+    backend_contract = json.loads(compiled.metadata["backend_contract_json"])
+    diagnostics = json.loads(compiled.metadata["compiler_diagnostics_json"])
+
+    assert compiled.metadata["workload_profile"] == profile
+    assert workload_profile["kind"] == profile
+    assert backend_contract["workload_profile"] == profile
+    assert diagnostics["workload_profile"] == profile
+    assert diagnostics["stage_order"] == EXPECTED_STAGE_ORDER
+    if profile == "DistributedJob":
+        assert backend_contract["backend_target_class"] == "distributed"
+    elif profile == "BenchmarkJob":
+        assert backend_contract["backend_target_class"] == "simulator"
+    elif profile == "QuantumJob":
+        assert backend_contract["backend_target_class"] == "implicit"
 
 
 def test_aqo_is_canonical_and_hash_stable() -> None:
