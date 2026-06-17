@@ -81,7 +81,8 @@ This contract governs observability for:
 - checkpoint/restore execution,
 - benchmark cancellation,
 - benchmark retries,
-- distributed benchmark coordination.
+
+Benchmark telemetry MUST be emitted under an isolated benchmark scope. It MUST NOT reuse production job trace parents or unbounded production trace labels, and it MUST preserve artifact references separately from general runtime/job traces.
 
 The contract applies to:
 

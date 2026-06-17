@@ -89,6 +89,9 @@ The canonical contract for benchmark execution is defined in protobuf/gRPC speci
   - MUST conform to benchmark configuration schema
   - MUST be canonicalizable
   - MUST NOT contain NaN/Infinity values
+  - MUST include fixed-seed metadata (`seed`)
+  - MUST include stable backend/target selection inputs (`backend`, optional `target`)
+  - MUST include benchmark dataset identity (`dataset`, `dataset_version`)
 
 ---
 
@@ -137,6 +140,7 @@ The REST API **MUST NOT** introduce transport-specific execution semantics.
   "api_version": "1.0.0",
   "run": {
     "run_id": "run_01JABCDEF",
+    "workload_kind": "BenchmarkJob",
     "state": "PENDING",
     "state_contract_version": "1.0.0",
     "parent_run_id": null,
@@ -148,8 +152,61 @@ The REST API **MUST NOT** introduce transport-specific execution semantics.
     "history_entry_version": "1.0.0",
     "run_id": "run_01JABCDEF",
     "request_hash": "sha256:abcdef123456",
+    "measurement_digest": "sha256:fedcba654321",
     "created_at": "2026-05-21T12:34:56Z",
-    "payload": "{\"backend\":\"simulator\",\"dataset\":\"qsbench-core\",\"seed\":42}"
+    "payload": "{\"backend\":\"simulator\",\"dataset\":\"qsbench-core\",\"dataset_version\":\"2026.04.27\",\"seed\":42,\"target\":\"simulator\"}",
+    "execution_context": {
+      "profile_kind": "BenchmarkJob",
+      "profile_version": "1.0.0",
+      "dataset": "qsbench-core",
+      "dataset_version": "2026.04.27",
+      "backend": "simulator",
+      "target": "simulator",
+      "seed": 42,
+      "selection_policy": "backend_locked",
+      "trace_scope": "benchmark",
+      "telemetry_scope": "benchmark"
+    },
+    "artifacts": {
+      "metrics_artifact_ref": "qfs://benchmarks/run_01JABCDEF/metrics/summary.json",
+      "metrics_artifact_digest": "sha256:fedcba654321",
+      "lineage_ref": "qfs://benchmarks/run_01JABCDEF/lineage.json",
+      "telemetry_ref": "qfs://benchmarks/run_01JABCDEF/telemetry/isolated.jsonl",
+      "normalized_metrics": {
+        "dataset": "qsbench-core",
+        "dataset_version": "2026.04.27",
+        "backend": "simulator",
+        "target": "simulator",
+        "seed": 42,
+        "request_hash": "sha256:abcdef123456"
+      }
+    }
+  },
+  "execution_context": {
+    "profile_kind": "BenchmarkJob",
+    "profile_version": "1.0.0",
+    "dataset": "qsbench-core",
+    "dataset_version": "2026.04.27",
+    "backend": "simulator",
+    "target": "simulator",
+    "seed": 42,
+    "selection_policy": "backend_locked",
+    "trace_scope": "benchmark",
+    "telemetry_scope": "benchmark"
+  },
+  "artifacts": {
+    "metrics_artifact_ref": "qfs://benchmarks/run_01JABCDEF/metrics/summary.json",
+    "metrics_artifact_digest": "sha256:fedcba654321",
+    "lineage_ref": "qfs://benchmarks/run_01JABCDEF/lineage.json",
+    "telemetry_ref": "qfs://benchmarks/run_01JABCDEF/telemetry/isolated.jsonl",
+    "normalized_metrics": {
+      "dataset": "qsbench-core",
+      "dataset_version": "2026.04.27",
+      "backend": "simulator",
+      "target": "simulator",
+      "seed": 42,
+      "request_hash": "sha256:abcdef123456"
+    }
   },
   "trace": {
     "trace_id": "otel-trace-id",
@@ -166,8 +223,9 @@ The REST API **MUST NOT** introduce transport-specific execution semantics.
 - **`run.run_id`**: Deterministic globally unique benchmark execution identifier.
 - **`run.state`**: Canonical QRTX lifecycle state. Immediately after creation: **`PENDING`**.
 - **`run.state_contract_version`**: Version of lifecycle semantics.
-- **`snapshot.request_hash`**: SHA-256 hash of canonicalized payload.
-- **`snapshot.payload`**: Canonical JSON payload representation.
+- **`snapshot.measurement_digest`**: SHA-256 hash of the canonical benchmark 
+- **`execution_context`**: Exact benchmark execution context reconstructed from recorded inputs.
+- **`artifacts`**: Normalized benchmark artifacts, including the isolated metrics artifact reference.
 
 **Requirements for canonical payload**:
 - lexicographically sorted keys
@@ -247,7 +305,11 @@ CANCELLED
 ### 4.2 Validation Rules
 
 - **`idempotency_key`**: MUST exist, MUST be string, MUST be non-empty
-- **`config`**: MUST exist, MUST be object, MUST be non-empty
+- **`config.dataset`**: MUST be a non-empty string
+- **`config.dataset_version`**: MUST be a non-empty string
+- **`config.backend`**: MUST be a non-empty string
+- **`config.seed`**: MUST be an integer
+- **`config.target`**: when provided, MUST be a non-empty string and MUST match `config.backend`
 
 ---
 

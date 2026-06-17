@@ -10,6 +10,7 @@
   ],
   "response_required_run_fields": [
     "run_id",
+    "workload_kind",
     "state",
     "state_contract_version",
     "parent_run_id",
@@ -21,8 +22,30 @@
     "history_entry_version",
     "run_id",
     "request_hash",
+    "measurement_digest",
     "created_at",
-    "payload"
+    "payload",
+    "execution_context",
+    "artifacts"
+  ],
+  "response_required_execution_context_fields": [
+    "profile_kind",
+    "profile_version",
+    "dataset",
+    "dataset_version",
+    "backend",
+    "target",
+    "seed",
+    "selection_policy",
+    "trace_scope",
+    "telemetry_scope"
+  ],
+  "response_required_artifact_fields": [
+    "metrics_artifact_ref",
+    "metrics_artifact_digest",
+    "lineage_ref",
+    "telemetry_ref",
+    "normalized_metrics"
   ],
   "error_required_top_level_fields": [
     "error"

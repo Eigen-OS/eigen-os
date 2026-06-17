@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from .run_lifecycle import BenchmarkRunService, BenchmarkRunSnapshot, RunState
+from .run_lifecycle import BENCHMARK_PROFILE_KIND, BenchmarkRunService, BenchmarkRunSnapshot, RunState
 
 BENCHMARK_RUN_API_VERSION = "1.0.0"
 BENCHMARK_RUN_HISTORY_VERSION = "1.0.0"
@@ -79,6 +79,47 @@ class BenchmarkRunApi:
                     message="config is required and must be a non-empty object",
                 )
             )
+            return errors
+
+        for field in ("dataset", "dataset_version", "backend", "seed"):
+            value = config.get(field)
+            if field == "seed":
+                if not isinstance(value, int) or isinstance(value, bool):
+                    errors.append(
+                        ApiValidationError(
+                            code="field_required",
+                            field=f"config.{field}",
+                            message="config.seed is required and must be an integer seed",
+                        )
+                    )
+                continue
+
+            if not isinstance(value, str) or not value.strip():
+                errors.append(
+                    ApiValidationError(
+                        code="field_required",
+                        field=f"config.{field}",
+                        message=f"config.{field} is required and must be a non-empty string",
+                    )
+                )
+
+        target = config.get("target")
+        if target is not None and (not isinstance(target, str) or not target.strip()):
+            errors.append(
+                ApiValidationError(
+                    code="invalid_value",
+                    field="config.target",
+                    message="config.target must be a non-empty string when provided",
+                )
+            )
+        if isinstance(target, str) and isinstance(config.get("backend"), str) and target.strip() != config["backend"].strip():
+            errors.append(
+                ApiValidationError(
+                    code="failed_precondition",
+                    field="config.target",
+                    message="config.target must match config.backend when explicitly set",
+                )
+            )
 
         return errors
 
@@ -89,6 +130,7 @@ class BenchmarkRunApi:
             "api_version": BENCHMARK_RUN_API_VERSION,
             "run": {
                 "run_id": run.run_id,
+                "workload_kind": BENCHMARK_PROFILE_KIND,
                 "state": _run_state_value(run.state),
                 "state_contract_version": run.state_contract_version,
                 "parent_run_id": run.parent_run_id,
@@ -102,7 +144,12 @@ class BenchmarkRunApi:
                 "request_hash": snapshot.request_hash,
                 "created_at": snapshot.created_at,
                 "payload": snapshot.payload,
+                "measurement_digest": snapshot.measurement_digest,
+                "execution_context": snapshot.execution_context,
+                "artifacts": snapshot.artifacts,
             },
+            "execution_context": snapshot.execution_context,
+            "artifacts": snapshot.artifacts,
         }
 
 
