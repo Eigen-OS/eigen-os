@@ -6,7 +6,16 @@
 - **Applies to:** System API → Compiler Service → AQO artifacts persisted to QFS
 - **Last updated:** 2026-06-17
 
-This document defines the compiler boundary for Eigen OS. The compiler is responsible for turning Eigen-Lang source into canonical AQO, validating that AQO against the contract, and emitting stable diagnostics and metadata.
+This document defines the compiler boundary for Eigen OS. The compiler turns Eigen-Lang source into canonical AQO, validates that AQO against the contract, and emits stable diagnostics and metadata.
+
+The deterministic semantic rule engine is authoritative for legality, lowering preconditions, and rewrite acceptance. The neuro-symbolic layer is advisory only: it may propose, rank, or explain, but it must never override the rule engine.
+
+Companion docs:
+
+- `docs/architecture/adr/compiler-rule-engine-and-advisory-boundary.md`
+- `docs/reference/compiler-model-migration-notes.md`
+- `docs/reference/formats/aqo.md`
+- `docs/reference/eigen-lang.md`
 
 ---
 
@@ -16,10 +25,12 @@ The compiler must:
 
 1. Parse Eigen-Lang source into AST.
 2. Validate the allowed language subset.
-3. Lower the program into deterministic AQO intent.
-4. Validate the final AQO payload against the AQO contract.
-5. Emit stable hashes, lineage, and observability metadata.
-6. Persist artifacts into QFS in a canonical layout.
+3. Resolve the workload-family profile deterministically from normalized options and source shape.
+4. Apply the semantic rule engine to validate legality, rewrite eligibility, lowering preconditions, and backend compatibility.
+5. Lower the program into deterministic AQO intent.
+6. Validate the final AQO payload against the AQO contract.
+7. Emit stable hashes, lineage, observability metadata, and compiler pass diagnostics.
+8. Persist artifacts into QFS in a canonical layout.
 
 The compiler must not execute user Python, import arbitrary modules, access host resources outside the workspace, or allow advisory ML output to bypass deterministic checks.
 
@@ -34,6 +45,14 @@ The compiler must not execute user Python, import arbitrary modules, access host
 
 New compilation output must be AQO v1.0.0.
 
+The compiler metadata contract is also stable and deterministic. The canonical names used by the implementation are:
+
+- `workload_profile`
+- `compiler_passes_json`
+- `backend_contract_json`
+
+These are compiler metadata fields, not AQO top-level fields.
+
 ---
 
 ## 3. Inputs and outputs
@@ -45,9 +64,11 @@ Compilation input is carried via the internal compile RPC and includes:
 - `source_bytes` (UTF-8) or `source_ref` (QFS reference),
 - target information,
 - bounded compiler options,
-- request context for trace, tenant, and project scope.
+- request context for trace, tenant, project, and replay scope.
 
 When both source forms are present, `source_bytes` is authoritative.
+
+Advisory hints from neuro-symbolic components may be present in request context or compiler metadata, but they are never authoritative.
 
 ### 3.2 Outputs
 
@@ -55,7 +76,9 @@ The compiler must produce:
 
 - canonical AQO JSON,
 - compiler metadata,
-- hashes and provenance information.
+- hashes and provenance information,
+- deterministic pass and rule-engine diagnostics,
+- explainability lineage that records when advisory output influenced, did not influence, or was transformed into a deterministic compiler action.
 
 Optional transport encodings may exist, but they must preserve AQO semantics exactly.
 
@@ -71,7 +94,9 @@ Determinism requirements:
 - stable operation ordering,
 - canonical JSON serialization,
 - stable stage ordering,
-- stable diagnostics ordering.
+- stable diagnostics ordering,
+- stable workload-profile resolution,
+- stable pass pipeline serialization.
 
 Any nondeterministic input must be explicit and recorded in request metadata.
 
@@ -86,15 +111,10 @@ The compiler:
 1. parses source into AST,
 2. validates the allowed AST subset,
 3. builds internal IR,
-4. emits deterministic AQO.
+4. applies the semantic rule engine,
+5. emits deterministic AQO.
 
-The compiler must reject:
-
-- `exec`, `eval`, `compile`,
-- dynamic imports,
-- filesystem / network / subprocess access,
-- dynamic control flow,
-- reflection or metaprogramming outside the approved surface.
+The compiler must reject dynamic execution primitives, dynamic imports, filesystem / network / subprocess access, dynamic control flow, and reflection or metaprogramming outside the approved surface.
 
 The compiler must run in an isolated sandbox profile selected explicitly by request/deployment context.
 
@@ -110,6 +130,26 @@ Before lowering, the compiler resolves a deterministic workload-family profile f
 - `ReplayJob`
 
 Each profile owns required semantic checks, allowed rewrites, forbidden transformations, target/backend expectations, replay or benchmark constraints, and observability requirements. Profile selection is deterministic and explainable, and advisory ML outputs MUST NOT bypass it.
+
+### 5.2 Semantic rule engine
+
+The semantic rule engine is the source of truth for compiler legality.
+
+It owns:
+
+- semantic constraint evaluation,
+- rewrite acceptance and rejection,
+- lowering preconditions,
+- backend compatibility checks,
+- rule attribution for violations,
+- deterministic fallback behavior when an advisory suggestion is not admissible.
+
+The rule engine must be rule-safe:
+
+- a suggestion cannot produce invalid IR by itself,
+- lowering cannot proceed until the rule engine approves the candidate,
+- advisory output may be discarded, transformed, or accepted only through deterministic compiler actions,
+- invalid or ambiguous suggestions must fail closed.
 
 ---
 
@@ -133,6 +173,8 @@ Within the lowering boundary, the compiler also exposes a deterministic pass pip
 4. `canonicalize_aqo`
 5. `emit`
 
+The semantic rule engine gates `validate_ast`, `rewrite_ir`, and `validate_lowering`. Advisory hints may influence ranking of rewrite candidates, but they do not change pass ordering, pass membership, or validation authority.
+
 Optional deterministic rewrite or hardware-adaptation work may be added as long as it remains replay-safe and does not change the meaning of canonical AQO. Workload-family specific validation happens before lowering and may reject a valid-looking source when the selected profile forbids it.
 
 Pass ordering and pass outputs must remain stable for identical normalized inputs.
@@ -144,6 +186,7 @@ Pass ordering and pass outputs must remain stable for identical normalized input
 - Metric labels must not include request IDs, trace IDs, tenant IDs, or project IDs.
 - Duplicate / replay compiles must be observable.
 - Stage failures must be attributable to a named stage and a structured violation.
+- Advisor influence must be recorded as accepted, rejected, or transformed into a deterministic compiler action.
 
 ---
 
@@ -192,6 +235,10 @@ The compiler may use a neuro-symbolic advisor, but it must remain advisory only.
 - Neural suggestions may rank or propose candidates.
 - Neural output must never bypass semantic checks or AQO validation.
 - The final AQO payload must be valid without any neural-only field.
+- Advisor outcomes are recorded when they are accepted, rejected, or transformed into a deterministic compiler action.
+- Advisors can be swapped or disabled without breaking the compiler.
+
+The compiler must preserve determinism even when the advisor is enabled.
 
 ---
 
@@ -217,13 +264,32 @@ The compiler must persist:
 - AQO digest,
 - request digest,
 - request context snapshot,
-- explainability lineage.
+- explainability lineage,
+- workload profile,
+- pass pipeline snapshot,
+- advisor influence outcome when present.
 
 Observability records must be bounded and must not leak secrets.
 
 ---
 
-## 11. Conformance expectations
+## 11. Migration notes
+
+The compiler model is still AQO v1.0.0, so there is no AQO schema migration.
+
+What changed is the compiler contract surface and the way decisions are attributed:
+
+- semantic legality is now attributed to the deterministic rule engine,
+- workload-family profiles are part of compile-time normalization,
+- advisory ML output is never authoritative,
+- compiler pass ordering is explicit in metadata,
+- explainability now records when a suggestion was accepted, rejected, or transformed into a deterministic compiler action.
+
+Callers should treat compiler diagnostics and metadata as the source of truth for semantics, not advisor scores or heuristic hints.
+
+---
+
+## 12. Conformance expectations
 
 A compliant compiler implementation must satisfy:
 
@@ -232,4 +298,7 @@ A compliant compiler implementation must satisfy:
 - stable stage order,
 - structured error mapping,
 - replay-safe outputs,
+- workload-profile resolution,
+- semantic rule-engine attribution,
+- advisor optionality,
 - documentation and golden-fixture alignment.
