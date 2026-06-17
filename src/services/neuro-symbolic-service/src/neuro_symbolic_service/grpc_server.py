@@ -8,7 +8,7 @@ from concurrent import futures
 
 import grpc
 
-from .grpc_impl import NeuroSymbolicService
+from .advisor_boundary import NeuroSymbolicService
 from .knowledge_base import KnowledgeBaseService
 from .observability import set_ready
 
