@@ -47,7 +47,7 @@ Compiler parses AST and **must not execute** user code. Python’s `ast` parsing
 Same source + job options + referenced inputs (by hash) → identical AQO JSON output (stable hash).
 
 ### Mapping target
-Canonical output is AQO JSON v0.1. Optional QASM output is allowed as an extra artifact. Mapping rules live in `docs/reference/eigen-lang/mapping-to-aqo.md`.
+Canonical output is AQO JSON v0.1. Optional QASM output is allowed as an extra artifact. Mapping rules are defined in `docs/reference/eigen-lang.md`.
 
 ### Errors
 - Validation: INVALID_ARGUMENT + BadRequest.FieldViolation
@@ -87,6 +87,6 @@ Conformance suite required:
 
 ## Rollout plan
 1) Accept this RFC.
-2) Treat `docs/reference/eigen-lang/*` as source of truth.
+2) Treat `docs/reference/eigen-lang.md` and `src/services/eigen-compiler/src/eigen_lang/` as source of truth.
 3) Implement allowlist + limits.
 4) Add conformance tests to CI.

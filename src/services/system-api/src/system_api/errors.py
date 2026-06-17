@@ -127,7 +127,7 @@ def build_public_status(spec: PublicErrorSpec) -> status_pb2.Status:
 def abort_public(context: grpc.ServicerContext, spec: PublicErrorSpec) -> None:
     """Abort RPC with canonical public google.rpc.Status details."""
 
-    if rpc_status is None:
+    if rpc_status is None or not hasattr(context, "abort_with_status"):
         context.abort(spec.grpc_code, spec.message)
         return
 

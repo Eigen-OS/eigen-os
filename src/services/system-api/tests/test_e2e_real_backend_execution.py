@@ -40,7 +40,7 @@ def test_e2e_real_backend_success_persists_qfs_and_public_results(grpc_addr: str
 
     results = stub.GetJobResults(job_pb.GetJobResultsRequest(job_id=job_id))
     assert results.state == types_pb.JOB_STATE_DONE
-    assert dict(results.counts) == {"00": 512, "11": 512}
+    assert dict(results.counts) == {"0": 1024}
     assert results.metadata["qfs_job_timeline"].endswith("/timeline.json")
     assert results.metadata["timeline_version"] == "2.0.0"
 

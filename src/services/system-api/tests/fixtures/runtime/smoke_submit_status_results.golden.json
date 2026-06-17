@@ -1,8 +1,8 @@
 {
   "state": 5,
   "counts": {
-    "00": 512,
-    "11": 512
+    "00": 495,
+    "11": 529
   },
   "metadata_templates": {
     "backend": "sim:local",

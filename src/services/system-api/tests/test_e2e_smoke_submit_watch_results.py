@@ -24,7 +24,13 @@ def _submit_bell_state_job(stub: job_pb_grpc.JobServiceStub) -> str:
         name="e2e-smoke-bell-state",
         target="sim:local",
         eigen_lang=types_pb.EigenLangSource(
-            source=b"""# Bell-state placeholder program for simulator smoke test\nfn main() {}\n""",
+            source=(
+                b'from eigen_lang import hybrid_program, ry, cnot\n\n'
+                b'@hybrid_program(target="sim", shots=1024)\n'
+                b'def main():\n'
+                b'    ry(0, theta=1.570796)\n'
+                b'    cnot(0, 1)\n'
+            ),
             entrypoint="main",
         ),
     )

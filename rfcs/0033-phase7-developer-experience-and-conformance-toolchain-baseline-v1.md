@@ -28,7 +28,7 @@ Defines the baseline developer workflow and CI conformance gates required to kee
 - Link/anchor checks for changed docs files in the PR.
 - Reference integrity checks for canonical contract docs:
   - `docs/reference/**`
-  - `docs/reference/eigen-lang/**`
+  - `src/services/eigen-compiler/src/eigen_lang/**`
   - `docs/reference/formats/**`
   - `docs/reference/api/**`
 - Smoke checks for primary user-path docs:

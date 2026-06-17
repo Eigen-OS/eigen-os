@@ -38,10 +38,9 @@ This document is the normative specification for Eigen-Lang v1.0.
 
 The canonical source-of-truth implementation includes:
 
-- `compiler/eigen_lang/`
+- `src/services/eigen-compiler/src/eigen_lang/`
+- `src/services/eigen-compiler/src/eigen_compiler/`
 - `docs/reference/formats/aqo.md`
-- `tests/conformance/eigen_lang/`
-- `proto/eigen/api/v1/`
 - compiler validation fixtures and golden AQO snapshots.
 
 ---
@@ -169,12 +168,14 @@ Only imports from approved Eigen-Lang namespaces are allowed.
 Examples:
 
 ```python
-from eigen_lang import rx, ry, rz
+from eigen_lang import rx, ry, rz, cx
 ```
 
 ```python
 from eigen_lang.optimizers import minimize
 ```
+
+`cnot` is accepted as a compatibility alias for `cx` and lowers to the same AQO `CX` operation.
 
 Forbidden imports include:
 
@@ -478,6 +479,7 @@ The following gates MUST be supported:
 | `ry` | `RY` |
 | `rz` | `RZ` |
 | `cx` | `CX` |
+| `cnot` | `CX` (compatibility alias) |
 
 ---
 

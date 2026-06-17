@@ -9,7 +9,11 @@ from typing import Any, Callable
 
 import grpc
 from google.rpc import code_pb2, status_pb2, error_details_pb2
-from grpc_status import rpc_status
+
+try:
+    from grpc_status import rpc_status
+except ModuleNotFoundError:  # pragma: no cover - lightweight test envs
+    rpc_status = None
 
 from .grpc_impl import DeviceService, JobService
 from .observability import trace_id_from_traceparent
@@ -107,7 +111,10 @@ class ValidationAndExceptionInterceptor(grpc.ServerInterceptor):
                     status_proto.details.add().Pack(bad_request)
                     
                     # 4. Terminate pipeline with high-fidelity status mapping
-                    context.abort_with_status(rpc_status.to_status(status_proto))
+                    if rpc_status is None or not hasattr(context, "abort_with_status"):
+                        context.abort(grpc.StatusCode.INTERNAL, status_proto.message or "An unexpected system error occurred.")
+                    else:
+                        context.abort_with_status(rpc_status.to_status(status_proto))
                 except Exception as ex:
                     if _is_grpc_abort_exception(context):
                         raise

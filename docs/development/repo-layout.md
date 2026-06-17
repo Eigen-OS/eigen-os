@@ -90,7 +90,6 @@ eigen-os/
 │   └── services/                  # Deployable services (mostly Python)
 │       ├── system-api/
 │       ├── driver-manager/
-│       ├── eigen-lang/
 │       └── eigen-compiler/
 │
 ├── client-sdks/                   # Public SDKs (published packages)
