@@ -95,6 +95,8 @@ ReplayJob
 
 `HybridWorkflow` jobs are replayed as explicit multi-stage runtime graphs. Stage handoff is represented through runtime envelope fields and lineage refs, not by adding orchestration semantics to AQO. Each stage boundary must remain reconstructable from stage input/output refs, handoff refs, and QFS lineage metadata.
 
+`BenchmarkJob` is the reproducible measurement profile. Its canonical runtime contract is fail-closed and requires fixed seed metadata, stable backend/target selection, and isolated benchmark telemetry. The benchmark envelope MUST preserve the exact execution context in lineage metadata and result artifacts so repeated runs can be compared without ambiguity. Missing seed metadata or ambiguous target selection MUST be rejected deterministically.
+
 ---
 
 # 3. Design Principles
@@ -231,6 +233,9 @@ artifacts:
 | `spec.workload.backend_target` | no | string | Backend target override |
 | `spec.workload.artifact_lineage` | no | object | Artifact lineage refs |
 | `spec.workload.observability` | no | object | Workload observability refs |
+| spec.workload.seed | no | integer | Fixed benchmark seed metadata |
+| spec.workload.execution_context | no | object | Canonical benchmark execution context |
+| spec.workload.metrics_artifacts | no | object | Normalized benchmark result artifacts |
 | `spec.workload.security` | no | object | Workload security context |
 | `spec.compiler` | no | object | Compiler behavior |
 | `spec.parameters` | no | object | Runtime parameters |

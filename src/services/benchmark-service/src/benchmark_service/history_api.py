@@ -273,7 +273,11 @@ class BenchmarkHistoryApi:
             "idempotency_key": run.idempotency_key,
             "created_at": run.snapshot.created_at,
             "request_hash": run.snapshot.request_hash,
+            "measurement_digest": run.snapshot.measurement_digest,
             "dataset": payload.get("dataset"),
+            "execution_context": run.snapshot.execution_context,
+            "artifacts": run.snapshot.artifacts,
+            "workload_kind": run.snapshot.execution_context.get("profile_kind"),
         }
 
 

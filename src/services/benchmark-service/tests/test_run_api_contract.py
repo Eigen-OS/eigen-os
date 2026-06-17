@@ -30,13 +30,18 @@ def test_benchmark_run_success_contract_fixture_is_stable() -> None:
     assert set(contract["response_required_top_level_fields"]) == set(response.keys())
     assert set(contract["response_required_run_fields"]) == set(response["run"].keys())
     assert set(contract["response_required_snapshot_fields"]) == set(response["snapshot"].keys())
+    assert set(contract["response_required_execution_context_fields"]) == set(response["execution_context"].keys())
+    assert set(contract["response_required_artifact_fields"]) == set(response["artifacts"].keys())
 
     assert response["api_version"] == BENCHMARK_RUN_API_VERSION
+    assert response["run"]["workload_kind"] == "BenchmarkJob"
     assert response["run"]["state"] == "PENDING"
     assert response["run"]["state_contract_version"] == RUN_CONTRACT_VERSION
     assert response["snapshot"]["contract_version"] == RUN_CONTRACT_VERSION
     assert response["snapshot"]["snapshot_version"] == SNAPSHOT_VERSION
     assert response["snapshot"]["history_entry_version"] == BENCHMARK_RUN_HISTORY_VERSION
+    assert response["snapshot"]["measurement_digest"] == response["artifacts"]["metrics_artifact_digest"]
+    assert response["execution_context"]["trace_scope"] == "benchmark"
 
 
 def test_benchmark_run_validation_errors_map_to_public_error_envelope() -> None:
@@ -56,3 +61,25 @@ def test_benchmark_run_validation_errors_map_to_public_error_envelope() -> None:
 
     detail = envelope["error"]["details"][0]
     assert set(contract["error_required_detail_fields"]) == set(detail.keys())
+
+
+def test_benchmark_run_missing_seed_is_rejected() -> None:
+    api = BenchmarkRunApi()
+
+    try:
+        api.run(
+            {
+                "idempotency_key": "missing-seed",
+                "config": {
+                    "dataset": "qsbench-core",
+                    "dataset_version": "2026.04.27",
+                    "backend": "simulator",
+                },
+            }
+        )
+    except BenchmarkRunRequestValidationError as err:
+        envelope = api.to_error_envelope(err)
+    else:
+        raise AssertionError("invalid request must fail")
+
+    assert any(detail["field"] == "config.seed" for detail in envelope["error"]["details"])

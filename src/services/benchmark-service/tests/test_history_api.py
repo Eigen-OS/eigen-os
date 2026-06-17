@@ -32,9 +32,18 @@ def test_history_endpoint_supports_deterministic_pagination_and_ordering() -> No
             ]
         )
     )
-    run_a = service.start_run(idempotency_key="a", config={"dataset": "d1"})
-    run_b = service.start_run(idempotency_key="b", config={"dataset": "d1"})
-    run_c = service.start_run(idempotency_key="c", config={"dataset": "d1"})
+    run_a = service.start_run(
+        idempotency_key="a",
+        config={"dataset": "d1", "dataset_version": "2026.04.27", "backend": "simulator", "seed": 1},
+    )
+    run_b = service.start_run(
+        idempotency_key="b",
+        config={"dataset": "d1", "dataset_version": "2026.04.27", "backend": "simulator", "seed": 2},
+    )
+    run_c = service.start_run(
+        idempotency_key="c",
+        config={"dataset": "d1", "dataset_version": "2026.04.27", "backend": "simulator", "seed": 3},
+    )
 
     service.transition(run_id=run_a.run_id, new_state=RunState.PREPARING)
     service.transition(run_id=run_a.run_id, new_state=RunState.RUNNING)
@@ -75,9 +84,18 @@ def test_history_endpoint_applies_filters_and_returns_trend_aggregates() -> None
         )
     )
 
-    run_success = service.start_run(idempotency_key="success", config={"dataset": "chem-v1"})
-    run_failed = service.start_run(idempotency_key="failed", config={"dataset": "chem-v1"})
-    run_other = service.start_run(idempotency_key="other", config={"dataset": "ml-v2"})
+    run_success = service.start_run(
+        idempotency_key="success",
+        config={"dataset": "chem-v1", "dataset_version": "2026.04.27", "backend": "simulator", "seed": 4},
+    )
+    run_failed = service.start_run(
+        idempotency_key="failed",
+        config={"dataset": "chem-v1", "dataset_version": "2026.04.27", "backend": "simulator", "seed": 5},
+    )
+    run_other = service.start_run(
+        idempotency_key="other",
+        config={"dataset": "ml-v2", "dataset_version": "2026.04.27", "backend": "simulator", "seed": 6},
+    )
 
     for run_id in (run_success.run_id, run_failed.run_id, run_other.run_id):
         service.transition(run_id=run_id, new_state=RunState.PREPARING)
@@ -105,6 +123,8 @@ def test_history_endpoint_applies_filters_and_returns_trend_aggregates() -> None
     assert response["trend"]["state_counts"]["SUCCEEDED"] == 1
     assert response["trend"]["state_counts"]["FAILED"] == 1
     assert response["trend"]["success_rate"] == 0.5
+    assert response["entries"][0]["execution_context"]["trace_scope"] == "benchmark"
+    assert response["entries"][0]["artifacts"]["metrics_artifact_ref"].startswith("qfs://benchmarks/")
     assert response["trend"]["daily"] == [
         {
             "date": "2026-04-20",
