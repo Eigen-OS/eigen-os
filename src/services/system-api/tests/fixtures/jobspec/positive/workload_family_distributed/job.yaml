@@ -3,7 +3,7 @@ kind: QuantumJob
 metadata:
   name: distributedjob
 spec:
-  target: sim:local
+  target: cluster:auto
   program:
     source: |
       @hybrid_program
@@ -11,4 +11,13 @@ spec:
           return 1
   workload:
     kind: DistributedJob
-    
+    topology:
+      cluster_id: cluster:auto
+      partition_count: 2
+      partition_ids:
+        - partition-0
+        - partition-1
+      preferred_workers:
+        - worker-a
+        - worker-b
+        
