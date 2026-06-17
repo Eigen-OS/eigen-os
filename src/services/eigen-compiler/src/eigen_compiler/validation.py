@@ -467,7 +467,7 @@ def validate_workload_profile(
             )
         if backend_target_class == "distributed":
             add(
-                "compiler.backend.quantum.no_distributed_target",
+                "compiler.profile.distributed.target_mismatch",
                 "options.spec.workload.backend_target",
                 "QuantumJob cannot target distributed cluster backends",
             )
@@ -651,7 +651,7 @@ def validate_workload_profile(
 
     if profile.kind == "DistributedJob" and declared_backend_target and backend_target_class != "distributed":
         add(
-            "compiler.backend.distributed.target_mismatch",
+            "compiler.profile.distributed.target_mismatch",
             "options.spec.workload.backend_target",
             f"DistributedJob requires a distributed backend target, got '{declared_backend_target}'",
         )
