@@ -155,4 +155,4 @@ def test_distributed_job_workload_is_preserved_opaquely() -> None:
     }
     assert "jobspec_topology" not in req.metadata
     assert json.loads(req.metadata["jobspec_workload"]) == normalized["spec"]["workload"]
-        
+    
