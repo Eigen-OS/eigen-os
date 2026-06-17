@@ -95,7 +95,31 @@ ReplayJob
 
 `HybridWorkflow` jobs are replayed as explicit multi-stage runtime graphs. Stage handoff is represented through runtime envelope fields and lineage refs, not by adding orchestration semantics to AQO. Each stage boundary must remain reconstructable from stage input/output refs, handoff refs, and QFS lineage metadata.
 
-`ReplayJob` is a fail-closed replay profile. Replay inputs MUST be canonical refs and hashes only, and the request MUST carry provenance evidence for program source, packaging, AQO, policy snapshot, trace context, and backend target. Missing, stale, ambiguous, or digest-mismatched evidence MUST be rejected rather than silently downgraded to a non-replay mode.
+`DistributedJob` is the bounded distributed profile. Its workload contract MAY declare deterministic topology hints under `spec.workload.topology` using a `cluster_id`, a bounded `partition_count`, explicit `partition_ids`, and aligned `preferred_workers`. These hints are execution metadata only; they MUST remain orthogonal to AQO top-level fields and are carried through the internal workload contract to Kernel/QRTX, which mirrors them into runtime lineage/dispatch metadata without mutating the AQO payload.
+
+`BenchmarkJob` is the reproducible measurement profile. Its canonical runtime contract is fail-closed and requires fixed seed metadata, stable backend/target selection, and isolated benchmark telemetry. The benchmark envelope MUST preserve the exact execution context in lineage metadata and result artifacts so repeated runs can be compared without ambiguity. Missing seed metadata or ambiguous target selection MUST be rejected deterministically.
+
+`PipelineJob` is the explicit multi-stage artifact handoff profile. It declares a directed acyclic handoff contract under `spec.workload.pipeline`, but kernel/QRTX owns DAG execution, ordering, and replay materialization. Each stage MUST declare `stage_id`, `input_refs`, `output_refs`, a canonical `handoff_ref`, `depends_on` edges, and `failure_semantics`; the handoff ref MUST point at one of that stage's outputs. The kernel MUST reject missing outputs, broken handoff references, unknown dependencies, or out-of-order stage boundaries. Failure semantics are stage-local and deterministic: stages may retain durable outputs in QFS, while downstream handoffs are invalidated when a stage fails. Stage-by-stage replay is expressed through `spec.workload.pipeline.replay`, and inspection metadata is preserved in QFS lineage refs so replay can resume deterministically without leaking orchestration semantics into AQO top-level fields.
+
+---
+
+### 2.1 Unified ingress, security, and audit path
+
+All supported workload-family kinds share the same normalized ingress path through System API. The workload family may change execution semantics, but it MUST NOT fork authentication, authorization, trace propagation, or audit formatting.
+
+For every workload-family kind (`QuantumJob`, `HybridWorkflow`, `DistributedJob`, `BenchmarkJob`, `PipelineJob`, `ReplayJob`), the normalized envelope MUST carry the same bounded security context fields end to end:
+
+- `traceparent`
+- derived `trace_id`
+- `subject`
+- `tenant` / `tenant_id`
+- `project` / `project_id`
+- `service_identity`
+- `policy_snapshot_ref` or equivalent policy evidence handle
+- `sandbox_profile`
+- replay markers when replay-safe processing is requested
+
+Replay-sensitive profiles, including replay and benchmark flows, MUST fail closed when policy evidence is missing or cannot be normalized. Observability and audit records for all workload kinds MUST remain bounded, secret-free, and schema-stable; kind-specific behavior is limited to workload execution semantics, not ingress security or audit structure.
 
 ---
 
@@ -231,8 +255,16 @@ artifacts:
 | `spec.workload.execution_profile` | no | string | Execution profile name |
 | `spec.workload.replayable` | no | bool | Replayability hint |
 | `spec.workload.backend_target` | no | string | Backend target override |
+| `spec.workload.topology` | no | object | Bounded distributed topology hints |
+| `spec.workload.topology.cluster_id` | no | string | Distributed cluster identity hint |
+| `spec.workload.topology.partition_count` | no | int | Number of distributed partitions |
+| `spec.workload.topology.partition_ids` | no | array<string> | Deterministic partition identifiers |
+| `spec.workload.topology.preferred_workers` | no | array<string> | Bounded worker placement hints |
 | `spec.workload.artifact_lineage` | no | object | Artifact lineage refs |
 | `spec.workload.observability` | no | object | Workload observability refs |
+| spec.workload.seed | no | integer | Fixed benchmark seed metadata |
+| spec.workload.execution_context | no | object | Canonical benchmark execution context |
+| spec.workload.metrics_artifacts | no | object | Normalized benchmark result artifacts |
 | `spec.workload.security` | no | object | Workload security context |
 | `spec.compiler` | no | object | Compiler behavior |
 | `spec.parameters` | no | object | Runtime parameters |
@@ -1150,6 +1182,18 @@ spec:
   program:
     path: src/vqe.py
     entrypoint: run
+
+workload:
+    kind: DistributedJob
+    topology:
+      cluster_id: cluster:auto
+      partition_count: 2
+      partition_ids:
+        - partition-0
+        - partition-1
+      preferred_workers:
+        - worker-a
+        - worker-b
 
 runtime:
   mode: distributed
