@@ -93,6 +93,31 @@ def test_source_ref_is_resolved_from_qfs_root(tmp_path: Path, monkeypatch: pytes
     assert from_ref.metadata["source_precedence"] == "source_ref"
 
 
+def test_compile_exposes_deterministic_pass_pipeline() -> None:
+    source = (
+        b"from eigen_lang import hybrid_program\n"
+        b"@hybrid_program(target=\"sim\")\n"
+        b"def main():\n"
+        b"    ry(0, theta=1.0)\n"
+    )
+
+    compiled = compile_eigen_lang(source)
+    pass_pipeline = json.loads(compiled.metadata["compiler_passes_json"])
+
+    assert pass_pipeline["version"] == "1.0.0"
+    assert [item["name"] for item in pass_pipeline["passes"]] == [
+        "lower_to_ir",
+        "rewrite_ir",
+        "validate_lowering",
+        "canonicalize_aqo",
+    ]
+    assert pass_pipeline["passes"][0]["output"]["operations"] == [
+        {"op": "RY", "q": [0], "params": {"theta": 1.0}}
+    ]
+    assert pass_pipeline["passes"][1]["output"]["operations"][-1] == {"op": "MEASURE", "q": [0], "c": [0]}
+    assert pass_pipeline["passes"][2]["output"] == {"status": "valid", "aqo_version": "1.0.0"}
+
+
 def test_metrics_expose_contract_marker() -> None:
     text = render_metrics_text()
     assert 'eigen_observability_contract_info{version="1.0.0"} 1' in text

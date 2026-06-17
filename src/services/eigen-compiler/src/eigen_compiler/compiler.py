@@ -120,6 +120,22 @@ class DistributedCompileConfig:
     topology_hint: str | None
 
 
+@dataclass(frozen=True)
+class CompilerPassRecord:
+    name: str
+    kind: str
+    preconditions: tuple[str, ...]
+    postconditions: tuple[str, ...]
+    input: dict[str, object]
+    output: dict[str, object]
+
+
+@dataclass(frozen=True)
+class CompilerPassPipeline:
+    records: tuple[CompilerPassRecord, ...]
+    aqo: dict[str, object]
+
+
 @dataclass
 class CompilerValidationError(Exception):
     violations: tuple[FieldViolation, ...]
@@ -617,9 +633,6 @@ def _collect_operations(tree: ast.AST, params: dict[str, dict[str, object]]) -> 
             qubit_count = max(qubit_count, max(lowered["c"]) + 1)
         operations.append(lowered)
 
-    if not operations or operations[-1].get("op") != "MEASURE":
-        operations.append({"op": "MEASURE", "q": list(range(qubit_count)), "c": list(range(qubit_count))})
-
     return operations, qubit_count
 
 
@@ -661,6 +674,86 @@ def _distributed_compile_config(options: dict[str, str] | None) -> DistributedCo
         queue_provider=queue_provider,
         topology_hint=topology_hint,
     )
+
+
+def _rewrite_terminal_measurement(operations: list[dict], qubits: int) -> list[dict]:
+    rewritten = json.loads(json.dumps(operations, sort_keys=True, separators=(",", ":"), allow_nan=False))
+    if not rewritten or rewritten[-1].get("op") != "MEASURE":
+        rewritten.append({"op": "MEASURE", "q": list(range(qubits)), "c": list(range(qubits))})
+    return rewritten
+
+
+def _validate_lowering_payload(aqo: dict[str, object]) -> dict[str, object]:
+    violations = _validate_aqo_payload(aqo)
+    if violations:
+        raise CompilerValidationError(violations=violations)
+    return aqo
+
+
+def _build_compiler_pass_pipeline(
+    *,
+    qubits: int,
+    operations: list[dict],
+    params: dict[str, dict[str, object]],
+    source_digest: str,
+    source_precedence: str,
+    request_digest: str,
+    has_expectation: bool,
+    has_minimize: bool,
+    distributed: DistributedCompileConfig,
+) -> CompilerPassPipeline:
+    lowered_ir = {"qubits": qubits, "operations": json.loads(json.dumps(operations, sort_keys=True, separators=(",", ":"), allow_nan=False))}
+    rewritten_operations = _rewrite_terminal_measurement(lowered_ir["operations"], qubits)
+    rewritten_ir = {"qubits": qubits, "operations": rewritten_operations}
+
+    aqo_payload = _build_aqo_payload(
+        qubits=qubits,
+        operations=rewritten_operations,
+        params=params,
+        source_digest=source_digest,
+        source_ref=None,
+        request_digest=request_digest,
+        has_expectation=has_expectation,
+        has_minimize=has_minimize,
+        distributed=distributed,
+    )
+    validated_aqo = _validate_lowering_payload(aqo_payload)
+
+    records = (
+        CompilerPassRecord(
+            name="lower_to_ir",
+            kind="lowering",
+            preconditions=("ast_validated", "single_entrypoint_validated"),
+            postconditions=("ir_extracted",),
+            input={"source_sha256": source_digest, "source_precedence": source_precedence},
+            output=lowered_ir,
+        ),
+        CompilerPassRecord(
+            name="rewrite_ir",
+            kind="rewrite",
+            preconditions=("ir_extracted",),
+            postconditions=("terminal_measurement_normalized",),
+            input=lowered_ir,
+            output=rewritten_ir,
+        ),
+        CompilerPassRecord(
+            name="validate_lowering",
+            kind="validation",
+            preconditions=("ir_rewritten",),
+            postconditions=("aqo_contract_valid",),
+            input=rewritten_ir,
+            output={"status": "valid", "aqo_version": AQO_VERSION},
+        ),
+        CompilerPassRecord(
+            name="canonicalize_aqo",
+            kind="lowering",
+            preconditions=("aqo_contract_valid",),
+            postconditions=("canonical_json_ready",),
+            input=validated_aqo,
+            output={"operation_count": len(rewritten_operations), "qubit_count": qubits},
+        ),
+    )
+    return CompilerPassPipeline(records=records, aqo=validated_aqo)
 
 
 def _build_aqo_payload(
@@ -821,15 +914,15 @@ def compile_eigen_lang(
     options_json = _canonical_json_bytes(normalized_options).decode("utf-8")
     request_context_json = _canonical_json_bytes(asdict(normalized_request_context)).decode("utf-8")
 
-    aqo = _run_stage(
+    pass_pipeline = _run_stage(
         "eigen_dpda",
         observer,
-        lambda: _build_aqo_payload(
+        lambda: _build_compiler_pass_pipeline(
             qubits=qubits,
             operations=operations,
             params=params,
             source_digest=source_digest,
-            source_ref=None,
+            source_precedence=source_precedence,
             request_digest=aqo_request_digest,
             has_expectation=has_expectation,
             has_minimize=has_minimize,
@@ -837,7 +930,8 @@ def compile_eigen_lang(
         ),
     )
 
-    aqo_bytes = _run_stage("canonicalize_aqo", observer, lambda: _encode_aqo_payload(aqo))
+    aqo = pass_pipeline.aqo
+    aqo_bytes = _run_stage("canonicalize_aqo", observer, lambda: _canonical_json_bytes(aqo))
     aqo_digest = hashlib.sha256(aqo_bytes).hexdigest()
 
     decision_lineage = {
@@ -912,6 +1006,23 @@ def compile_eigen_lang(
         "sandbox_profile": normalized_request_context.sandbox_profile,
         "tenant_id": normalized_request_context.tenant_id,
         "project_id": normalized_request_context.project_id,
+        "compiler_pass_pipeline_version": "1.0.0",
+        "compiler_passes_json": _canonical_json_text(
+            {
+                "version": "1.0.0",
+                "passes": [
+                    {
+                        "name": record.name,
+                        "kind": record.kind,
+                        "preconditions": list(record.preconditions),
+                        "postconditions": list(record.postconditions),
+                        "input": record.input,
+                        "output": record.output,
+                    }
+                    for record in pass_pipeline.records
+                ],
+            }
+        ),
         "workload_profile": workload_profile.kind,
         "workload_profile_json": workload_profile_json,
     }
@@ -933,7 +1044,7 @@ def compile_eigen_lang(
     metadata["observability_json"] = _canonical_json_text(observability)
     metadata["explainability_json"] = _canonical_json_text(explainability)
 
-    return CompilationResult(aqo_json=aqo_bytes, metadata=metadata)
+    return _run_stage("emit", observer, lambda: CompilationResult(aqo_json=aqo_bytes, metadata=metadata))
 
 
 @contextmanager

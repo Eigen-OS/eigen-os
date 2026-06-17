@@ -115,7 +115,7 @@ Each profile owns required semantic checks, allowed rewrites, forbidden transfor
 
 ## 6. Compilation pipeline
 
-The canonical compiler stages are:
+The canonical compiler service stages are:
 
 1. `parse`
 2. `validate_ast`
@@ -125,7 +125,17 @@ The canonical compiler stages are:
 6. `canonicalize_aqo`
 7. `emit`
 
+Within the lowering boundary, the compiler also exposes a deterministic pass pipeline that is serialized in compiler metadata as `compiler_passes_json`. The pass pipeline separates rewrite steps from lowering/validation steps:
+
+1. `lower_to_ir`
+2. `rewrite_ir`
+3. `validate_lowering`
+4. `canonicalize_aqo`
+5. `emit`
+
 Optional deterministic rewrite or hardware-adaptation work may be added as long as it remains replay-safe and does not change the meaning of canonical AQO. Workload-family specific validation happens before lowering and may reject a valid-looking source when the selected profile forbids it.
+
+Pass ordering and pass outputs must remain stable for identical normalized inputs.
 
 ### Observability requirements
 
