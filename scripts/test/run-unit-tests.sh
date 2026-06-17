@@ -25,9 +25,6 @@ for service in "${services[@]}"; do
   fi
 done
 
-if [[ -d "$ROOT_DIR/src/services/eigen-lang" ]]; then
-  echo "==> Skipping eigen-lang (service scaffold has no tests yet)"
-fi
 if [[ -x "$ROOT_DIR/scripts/ci/check-benchmark-reproducibility.sh" ]]; then
   echo "==> Running benchmark reproducibility drift gate"
   "$ROOT_DIR/scripts/ci/check-benchmark-reproducibility.sh"

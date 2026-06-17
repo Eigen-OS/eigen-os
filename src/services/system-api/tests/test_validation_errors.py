@@ -51,14 +51,33 @@ def _extract_bad_request(err: grpc.RpcError) -> error_details_pb2.BadRequest:
     return bad
 
 
-def test_submit_job_missing_required_fields_is_accepted(grpc_addr: str):
+def test_submit_job_minimal_valid_request_is_accepted(grpc_addr: str):
     channel = grpc.insecure_channel(grpc_addr)
     stub = job_pb_grpc.JobServiceStub(channel)
 
-    response = stub.SubmitJob(job_pb.SubmitJobRequest())
+    response = stub.SubmitJob(
+        job_pb.SubmitJobRequest(
+            name="validation-smoke",
+            target="sim:local",
+            eigen_lang=types_pb.EigenLangSource(
+                source=(
+                    b"from eigen_lang import hybrid_program\n\n"
+                    b"@hybrid_program()\n"
+                    b"def main():\n"
+                    b"    return 0\n"
+                ),
+                entrypoint="main",
+            ),
+        )
+    )
     assert response.job_id
     assert response.status.job_id == response.job_id
-    assert response.status.state == types_pb.JOB_STATE_PENDING
+    assert response.status.state in {
+        types_pb.JOB_STATE_PENDING,
+        types_pb.JOB_STATE_QUEUED,
+        types_pb.JOB_STATE_RUNNING,
+        types_pb.JOB_STATE_DONE,
+    }
 
 
 def test_get_job_status_missing_job_id(grpc_addr: str):

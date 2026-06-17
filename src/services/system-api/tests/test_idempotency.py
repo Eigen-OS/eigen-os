@@ -7,6 +7,14 @@ from system_api.proto_gen import ensure_generated
 
 ensure_generated()
 
+
+@pytest.fixture(autouse=True)
+def _use_kernel(kernel_addr: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EIGEN_KERNEL_ADDR", kernel_addr)
+    monkeypatch.setenv("KERNEL_ENDPOINT", kernel_addr)
+    monkeypatch.setenv("KERNEL_GRPC_ENDPOINT", kernel_addr)
+
+
 from eigen.api.v1 import job_service_pb2 as job_pb  # noqa: E402
 from eigen.api.v1 import job_service_pb2_grpc as job_pb_grpc  # noqa: E402
 from eigen.api.v1 import types_pb2 as types_pb  # noqa: E402

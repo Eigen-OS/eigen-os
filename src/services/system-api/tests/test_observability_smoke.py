@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import socket
 import urllib.request
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -221,8 +222,15 @@ def test_submit_job_marker_and_traceparent_correlation_from_public_envelope(capl
     )
 
     caplog.set_level("INFO", logger="system_api")
-    response = JobService(job_pb=job_pb, types_pb=types_pb).SubmitJob(request, _Context())
-
+    service = JobService(job_pb=job_pb, types_pb=types_pb)
+    service._kernel_client = AsyncMock()
+    service._kernel_client._closed = False
+    service._kernel_client.enqueue_job = AsyncMock(return_value={
+        "job_id": "job-observability-smoke",
+        "state": "TASK_STATE_PENDING",
+        "created_at": None,
+    })
+    response = service.SubmitJob(request, _Context())
     assert response.job_id
     assert _MetricsState.public_api_contract_requests_total[("1.0.0", "accepted")] == 1
     assert any(record.message == "rpc_start" for record in caplog.records)

@@ -27,5 +27,5 @@ Compiler implementation for MVP-2 must stay safe (no code execution) and determi
 ## Related
 
 - MVP-2 plan: `docs/development/mvp-2-compilation-pipeline.md`
-- Eigen-Lang reference: `docs/reference/eigen-lang/README.md`
+- Eigen-Lang reference: `docs/reference/eigen-lang.md`
 - AQO reference: `docs/reference/formats/aqo.md`

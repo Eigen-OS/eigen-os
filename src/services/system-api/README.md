@@ -1,32 +1,15 @@
 # System API Server
 
-## 🚀 MVP skeleton quickstart (Issue #24)
+## System API
 
-This repository currently implements a **minimal** gRPC server skeleton exposing:
+Public ingress for Eigen OS. The service is intentionally thin:
 
-- `eigen.api.v1.JobService`
-- `eigen.api.v1.DeviceService`
+- validates and normalizes public envelopes,
+- enforces authn/authz and payload limits,
+- propagates trace/security context,
+- delegates execution and lifecycle ownership to Kernel/Core.
 
-Run locally (from repo root):
-
-```bash
-export EIGEN_QFS_BACKEND=s3
-export EIGEN_QFS_S3_BUCKET=eigen-qfs
-export EIGEN_QFS_S3_ENDPOINT=http://localhost:9000
-export AWS_ACCESS_KEY_ID=eigen
-export AWS_SECRET_ACCESS_KEY=eigen-password
-python -m venv .venv
-source .venv/bin/activate
-pip install -e src/services/system-api
-SYSTEM_API_GRPC_BIND=0.0.0.0:50051 system-api
-```
-
-The server performs basic required-field validation and returns structured validation
-errors using `google.rpc.BadRequest` field violations.
-
-When system-api runs in Docker and CLI runs on the host, use the S3 backend
-so result artifacts live in MinIO instead of container-local disk.
-That keeps `eigen results` consistent across process boundaries.
+Run the service with the normal `system-api` entrypoint and point it at a live Kernel gateway.
 
 ## MVP security/isolation baseline (Issue #46)
 

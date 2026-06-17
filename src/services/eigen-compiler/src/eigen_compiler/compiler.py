@@ -612,9 +612,9 @@ def _collect_operations(tree: ast.AST, params: dict[str, dict[str, object]]) -> 
         elif name in {"x", "y", "z", "h", "s", "t", "reset"}:
             q = _extract_qubits_from_args(positional_qubits[:1], arity=1, name=name.upper())
             lowered = {"op": name.upper(), "q": q}
-        elif name in {"cx", "cz", "swap"}:
-            q = _extract_qubits_from_args(positional_qubits[:2], arity=2, name=name.upper())
-            lowered = {"op": name.upper(), "q": q}
+        elif name in {"cx", "cnot", "cz", "swap"}:
+            q = _extract_qubits_from_args(positional_qubits[:2], arity=2, name=("CX" if name == "cnot" else name.upper()))
+            lowered = {"op": "CX" if name == "cnot" else name.upper(), "q": q}
         elif name in {"ccx", "ccz"}:
             q = _extract_qubits_from_args(positional_qubits[:3], arity=3, name=name.upper())
             lowered = {"op": name.upper(), "q": q}
@@ -973,19 +973,12 @@ def compile_eigen_lang(
     backend_contract = backend_contract_payload(workload_profile, normalized_options)
     backend_contract_json = _canonical_json_text(backend_contract)
     
-    aqo_request_payload = {
+    request_digest_payload = {
         "options": normalized_options,
         "request_context": asdict(normalized_request_context),
         "source_sha256": source_digest,
     }
-    aqo_request_digest = hashlib.sha256(_canonical_json_bytes(aqo_request_payload)).hexdigest()
-
-    semantic_request_payload = {
-        "options": normalized_options,
-        "request_context": asdict(normalized_request_context),
-        "source_sha256": source_digest,
-    }
-    aqo_request_digest = hashlib.sha256(_canonical_json_bytes(semantic_request_payload)).hexdigest()
+    aqo_request_digest = hashlib.sha256(_canonical_json_bytes(request_digest_payload)).hexdigest()
 
     request_payload = {
         "options": normalized_options,

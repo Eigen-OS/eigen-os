@@ -1,4 +1,4 @@
-from eigen_lang import hybrid_program
+from eigen_lang import hybrid_program, ry
 
 
 @hybrid_program(target="sim", shots=1000)
