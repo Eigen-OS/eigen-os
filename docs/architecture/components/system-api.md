@@ -89,7 +89,7 @@ For Wave 1 public-boundary closure, the System API owns canonical envelope norma
 
 The public wire contract for these requirements is defined in `docs/reference/api/grpc-public.md`; this component document describes ownership only.
 
-For W1-04, System API also owns JobSpec 1.0 normalization at ingress. It accepts native `eigen.os/v1` payloads and documented `eigen.os/v0.1` migration inputs, computes the canonical JobSpec digest, attaches package metadata (`jobspec_digest`, `jobspec_version`, `source_sha256`), and maps scheduling/security/observability sections into bounded internal metadata without adding internal-only fields to the public protobuf surface. The source-of-truth contract is `docs/reference/jobspec.md` and the schema is `docs/reference/schemas/jobspec-1.0.schema.json`.
+For W1-04, System API also owns JobSpec 1.0 normalization at ingress. It accepts native `eigen.os/v1` payloads and documented `eigen.os/v0.1` migration inputs, computes the canonical JobSpec digest, attaches package metadata (`jobspec_digest`, `jobspec_version`, `source_sha256`), and maps scheduling/security/observability sections into bounded internal metadata without adding internal-only fields to the public protobuf surface. Distributed topology hints are forwarded opaquely in `jobspec_workload`; Kernel/QRTX owns validation and lineage materialization for distributed execution. The source-of-truth contract is `docs/reference/jobspec.md` and the schema is `docs/reference/schemas/jobspec-1.0.schema.json`.
 
 ---
 

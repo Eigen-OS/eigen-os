@@ -257,50 +257,7 @@ def _normalize_workload_contract(
             topology_raw = workload_raw.get(topology_key)
             break
 
-    topology: dict[str, Any] | None = None
-    if kind == "DistributedJob":
-        if topology_raw is None:
-            violations.append(FieldViolation(field="spec.workload.topology", description="field is required"))
-            topology_raw = {}
-        topology_raw = _require_subdict(topology_raw, "spec.workload.topology")
-        cluster_id = _require_str(topology_raw, "cluster_id", "spec.workload.topology.cluster_id")
-        partition_count = topology_raw.get("partition_count")
-        if not isinstance(partition_count, int):
-            violations.append(FieldViolation(field="spec.workload.topology.partition_count", description="must be int32"))
-            partition_count = 0
-        elif partition_count < 1:
-            violations.append(FieldViolation(field="spec.workload.topology.partition_count", description="must be >= 1"))
-        partition_ids = _require_str_list(topology_raw, "partition_ids", "spec.workload.topology.partition_ids")
-        preferred_workers = _require_str_list(topology_raw, "preferred_workers", "spec.workload.topology.preferred_workers")
-        if partition_count and len(partition_ids) != partition_count:
-            violations.append(
-                FieldViolation(
-                    field="spec.workload.topology.partition_ids",
-                    description="must contain partition_count entries",
-                )
-            )
-        if partition_ids and len(set(partition_ids)) != len(partition_ids):
-            violations.append(
-                FieldViolation(
-                    field="spec.workload.topology.partition_ids",
-                    description="partition ids must be unique",
-                )
-            )
-        if partition_ids and len(preferred_workers) != len(partition_ids):
-            violations.append(
-                FieldViolation(
-                    field="spec.workload.topology.preferred_workers",
-                    description="must contain one worker per partition",
-                )
-            )
-        topology = {
-            "cluster_id": cluster_id,
-            "partition_count": partition_count,
-            "partition_ids": partition_ids,
-            "preferred_workers": preferred_workers,
-        }
-    elif topology_raw is not None:
-        violations.append(FieldViolation(field="spec.workload.topology", description="only DistributedJob may declare topology"))
+    topology: dict[str, Any] | None = topology_raw if isinstance(topology_raw, dict) else None
 
     backend_target = workload_raw.get("backend_target") or workload_raw.get("backendTarget") or target
     if backend_target is None:
@@ -559,8 +516,6 @@ def parse_jobspec_to_submit_request(jobspec_path: Path) -> job_pb.SubmitJobReque
             "jobspec_workload": _canonical_json(normalized["spec"]["workload"]),
         }
     )
-    if "topology" in normalized["spec"]["workload"]:
-        public_metadata["jobspec_topology"] = _canonical_json(normalized["spec"]["workload"]["topology"])
 
     workload = normalized["spec"]["workload"]
     workload_proto = job_pb.WorkloadContract(
