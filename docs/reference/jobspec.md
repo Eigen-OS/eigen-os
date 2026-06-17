@@ -103,6 +103,26 @@ ReplayJob
 
 ---
 
+### 2.1 Unified ingress, security, and audit path
+
+All supported workload-family kinds share the same normalized ingress path through System API. The workload family may change execution semantics, but it MUST NOT fork authentication, authorization, trace propagation, or audit formatting.
+
+For every workload-family kind (`QuantumJob`, `HybridWorkflow`, `DistributedJob`, `BenchmarkJob`, `PipelineJob`, `ReplayJob`), the normalized envelope MUST carry the same bounded security context fields end to end:
+
+- `traceparent`
+- derived `trace_id`
+- `subject`
+- `tenant` / `tenant_id`
+- `project` / `project_id`
+- `service_identity`
+- `policy_snapshot_ref` or equivalent policy evidence handle
+- `sandbox_profile`
+- replay markers when replay-safe processing is requested
+
+Replay-sensitive profiles, including replay and benchmark flows, MUST fail closed when policy evidence is missing or cannot be normalized. Observability and audit records for all workload kinds MUST remain bounded, secret-free, and schema-stable; kind-specific behavior is limited to workload execution semantics, not ingress security or audit structure.
+
+---
+
 # 3. Design Principles
 
 ## 3.1 Declarative Execution

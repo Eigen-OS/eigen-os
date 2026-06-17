@@ -112,11 +112,15 @@ Wave 9 public ingress handlers MUST normalize and propagate a deterministic secu
 
 The public ingress boundary MUST reject requests by default unless the configured identity and policy checks succeed. Allow-all behavior remains a local/dev compatibility mode only when explicitly configured.
 
+All workload-family variants (`QuantumJob`, `HybridWorkflow`, `DistributedJob`, `BenchmarkJob`, `PipelineJob`, `ReplayJob`) MUST use this same normalized ingress path. No workload kind may introduce a separate authn/authz, trace, or audit branch.
+
 ---
 
 ### 7.1 Security audit trail and replay evidence
 
 Security decisions MUST be written to the canonical append-only audit sink with bounded, secret-free metadata. Each audit event MUST include the decision outcome, decision reason, policy version, service identity, sandbox profile, replay marker, and request trace correlation where available.
+
+This audit schema applies uniformly to every workload-family kind. Workload-specific semantics MAY influence the decision reason, but they MUST NOT change the audit envelope shape or introduce family-specific security fields.
 
 Security telemetry for the audit path MUST remain bounded. Audit sink health is surfaced as counters rather than free-form labels, and audit records MUST NOT embed raw payloads, bearer tokens, or provider secrets.
 
