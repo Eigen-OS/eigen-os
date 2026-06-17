@@ -15,6 +15,7 @@ from time import perf_counter
 from typing import Callable, Iterator, TypeVar
 
 from .errors import FieldViolation
+from .validation import evaluate_compiler_rules
 
 AQO_VERSION = "1.0.0"
 
@@ -739,18 +740,24 @@ def compile_eigen_lang(
     source_digest = hashlib.sha256(resolved_source).hexdigest()
     tree = _run_stage("parse", observer, lambda: _parse_python_source(resolved_source))
 
-    def _validate_tree() -> None:
-        violations = (
-            _enforce_resource_limits(tree)
-            + _reject_forbidden_imports(tree)
-            + _reject_forbidden_calls(tree)
-            + _reject_dynamic_control_flow(tree)
-            + _validate_single_entrypoint(tree)
+    def _validate_semantics() -> tuple[object, ...]:
+        results = evaluate_compiler_rules(
+            source=resolved_source,
+            tree=tree,
+            options=normalized_options,
+            request_context=asdict(normalized_request_context),
+            source_ref=source_ref,
+            source_precedence=source_precedence,
+            source_digest=source_digest,
+            categories={"syntax", "policy", "semantic"},
         )
+        violations = tuple(v for result in results if not result.accepted for v in result.violations)
         if violations:
             raise CompilerValidationError(violations=violations)
 
-    _run_stage("validate_ast", observer, _validate_tree)
+        return results
+    
+    semantic_results = _run_stage("semantic_validation", observer, _validate_semantics)
 
     def _annotate_tree() -> dict[str, dict[str, object]]:
         params, param_violations = _collect_params(tree)
@@ -760,6 +767,28 @@ def compile_eigen_lang(
 
     params = _run_stage("annotate", observer, _annotate_tree)
     operations, qubits = _run_stage("lower_to_ir", observer, lambda: _collect_operations(tree, params))
+    
+    def _validate_lowering() -> tuple[object, ...]:
+        results = evaluate_compiler_rules(
+            source=resolved_source,
+            tree=tree,
+            options=normalized_options,
+            request_context=asdict(normalized_request_context),
+            params=params,
+            operations=operations,
+            qubits=qubits,
+            source_ref=source_ref,
+            source_precedence=source_precedence,
+            source_digest=source_digest,
+            categories={"lowering"},
+        )
+        violations = tuple(v for result in results if not result.accepted for v in result.violations)
+        if violations:
+            raise CompilerValidationError(violations=violations)
+        return results
+
+    lowering_results = _run_stage("lowering_validation", observer, _validate_lowering)
+    
     has_minimize = _run_stage(
         "eigen_dpda",
         observer,
@@ -774,28 +803,13 @@ def compile_eigen_lang(
     )
     distributed = _distributed_compile_config(options)
 
-    aqo_request_payload = {
-        "options": normalized_options,
-        "request_context": asdict(normalized_request_context),
-        "source_sha256": source_digest,
-    }
-    aqo_request_digest = hashlib.sha256(_canonical_json_bytes(aqo_request_payload)).hexdigest()
-
     semantic_request_payload = {
         "options": normalized_options,
         "request_context": asdict(normalized_request_context),
         "source_sha256": source_digest,
     }
-    aqo_request_digest = hashlib.sha256(_canonical_json_bytes(semantic_request_payload)).hexdigest()
-
-    request_payload = {
-        "options": normalized_options,
-        "request_context": asdict(normalized_request_context),
-        "source_precedence": source_precedence,
-        "source_ref": source_ref or "",
-        "source_sha256": source_digest,
-    }
-    request_digest = hashlib.sha256(_canonical_json_bytes(request_payload)).hexdigest()
+    request_digest = hashlib.sha256(_canonical_json_bytes(semantic_request_payload)).hexdigest()
+    aqo_request_digest = request_digest
     options_json = _canonical_json_bytes(normalized_options).decode("utf-8")
     request_context_json = _canonical_json_bytes(asdict(normalized_request_context)).decode("utf-8")
 
@@ -825,9 +839,10 @@ def compile_eigen_lang(
         "source_precedence": source_precedence,
         "stage_order": [
             "parse",
-            "validate_ast",
+            "semantic_validation",
             "annotate",
             "lower_to_ir",
+            "lowering_validation",
             "eigen_dpda",
             "canonicalize_aqo",
             "emit",
@@ -907,6 +922,8 @@ def compile_eigen_lang(
     metadata["decision_lineage_json"] = _canonical_json_text(decision_lineage)
     metadata["observability_json"] = _canonical_json_text(observability)
     metadata["explainability_json"] = _canonical_json_text(explainability)
+    metadata["semantic_rule_report_json"] = _canonical_json_text([asdict(result) for result in semantic_results])
+    metadata["lowering_rule_report_json"] = _canonical_json_text([asdict(result) for result in lowering_results])
 
     return CompilationResult(aqo_json=aqo_bytes, metadata=metadata)
 

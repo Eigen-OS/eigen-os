@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from eigen_compiler.compiler import CompilerValidationError, _encode_aqo_payload, compile_eigen_lang
+from eigen_compiler.validation import build_compiler_rule_catalog
 from eigen_compiler.grpc_impl import render_metrics_text
 from eigen_compiler.proto_gen import ensure_generated
 
@@ -77,6 +78,28 @@ def test_aqo_validation_rejects_unknown_opcode_and_measurement_shape() -> None:
         _encode_aqo_payload({"version": "1.0.0", "qubits": 1, "operations": [{"op": "FOO", "q": [0]}]})
     with pytest.raises(CompilerValidationError):
         _encode_aqo_payload({"version": "1.0.0", "qubits": 2, "operations": [{"op": "MEASURE", "q": [0, 1], "c": [0]}]})
+
+
+def test_rule_catalog_exposes_named_semantic_and_lowering_rules() -> None:
+    catalog = build_compiler_rule_catalog()
+    names = {rule.name for rule in catalog.rules}
+    assert "syntax.entrypoint.single" in names
+    assert "policy.import.allowed" in names
+    assert "lowering.rotation.theta_required" in names
+
+
+def test_compile_errors_carry_named_rule_and_location() -> None:
+    source = (
+        b"import os\n"
+        b"from eigen_lang import hybrid_program\n\n"
+        b"@hybrid_program()\n"
+        b"def main():\n"
+        b"    pass\n"
+    )
+    with pytest.raises(CompilerValidationError) as excinfo:
+        compile_eigen_lang(source)
+    assert any(v.rule == "policy.import.allowed" for v in excinfo.value.violations)
+    assert any(v.location == "source" for v in excinfo.value.violations)
 
 
 def test_source_ref_is_resolved_from_qfs_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

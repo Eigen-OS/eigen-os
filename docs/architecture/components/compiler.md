@@ -96,6 +96,8 @@ The compiler must reject:
 - dynamic control flow,
 - reflection or metaprogramming outside the approved surface.
 
+These rejections are enforced by deterministic rule checks, not by advisory models.
+
 The compiler must run in an isolated sandbox profile selected explicitly by request/deployment context.
 
 ---
@@ -105,14 +107,15 @@ The compiler must run in an isolated sandbox profile selected explicitly by requ
 The canonical compiler stages are:
 
 1. `parse`
-2. `validate_ast`
+2. `semantic_validation`
 3. `annotate`
 4. `lower_to_ir`
-5. `eigen_dpda`
-6. `canonicalize_aqo`
-7. `emit`
+5. `lowering_validation`
+6. `eigen_dpda`
+7. `canonicalize_aqo`
+8. `emit`
 
-Optional deterministic rewrite or hardware-adaptation work may be added as long as it remains replay-safe and does not change the meaning of canonical AQO.
+`semantic_validation` owns syntax, policy, and semantic rule evaluation. `lowering_validation` owns lowering preconditions and rewrite eligibility. Optional deterministic rewrite or hardware-adaptation work may be added as long as it remains replay-safe and does not change the meaning of canonical AQO.
 
 ### Observability requirements
 
@@ -121,6 +124,7 @@ Optional deterministic rewrite or hardware-adaptation work may be added as long 
 - Metric labels must not include request IDs, trace IDs, tenant IDs, or project IDs.
 - Duplicate / replay compiles must be observable.
 - Stage failures must be attributable to a named stage and a structured violation.
+- Rule rejections should identify the rule identifier and the field or source location that failed.
 
 ---
 

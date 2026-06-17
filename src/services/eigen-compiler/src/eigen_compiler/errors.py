@@ -23,6 +23,8 @@ except ModuleNotFoundError:  # pragma: no cover - exercised in lean test envs
 class FieldViolation:
     field: str
     description: str
+    rule: str = ""
+    location: str = ""
 
 
 def _grpc_code_int(code: grpc.StatusCode) -> int:

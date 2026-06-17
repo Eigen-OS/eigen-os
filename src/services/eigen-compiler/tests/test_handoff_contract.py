@@ -141,9 +141,10 @@ def test_handoff_schema_is_versioned_and_bounded() -> None:
     assert decision_lineage["optimizer_contract_version"] == "1.0.0"
     assert decision_lineage["stage_order"] == [
         "parse",
-        "validate_ast",
+        "semantic_validation",
         "annotate",
         "lower_to_ir",
+        "lowering_validation",
         "eigen_dpda",
         "canonicalize_aqo",
         "emit",
