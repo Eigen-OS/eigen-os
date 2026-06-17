@@ -95,6 +95,8 @@ ReplayJob
 
 `HybridWorkflow` jobs are replayed as explicit multi-stage runtime graphs. Stage handoff is represented through runtime envelope fields and lineage refs, not by adding orchestration semantics to AQO. Each stage boundary must remain reconstructable from stage input/output refs, handoff refs, and QFS lineage metadata.
 
+`DistributedJob` is the bounded distributed profile. Its workload contract MAY declare deterministic topology hints under `spec.workload.topology` using a `cluster_id`, a bounded `partition_count`, explicit `partition_ids`, and aligned `preferred_workers`. These hints are execution metadata only; they MUST remain orthogonal to AQO top-level fields and MUST be mirrored into runtime lineage/dispatch metadata without mutating the AQO payload.
+
 `BenchmarkJob` is the reproducible measurement profile. Its canonical runtime contract is fail-closed and requires fixed seed metadata, stable backend/target selection, and isolated benchmark telemetry. The benchmark envelope MUST preserve the exact execution context in lineage metadata and result artifacts so repeated runs can be compared without ambiguity. Missing seed metadata or ambiguous target selection MUST be rejected deterministically.
 
 ---
@@ -231,6 +233,11 @@ artifacts:
 | `spec.workload.execution_profile` | no | string | Execution profile name |
 | `spec.workload.replayable` | no | bool | Replayability hint |
 | `spec.workload.backend_target` | no | string | Backend target override |
+| `spec.workload.topology` | no | object | Bounded distributed topology hints |
+| `spec.workload.topology.cluster_id` | no | string | Distributed cluster identity hint |
+| `spec.workload.topology.partition_count` | no | int | Number of distributed partitions |
+| `spec.workload.topology.partition_ids` | no | array<string> | Deterministic partition identifiers |
+| `spec.workload.topology.preferred_workers` | no | array<string> | Bounded worker placement hints |
 | `spec.workload.artifact_lineage` | no | object | Artifact lineage refs |
 | `spec.workload.observability` | no | object | Workload observability refs |
 | spec.workload.seed | no | integer | Fixed benchmark seed metadata |
@@ -1153,6 +1160,18 @@ spec:
   program:
     path: src/vqe.py
     entrypoint: run
+
+workload:
+    kind: DistributedJob
+    topology:
+      cluster_id: cluster:auto
+      partition_count: 2
+      partition_ids:
+        - partition-0
+        - partition-1
+      preferred_workers:
+        - worker-a
+        - worker-b
 
 runtime:
   mode: distributed

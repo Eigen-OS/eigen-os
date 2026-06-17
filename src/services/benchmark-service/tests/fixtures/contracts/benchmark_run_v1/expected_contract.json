@@ -6,7 +6,9 @@
   "response_required_top_level_fields": [
     "api_version",
     "run",
-    "snapshot"
+    "snapshot",
+    "execution_context",
+    "artifacts"
   ],
   "response_required_run_fields": [
     "run_id",

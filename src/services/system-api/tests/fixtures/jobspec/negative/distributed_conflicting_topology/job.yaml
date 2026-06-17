@@ -1,7 +1,7 @@
 apiVersion: eigen.os/v1
 kind: QuantumJob
 metadata:
-  name: distributedjob
+  name: distributedjob-conflict
 spec:
   target: cluster:auto
   program:
@@ -19,5 +19,3 @@ spec:
         - partition-1
       preferred_workers:
         - worker-a
-        - worker-b
-        
