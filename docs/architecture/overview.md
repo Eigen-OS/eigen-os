@@ -90,6 +90,8 @@ Identical inputs:
 - target metadata,
 - referenced artifacts
 
+The compiler also resolves a workload-family profile from the normalized workload contract before lowering. That profile becomes part of compiler metadata and can change validation and lowering decisions without changing AQO's top-level schema.
+
 MUST produce identical AQO output.
 
 Server-side user code execution is prohibited. Compilation operates on an allowlisted Python AST subset and performs parsing/validation/transformation only.

@@ -124,6 +124,8 @@ NSC never bypasses:
 - deterministic AQO guarantees,
 - runtime isolation boundaries,
 - policy enforcement layers.
+- workload-family profile resolution,
+- profile-specific compiler preconditions,
 
 ---
 

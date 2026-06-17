@@ -131,10 +131,12 @@ def test_handoff_schema_is_versioned_and_bounded() -> None:
     assert set(handoff["envelope"]) == ALLOWED_HANDFOFF_ENVELOPE_FIELDS
     assert handoff["input_aqo"]["version"] == "1.0.0"
     assert handoff["input_aqo"]["operations"]
+    assert result.metadata["workload_profile"] == "QuantumJob"
 
     decision_lineage = json.loads(handoff["compiler_metadata"]["decision_lineage_json"])
     observability = json.loads(handoff["compiler_metadata"]["observability_json"])
     explainability = json.loads(handoff["compiler_metadata"]["explainability_json"])
+    assert decision_lineage["workload_profile"] == "QuantumJob"
 
     assert decision_lineage["contract_version"] == "1.0.0"
     assert decision_lineage["compiler_contract_version"] == "1.0.0"

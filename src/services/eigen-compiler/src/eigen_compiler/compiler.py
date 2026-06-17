@@ -15,6 +15,7 @@ from time import perf_counter
 from typing import Callable, Iterator, TypeVar
 
 from .errors import FieldViolation
+from .validation import resolve_workload_profile, validate_workload_profile, workload_profile_payload
 
 AQO_VERSION = "1.0.0"
 
@@ -773,6 +774,25 @@ def compile_eigen_lang(
         ),
     )
     distributed = _distributed_compile_config(options)
+    workload_profile, profile_selection_violations = resolve_workload_profile(
+        normalized_options,
+        has_expectation=has_expectation,
+        has_minimize=has_minimize,
+    )
+    if profile_selection_violations:
+        raise CompilerValidationError(violations=profile_selection_violations)
+
+    profile_violations = validate_workload_profile(
+        workload_profile,
+        normalized_options,
+        source_ref_present=source_ref is not None,
+        has_expectation=has_expectation,
+        has_minimize=has_minimize,
+    )
+    if profile_violations:
+        raise CompilerValidationError(violations=profile_violations)
+
+    workload_profile_json = _canonical_json_text(workload_profile_payload(workload_profile))
 
     aqo_request_payload = {
         "options": normalized_options,
@@ -792,6 +812,8 @@ def compile_eigen_lang(
         "options": normalized_options,
         "request_context": asdict(normalized_request_context),
         "source_precedence": source_precedence,
+        "workload_profile": workload_profile.kind,
+        "workload_profile_json": workload_profile_json,
         "source_ref": source_ref or "",
         "source_sha256": source_digest,
     }
@@ -835,6 +857,7 @@ def compile_eigen_lang(
         "request_id": normalized_request_context.request_id,
         "trace_id": normalized_request_context.trace_id,
         "traceparent": normalized_request_context.traceparent,
+        "workload_profile": workload_profile.kind,
         "source_sha256": source_digest,
         "aqo_sha256": aqo_digest,
         "request_sha256": request_digest,
@@ -889,6 +912,8 @@ def compile_eigen_lang(
         "sandbox_profile": normalized_request_context.sandbox_profile,
         "tenant_id": normalized_request_context.tenant_id,
         "project_id": normalized_request_context.project_id,
+        "workload_profile": workload_profile.kind,
+        "workload_profile_json": workload_profile_json,
     }
     if has_minimize:
         metadata["hybrid_plan_marker"] = "minimize"
