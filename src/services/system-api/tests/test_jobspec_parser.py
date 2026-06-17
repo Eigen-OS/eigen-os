@@ -48,6 +48,8 @@ def test_jobspec_positive_fixtures_are_mapped_deterministically() -> None:
         assert req.workload.replayable == normalized["spec"]["workload"]["replayable"]
         assert json.loads(req.metadata["jobspec_workload"]) == normalized["spec"]["workload"]
         assert req.metadata["jobspec_version"] == "1.0.0"
+        if normalized["spec"]["workload"]["kind"] == "DistributedJob":
+            assert json.loads(req.metadata["jobspec_topology"]) == normalized["spec"]["workload"]["topology"]
         assert req.metadata["jobspec_digest"] == normalized["digest"]
         assert req.metadata["source_sha256"] == req.eigen_lang.sha256
         assert req.metadata["jobspec_yaml"]
@@ -138,3 +140,33 @@ def test_missing_workload_context_defaults_to_quantumjob() -> None:
     assert req.workload.kind == WORKLOAD_KIND_VALUES["QuantumJob"]
     assert req.workload.execution_profile == "quantum"
     assert json.loads(req.metadata["jobspec_workload"]) == normalized["spec"]["workload"]
+
+
+def test_distributed_job_requires_and_preserves_topology_hints() -> None:
+    case_path = FIXTURES_ROOT / "positive" / "workload_family_distributed" / "job.yaml"
+
+    normalized = normalize_jobspec(case_path)
+    req = parse_jobspec_to_submit_request(case_path)
+
+    assert normalized["spec"]["workload"]["kind"] == "DistributedJob"
+    assert normalized["spec"]["workload"]["topology"] == {
+        "cluster_id": "cluster:auto",
+        "partition_count": 2,
+        "partition_ids": ["partition-0", "partition-1"],
+        "preferred_workers": ["worker-a", "worker-b"],
+    }
+    assert json.loads(req.metadata["jobspec_topology"]) == normalized["spec"]["workload"]["topology"]
+    assert json.loads(req.metadata["jobspec_workload"]) == normalized["spec"]["workload"]
+
+
+def test_distributed_job_negative_topology_fixtures_are_rejected() -> None:
+    for case_name, expected_field in [
+        ("distributed_missing_topology", "spec.workload.topology"),
+        ("distributed_conflicting_topology", "spec.workload.topology.preferred_workers"),
+    ]:
+        case_path = FIXTURES_ROOT / "negative" / case_name / "job.yaml"
+        with pytest.raises(JobSpecValidationError) as exc:
+            parse_jobspec_to_submit_request(case_path)
+        fields = {v.field for v in exc.value.violations}
+        assert expected_field in fields
+        

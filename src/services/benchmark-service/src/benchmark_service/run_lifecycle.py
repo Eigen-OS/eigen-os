@@ -93,10 +93,13 @@ class BenchmarkRunService:
         if existing_retry is not None:
             return self._runs[existing_retry]
 
+        source_context = source_run.snapshot.execution_context
         retry_config = {
-            "retry_of": run_id,
-            "source_snapshot_hash": source_run.snapshot.request_hash,
-            "retry_key": retry_key,
+            "dataset": source_context["dataset"],
+            "dataset_version": source_context["dataset_version"],
+            "backend": source_context["backend"],
+            "target": source_context["target"],
+            "seed": source_context["seed"],
         }
         retry_run_id = self._stable_run_id("retry", retry_key, retry_config)
         retry_run = self._create_run(
@@ -205,6 +208,11 @@ class BenchmarkRunService:
     def _emit_kb_record(self, run: BenchmarkRun, *, kind: str, source_run_id: str | None, retry_key: str | None) -> None:
         if self._kb_sink is None:
             return
+        
+        source_measurement_digest = run.snapshot.measurement_digest
+        if source_run_id is not None and source_run_id in self._runs:
+            source_measurement_digest = self._runs[source_run_id].snapshot.measurement_digest
+
         payload = {
             "contract_version": RUN_CONTRACT_VERSION,
             "record_id": f"benchmark:{run.run_id}",
@@ -214,7 +222,7 @@ class BenchmarkRunService:
             "idempotency_key": run.idempotency_key,
             "state": run.state.value,
             "request_hash": run.snapshot.request_hash,
-            "measurement_digest": run.snapshot.measurement_digest,
+            "measurement_digest": source_measurement_digest,
             "created_at": run.snapshot.created_at,
             "trace_id": f"trace_{run.run_id[:8]}",
             "trace_scope": BENCHMARK_TELEMETRY_SCOPE,
@@ -240,7 +248,7 @@ class BenchmarkRunService:
             "lineage": {
                 "model_version": RUN_CONTRACT_VERSION,
                 "training_set_hash": run.snapshot.request_hash,
-                "evaluation_bundle_hash": run.snapshot.measurement_digest,
+                "evaluation_bundle_hash": source_measurement_digest,
                 "promotion_policy_version": RUN_CONTRACT_VERSION,
                 "promotion_outcome": run.state.value,
             },

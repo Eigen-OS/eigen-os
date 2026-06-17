@@ -183,6 +183,30 @@ def _normalize_workload_contract(
             return {}
         return value
 
+    def _require_str(raw: dict[str, Any], key: str, field: str) -> str:
+        value = raw.get(key, "")
+        if value is None:
+            return ""
+        if not isinstance(value, str):
+            violations.append(FieldViolation(field=field, description="must be string"))
+            return ""
+        return value.strip()
+
+    def _require_str_list(raw: dict[str, Any], key: str, field: str) -> list[str]:
+        value = raw.get(key, [])
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            violations.append(FieldViolation(field=field, description="must be list<string>"))
+            return []
+        out: list[str] = []
+        for idx, item in enumerate(value):
+            if not isinstance(item, str) or not item.strip():
+                violations.append(FieldViolation(field=f"{field}[{idx}]", description="must be non-empty string"))
+            else:
+                out.append(item.strip())
+        return out
+
     artifact_lineage_raw = _require_subdict(
         workload_raw.get("artifact_lineage") or workload_raw.get("artifactLineage"),
         "spec.workload.artifact_lineage",
@@ -196,27 +220,18 @@ def _normalize_workload_contract(
         "spec.workload.security",
     )
 
-    def _string_field(raw: dict[str, Any], key: str, field: str) -> str:
-        value = raw.get(key, "")
-        if value is None:
-            return ""
-        if not isinstance(value, str):
-            violations.append(FieldViolation(field=field, description="must be string"))
-            return ""
-        return value.strip()
-
     artifact_lineage = {
-        "root_ref": _string_field(artifact_lineage_raw, "root_ref", "spec.workload.artifact_lineage.root_ref"),
-        "parent_ref": _string_field(artifact_lineage_raw, "parent_ref", "spec.workload.artifact_lineage.parent_ref"),
-        "policy_snapshot_ref": _string_field(
+        "root_ref": _require_str(artifact_lineage_raw, "root_ref", "spec.workload.artifact_lineage.root_ref"),
+        "parent_ref": _require_str(artifact_lineage_raw, "parent_ref", "spec.workload.artifact_lineage.parent_ref"),
+        "policy_snapshot_ref": _require_str(
             artifact_lineage_raw, "policy_snapshot_ref", "spec.workload.artifact_lineage.policy_snapshot_ref"
         ),
-        "execution_ref": _string_field(artifact_lineage_raw, "execution_ref", "spec.workload.artifact_lineage.execution_ref"),
+        "execution_ref": _require_str(artifact_lineage_raw, "execution_ref", "spec.workload.artifact_lineage.execution_ref"),
     }
     observability = {
-        "traceparent": _string_field(observability_raw, "traceparent", "spec.workload.observability.traceparent"),
-        "trace_id": _string_field(observability_raw, "trace_id", "spec.workload.observability.trace_id"),
-        "trace_ref": _string_field(observability_raw, "trace_ref", "spec.workload.observability.trace_ref"),
+        "traceparent": _require_str(observability_raw, "traceparent", "spec.workload.observability.traceparent"),
+        "trace_id": _require_str(observability_raw, "trace_id", "spec.workload.observability.trace_id"),
+        "trace_ref": _require_str(observability_raw, "trace_ref", "spec.workload.observability.trace_ref"),
         "emit_metrics": observability_raw.get("emit_metrics", False),
     }
     if not isinstance(observability["emit_metrics"], bool):
@@ -224,10 +239,10 @@ def _normalize_workload_contract(
         observability["emit_metrics"] = False
 
     security = {
-        "tenant_id": _string_field(security_raw, "tenant_id", "spec.workload.security.tenant_id"),
-        "project_id": _string_field(security_raw, "project_id", "spec.workload.security.project_id"),
-        "service_identity": _string_field(security_raw, "service_identity", "spec.workload.security.service_identity"),
-        "policy_snapshot_ref": _string_field(
+        "tenant_id": _require_str(security_raw, "tenant_id", "spec.workload.security.tenant_id"),
+        "project_id": _require_str(security_raw, "project_id", "spec.workload.security.project_id"),
+        "service_identity": _require_str(security_raw, "service_identity", "spec.workload.security.service_identity"),
+        "policy_snapshot_ref": _require_str(
             security_raw, "policy_snapshot_ref", "spec.workload.security.policy_snapshot_ref"
         ),
         "fail_closed": security_raw.get("fail_closed", kind == "ReplayJob"),
@@ -236,6 +251,57 @@ def _normalize_workload_contract(
         violations.append(FieldViolation(field="spec.workload.security.fail_closed", description="must be boolean"))
         security["fail_closed"] = kind == "ReplayJob"
 
+    topology_raw = None
+    for topology_key in ("topology", "execution_topology", "topology_hints"):
+        if topology_key in workload_raw:
+            topology_raw = workload_raw.get(topology_key)
+            break
+
+    topology: dict[str, Any] | None = None
+    if kind == "DistributedJob":
+        if topology_raw is None:
+            violations.append(FieldViolation(field="spec.workload.topology", description="field is required"))
+            topology_raw = {}
+        topology_raw = _require_subdict(topology_raw, "spec.workload.topology")
+        cluster_id = _require_str(topology_raw, "cluster_id", "spec.workload.topology.cluster_id")
+        partition_count = topology_raw.get("partition_count")
+        if not isinstance(partition_count, int):
+            violations.append(FieldViolation(field="spec.workload.topology.partition_count", description="must be int32"))
+            partition_count = 0
+        elif partition_count < 1:
+            violations.append(FieldViolation(field="spec.workload.topology.partition_count", description="must be >= 1"))
+        partition_ids = _require_str_list(topology_raw, "partition_ids", "spec.workload.topology.partition_ids")
+        preferred_workers = _require_str_list(topology_raw, "preferred_workers", "spec.workload.topology.preferred_workers")
+        if partition_count and len(partition_ids) != partition_count:
+            violations.append(
+                FieldViolation(
+                    field="spec.workload.topology.partition_ids",
+                    description="must contain partition_count entries",
+                )
+            )
+        if partition_ids and len(set(partition_ids)) != len(partition_ids):
+            violations.append(
+                FieldViolation(
+                    field="spec.workload.topology.partition_ids",
+                    description="partition ids must be unique",
+                )
+            )
+        if partition_ids and len(preferred_workers) != len(partition_ids):
+            violations.append(
+                FieldViolation(
+                    field="spec.workload.topology.preferred_workers",
+                    description="must contain one worker per partition",
+                )
+            )
+        topology = {
+            "cluster_id": cluster_id,
+            "partition_count": partition_count,
+            "partition_ids": partition_ids,
+            "preferred_workers": preferred_workers,
+        }
+    elif topology_raw is not None:
+        violations.append(FieldViolation(field="spec.workload.topology", description="only DistributedJob may declare topology"))
+
     backend_target = workload_raw.get("backend_target") or workload_raw.get("backendTarget") or target
     if backend_target is None:
         backend_target = ""
@@ -243,7 +309,7 @@ def _normalize_workload_contract(
         violations.append(FieldViolation(field="spec.workload.backend_target", description="must be string"))
         backend_target = target
 
-    return {
+    result = {
         "kind": kind,
         "execution_profile": execution_profile,
         "replayable": replayable,
@@ -252,6 +318,9 @@ def _normalize_workload_contract(
         "security": security,
         "backend_target": backend_target.strip() if isinstance(backend_target, str) else target,
     }
+    if topology is not None:
+        result["topology"] = topology
+    return result
 
 
 def _canonical_json(value: Any) -> str:
@@ -490,6 +559,8 @@ def parse_jobspec_to_submit_request(jobspec_path: Path) -> job_pb.SubmitJobReque
             "jobspec_workload": _canonical_json(normalized["spec"]["workload"]),
         }
     )
+    if "topology" in normalized["spec"]["workload"]:
+        public_metadata["jobspec_topology"] = _canonical_json(normalized["spec"]["workload"]["topology"])
 
     workload = normalized["spec"]["workload"]
     workload_proto = job_pb.WorkloadContract(
