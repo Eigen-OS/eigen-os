@@ -56,6 +56,7 @@ def test_compile_circuit_happy_path(grpc_addr: str) -> None:
 
     assert resp.circuit.format == _enum_value(types_pb, "CIRCUIT_FORMAT_AQO_JSON", "AQO_JSON")
     assert resp.metadata["aqo_version"] == "1.0.0"
+    assert resp.metadata["workload_profile"] == "QuantumJob"
     assert len(resp.circuit.data) > 0
     assert resp.metadata["distributed.execution_metadata_version"] == "1.0.0"
     assert resp.metadata["distributed.enabled"] == "false"
@@ -87,6 +88,7 @@ def test_compile_circuit_emits_distributed_metadata_hints(grpc_addr: str) -> Non
     assert resp.metadata["distributed.execution_metadata_version"] == "1.0.0"
     assert resp.metadata["distributed.topology_hints_version"] == "1.0.0"
     assert resp.metadata["distributed.enabled"] == "true"
+    assert resp.metadata["workload_profile"] == "DistributedJob"
     assert resp.metadata["distributed.target"] == "cluster"
     assert resp.metadata["distributed.partition_count"] == "8"
     assert resp.metadata["distributed.queue_provider"] == "redis"
@@ -263,6 +265,64 @@ def test_compile_circuit_rejects_unsupported_distributed_config(grpc_addr: str) 
         "options.distributed.queue_provider",
         "options.distributed.topology_hint",
     ]
+
+
+@pytest.mark.parametrize(
+    "options,expected_fields,expected_snippet",
+    [
+        (
+            {
+                "workload.kind": "BenchmarkJob",
+                "spec.workload.backend_target": "sim:local",
+            },
+            {"options.spec.workload.seed"},
+            "BenchmarkJob requires spec.workload.seed",
+        ),
+        (
+            {
+                "workload.kind": "ReplayJob",
+                "spec.workload.replay.enabled": "true",
+            },
+            {"source_ref"},
+            "ReplayJob requires source_ref",
+        ),
+        (
+            {
+                "workload.kind": "PipelineJob",
+                "spec.workload.pipeline.stage_id": "stage-1",
+            },
+            {"options.spec.workload.pipeline.handoff_ref", "source_ref"},
+            "PipelineJob requires",
+        ),
+    ],
+)
+def test_compile_circuit_rejects_profile_specific_constraints(
+    grpc_addr: str,
+    options: dict[str, str],
+    expected_fields: set[str],
+    expected_snippet: str,
+) -> None:
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = comp_pb_grpc.CompilationServiceStub(channel)
+
+    with pytest.raises(grpc.RpcError) as e:
+        stub.CompileCircuit(
+            comp_pb.CompileCircuitRequest(
+                language="eigen-lang",
+                source=(
+                    b"from eigen_lang import hybrid_program\n\n"
+                    b"@hybrid_program()\n"
+                    b"def main():\n"
+                    b"    ry(0, theta=1.0)\n"
+                ),
+                options=options,
+            )
+        )
+
+    assert e.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+    bad = _extract_bad_request(e.value)
+    assert expected_fields <= {v.field for v in bad.field_violations}
+    assert any(expected_snippet in v.description for v in bad.field_violations)
 
 
 def _nsc_request(

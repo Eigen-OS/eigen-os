@@ -98,6 +98,19 @@ The compiler must reject:
 
 The compiler must run in an isolated sandbox profile selected explicitly by request/deployment context.
 
+### 5.1 Workload-family profiles
+
+Before lowering, the compiler resolves a deterministic workload-family profile from the normalized request, compiler options, and source shape. The supported profiles are:
+
+- `QuantumJob`
+- `HybridWorkflow`
+- `DistributedJob`
+- `BenchmarkJob`
+- `PipelineJob`
+- `ReplayJob`
+
+Each profile owns required semantic checks, allowed rewrites, forbidden transformations, target/backend expectations, replay or benchmark constraints, and observability requirements. Profile selection is deterministic and explainable, and advisory ML outputs MUST NOT bypass it.
+
 ---
 
 ## 6. Compilation pipeline
@@ -112,7 +125,7 @@ The canonical compiler stages are:
 6. `canonicalize_aqo`
 7. `emit`
 
-Optional deterministic rewrite or hardware-adaptation work may be added as long as it remains replay-safe and does not change the meaning of canonical AQO.
+Optional deterministic rewrite or hardware-adaptation work may be added as long as it remains replay-safe and does not change the meaning of canonical AQO. Workload-family specific validation happens before lowering and may reject a valid-looking source when the selected profile forbids it.
 
 ### Observability requirements
 

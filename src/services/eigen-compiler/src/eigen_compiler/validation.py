@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from dataclasses import dataclass
 from typing import List
 
 from .errors import FieldViolation
@@ -12,6 +13,426 @@ _SUPPORTED_LANGUAGES = {"eigen-lang"}
 _SUPPORTED_DISTRIBUTED_TARGETS = {"cluster"}
 _SUPPORTED_QUEUE_PROVIDERS = {"memory", "redis", "sqs"}
 _SUPPORTED_TOPOLOGY_HINTS = {"data_parallel", "pipeline"}
+_SUPPORTED_WORKLOAD_KINDS = {
+    "QuantumJob",
+    "HybridWorkflow",
+    "DistributedJob",
+    "BenchmarkJob",
+    "PipelineJob",
+    "ReplayJob",
+}
+
+
+@dataclass(frozen=True)
+class WorkloadProfile:
+    kind: str
+    required_semantic_checks: tuple[str, ...]
+    allowed_rewrites: tuple[str, ...]
+    forbidden_transformations: tuple[str, ...]
+    target_expectations: tuple[str, ...]
+    replay_or_benchmark_constraints: tuple[str, ...]
+    observability_requirements: tuple[str, ...]
+
+
+_WORKLOAD_PROFILE_CATALOG: dict[str, WorkloadProfile] = {
+    "QuantumJob": WorkloadProfile(
+        kind="QuantumJob",
+        required_semantic_checks=(
+            "compiler.semantic.ast_subset",
+            "compiler.semantic.single_entrypoint",
+            "compiler.profile.quantum.no_adaptive_markers",
+        ),
+        allowed_rewrites=(
+            "compiler.rewrite.measure_normalization",
+            "compiler.rewrite.constant_theta_projection",
+        ),
+        forbidden_transformations=(
+            "compiler.rewrite.distributed_topology",
+            "compiler.rewrite.benchmark_materialization",
+            "compiler.rewrite.pipeline_handoff",
+            "compiler.rewrite.replay_materialization",
+        ),
+        target_expectations=("sim:local", "backend:quantum"),
+        replay_or_benchmark_constraints=("benchmark=false", "replay=false"),
+        observability_requirements=("request_id", "trace_id", "traceparent"),
+    ),
+    "HybridWorkflow": WorkloadProfile(
+        kind="HybridWorkflow",
+        required_semantic_checks=(
+            "compiler.semantic.ast_subset",
+            "compiler.semantic.single_entrypoint",
+            "compiler.profile.hybrid.allow_expectation_and_minimize",
+        ),
+        allowed_rewrites=(
+            "compiler.rewrite.hybrid_annotation_projection",
+            "compiler.rewrite.expectation_annotation_projection",
+            "compiler.rewrite.measure_normalization",
+        ),
+        forbidden_transformations=(
+            "compiler.rewrite.pipeline_handoff",
+            "compiler.rewrite.replay_materialization",
+        ),
+        target_expectations=("sim:local", "backend:cluster"),
+        replay_or_benchmark_constraints=("benchmark=false", "replay=false"),
+        observability_requirements=("request_id", "trace_id", "traceparent"),
+    ),
+    "DistributedJob": WorkloadProfile(
+        kind="DistributedJob",
+        required_semantic_checks=(
+            "compiler.semantic.ast_subset",
+            "compiler.semantic.single_entrypoint",
+            "compiler.profile.distributed.explicit_topology",
+        ),
+        allowed_rewrites=(
+            "compiler.rewrite.distributed_topology_projection",
+            "compiler.rewrite.partition_hint_projection",
+        ),
+        forbidden_transformations=(
+            "compiler.rewrite.benchmark_materialization",
+            "compiler.rewrite.pipeline_handoff",
+            "compiler.rewrite.replay_materialization",
+        ),
+        target_expectations=("cluster:auto", "cluster:gpu", "cluster:quantum"),
+        replay_or_benchmark_constraints=("distributed.enabled=true", "partition_count>=1"),
+        observability_requirements=("request_id", "trace_id", "traceparent", "tenant_id", "project_id"),
+    ),
+    "BenchmarkJob": WorkloadProfile(
+        kind="BenchmarkJob",
+        required_semantic_checks=(
+            "compiler.semantic.ast_subset",
+            "compiler.semantic.single_entrypoint",
+            "compiler.profile.benchmark.fixed_seed",
+        ),
+        allowed_rewrites=(),
+        forbidden_transformations=(
+            "compiler.rewrite.distributed_topology",
+            "compiler.rewrite.pipeline_handoff",
+            "compiler.rewrite.replay_materialization",
+            "compiler.rewrite.adaptive_minimize",
+        ),
+        target_expectations=("explicit backend target",),
+        replay_or_benchmark_constraints=("seed required", "target required"),
+        observability_requirements=("request_id", "trace_id", "traceparent", "tenant_id", "project_id"),
+    ),
+    "PipelineJob": WorkloadProfile(
+        kind="PipelineJob",
+        required_semantic_checks=(
+            "compiler.semantic.ast_subset",
+            "compiler.semantic.single_entrypoint",
+            "compiler.profile.pipeline.explicit_handoff",
+        ),
+        allowed_rewrites=("compiler.rewrite.pipeline_handoff_projection",),
+        forbidden_transformations=(
+            "compiler.rewrite.benchmark_materialization",
+            "compiler.rewrite.replay_materialization",
+        ),
+        target_expectations=("source_ref required", "handoff_ref required"),
+        replay_or_benchmark_constraints=("stage_id required",),
+        observability_requirements=("request_id", "trace_id", "traceparent", "tenant_id", "project_id"),
+    ),
+    "ReplayJob": WorkloadProfile(
+        kind="ReplayJob",
+        required_semantic_checks=(
+            "compiler.semantic.ast_subset",
+            "compiler.semantic.single_entrypoint",
+            "compiler.profile.replay.canonical_source_ref",
+        ),
+        allowed_rewrites=("compiler.rewrite.replay_lineage_projection",),
+        forbidden_transformations=(
+            "compiler.rewrite.adaptive_minimize",
+            "compiler.rewrite.pipeline_handoff",
+        ),
+        target_expectations=("source_ref required",),
+        replay_or_benchmark_constraints=("replay enabled", "source_ref required"),
+        observability_requirements=("request_id", "trace_id", "traceparent", "tenant_id", "project_id"),
+    ),
+}
+
+
+def _normalize_options(options: dict[str, str] | None) -> dict[str, str]:
+    normalized: dict[str, str] = {}
+    for key, value in sorted((options or {}).items()):
+        normalized[str(key)] = str(value)
+    return normalized
+
+
+def _first_option(options: dict[str, str], *keys: str) -> str | None:
+    for key in keys:
+        value = options.get(key)
+        if value is not None and str(value).strip():
+            return str(value)
+    return None
+
+
+def _profile_violation(rule: str, field: str, description: str) -> FieldViolation:
+    return FieldViolation(field=field, description=f"{rule}: {description}")
+
+
+def workload_profile_payload(profile: WorkloadProfile) -> dict[str, object]:
+    return {
+        "kind": profile.kind,
+        "required_semantic_checks": list(profile.required_semantic_checks),
+        "allowed_rewrites": list(profile.allowed_rewrites),
+        "forbidden_transformations": list(profile.forbidden_transformations),
+        "target_expectations": list(profile.target_expectations),
+        "replay_or_benchmark_constraints": list(profile.replay_or_benchmark_constraints),
+        "observability_requirements": list(profile.observability_requirements),
+    }
+
+
+def resolve_workload_profile(
+    options: dict[str, str] | None,
+    *,
+    has_expectation: bool,
+    has_minimize: bool,
+) -> tuple[WorkloadProfile, tuple[FieldViolation, ...]]:
+    normalized = _normalize_options(options)
+    selection_violations: list[FieldViolation] = []
+
+    explicit_kind = _first_option(normalized, "spec.workload.kind", "workload.kind")
+    if explicit_kind:
+        if explicit_kind not in _SUPPORTED_WORKLOAD_KINDS:
+            selection_violations.append(
+                _profile_violation(
+                    "compiler.profile.selection.unknown",
+                    "options.spec.workload.kind",
+                    f"unsupported workload profile '{explicit_kind}'",
+                )
+            )
+            return _WORKLOAD_PROFILE_CATALOG["QuantumJob"], tuple(selection_violations)
+        return _WORKLOAD_PROFILE_CATALOG[explicit_kind], ()
+
+    runtime_mode = _first_option(normalized, "runtime.mode", "spec.runtime.mode") or ""
+    if runtime_mode == "distributed" or _parse_bool(normalized.get("distributed.enabled", "false")) is True:
+        return _WORKLOAD_PROFILE_CATALOG["DistributedJob"], ()
+    if runtime_mode == "benchmark" or _first_option(
+        normalized, "spec.workload.seed", "workload.seed", "benchmark.seed"
+    ) is not None:
+        return _WORKLOAD_PROFILE_CATALOG["BenchmarkJob"], ()
+    if runtime_mode == "pipeline" or _first_option(
+        normalized, "spec.workload.pipeline.handoff_ref", "workload.pipeline.handoff_ref"
+    ) is not None:
+        return _WORKLOAD_PROFILE_CATALOG["PipelineJob"], ()
+    if runtime_mode == "replay" or _parse_bool(
+        _first_option(normalized, "spec.workload.replay.enabled", "workload.replay.enabled") or "false"
+    ) is True:
+        return _WORKLOAD_PROFILE_CATALOG["ReplayJob"], ()
+    if runtime_mode == "hybrid" or has_expectation or has_minimize:
+        return _WORKLOAD_PROFILE_CATALOG["HybridWorkflow"], ()
+    return _WORKLOAD_PROFILE_CATALOG["QuantumJob"], ()
+
+
+def validate_workload_profile(
+    profile: WorkloadProfile,
+    options: dict[str, str] | None,
+    *,
+    source_ref_present: bool,
+    has_expectation: bool,
+    has_minimize: bool,
+) -> tuple[FieldViolation, ...]:
+    normalized = _normalize_options(options)
+    violations: list[FieldViolation] = []
+
+    def add(rule: str, field: str, description: str) -> None:
+        violations.append(_profile_violation(rule, field, description))
+
+    distributed_enabled = _parse_bool(normalized.get("distributed.enabled", "false")) is True
+    seed_value = _first_option(normalized, "spec.workload.seed", "workload.seed", "benchmark.seed")
+    backend_target = _first_option(normalized, "spec.workload.backend_target", "target", "runtime.target")
+    pipeline_handoff_ref = _first_option(
+        normalized, "spec.workload.pipeline.handoff_ref", "workload.pipeline.handoff_ref"
+    )
+    pipeline_stage_id = _first_option(normalized, "spec.workload.pipeline.stage_id", "workload.pipeline.stage_id")
+    replay_enabled = _parse_bool(_first_option(normalized, "spec.workload.replay.enabled", "workload.replay.enabled") or "false") is True
+
+    if profile.kind == "QuantumJob":
+        if distributed_enabled or any(
+            key in normalized
+            for key in (
+                "distributed.target",
+                "distributed.partition_count",
+                "distributed.queue_provider",
+                "distributed.topology_hint",
+            )
+        ):
+            add(
+                "compiler.profile.quantum.no_distributed_options",
+                "options.distributed.enabled",
+                "QuantumJob forbids distributed compilation options",
+            )
+        if seed_value is not None:
+            add(
+                "compiler.profile.quantum.no_benchmark_metadata",
+                "options.spec.workload.seed",
+                "QuantumJob forbids benchmark seed metadata",
+            )
+        if pipeline_handoff_ref is not None or pipeline_stage_id is not None:
+            add(
+                "compiler.profile.quantum.no_pipeline_handoff",
+                "options.spec.workload.pipeline.handoff_ref",
+                "QuantumJob forbids pipeline handoff references",
+            )
+        if replay_enabled:
+            add(
+                "compiler.profile.quantum.no_replay_marker",
+                "options.spec.workload.replay.enabled",
+                "QuantumJob forbids replay markers",
+            )
+        if has_expectation or has_minimize:
+            add(
+                "compiler.profile.quantum.no_hybrid_markers",
+                "source",
+                "QuantumJob cannot be used with ExpectationValue or minimize markers",
+            )
+
+    elif profile.kind == "HybridWorkflow":
+        if distributed_enabled or any(
+            key in normalized
+            for key in (
+                "distributed.target",
+                "distributed.partition_count",
+                "distributed.queue_provider",
+                "distributed.topology_hint",
+            )
+        ):
+            add(
+                "compiler.profile.hybrid.no_distributed_options",
+                "options.distributed.enabled",
+                "HybridWorkflow forbids distributed compilation options",
+            )
+        if seed_value is not None:
+            add(
+                "compiler.profile.hybrid.no_benchmark_metadata",
+                "options.spec.workload.seed",
+                "HybridWorkflow does not accept benchmark seed metadata",
+            )
+        if pipeline_handoff_ref is not None or pipeline_stage_id is not None:
+            add(
+                "compiler.profile.hybrid.no_pipeline_handoff",
+                "options.spec.workload.pipeline.handoff_ref",
+                "HybridWorkflow does not accept pipeline handoff references",
+            )
+        if replay_enabled:
+            add(
+                "compiler.profile.hybrid.no_replay_marker",
+                "options.spec.workload.replay.enabled",
+                "HybridWorkflow does not accept replay markers",
+            )
+
+    elif profile.kind == "DistributedJob":
+        if not distributed_enabled:
+            add(
+                "compiler.profile.distributed.requires_enabled",
+                "options.distributed.enabled",
+                "DistributedJob requires distributed.enabled=true",
+            )
+        if _first_option(normalized, "distributed.target") is None:
+            add(
+                "compiler.profile.distributed.requires_target",
+                "options.distributed.target",
+                "DistributedJob requires distributed.target",
+            )
+        partition_count = _first_option(normalized, "distributed.partition_count")
+        if partition_count is None:
+            add(
+                "compiler.profile.distributed.requires_partition_count",
+                "options.distributed.partition_count",
+                "DistributedJob requires distributed.partition_count",
+            )
+        else:
+            try:
+                if int(partition_count) < 1:
+                    raise ValueError
+            except ValueError:
+                add(
+                    "compiler.profile.distributed.invalid_partition_count",
+                    "options.distributed.partition_count",
+                    "distributed.partition_count must be a positive integer",
+                )
+
+    elif profile.kind == "BenchmarkJob":
+        if seed_value is None:
+            add(
+                "compiler.profile.benchmark.requires_seed",
+                "options.spec.workload.seed",
+                "BenchmarkJob requires spec.workload.seed",
+            )
+        else:
+            try:
+                int(seed_value)
+            except ValueError:
+                add(
+                    "compiler.profile.benchmark.invalid_seed",
+                    "options.spec.workload.seed",
+                    "BenchmarkJob seed must be an integer",
+                )
+        if backend_target is None:
+            add(
+                "compiler.profile.benchmark.requires_backend_target",
+                "options.spec.workload.backend_target",
+                "BenchmarkJob requires an explicit backend target",
+            )
+        if distributed_enabled:
+            add(
+                "compiler.profile.benchmark.no_distributed_options",
+                "options.distributed.enabled",
+                "BenchmarkJob forbids distributed compilation",
+            )
+        if has_minimize:
+            add(
+                "compiler.profile.benchmark.no_adaptive_rewrite",
+                "source",
+                "BenchmarkJob forbids minimize-based adaptive rewrites",
+            )
+
+    elif profile.kind == "PipelineJob":
+        if pipeline_handoff_ref is None:
+            add(
+                "compiler.profile.pipeline.requires_handoff_ref",
+                "options.spec.workload.pipeline.handoff_ref",
+                "PipelineJob requires spec.workload.pipeline.handoff_ref",
+            )
+        if pipeline_stage_id is None:
+            add(
+                "compiler.profile.pipeline.requires_stage_id",
+                "options.spec.workload.pipeline.stage_id",
+                "PipelineJob requires spec.workload.pipeline.stage_id",
+            )
+        if not source_ref_present:
+            add(
+                "compiler.profile.pipeline.requires_source_ref",
+                "source_ref",
+                "PipelineJob requires source_ref so the handoff lineage can be reconstructed",
+            )
+        if has_minimize:
+            add(
+                "compiler.profile.pipeline.no_adaptive_rewrite",
+                "source",
+                "PipelineJob forbids minimize-based adaptive rewrites",
+            )
+
+    elif profile.kind == "ReplayJob":
+        if not replay_enabled:
+            add(
+                "compiler.profile.replay.requires_enabled",
+                "options.spec.workload.replay.enabled",
+                "ReplayJob requires spec.workload.replay.enabled=true",
+            )
+        if not source_ref_present:
+            add(
+                "compiler.profile.replay.requires_source_ref",
+                "source_ref",
+                "ReplayJob requires source_ref so canonical inputs can be replayed",
+            )
+        if has_minimize:
+            add(
+                "compiler.profile.replay.no_adaptive_rewrite",
+                "source",
+                "ReplayJob forbids minimize-based adaptive rewrites",
+            )
+
+    return tuple(violations)
+
 
 def _max_source_bytes() -> int:
     raw = os.getenv("EIGEN_COMPILER_MAX_SOURCE_BYTES", "262144")
