@@ -144,3 +144,19 @@ pytest src/services/system-api/tests
 ## License
 
 Apache License 2.0. See [LICENSE](LICENSE).
+
+## Support the project
+
+Your contribution goes towards the development of Eigen OS and the project's basic infrastructure: hosting, services, domains, testbeds, and documentation.
+
+**Ethereum**
+`0x9c1fbf8115ee339539300ad770a55f7e5adcb12d`
+
+**Polygon**
+`0x9C1FbF8115ee339539300ad770a55F7E5adCB12d`
+
+**Base**
+`0x9c1fbf8115ee339539300ad770a55f7e5adcb12d`
+
+**Solana**
+`8qEmRSNRYYRDweh6exKE8286KTTCJHUFQvPmaQEfy34D`
