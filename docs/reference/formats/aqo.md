@@ -2,34 +2,26 @@
 
 ## 1. Overview
 
-**AQO (Abstract Quantum Operations)** is the canonical intermediate representation (IR) between the Eigen-Lang compiler and the runtime execution layer (Kernel, Scheduler, Driver Manager, and device adapters).
+**AQO (Abstract Quantum Operations)** is the canonical intermediate representation between the Eigen-Lang compiler and the runtime execution layer.
 
-AQO provides:
+AQO is the contract boundary for:
 
-- deterministic and hardware-agnostic quantum program representation,
-- stable replay semantics,
-- transport-safe execution payloads,
-- backend-independent normalization,
-- reproducible compilation and scheduling behavior.
+- deterministic compilation,
+- replayable execution,
+- runtime validation,
+- backend-agnostic transport,
+- artifact persistence,
+- scheduling and observability handoff.
 
-AQO is an executable contract artifact and is part of the platform compatibility surface.
+AQO is intentionally strict: it must be stable enough to hash, replay, compare, and validate before execution.
 
-The canonical AQO specification version for this document is:
+The canonical AQO contract version for this document is `1.0.0`. Breaking changes require a major version bump.
 
-- AQO Contract Version: `1.0.0`
-
-Breaking AQO changes require a MAJOR version bump.
-
-The AQO schema is transport-independent and may be encoded as:
-
-- canonical JSON (`AQO_JSON`) — normative/debug format,
-- protobuf/binary (`AQO_PROTO`) — optimized runtime transport format.
-
-JSON AQO remains the source-of-truth representation for replay, hashing, fixtures, and contract tests.
+AQO JSON is the source-of-truth encoding for fixtures, hashing, and contract tests. Transport layers may use alternative encodings, but they must preserve the canonical semantics.
 
 ---
 
-## 2. Design Goals
+## 2. Design goals
 
 AQO v1.0 is designed to guarantee:
 
@@ -42,46 +34,39 @@ AQO v1.0 is designed to guarantee:
 - strict runtime validation,
 - auditability and observability.
 
-AQO intentionally does not contain:
+AQO does not contain credentials, runtime secrets, or authorization tokens.
 
-- credentials,
-- runtime secrets,
-- authorization tokens,
-- tenant-private execution state.
-
-However, AQO MUST always be treated as untrusted executable input.
+AQO must always be treated as untrusted executable input.
 
 ---
 
-## 3. Top-Level Document Structure
+## 3. Top-level structure
 
 An AQO document is a JSON object.
 
-### 3.1 Required Fields
+### 3.1 Required fields
 
-| **Field** | **Type** | **Description** |
-|-------------|------------|-----------|
+| Field | Type | Description |
+|---|---|---|
 | `version` | string | AQO contract version |
 | `qubits` | integer | Total number of logical qubits |
 | `operations` | array | Ordered operation list |
 
----
+### 3.2 Optional fields
 
-### 3.2 Optional Fields
-
-| **Field** | **Type** | **Description** |
-|-------------|------------|-----------|
-| `metadata` | object | Non-semantic metadata |
+| Field | Type | Description |
+|---|---|---|
 | `parameters` | object | Symbolic parameter declarations |
-| `checksums` | object | Integrity hashes |
-| `topology` | object | Optional topology constraints |
-| `annotations` | object | Compiler/runtime annotations |
+| `metadata` | object | Non-semantic compiler/runtime metadata |
+| `checksums` | object | Integrity and provenance hashes |
+| `topology` | object | Distributed / backend topology hints |
+| `annotations` | object | Compiler and runtime annotations |
 
-Unknown top-level fields MUST be rejected unless explicitly allowed by the contract version.
+Unknown top-level fields must be rejected unless a future version explicitly allows them.
 
 ---
 
-## 4. Canonical AQO JSON Example
+## 4. Canonical AQO JSON example
 
 ```json
 {
@@ -107,9 +92,9 @@ Unknown top-level fields MUST be rejected unless explicitly allowed by the contr
 
 ---
 
-## 5. Canonical Serialization Rules
+## 5. Canonical serialization rules
 
-Canonical AQO JSON serialization is REQUIRED for:
+Canonical AQO JSON serialization is required for:
 
 - hashing,
 - replay,
@@ -119,16 +104,16 @@ Canonical AQO JSON serialization is REQUIRED for:
 - caching,
 - audit logs.
 
-Canonicalization rules:
+Rules:
 
 1. UTF-8 encoding only.
 2. Object keys sorted lexicographically.
 3. No insignificant whitespace.
-4. Arrays preserve original order.
-5. Numbers serialized deterministically.
+4. Arrays preserve order.
+5. Numbers must be serialized deterministically.
 6. No trailing commas.
 7. Duplicate keys are forbidden.
-8. Floating-point values MUST be finite.
+8. Floating-point values must be finite.
 9. NaN and Infinity are forbidden.
 
 Example canonical payload:
@@ -139,257 +124,96 @@ Example canonical payload:
 
 ---
 
-## 6. Operation Format
+## 6. Operation format
 
 Each operation is a JSON object.
 
-### 6.1 Common Fields
+### 6.1 Common fields
 
-| **Field** | **Type** | **Required** | **Description** |
-|-----------|-----------|-----------|-----------|
+| Field | Type | Required | Description |
+|---|---|---|---|
 | `op` | string | yes | Opcode |
 | `q` | integer[] | yes | Logical qubit indices |
 | `c` | integer[] | conditional | Classical bit indices |
 | `params` | object | optional | Operation parameters |
-| `metadata` | object | optional | Non-semantic annotations |
+| `basis` | string | optional | Measurement basis |
 
----
+### 6.2 Supported opcode set
 
-### 6.2 Example
+The canonical opcode set includes:
 
-```json
-{
-  "op": "RZ",
-  "q": [0],
-  "params": {
-    "theta": "p0"
-  }
-}
-```
+- `RX`, `RY`, `RZ`
+- `CX`, `CZ`, `SWAP`
+- `CCX`, `CCZ`
+- `X`, `Y`, `Z`, `H`, `S`, `T`
+- `MEASURE`
+- `RESET`
 
----
+### 6.3 Parameter rules
 
-## 7. Opcode Set (v1.0)
-
-### 7.1 Mandatory Baseline Operations
-
-The following operations are REQUIRED for all AQO v1.0 compliant runtimes:
-
-| **Opcode** | **Arity** |
-|----------|----------|
-| `RX` | 1 |
-| `RY` | 1 |
-| `RZ` | 1 |
-| `CX` | 2 |
-| `MEASURE` | 1..N |
-| `RESET` | 1..N |
-
----
-
-### 7.2 Standard Single-Qubit Gates
-
-| **Opcode** | **Parameters** |
-|----------|----------|
-| `X` | none |
-| `Y` | none |
-| `Z` | none |
-| `H` | none |
-| `S` | none |
-| `T` | none |
-
----
-
-### 7.3 Parameterized Rotations
-
-| **Opcode** | **Required Parameters** |
-|----------|----------|
-| `RX` | theta |
-| `RY` | theta |
-| `RZ` | theta |
-
----
-
-### 7.4 Two-Qubit Gates
-
-| **Opcode** |
-|----------|
-| `CX` |
-| `CZ` |
-| `SWAP` |
-
----
-
-### 7.5 Multi-Qubit Gates
-
-| **Opcode** |
-|----------|
-| `CCX` |
-| `CCZ` |
-
----
-
-## 7.6 Measurement
-
-| **Opcode** |
-|----------|
-| `MEASURE` |
-
-Default measurement basis: `Z`
-
-Optional basis override:
-
-```json
-{
-  "basis": "X"
-}
-```
-
-Allowed values:
-
-- `"X"`
-- `"Y"`
-- `"Z"`
-
----
-
-### 7.7 Reset
-
-| **Opcode** |
-|----------|
-| `RESET` |
-
-Resets target qubits into: `|0⟩`
-
----
-
-## 8. Parameter Rules
-
-Parameters are supplied via the `params` object.
+Parameters are supplied through the `params` object.
 
 Supported value types:
 
-| **Type** | **Allowed** |
-|----------|----------|
-| integer | yes |
-| float | yes |
-| string symbolic identifier | yes |
+- integer,
+- float,
+- string symbolic identifier.
+
+Validation rules:
+
+- `RX` / `RY` / `RZ` must include `theta`
+- non-parameterized gates must not include `params`
+- `MEASURE` may include `basis`
+- unknown parameter keys must be rejected
+- unsupported symbolic expressions must be rejected
+
+AQO forbids arbitrary expressions, inline functions, dynamic evaluation, and runtime scripting.
 
 ---
 
-### 8.1 Examples
-
-Numeric parameter:
-
-```json
-{
-  "theta": 3.1415926535
-}
-```
-
-Symbolic parameter:
-
-```json
-{
-  "theta": "p0"
-}
-```
-
----
-
-### 8.2 Validation Rules
-
-| **Rule** | **Requirement** |
-|----------|----------|
-| `RX`/`RY`/`RZ` | MUST include `theta` |
-| Non-parameterized gates | MUST NOT include parameters |
-| `MEASURE` | only optional `basis` allowed |
-| Unknown parameter keys | MUST be rejected |
-| Unsupported symbolic expressions | MUST be rejected |
-
-AQO v1.0 intentionally forbids:
-
-- arbitrary expressions,
-- inline functions,
-- dynamic evaluation,
-- runtime scripting.
-
----
-
-## 9. Classical Bit Semantics
+## 7. Measurement semantics
 
 AQO uses deterministic classical bit indexing.
 
-### 9.1 Measurement Invariant
+For `MEASURE`:
 
-```text
-len(q) == len(c)
-```
+- `q` must contain at least one qubit,
+- `c` must match the number of measured qubits,
+- `basis`, when present, must be one of `X`, `Y`, or `Z`.
 
-is REQUIRED for `MEASURE`.
-
----
-
-### 9.2 Canonical Bit Ordering
-
-Execution results use canonical bit ordering:
-
-| **Bit** | **Meaning** |
-|----------|----------|
-| `c[0]` | least significant bit (rightmost) |
-| `c[n-1]` | most significant bit (leftmost) |
-
-Example:
-
-```text
-q0 -> c0 = 1
-q1 -> c1 = 0
-```
-
-Produces: `"01"`
-
-This normalization is mandatory across all backends.
+Canonical bit ordering is preserved across backends and runtimes.
 
 ---
 
-## 10. Validation Invariants
+## 8. Validation invariants
 
-AQO validation MUST occur before compilation and execution.
+AQO validation must occur before execution.
 
-### 10.1 Structural Validation
+### 8.1 Structural validation
 
-The runtime/compiler MUST validate:
+The compiler/runtime must validate:
 
 - valid JSON,
-- valid schema,
 - required fields,
 - correct field types,
 - deterministic canonicalization,
 - supported AQO version.
 
----
+### 8.2 Semantic validation
 
-### 10.2 Semantic Validation
+The compiler/runtime must validate:
 
-The runtime/compiler MUST validate:
-
-- all qubit indices satisfy:
-
-```text
-0 <= q[i] < qubits
-```
-
-- operation arity matches opcode definition,
+- qubit indices are within range,
+- operation arity matches the opcode definition,
 - required parameters exist,
 - unsupported parameters are rejected,
 - measurement constraints are satisfied,
 - unsupported opcodes are rejected,
 - invalid symbolic identifiers are rejected.
 
----
+### 8.3 Resource validation
 
-### 10.3 Resource Validation
-
-The runtime/backend MAY additionally validate:
+The runtime/backend may additionally validate:
 
 - backend topology compatibility,
 - gate support,
@@ -400,11 +224,11 @@ The runtime/backend MAY additionally validate:
 
 ---
 
-## 11. Determinism Requirements
+## 9. Determinism requirements
 
 AQO v1.0 is deterministic by contract.
 
-The following MUST be deterministic:
+The following must be deterministic:
 
 - parsing,
 - canonical serialization,
@@ -414,47 +238,41 @@ The following MUST be deterministic:
 - classical bit ordering,
 - validation behavior.
 
-AQO execution outcomes MAY still be probabilistic due to quantum execution semantics.
+Execution outcomes may still be probabilistic because quantum execution itself is probabilistic.
 
 ---
 
-## 12. Transport Formats
+## 10. Compatibility and versioning
 
-### 12.1 AQO_JSON
+### 10.1 Version policy
 
-Canonical JSON representation.
+- `1.x` must remain backward-compatible within the same major version.
+- `2.0.0` or later may introduce breaking changes.
+- breaking AQO changes require a version bump and explicit migration guidance.
 
-Required for:
+### 10.2 Forward-compatible extensions
 
-- fixtures,
-- debugging,
-- replay,
-- auditing,
-- hashes,
-- signatures.
+A future compiler may add new semantics only through documented optional fields or a new contract version.
 
----
+Implementations must reject unknown top-level fields unless the version explicitly allows them.
 
-### 12.2 AQO_PROTO
+### 10.3 Migration rules
 
-Binary/protobuf transport representation.
+When migrating from older AQO shapes:
 
-Intended for:
-
-- internal service communication,
-- high-throughput execution,
-- reduced payload size.
-
-`AQO_PROTO` MUST preserve semantic equivalence with canonical AQO JSON.
+- preserve canonical semantics,
+- rewrite to the current contract before persistence when possible,
+- keep compatibility notes in docs and fixtures,
+- never silently reinterpret unknown fields as authoritative.
 
 ---
 
-## 13. Error Model
+## 11. Error model
 
-AQO-related failures MUST map to standardized platform errors.
+AQO-related failures map to platform errors as follows:
 
-| **Condition** | **Status** |
-|----------|----------|
+| Condition | Status |
+|---|---|
 | Invalid AQO JSON | `INVALID_ARGUMENT` |
 | Invalid schema | `INVALID_ARGUMENT` |
 | Unknown opcode | `INVALID_ARGUMENT` |
@@ -467,17 +285,15 @@ AQO-related failures MUST map to standardized platform errors.
 | Payload too large | `RESOURCE_EXHAUSTED` |
 | Execution timeout | `DEADLINE_EXCEEDED` |
 
-All validation failures MUST occur before execution begins.
+All validation failures must occur before execution begins.
 
 ---
 
-## 14. Security Requirements
+## 12. Security requirements
 
-AQO does not contain secrets by design, but MUST be treated as executable input.
+AQO does not contain secrets by design, but it must be treated as executable input.
 
-### 14.1 Required Security Guarantees
-
-All AQO consumers MUST implement:
+Required guarantees:
 
 - strict schema validation,
 - bounds checking,
@@ -489,344 +305,21 @@ All AQO consumers MUST implement:
 - rejection of malformed JSON,
 - rejection of duplicate keys.
 
-AQO payloads MUST NEVER be executed without validation.
+AQO payloads must never be executed without validation.
 
 ---
 
-### 14.2 Forbidden Behavior
-
-Implementations MUST NOT:
-
-- dynamically execute AQO as code,
-- evaluate arbitrary expressions,
-- allow embedded scripting,
-- trust client-supplied metadata,
-- bypass validation for internal callers.
-
----
-
-## 15. Observability Requirements
+## 13. Observability
 
 Recommended observability fields:
 
-| **Field** | **Description** |
-|----------|----------|
+| Field | Description |
+|---|---|
 | `aqo_hash` | canonical payload hash |
 | `aqo_version` | AQO contract version |
 | `aqo_size_bytes` | serialized payload size |
 | `operation_count` | total operations |
 | `qubit_count` | logical qubits |
-| `transport_format` | JSON/PROTO |
+| `transport_format` | JSON / transport encoding |
 
----
-
-### 15.1 Logging Rules
-
-Recommended:
-
-- log AQO checksum/hash,
-- log payload size,
-- log operation count,
-- log validation failures,
-- log backend compatibility failures.
-
-Forbidden by default:
-
-- full AQO payload logging,
-- parameter dumps in production logs,
-- raw payload persistence without retention policy.
-
----
-
-## 16. Performance Considerations
-
-### 16.1 Canonical JSON
-
-AQO JSON remains the normative representation for:
-
-- debugging,
-- replay,
-- fixtures,
-- audit systems.
-
----
-
-### 16.2 Binary Transport
-
-`AQO_PROTO` is recommended for:
-
-- large circuits,
-- internal RPC traffic,
-- high-throughput scheduling.
-
----
-
-### 16.3 Caching
-
-Driver/runtime implementations MAY cache:
-
-- parsed AQO payloads,
-- validated IR,
-- compiled artifacts,
-- topology checks,
-
-using deterministic content hashes.
-
----
-
-## 17. Compatibility and Versioning
-
-AQO follows Semantic Versioning.
-
-| **Change Type** | **Version Impact** |
-|----------|----------|
-| Breaking schema change | MAJOR |
-| Backward-compatible extension | MINOR |
-| Clarification/fix | PATCH |
-
----
-
-### 17.1 Compatibility Rules
-
-AQO v1.0 consumers:
-
-- MUST reject unsupported MAJOR versions,
-- MAY ignore explicitly allowed optional metadata fields,
-- MUST preserve deterministic semantics.
-
----
-
-## 18. Compliance Requirements
-
-A compliant AQO v1.0 implementation MUST:
-
-- support all mandatory baseline operations,
-- implement canonical serialization,
-- implement deterministic validation,
-- implement required error mappings,
-- preserve canonical bit ordering,
-- reject invalid AQO payloads,
-- support replay-safe hashing semantics.
-
-Golden fixtures and replay tests SHOULD be used to ensure compatibility stability.
-
----
-
-## Appendix A. Diagrams
-
-### A.1 Overview
-
-![Overview](https://i.imgur.com/lx2hTua.png)
-
-<details>
-<summary>code</summary>
-
-```text
-flowchart LR
-  SRC[Eigen-Lang source] --> COMP["Compiler (Neuro-DPDA)"]
-  COMP -->|"AQO v1.0 (JSON/PROTO)"| AQO[AQO IR]
-
-  AQO --> K["Kernel (QRTX)"]
-  K --> S[Scheduler/Runtime Controller]
-  K --> DM[Driver Manager]
-  DM --> QD[QDriver]
-  QD --> BE["Backend (sim/hardware)"]
-
-  K --> QFS["QFS (job-scoped artifacts)"]
-  S --> KB["Knowledge Base (optional)"]
-  K --> OBS["Observability (traces/metrics/logs)"]
-
-  note1{{AQO is canonical IR:\nportable, deterministic,\nreplay-hashable}}
-  AQO --- note1
-```
-
-</details>
-
----
-
-### A.2 Canonical Serialization Rules
-
-![Canonical Serialization Rules](https://i.imgur.com/hxQuU90.png)
-
-<details>
-<summary>code</summary>
-
-```text
-flowchart TB
-  A[Raw AQO JSON bytes] --> B["Parse JSON\n(reject duplicate keys,\nreject NaN/Inf)"]
-  B --> C[Normalize\n- UTF-8\n- sort object keys\n- no insignificant whitespace\n- stable number encoding\n- preserve array order]
-  C --> D[Canonical JSON bytes]
-  D --> E["sha256(canonical bytes)\n=> aqo_hash"]
-  E --> F[Used for:\nreplay • fixtures • signatures\nidempotency • caching • audit refs]
-```
-
-</details>
-
----
-
-### A.3 Operation Format
-
-![Operation Format](https://i.imgur.com/dPZKzaD.png)
-
-<details>
-<summary>code</summary>
-
-```text
-flowchart TB
-  OP[Operation object] --> OPK["op: string (required)"]
-  OP --> Q["q: int[] (required)"]
-  OP --> C["c: int[] (conditional)"]
-  OP --> P["params: object (optional)"]
-  OP --> M["metadata: object (optional, non-semantic)"]
-
-  OPK -->|must be allow-listed| AL[Opcode set v1.0]
-  P -->|keys must match opcode contract| PK[Parameter validation]
-  M -->|must not affect semantics| NS[Non-semantic only]
-```
-
-</details>
-
----
-
-### A.4 Parameter Rules
-
-![Parameter Rules](https://i.imgur.com/DDtpCKA.png)
-
-<details>
-<summary>code</summary>
-
-```text
-flowchart TD
-  A[Operation with params] --> B{Opcode type}
-  B -->|RX/RY/RZ| C["Require theta\n(theta is number OR symbolic id)"]
-  B -->|non-parameterized gates| D[params MUST be absent]
-  B -->|MEASURE| E[Only optional basis allowed]
-  B -->|other opcodes| F[Allowed keys per opcode contract]
-
-  C --> G{theta valid?}
-  G -->|yes| OK[accept]
-  G -->|no| ERR1["INVALID_ARGUMENT\n(missing/invalid theta)"]
-
-  D --> H{params present?}
-  H -->|no| OK
-  H -->|yes| ERR2["INVALID_ARGUMENT\n(unexpected params)"]
-
-  E --> I{unknown keys?}
-  I -->|no| OK
-  I -->|yes| ERR3["INVALID_ARGUMENT\n(unknown measure param)"]
-```
-
-</details>
-
----
-
-### A.5 Classical Bit Semantics
-
-![Classical Bit Semantics](https://i.imgur.com/VSkzEij.png)
-
-<details>
-<summary>code</summary>
-
-```text
-flowchart LR
-  Q0["q0 measured"] --> C0["c[0] (LSB)"]
-  Q1["q1 measured"] --> C1["c[1] (MSB)"]
-  C0 --> OUT["bitstring output:left..right = MSB..LSBexample c[1]=0, c[0]=1 => \"01\""]
-  C1 --> OUT
-```
-
-</details>
-
----
-
-### A.6 Validation Invariants
-
-![Validation Invariants](https://i.imgur.com/uJsW5Km.png)
-
-<details>
-<summary>code</summary>
-
-```text
-flowchart TB
-  IN[Incoming AQO payload] --> S[Structural validation- JSON parse- schema fields/types- version supported- canonicalization rules]
-  S -->|ok| SEM[Semantic validation- qubit bounds- opcode allowlist- arity checks- params contract- measure invariants]
-  S -->|fail| E1["INVALID_ARGUMENT(structural)"]
-  SEM -->|ok| RES["Resource/back-end checks (optional)- topology/capacity- gate support- calibration/quotas- reservation ownership"]
-  SEM -->|fail| E2["INVALID_ARGUMENT(semantic)"]
-  RES -->|ok| READY[Eligible for compile/execute]
-  RES -->|fail| E3["FAILED_PRECONDITION(back-end incompatibility)"]
-```
-
-</details>
-
----
-
-### A.7 Determinism Requirements
-
-![Determinism Requirements](https://i.imgur.com/twJ8rlK.png)
-
-<details>
-<summary>code</summary>
-
-```text
-flowchart LR
-  A[Canonical JSON bytes] --> H[Stable hash\nsha256]
-  A --> P[Deterministic parse]
-  P --> V["Deterministic validation outcomes(errors + reasons)"]
-  P --> I[Deterministic opcode interpretation + canonical bit ordering]
-  H --> R["Replay identity(fixtures/audit/cache keys)"]
-  I --> EXE[Execution payload to drivers]
-  note1{{Quantum outcomes probabilistic,AQO semantics + parsing/hashing are deterministic}}
-  EXE --- note1
-```
-
-</details>
-
----
-
-### A.8 Transport Formats
-
-![Transport Formats](https://i.imgur.com/399lJaW.png)
-
-<details>
-<summary>code</summary>
-
-```text
-flowchart LR
-  J["AQO_JSON (canonical)"] -->|encode| P[AQO_PROTO]
-  P -->|decode| J2["AQO_JSON (reconstructed)"]
-  J --> EQ{Semantic equivalence}
-  J2 --> EQ
-  EQ -->|required| OK[Pass]
-  EQ -->|violation| FAIL["Contract violation\n(reject / fail CI fixtures)"]
-```
-
-</details>
-
----
-
-### A.9 Observability Requirements
-
-![Observability Requirements](https://i.imgur.com/C8agcAl.png)
-
-<details>
-<summary>code</summary>
-
-```text
-sequenceDiagram
-    autonumber
-
-    participant COMP as Compiler
-    participant K as Kernel (QRTX)
-    participant DM as Driver Manager
-    participant OBS as Observability
-
-    COMP->>K: AQO artifact + aqo_hash + metadata
-    K->>OBS: span/metrics aqo_version, transport_format, aqo_size_bytes, operation_count, qubit_count
-    K->>DM: CircuitPayload(format=JSON|PROTO, ref or bytes, aqo_hash)
-    DM->>OBS: exec spans backend_id, result status (no aqo payload)
-
-    Note over OBS: Never log full AQO payload by default. Use refs and hashes for correlation.
-```
-
-</details>
+Observability values must remain bounded and must not leak secrets or unbounded identifiers.
