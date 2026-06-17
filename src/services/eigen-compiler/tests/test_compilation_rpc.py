@@ -267,6 +267,40 @@ def test_compile_circuit_rejects_unsupported_distributed_config(grpc_addr: str) 
     ]
 
 
+def test_compile_circuit_rejects_backend_target_mismatch(grpc_addr: str) -> None:
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = comp_pb_grpc.CompilationServiceStub(channel)
+
+    with pytest.raises(grpc.RpcError) as e:
+        stub.CompileCircuit(
+            comp_pb.CompileCircuitRequest(
+                language="eigen-lang",
+                source=(
+                    b"from eigen_lang import hybrid_program\n\n"
+                    b"@hybrid_program()\n"
+                    b"def main():\n"
+                    b"    ry(0, theta=1.0)\n"
+                ),
+                options={
+                    "spec.workload.kind": "DistributedJob",
+                    "distributed.enabled": "true",
+                    "distributed.target": "cluster",
+                    "distributed.partition_count": "2",
+                    "spec.workload.backend_target": "sim:local",
+                },
+            )
+        )
+
+    assert e.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+    bad = _extract_bad_request(e.value)
+    fields = {v.field for v in bad.field_violations}
+    assert "options.spec.workload.backend_target" in fields
+    assert any(
+        "distributed cluster backends" in v.description or "unsupported backend target" in v.description
+        for v in bad.field_violations
+    )
+
+
 @pytest.mark.parametrize(
     "options,expected_fields,expected_snippet",
     [

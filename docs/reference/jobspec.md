@@ -211,6 +211,17 @@ Implicit runtime behavior is prohibited where it affects:
 - retry behavior,
 - distributed execution semantics.
 
+Backend target selection is normalized before emission. The compiler rejects unsupported backend/target combinations at compile time and records the resolved backend contract in compiler metadata. AQO stays backend-agnostic: backend routing, topology hints, and provider aliases are carried outside AQO top-level fields.
+
+Supported backend routing classes are:
+
+- `sim:local`
+- `cluster:*`
+- provider aliases such as `ibm:qpu`, `aws:braket`, `azure:quantum`
+- policy routing such as `runtime:auto`, `runtime:latency`, `runtime:cost`, `runtime:availability`, `runtime:deterministic`
+
+Unknown backend targets MUST fail with `INVALID_ARGUMENT`.
+
 ---
 
 # 4. Minimal Valid JobSpec
