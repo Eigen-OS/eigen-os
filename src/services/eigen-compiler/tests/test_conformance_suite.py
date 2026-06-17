@@ -67,6 +67,25 @@ def test_compile_preserves_annotations_and_topology() -> None:
     assert compiled["topology"]["partition_count"] == 4
 
 
+def test_compile_exposes_compiler_diagnostics_payload() -> None:
+    source = b'from eigen_lang import Param, ExpectationValue, hybrid_program, minimize\n@hybrid_program(target="sim")\ndef main():\n    theta = Param("theta")\n    ry(0, theta=theta)\n    minimize(ExpectationValue("a", "b"), [0.1])\n'
+    compiled = compile_eigen_lang(
+        source,
+        options={
+            "distributed.enabled": "true",
+            "distributed.target": "cluster",
+            "distributed.partition_count": "4",
+            "distributed.queue_provider": "memory",
+            "distributed.topology_hint": "pipeline",
+        },
+    )
+    diagnostics = json.loads(compiled.metadata["compiler_diagnostics_json"])
+    assert diagnostics["contract_version"] == "1.0.0"
+    assert diagnostics["stage_order"] == ["parse", "validate_ast", "annotate", "lower_to_ir", "eigen_dpda", "canonicalize_aqo", "emit"]
+    assert diagnostics["backend_contract"]["backend_target_class"] == "distributed"
+    assert diagnostics["explainability"]["decision"] == "compiler_to_optimizer_handoff"
+
+
 def test_compile_exposes_backend_contract_and_target_classification() -> None:
     source = (
         b"from eigen_lang import Param, ExpectationValue, hybrid_program, minimize\n"
@@ -144,6 +163,9 @@ def test_compile_rejects_backend_target_mismatch() -> None:
                 "spec.workload.backend_target": "sim:local",
             },
         )
+    assert excinfo.value.violations
+    assert excinfo.value.violations[0].stage == "eigen_dpda"
+    assert excinfo.value.violations[0].rule == "compiler.profile.distributed.target_mismatch"
     descriptions = [violation.description for violation in excinfo.value.violations]
     assert any("DistributedJob requires a distributed backend target" in desc for desc in descriptions)
 

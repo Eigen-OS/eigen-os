@@ -14,7 +14,7 @@ from pathlib import Path
 from time import perf_counter
 from typing import Callable, Iterator, TypeVar
 
-from .errors import FieldViolation
+from .errors import FieldViolation, annotate_violations
 from .validation import (
     backend_contract_payload,
     resolve_workload_profile,
@@ -144,6 +144,16 @@ class CompilerPassPipeline:
 @dataclass
 class CompilerValidationError(Exception):
     violations: tuple[FieldViolation, ...]
+
+
+def _relabel_violations(
+    violations: tuple[FieldViolation, ...],
+    *,
+    stage: str,
+    rule: str,
+    pass_name: str,
+) -> tuple[FieldViolation, ...]:
+    return annotate_violations(violations, stage=stage, rule=rule, pass_name=pass_name)
 
 
 def _run_stage(stage: str, observer: StageObserver | None, fn: Callable[[], T]) -> T:
@@ -836,29 +846,74 @@ def compile_eigen_lang(
     normalized_request_context = _normalize_request_context(request_context)
     resolved_source, source_precedence = _resolve_source_bytes(source, source_ref)
     source_digest = hashlib.sha256(resolved_source).hexdigest()
-    tree = _run_stage("parse", observer, lambda: _parse_python_source(resolved_source))
+    
+    def _parse_stage() -> ast.AST:
+        try:
+            return _parse_python_source(resolved_source)
+        except CompilerValidationError as exc:
+            raise CompilerValidationError(
+                violations=_relabel_violations(
+                    exc.violations, stage="parse", rule="compiler.source.parse", pass_name="parse"
+                )
+            ) from None
+
+    tree = _run_stage("parse", observer, _parse_stage)
 
     def _validate_tree() -> None:
-        violations = (
-            _enforce_resource_limits(tree)
-            + _reject_forbidden_imports(tree)
-            + _reject_forbidden_calls(tree)
-            + _reject_dynamic_control_flow(tree)
-            + _validate_single_entrypoint(tree)
-        )
-        if violations:
-            raise CompilerValidationError(violations=violations)
+        try:
+            violations = (
+                _enforce_resource_limits(tree)
+                + _reject_forbidden_imports(tree)
+                + _reject_forbidden_calls(tree)
+                + _reject_dynamic_control_flow(tree)
+                + _validate_single_entrypoint(tree)
+            )
+            if violations:
+                raise CompilerValidationError(violations=violations)
+        except CompilerValidationError as exc:
+            raise CompilerValidationError(
+                violations=_relabel_violations(
+                    exc.violations,
+                    stage="validate_ast",
+                    rule="compiler.source.validate_ast",
+                    pass_name="validate_ast",
+                )
+            ) from None
 
     _run_stage("validate_ast", observer, _validate_tree)
 
     def _annotate_tree() -> dict[str, dict[str, object]]:
-        params, param_violations = _collect_params(tree)
-        if param_violations:
-            raise CompilerValidationError(violations=param_violations)
-        return params
+        try:
+            params, param_violations = _collect_params(tree)
+            if param_violations:
+                raise CompilerValidationError(violations=param_violations)
+            return params
+        except CompilerValidationError as exc:
+            raise CompilerValidationError(
+                violations=_relabel_violations(
+                    exc.violations,
+                    stage="annotate",
+                    rule="compiler.source.annotate",
+                    pass_name="annotate",
+                )
+            ) from None
 
     params = _run_stage("annotate", observer, _annotate_tree)
-    operations, qubits = _run_stage("lower_to_ir", observer, lambda: _collect_operations(tree, params))
+    
+    def _lower_to_ir() -> tuple[list[dict], int]:
+        try:
+            return _collect_operations(tree, params)
+        except CompilerValidationError as exc:
+            raise CompilerValidationError(
+                violations=_relabel_violations(
+                    exc.violations,
+                    stage="lower_to_ir",
+                    rule="compiler.source.lower_to_ir",
+                    pass_name="lower_to_ir",
+                )
+            ) from None
+
+    operations, qubits = _run_stage("lower_to_ir", observer, _lower_to_ir)
     has_minimize = _run_stage(
         "eigen_dpda",
         observer,
@@ -872,26 +927,42 @@ def compile_eigen_lang(
         ),
     )
     distributed = _distributed_compile_config(options)
-    workload_profile, profile_selection_violations = resolve_workload_profile(
-        normalized_options,
-        has_expectation=has_expectation,
-        has_minimize=has_minimize,
-    )
-    if profile_selection_violations:
-        raise CompilerValidationError(violations=profile_selection_violations)
+    
+    def _resolve_and_validate_profile() -> object:
+        try:
+            workload_profile, profile_selection_violations = resolve_workload_profile(
+                normalized_options,
+                has_expectation=has_expectation,
+                has_minimize=has_minimize,
+            )
+            if profile_selection_violations:
+                raise CompilerValidationError(violations=profile_selection_violations)
 
-    profile_violations = validate_workload_profile(
-        workload_profile,
-        normalized_options,
-        source_ref_present=source_ref is not None,
-        has_expectation=has_expectation,
-        has_minimize=has_minimize,
-    )
-    if profile_violations:
-        raise CompilerValidationError(violations=profile_violations)
+            profile_violations = validate_workload_profile(
+                workload_profile,
+                normalized_options,
+                source_ref_present=source_ref is not None,
+                has_expectation=has_expectation,
+                has_minimize=has_minimize,
+            )
+            if profile_violations:
+                raise CompilerValidationError(violations=profile_violations)
+            return workload_profile
+        except CompilerValidationError as exc:
+            raise CompilerValidationError(
+                violations=_relabel_violations(
+                    exc.violations,
+                    stage="eigen_dpda",
+                    rule="compiler.profile.validation",
+                    pass_name="eigen_dpda",
+                )
+            ) from None
+
+    workload_profile = _run_stage("eigen_dpda", observer, _resolve_and_validate_profile)
 
     workload_profile_json = _canonical_json_text(workload_profile_payload(workload_profile))
-    backend_contract_json = _canonical_json_text(backend_contract_payload(workload_profile, normalized_options))
+    backend_contract = backend_contract_payload(workload_profile, normalized_options)
+    backend_contract_json = _canonical_json_text(backend_contract)
     
     aqo_request_payload = {
         "options": normalized_options,
@@ -920,24 +991,46 @@ def compile_eigen_lang(
     options_json = _canonical_json_bytes(normalized_options).decode("utf-8")
     request_context_json = _canonical_json_bytes(asdict(normalized_request_context)).decode("utf-8")
 
-    pass_pipeline = _run_stage(
-        "eigen_dpda",
-        observer,
-        lambda: _build_compiler_pass_pipeline(
-            qubits=qubits,
-            operations=operations,
-            params=params,
-            source_digest=source_digest,
-            source_precedence=source_precedence,
-            request_digest=aqo_request_digest,
-            has_expectation=has_expectation,
-            has_minimize=has_minimize,
-            distributed=distributed,
-        ),
-    )
+    def _build_pass_pipeline() -> CompilerPassPipeline:
+        try:
+            return _build_compiler_pass_pipeline(
+                qubits=qubits,
+                operations=operations,
+                params=params,
+                source_digest=source_digest,
+                source_precedence=source_precedence,
+                request_digest=aqo_request_digest,
+                has_expectation=has_expectation,
+                has_minimize=has_minimize,
+                distributed=distributed,
+            )
+        except CompilerValidationError as exc:
+            raise CompilerValidationError(
+                violations=_relabel_violations(
+                    exc.violations,
+                    stage="eigen_dpda",
+                    rule="compiler.pass_pipeline.build",
+                    pass_name="canonicalize_aqo",
+                )
+            ) from None
+
+    pass_pipeline = _run_stage("eigen_dpda", observer, _build_pass_pipeline)
 
     aqo = pass_pipeline.aqo
-    aqo_bytes = _run_stage("canonicalize_aqo", observer, lambda: _canonical_json_bytes(aqo))
+
+    def _canonicalize_aqo() -> bytes:
+        try:
+            return _canonical_json_bytes(aqo)
+        except CompilerValidationError as exc:
+            raise CompilerValidationError(
+                violations=_relabel_violations(
+                    exc.violations,
+                    stage="canonicalize_aqo",
+                    rule="compiler.aqo.canonicalize",
+                    pass_name="canonicalize_aqo",
+                )
+            ) from None
+    aqo_bytes = _run_stage("canonicalize_aqo", observer, _canonicalize_aqo)
     aqo_digest = hashlib.sha256(aqo_bytes).hexdigest()
 
     decision_lineage = {
@@ -989,6 +1082,15 @@ def compile_eigen_lang(
             "request_sha256",
         ],
     }
+    compiler_diagnostics = {
+        "contract_version": "1.0.0",
+        "stage_order": decision_lineage["stage_order"],
+        "workload_profile": workload_profile.kind,
+        "backend_contract": backend_contract,
+        "decision_lineage": decision_lineage,
+        "observability": observability,
+        "explainability": explainability,
+    }
 
     metadata = {
         "compiler": "eigen-compiler",
@@ -1033,6 +1135,7 @@ def compile_eigen_lang(
         "workload_profile_json": workload_profile_json,
         "backend_contract_version": "1.0.0",
         "backend_contract_json": backend_contract_json,
+        "compiler_diagnostics_json": _canonical_json_text(compiler_diagnostics),
     }
     if has_minimize:
         metadata["hybrid_plan_marker"] = "minimize"

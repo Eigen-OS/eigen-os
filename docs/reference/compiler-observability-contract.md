@@ -105,12 +105,21 @@ Required payload fields:
 - `decision_lineage_json`
 - `observability_json`
 - `explainability_json`
+- `compiler_diagnostics_json`
 
 Those payloads MUST remain deterministic for identical inputs and MUST include only bounded trace and metric fields:
 
 - trace fields: `request_id`, `trace_id`, `traceparent`
 - metric fields: `rpc`, `stage`, `outcome`, `elapsed_ms`
 - label-family bounds: no request, trace, tenant, or project identifiers in metric labels
+
+`compiler_diagnostics_json` MUST summarize the compiler stage order, the resolved workload profile, and the backend contract in a machine-readable payload that remains stable for identical inputs.
+
+Validation failures MUST also carry structured gRPC details with:
+
+- `google.rpc.BadRequest` for field-level violations,
+- `google.rpc.ErrorInfo` for stage/rule/pass attribution,
+- a bounded `diagnostics_json` metadata value containing the same machine-readable diagnostic payload.
 
 The lineage payload MUST preserve the compiler-to-optimizer boundary contract:
 
