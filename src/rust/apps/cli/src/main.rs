@@ -729,11 +729,7 @@ fn run_status(args: &[String]) -> Result<(), i32> {
     let job_id = parse_job_id_arg(args, "eigen status <job_id>")?;
     match jobspec::get_job_status_from_system_api(&job_id) {
         Ok(status) => {
-            println!("job_id: {}", status.job_id);
-            println!("state: {}", format_state_label(&status.state));
-            println!("stage: {}", status.stage);
-            println!("progress: {:.1}%", f64::from(status.progress) * 100.0);
-            println!("message: {}", status.message);
+            render_status_output(&status);
             match terminal_exit_code(&status.state) {
                 Some(0) | None => Ok(()),
                 Some(code) => Err(code),
@@ -748,24 +744,13 @@ fn run_watch(args: &[String]) -> Result<(), i32> {
     let updates = jobspec::stream_job_updates_from_system_api(&job_id)
         .map_err(|err| print_grpc_like_error("watch", &err))?;
 
+    render_title("watch", Some(&job_id));
     let mut last_state: Option<String> = None;
     for update in updates {
         if should_render_live() {
             std::thread::sleep(Duration::from_millis(350));
         }
-        let transition = last_state
-            .as_deref()
-            .map(|prev| format!("{prev} -> {}", update.state))
-            .unwrap_or_else(|| format!("INIT -> {}", update.state));
-        println!(
-            "seq={} transition={} state={} stage={} progress={:.1}% message={}",
-            update.event_seq,
-            transition,
-            format_state_label(&update.state),
-            update.stage,
-            f64::from(update.progress) * 100.0,
-            update.message
-        );
+        render_watch_update(last_state.as_deref(), &update);
         last_state = Some(update.state.clone());
     }
 
@@ -779,23 +764,9 @@ fn run_results(args: &[String]) -> Result<(), i32> {
     let job_id = parse_job_id_arg(args, "eigen results <job_id>")?;
     match jobspec::get_job_results_from_system_api(&job_id) {
         Ok(results) => {
-            println!("job_id: {}", results.job_id);
-            println!("state: {}", format_state_label(&results.state));
-            println!("counts:");
-            for (k, v) in &results.counts {
-                println!("  {k}: {v}");
-            }
-            println!("metadata:");
-            for (k, v) in &results.metadata {
-                println!("  {k}: {v}");
-            }
+            render_results_output(&results);
 
             if results.state != "DONE" {
-                eprintln!("error_code: {}", results.error_code.unwrap_or_default());
-                eprintln!(
-                    "error_summary: {}",
-                    results.error_summary.unwrap_or_default()
-                );
                 return Err(EXIT_SERVER_ERROR);
             }
             Ok(())
@@ -808,23 +779,204 @@ fn run_explain(args: &[String]) -> Result<(), i32> {
     let job_id = parse_job_id_arg(args, "eigen explain <job_id>")?;
     match jobspec::get_dispatch_rationale_from_system_api(&job_id) {
         Ok(rationale) => {
-            println!("job_id: {job_id}");
-            println!("version: {}", rationale.version);
-            println!("policy_version: {}", rationale.policy_version);
-            println!("selected_backend: {}", rationale.selected_backend);
-            println!("selected_queue: {}", rationale.selected_queue);
-            println!("reason_codes:");
-            for code in &rationale.reason_codes {
-                println!("  - {code}");
-            }
-            println!("timeline_ref: {}", rationale.timeline_ref);
-            println!("logs_ref: {}", rationale.logs_ref);
-            println!("trace_id: {}", rationale.trace_id.unwrap_or_default());
-            println!("trace_ref: {}", rationale.trace_ref.unwrap_or_default());
+            render_explain_output(&job_id, &rationale);
             Ok(())
         }
         Err(err) => Err(print_grpc_like_error("explain", &err)),
     }
+}
+
+fn use_terminal_styling() -> bool {
+    use std::io::IsTerminal;
+    std::io::stdout().is_terminal()
+}
+
+fn stylize(text: &str, code: &str) -> String {
+    if use_terminal_styling() {
+        format!("\x1b[{code}m{text}\x1b[0m")
+    } else {
+        text.to_string()
+    }
+}
+
+fn render_title(title: &str, subtitle: Option<&str>) {
+    let title = stylize(title, "1;36");
+    match subtitle {
+        Some(subtitle) if !subtitle.is_empty() => println!("{title} — {subtitle}"),
+        _ => println!("{title}"),
+    }
+}
+
+fn print_indented_lines(indent: usize, text: &str) {
+    let pad = " ".repeat(indent);
+    for line in text.lines() {
+        println!("{pad}{line}");
+    }
+}
+
+fn pretty_json_like(input: &str) -> String {
+    let trimmed = input.trim();
+    if !(trimmed.starts_with('{') || trimmed.starts_with('[')) {
+        return input.to_string();
+    }
+
+    let mut out = String::with_capacity(trimmed.len() + 32);
+    let mut indent = 0usize;
+    let mut in_string = false;
+    let mut escape = false;
+    let indent_unit = "  ";
+
+    for ch in trimmed.chars() {
+        if in_string {
+            out.push(ch);
+            if escape {
+                escape = false;
+            } else if ch == '\\' {
+                escape = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+
+        match ch {
+            '"' => {
+                in_string = true;
+                out.push(ch);
+            }
+            '{' | '[' => {
+                out.push(ch);
+                out.push('\n');
+                indent += 1;
+                out.push_str(&indent_unit.repeat(indent));
+            }
+            '}' | ']' => {
+                out.push('\n');
+                indent = indent.saturating_sub(1);
+                out.push_str(&indent_unit.repeat(indent));
+                out.push(ch);
+            }
+            ',' => {
+                out.push(ch);
+                out.push('\n');
+                out.push_str(&indent_unit.repeat(indent));
+            }
+            ':' => out.push_str(": "),
+            c if c.is_whitespace() => {}
+            other => out.push(other),
+        }
+    }
+
+    out.trim().to_string()
+}
+
+fn print_key_value(indent: usize, key: &str, value: &str) {
+    let pad = " ".repeat(indent);
+    let rendered = pretty_json_like(value);
+    if rendered.contains('\n') {
+        println!("{pad}{key}:");
+        print_indented_lines(indent + 2, &rendered);
+    } else {
+        println!("{pad}{key}: {rendered}");
+    }
+}
+
+fn render_submit_output(
+    job_id: &str,
+    req: &jobspec::SubmitJobRequest,
+    envelope: &jobspec::PublicSubmitEnvelope,
+    payload: &str,
+) {
+    render_title("submit", Some("job accepted"));
+    println!("  job_id: {job_id}");
+    println!("  request:");
+    println!("    name: {}", req.name);
+    println!("    kind: {}", req.workload.kind);
+    println!("    execution_profile: {}", req.workload.execution_profile);
+    println!("    target: {}", req.target);
+    println!("    priority: {}", req.priority);
+    let entrypoint = match &req.program {
+        jobspec::ProgramSource::EigenLangSource { entrypoint, .. } => entrypoint,
+    };
+    println!("    entrypoint: {entrypoint}");
+    println!(
+        "    digest: {}",
+        jobspec::canonical_jobspec_digest_from_request(req, &req.jobspec_api_version)
+    );
+    println!("  envelope:");
+    println!("    contract_version: {}", envelope.contract_version);
+    println!("    request_id: {}", envelope.request_id);
+    println!("    idempotency_key: {}", envelope.idempotency_key);
+    println!("    traceparent: {}", envelope.traceparent);
+    println!("    tenant/project: {}/{}", envelope.tenant_id, envelope.project_id);
+    println!("    client_version: {}", envelope.client_version);
+    println!("  request_payload:");
+    print_indented_lines(4, &pretty_json_like(payload));
+    println!("  next:");
+    println!("    eigen status {job_id}");
+    println!("    eigen watch {job_id}");
+    println!("    eigen results {job_id}  # after completion");
+}
+
+fn render_status_output(status: &jobspec::JobStatusView) {
+    render_title("status", Some(&status.job_id));
+    println!("  job_id: {}", status.job_id);
+    println!("  state: {}", format_state_label(&status.state));
+    println!("  stage: {}", status.stage);
+    println!("  progress: {:.1}%", f64::from(status.progress) * 100.0);
+    println!("  message: {}", status.message);
+}
+
+fn render_watch_update(last_state: Option<&str>, update: &jobspec::JobUpdateView) {
+    let transition = last_state
+        .map(|prev| format!("{prev} → {}", update.state))
+        .unwrap_or_else(|| format!("INIT → {}", update.state));
+    println!(
+        "  #{:02}  {:<22} {:<12} {:<12} {:>5.1}%  {}",
+        update.event_seq,
+        transition,
+        format_state_label(&update.state),
+        update.stage,
+        f64::from(update.progress) * 100.0,
+        update.message
+    );
+}
+
+fn render_results_output(results: &jobspec::JobResultsView) {
+    render_title("results", Some(&results.job_id));
+    println!("  job_id: {}", results.job_id);
+    println!("  state: {}", format_state_label(&results.state));
+    println!("  counts:");
+    for (k, v) in &results.counts {
+        println!("    {k}: {v}");
+    }
+    println!("  metadata:");
+    for (k, v) in &results.metadata {
+        print_key_value(4, k, v);
+    }
+    if results.state != "DONE" {
+        println!("  error:");
+        println!("    error_code: {}", results.error_code.as_deref().unwrap_or_default());
+        println!("    error_summary: {}", results.error_summary.as_deref().unwrap_or_default());
+    }
+}
+
+fn render_explain_output(job_id: &str, rationale: &jobspec::DispatchRationaleView) {
+    render_title("explain", Some(job_id));
+    println!("  job_id: {job_id}");
+    println!("  version: {}", rationale.version);
+    println!("  policy_version: {}", rationale.policy_version);
+    println!("  selected_backend: {}", rationale.selected_backend);
+    println!("  selected_queue: {}", rationale.selected_queue);
+    println!("  reason_codes:");
+    for code in &rationale.reason_codes {
+        println!("    - {code}");
+    }
+    println!("  timeline_ref: {}", rationale.timeline_ref);
+    println!("  logs_ref: {}", rationale.logs_ref);
+    println!("  trace:");
+    println!("    trace_id: {}", rationale.trace_id.as_deref().unwrap_or_default());
+    println!("    trace_ref: {}", rationale.trace_ref.as_deref().unwrap_or_default());
 }
 
 fn should_render_live() -> bool {
@@ -934,19 +1086,10 @@ fn run_submit(args: &[String]) -> Result<(), String> {
 
     let req = jobspec::build_submit_request_from_job_file(&job_file).map_err(|e| e.to_string())?;
     let public_payload = jobspec::build_public_submit_payload_json(&req, &options);
+    let envelope = jobspec::normalized_public_submit_envelope(&req, &options);
     let response = jobspec::submit_job_to_system_api(&req, &options).map_err(|e| e.to_string())?;
 
-    println!("job_id: {}", response.job_id);
-    println!("request_payload: {public_payload}");
-    println!("hint: run `eigen status {}` to view state", response.job_id);
-    println!(
-        "hint: run `eigen watch {}` to stream updates",
-        response.job_id
-    );
-    println!(
-        "hint: run `eigen results {}` when the job is DONE",
-        response.job_id
-    );
+    render_submit_output(&response.job_id, &req, &envelope, &public_payload);
     Ok(())
 }
 
@@ -1339,6 +1482,17 @@ mod tests {
         assert_eq!(terminal_exit_code("CANCELLED"), Some(EXIT_SERVER_ERROR));
         assert_eq!(terminal_exit_code("TIMEOUT"), Some(EXIT_SERVER_ERROR));
         assert_eq!(terminal_exit_code("RUNNING"), None);
+    }
+
+
+    #[test]
+    fn pretty_json_like_formats_nested_payloads() {
+        let raw = r#"{"outer":{"inner":[1,2,{"k":"v"}]},"flag":true}"#;
+        let pretty = pretty_json_like(raw);
+        assert!(pretty.contains("\n  \"outer\":"));
+        assert!(pretty.contains("\n    \"inner\":"));
+        assert!(pretty.contains("\n      {"));
+        assert!(pretty.contains("\n  \"flag\": true"));
     }
 
     #[test]
