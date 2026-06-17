@@ -93,14 +93,14 @@ def test_compile_exposes_backend_contract_and_target_classification() -> None:
     assert workload_profile["backend_targets"]
     assert workload_profile["emission_modes"]
     assert backend_contract["contract_version"] == "1.0.0"
-    assert backend_contract["workload_profile"] == "HybridWorkflow"
+    assert backend_contract["workload_profile"] == "DistributedJob"
     assert backend_contract["backend_target_class"] == "distributed"
     assert backend_contract["target_resolution"] == "distributed"
     assert backend_contract["selected_emission_mode"] == "aqo_json+topology_metadata"
     assert backend_contract["backend_specific_decisions"] == {
         "distributed.enabled": True,
         "distributed.target": "cluster",
-        "requires_explicit_target": False,
+        "requires_explicit_target": True,
         "core_ir_backend_agnostic": True,
     }
 
@@ -133,7 +133,7 @@ def test_source_ref_is_resolved_from_qfs_root(tmp_path: Path, monkeypatch: pytes
 
 def test_compile_rejects_backend_target_mismatch() -> None:
     source = b'from eigen_lang import hybrid_program\n@hybrid_program(target="sim")\ndef main():\n    ry(0, theta=1.0)\n'
-    with pytest.raises(CompilerValidationError, match="backend target|distributed backend"):
+    with pytest.raises(CompilerValidationError) as excinfo:
         compile_eigen_lang(
             source,
             options={
@@ -144,7 +144,8 @@ def test_compile_rejects_backend_target_mismatch() -> None:
                 "spec.workload.backend_target": "sim:local",
             },
         )
-
+    descriptions = [violation.description for violation in excinfo.value.violations]
+    assert any("DistributedJob requires a distributed backend target" in desc for desc in descriptions)
 
 def test_compile_exposes_deterministic_pass_pipeline() -> None:
     source = (

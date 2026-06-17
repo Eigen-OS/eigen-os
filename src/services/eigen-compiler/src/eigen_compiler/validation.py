@@ -536,19 +536,7 @@ def validate_workload_profile(
                 "options.spec.workload.seed",
                 "BenchmarkJob requires spec.workload.seed",
             )
-        if backend_target is None and backend_target_class == "implicit":
-            add(
-                "compiler.profile.benchmark.requires_backend_target",
-                "options.spec.workload.backend_target",
-                "BenchmarkJob requires an explicit backend target",
-            )
-        if backend_target_class == "unknown":
-            add(
-                "compiler.backend.unknown_target",
-                "options.spec.workload.backend_target",
-                f"unsupported backend target '{declared_backend_target}'",
-            )
-        else:
+        if seed_value is not None:
             try:
                 int(seed_value)
             except ValueError:
@@ -557,6 +545,18 @@ def validate_workload_profile(
                     "options.spec.workload.seed",
                     "BenchmarkJob seed must be an integer",
                 )
+        if backend_target is None and backend_target_class == "implicit":
+            add(
+                "compiler.profile.benchmark.requires_backend_target",
+                "options.spec.workload.backend_target",
+                "BenchmarkJob requires an explicit backend target",
+            )
+        elif backend_target_class == "unknown":
+            add(
+                "compiler.backend.unknown_target",
+                "options.spec.workload.backend_target",
+                f"unsupported backend target '{declared_backend_target}'",
+            )
         if backend_target is None:
             add(
                 "compiler.profile.benchmark.requires_backend_target",
@@ -627,6 +627,19 @@ def validate_workload_profile(
                 "source",
                 "ReplayJob forbids minimize-based adaptive rewrites",
             )
+        if declared_backend_target and backend_target_class == "unknown":
+            add(
+                "compiler.backend.unknown_target",
+                "options.spec.workload.backend_target",
+                f"unsupported backend target '{declared_backend_target}'",
+            )
+
+    if profile.kind == "DistributedJob" and declared_backend_target and backend_target_class != "distributed":
+        add(
+            "compiler.backend.distributed.target_mismatch",
+            "options.spec.workload.backend_target",
+            f"DistributedJob requires a distributed backend target, got '{declared_backend_target}'",
+        )
         if declared_backend_target and backend_target_class == "unknown":
             add(
                 "compiler.backend.unknown_target",
