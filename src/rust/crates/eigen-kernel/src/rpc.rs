@@ -277,13 +277,6 @@ impl HybridWorkflowGraph {
             });
         }
 
-        if self.final_failure_ref.is_some()
-            && self.final_completion_ref.is_none()
-            && self.stages.len() == 1
-        {
-            return Ok(());
-        }
-
         let mut previous_output_ref: Option<String> = None;
         let mut previous_order: Option<u32> = None;
         for stage in self.stages.iter() {
@@ -422,7 +415,7 @@ struct NormalizedSubmission {
     priority: i32,
     compiler_options: BTreeMap<String, String>,
     metadata_kvs: BTreeMap<String, String>,
-    workload: Option<crate::proto::WorkloadContract>,
+    workload_metadata: BTreeMap<String, String>,
     fingerprint: String,
     job_id: String,
 }
@@ -462,19 +455,10 @@ impl NormalizedSubmission {
             .and_then(|d| normalized_deadline_at(d));
         let compiler_options = canonical_string_map(&request.compiler_options);
         let metadata_kvs = canonical_string_map(&request.metadata_kvs);
-        let workload = metadata.workload.clone();
+        let workload_metadata = distributed_workload_metadata(&metadata_kvs)?;
         let program_hash = hash_bytes_hex(&program);
         let trace_id = trace_id_from_traceparent(&traceparent)
             .unwrap_or_else(|| stable_trace_id(&request_id, &program_hash));
-        let replay_contract_digest = replay_contract_digest(
-            workload.as_ref(),
-            target.as_str(),
-            &program_hash,
-            &trace_id,
-            &traceparent,
-            &metadata_kvs,
-        );
-        
         let fingerprint = canonical_submission_fingerprint(
             &contract_version,
             &request_id,
@@ -493,11 +477,10 @@ impl NormalizedSubmission {
             request.priority,
             &compiler_options,
             &metadata_kvs,
-            &replay_contract_digest,
         );
         let job_id = format!("job-{}", &fingerprint);
 
-        let submission = Self {
+        Ok(Self {
             contract_version,
             request_id,
             idempotency_key,
@@ -518,16 +501,14 @@ impl NormalizedSubmission {
             priority: request.priority,
             compiler_options,
             metadata_kvs,
-            workload,
+            workload_metadata,
             fingerprint,
             job_id,
-        };
-        submission.validate_replay_contract()?;
-        Ok(submission)
+        })
     }
 
     fn summary_map(&self) -> BTreeMap<String, String> {
-        BTreeMap::from([
+        let mut summary = BTreeMap::from([
             ("contract_version".to_string(), self.contract_version.clone()),
             ("request_id".to_string(), self.request_id.clone()),
             ("idempotency_key".to_string(), self.idempotency_key.clone()),
@@ -566,11 +547,14 @@ impl NormalizedSubmission {
                     .map(|ts| timestamp_to_ms(ts).to_string())
                     .unwrap_or_default(),
             ),
-        ])
+        ]);
+        summary.extend(self.workload_metadata.clone());
+        summary
     }
 
     fn stage_input(&self, stage: DagStageKind) -> BTreeMap<String, String> {
         let mut input = self.summary_map();
+        input.extend(self.workload_metadata.clone());
         input.insert("stage_id".to_string(), stage_id(&self.job_id, stage));
         input.insert("stage_key".to_string(), stage.key().to_string());
         input.insert("stage_index".to_string(), stage.index().to_string());
@@ -595,337 +579,6 @@ impl NormalizedSubmission {
         input
     }
 }
-
-fn is_replay_job(&self) -> bool {
-        self.workload
-            .as_ref()
-            .map(|workload| workload.kind == WORKLOAD_FAMILY_KIND_REPLAY_JOB)
-            .unwrap_or(false)
-    }
-
-    fn replay_material_map(&self) -> BTreeMap<String, String> {
-        let mut material = BTreeMap::new();
-        let Some(workload) = self.workload.as_ref() else {
-            return material;
-        };
-        if workload.kind != WORKLOAD_FAMILY_KIND_REPLAY_JOB {
-            return material;
-        }
-
-        material.insert(
-            "kind".to_string(),
-            workload_family_kind_label(workload.kind).to_string(),
-        );
-        material.insert(
-            "execution_profile".to_string(),
-            workload.execution_profile.clone(),
-        );
-        material.insert("replayable".to_string(), workload.replayable.to_string());
-        material.insert("backend_target".to_string(), self.target.clone());
-        material.insert("program_source_sha256".to_string(), self.program_hash.clone());
-        material.insert("trace_id".to_string(), self.trace_id.clone());
-        material.insert("traceparent".to_string(), self.traceparent.clone());
-        material.insert(
-            "policy_snapshot_ref".to_string(),
-            workload
-                .artifact_lineage
-                .as_ref()
-                .map(|value| value.policy_snapshot_ref.clone())
-                .unwrap_or_default(),
-        );
-        material.insert(
-            "trace_ref".to_string(),
-            workload
-                .observability
-                .as_ref()
-                .map(|value| value.trace_ref.clone())
-                .unwrap_or_default(),
-        );
-        material.insert(
-            "root_ref".to_string(),
-            workload
-                .artifact_lineage
-                .as_ref()
-                .map(|value| value.root_ref.clone())
-                .unwrap_or_default(),
-        );
-        material.insert(
-            "parent_ref".to_string(),
-            workload
-                .artifact_lineage
-                .as_ref()
-                .map(|value| value.parent_ref.clone())
-                .unwrap_or_default(),
-        );
-        material.insert(
-            "execution_ref".to_string(),
-            workload
-                .artifact_lineage
-                .as_ref()
-                .map(|value| value.execution_ref.clone())
-                .unwrap_or_default(),
-        );
-        material.insert(
-            "fail_closed".to_string(),
-            workload
-                .security
-                .as_ref()
-                .map(|value| value.fail_closed.to_string())
-                .unwrap_or_default(),
-        );
-        material.insert(
-            "tenant_id".to_string(),
-            workload
-                .security
-                .as_ref()
-                .map(|value| value.tenant_id.clone())
-                .unwrap_or_default(),
-        );
-        material.insert(
-            "project_id".to_string(),
-            workload
-                .security
-                .as_ref()
-                .map(|value| value.project_id.clone())
-                .unwrap_or_default(),
-        );
-        material.insert(
-            "service_identity".to_string(),
-            workload
-                .security
-                .as_ref()
-                .map(|value| value.service_identity.clone())
-                .unwrap_or_default(),
-        );
-        material.insert(
-            "aqo_sha256".to_string(),
-            self.metadata_kvs
-                .get("replay.aqo_sha256")
-                .cloned()
-                .unwrap_or_default(),
-        );
-        material.insert(
-            "policy_snapshot_version".to_string(),
-            self.metadata_kvs
-                .get("replay.policy_snapshot_version")
-                .cloned()
-                .unwrap_or_default(),
-        );
-        material
-    }
-
-    fn replay_contract_digest(&self) -> String {
-        let material = self.replay_material_map();
-        if material.is_empty() {
-            return String::new();
-        }
-        hash_bytes_hex(&serde_json::to_vec(&material).unwrap_or_default())
-    }
-
-    fn replay_metadata_map(&self) -> BTreeMap<String, String> {
-        let mut metadata = BTreeMap::new();
-        if !self.is_replay_job() {
-            return metadata;
-        }
-
-        let material = self.replay_material_map();
-        metadata.insert("replay.kind".to_string(), "ReplayJob".to_string());
-        metadata.insert("replay.execution_profile".to_string(), "replay".to_string());
-        metadata.insert("replay.replayable".to_string(), "true".to_string());
-        metadata.insert("replay.backend_target".to_string(), self.target.clone());
-        metadata.insert("replay.program_source_sha256".to_string(), self.program_hash.clone());
-        metadata.insert("replay.packaging_sha256".to_string(), self.fingerprint.clone());
-        metadata.insert("replay.contract_digest".to_string(), self.replay_contract_digest());
-        metadata.insert(
-            "replay.policy_snapshot_ref".to_string(),
-            material.get("policy_snapshot_ref").cloned().unwrap_or_default(),
-        );
-        metadata.insert(
-            "replay.trace_ref".to_string(),
-            material.get("trace_ref").cloned().unwrap_or_default(),
-        );
-        metadata.insert(
-            "replay.trace_id".to_string(),
-            material.get("trace_id").cloned().unwrap_or_default(),
-        );
-        metadata.insert(
-            "replay.traceparent".to_string(),
-            material.get("traceparent").cloned().unwrap_or_default(),
-        );
-        metadata.insert(
-            "replay.root_ref".to_string(),
-            material.get("root_ref").cloned().unwrap_or_default(),
-        );
-        metadata.insert(
-            "replay.parent_ref".to_string(),
-            material.get("parent_ref").cloned().unwrap_or_default(),
-        );
-        metadata.insert(
-            "replay.execution_ref".to_string(),
-            material.get("execution_ref").cloned().unwrap_or_default(),
-        );
-        metadata.insert(
-            "replay.aqo_sha256".to_string(),
-            material.get("aqo_sha256").cloned().unwrap_or_default(),
-        );
-        metadata.insert(
-            "replay.policy_snapshot_version".to_string(),
-            material.get("policy_snapshot_version").cloned().unwrap_or_default(),
-        );
-        metadata.insert(
-            "replay.fail_closed".to_string(),
-            material.get("fail_closed").cloned().unwrap_or_default(),
-        );
-        metadata
-    }
-
-    fn validate_replay_contract(&self) -> Result<(), Status> {
-        if !self.is_replay_job() {
-            return Ok(());
-        }
-
-        let Some(workload) = self.workload.as_ref() else {
-            return Err(Status::failed_precondition(
-                "replay request rejected: workload contract is required",
-            ));
-        };
-
-        if workload.execution_profile.trim() != "replay" {
-            return Err(Status::failed_precondition(
-                "replay request rejected: execution_profile must be replay",
-            ));
-        }
-
-        if !workload.replayable {
-            return Err(Status::failed_precondition(
-                "replay request rejected: workload must remain replayable",
-            ));
-        }
-
-        if workload.backend_target.trim().is_empty() || workload.backend_target != self.target {
-            return Err(Status::failed_precondition(
-                "replay request rejected: backend target mismatch or missing target evidence",
-            ));
-        }
-
-        let Some(artifact_lineage) = workload.artifact_lineage.as_ref() else {
-            return Err(Status::failed_precondition(
-                "replay request rejected: artifact lineage evidence is required",
-            ));
-        };
-        let Some(observability) = workload.observability.as_ref() else {
-            return Err(Status::failed_precondition(
-                "replay request rejected: trace context evidence is required",
-            ));
-        };
-        let Some(security) = workload.security.as_ref() else {
-            return Err(Status::failed_precondition(
-                "replay request rejected: security evidence is required",
-            ));
-        };
-
-        if !security.fail_closed {
-            return Err(Status::failed_precondition(
-                "replay request rejected: fail_closed must be true",
-            ));
-        }
-
-        if security.policy_snapshot_ref.trim().is_empty()
-            || security.policy_snapshot_ref != artifact_lineage.policy_snapshot_ref
-        {
-            return Err(Status::failed_precondition(
-                "replay request rejected: policy snapshot ref is missing or stale",
-            ));
-        }
-
-        if artifact_lineage.root_ref.trim().is_empty()
-            || artifact_lineage.parent_ref.trim().is_empty()
-            || artifact_lineage.execution_ref.trim().is_empty()
-            || observability.trace_ref.trim().is_empty()
-            || observability.trace_id.trim().is_empty()
-            || observability.traceparent.trim().is_empty()
-        {
-            return Err(Status::failed_precondition(
-                "replay request rejected: missing required provenance refs",
-            ));
-        }
-
-        let required_hashes: [(&str, &str); 3] = [
-            ("replay.program_source_sha256", self.program_hash.as_str()),
-            ("replay.packaging_sha256", self.fingerprint.as_str()),
-            (
-                "replay.aqo_sha256",
-                self.metadata_kvs
-                    .get("replay.aqo_sha256")
-                    .map(String::as_str)
-                    .unwrap_or(""),
-            ),
-        ];
-        for &(key, expected) in &required_hashes {
-            if expected.trim().is_empty() {
-                return Err(Status::failed_precondition(format!(
-                    "replay request rejected: missing {key}"
-                )));
-            }
-        }
-
-        let program_source_sha256 = self
-            .metadata_kvs
-            .get("replay.program_source_sha256")
-            .map(String::as_str)
-            .unwrap_or("");
-        if program_source_sha256 != self.program_hash {
-            return Err(Status::failed_precondition(
-                "replay request rejected: program source digest mismatch",
-            ));
-        }
-
-        let packaging_sha256 = self
-            .metadata_kvs
-            .get("replay.packaging_sha256")
-            .map(String::as_str)
-            .unwrap_or("");
-        if packaging_sha256 != self.fingerprint {
-            return Err(Status::failed_precondition(
-                "replay request rejected: packaging digest mismatch",
-            ));
-        }
-
-        let backend_target = self
-            .metadata_kvs
-            .get("replay.backend_target")
-            .map(String::as_str)
-            .unwrap_or("");
-        if backend_target != self.target {
-            return Err(Status::failed_precondition(
-                "replay request rejected: backend target digest mismatch",
-            ));
-        }
-
-        let policy_snapshot_ref = self
-            .metadata_kvs
-            .get("replay.policy_snapshot_ref")
-            .map(String::as_str)
-            .unwrap_or("");
-        if policy_snapshot_ref != artifact_lineage.policy_snapshot_ref {
-            return Err(Status::failed_precondition(
-                "replay request rejected: policy snapshot ref digest mismatch",
-            ));
-        }
-
-        let trace_ref = self
-            .metadata_kvs
-            .get("replay.trace_ref")
-            .map(String::as_str)
-            .unwrap_or("");
-        if trace_ref != observability.trace_ref {
-            return Err(Status::failed_precondition(
-                "replay request rejected: trace ref digest mismatch",
-            ));
-        }
-
-        Ok(())
-    }
 
 fn workflow_id_for(job_id: &str) -> String {
     format!("workflow-{job_id}")
@@ -1019,6 +672,91 @@ fn workflow_handoff_token(job_id: &str, stage: DagStageKind, phase: &str, materi
         normalized.insert(key.clone(), serde_json::Value::String(value.clone()));
     }
     hash_bytes_hex(&serde_json::to_vec(&normalized).unwrap_or_default())
+}
+
+fn distributed_workload_metadata(metadata_kvs: &BTreeMap<String, String>) -> Result<BTreeMap<String, String>, Status> {
+    let workload_raw = match metadata_kvs.get("jobspec_workload") {
+        Some(raw) if !raw.trim().is_empty() => raw,
+        _ => return Ok(BTreeMap::new()),
+    };
+
+    let workload: serde_json::Value = serde_json::from_str(workload_raw)
+        .map_err(|_| Status::invalid_argument("jobspec_workload metadata must be valid JSON"))?;
+
+    if workload.get("kind").and_then(|value| value.as_str()) != Some("DistributedJob") {
+        return Ok(BTreeMap::new());
+    }
+
+    let topology = workload
+        .get("topology")
+        .and_then(|value| value.as_object())
+        .ok_or_else(|| Status::invalid_argument("spec.workload.topology is required for DistributedJob"))?;
+
+    let cluster_id = topology
+        .get("cluster_id")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| Status::invalid_argument("spec.workload.topology.cluster_id is required"))?;
+
+    let partition_count = topology
+        .get("partition_count")
+        .and_then(|value| value.as_i64())
+        .filter(|value| *value > 0)
+        .ok_or_else(|| Status::invalid_argument("spec.workload.topology.partition_count must be >= 1"))? as usize;
+
+    let partition_ids = topology
+        .get("partition_ids")
+        .and_then(|value| value.as_array())
+        .ok_or_else(|| Status::invalid_argument("spec.workload.topology.partition_ids must be an array"))?
+        .iter()
+        .map(|value| value.as_str().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string))
+        .collect::<Option<Vec<String>>>()
+        .ok_or_else(|| Status::invalid_argument("spec.workload.topology.partition_ids must contain non-empty strings"))?;
+
+    let preferred_workers = topology
+        .get("preferred_workers")
+        .and_then(|value| value.as_array())
+        .ok_or_else(|| Status::invalid_argument("spec.workload.topology.preferred_workers must be an array"))?
+        .iter()
+        .map(|value| value.as_str().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string))
+        .collect::<Option<Vec<String>>>()
+        .ok_or_else(|| Status::invalid_argument("spec.workload.topology.preferred_workers must contain non-empty strings"))?;
+
+    if partition_ids.len() != partition_count {
+        return Err(Status::invalid_argument("spec.workload.topology.partition_ids must contain partition_count entries"));
+    }
+    if preferred_workers.len() != partition_ids.len() {
+        return Err(Status::invalid_argument("spec.workload.topology.preferred_workers must contain one worker per partition"));
+    }
+    let mut unique_partition_ids = partition_ids.clone();
+    unique_partition_ids.sort();
+    unique_partition_ids.dedup();
+    if unique_partition_ids.len() != partition_ids.len() {
+        return Err(Status::invalid_argument("spec.workload.topology.partition_ids must be unique"));
+    }
+
+    let canonical_topology = serde_json::json!({
+        "cluster_id": cluster_id,
+        "partition_count": partition_count,
+        "partition_ids": partition_ids,
+        "preferred_workers": preferred_workers,
+    });
+    let topology_json = serde_json::to_string(&canonical_topology).unwrap_or_default();
+    let topology_digest = hash_bytes_hex(topology_json.as_bytes());
+    let replay_token = hash_bytes_hex(
+        format!("distributed:{cluster_id}:{topology_digest}").as_bytes(),
+    );
+
+    Ok(BTreeMap::from([
+        ("distributed.cluster_id".to_string(), cluster_id.to_string()),
+        ("distributed.partition_count".to_string(), partition_count.to_string()),
+        ("distributed.partition_ids".to_string(), serde_json::to_string(&partition_ids).unwrap_or_default()),
+        ("distributed.preferred_workers".to_string(), serde_json::to_string(&preferred_workers).unwrap_or_default()),
+        ("distributed.topology_digest_sha256".to_string(), topology_digest),
+        ("distributed.replay_token".to_string(), replay_token),
+        ("distributed.topology_json".to_string(), topology_json),
+    ]))
 }
 
 #[derive(Debug, Clone)]
@@ -1131,9 +869,66 @@ impl JobRuntimeRecord {
                     "error_code": stage.error_code,
                     "error_summary": stage.error_summary,
                     "error_details_ref": stage.error_details_ref,
+                    "input_refs": stage.pipeline_input_refs(),
+                    "output_refs": stage.pipeline_output_refs(),
+                    "depends_on": stage
+                        .artifact_refs
+                        .get("upstream_output_ref")
+                        .cloned()
+                        .map(|value| vec![value])
+                        .unwrap_or_default(),
+                    "failure_semantics": stage.pipeline_failure_semantics(),
                 })
             })
             .collect();
+
+        let mut pipeline_stage_json: Vec<serde_json::Value> = Vec::with_capacity(self.stage_records.len());
+        let mut previous_output_ref: Option<String> = None;
+        for stage in &self.stage_records {
+            let depends_on = previous_output_ref.clone().into_iter().collect::<Vec<_>>();
+            previous_output_ref = stage
+                .artifact_refs
+                .get("workflow_output_ref")
+                .cloned()
+                .or_else(|| stage.output.get("workflow_output_ref").cloned());
+            pipeline_stage_json.push(serde_json::json!({
+                "stage_id": stage.stage_id,
+                "stage_key": stage.stage_key,
+                "order": stage.order,
+                "state_before": stage.state_before as i32,
+                "state_after": stage.state_after as i32,
+                "status": match stage.status {
+                    StageStatus::Running => "running",
+                    StageStatus::Succeeded => "succeeded",
+                    StageStatus::Failed => "failed",
+                },
+                "input_refs": stage.pipeline_input_refs(),
+                "output_refs": stage.pipeline_output_refs(),
+                "handoff_ref": stage.handoff_ref,
+                "depends_on": depends_on,
+                "artifact_refs": stage.artifact_refs,
+                "lineage_refs": stage.lineage_refs,
+                "replay_token": stage.replay_token,
+                "failure_semantics": stage.pipeline_failure_semantics(),
+            }));
+        }
+
+        let pipeline_json = serde_json::json!({
+            "kind": "PipelineJob",
+            "job_id": self.job_id,
+            "workflow_id": self.workflow_id,
+            "root_lineage_ref": self.workflow_root_lineage_ref,
+            "replay_cursor": self
+                .stage_records
+                .iter()
+                .rev()
+                .find(|stage| matches!(stage.status, StageStatus::Succeeded))
+                .map(|stage| stage.stage_id.clone())
+                .unwrap_or_default(),
+            "stages": pipeline_stage_json,
+            "final_completion_ref": self.workflow_completion_ref,
+            "final_failure_ref": self.workflow_failure_ref,
+        });
 
         let HybridWorkflowGraph {
             workflow_id,
@@ -1202,6 +997,7 @@ impl JobRuntimeRecord {
             "state": self.state as i32,
             "current_stage": self.current_stage.map(|s| s.key()),
             "stage_records": stage_json,
+            "pipeline": pipeline_json,
             "workflow": workflow_json,
             "counts": self.counts,
             "metadata": self.metadata,
@@ -1314,6 +1110,59 @@ impl JobRuntimeRecord {
     }
 }
 
+impl StageRecord {
+    fn pipeline_input_refs(&self) -> Vec<String> {
+        let mut refs = Vec::new();
+        for key in [
+            "workflow_input_ref",
+            "upstream_output_ref",
+            "workflow_lineage_ref",
+            "workflow_root_lineage_ref",
+        ] {
+            if let Some(value) = self.artifact_refs.get(key) {
+                if !value.is_empty() && !refs.contains(value) {
+                    refs.push(value.clone());
+                }
+            }
+        }
+        refs
+    }
+
+    fn pipeline_output_refs(&self) -> Vec<String> {
+        let mut refs = Vec::new();
+        for key in [
+            "workflow_output_ref",
+            "workflow_handoff_ref",
+            "workflow_failure_ref",
+            "workflow_completion_ref",
+        ] {
+            if let Some(value) = self.artifact_refs.get(key).or_else(|| self.output.get(key)) {
+                if !value.is_empty() && !refs.contains(value) {
+                    refs.push(value.clone());
+                }
+            }
+        }
+        refs
+    }
+
+    fn pipeline_failure_semantics(&self) -> serde_json::Value {
+        serde_json::json!({
+            "retains_outputs": true,
+            "invalidates_downstream_handoffs": matches!(self.status, StageStatus::Failed),
+            "resume_boundary": if matches!(self.status, StageStatus::Failed) {
+                "failed-stage"
+            } else {
+                "last-successful-stage"
+            },
+            "terminal_state": match self.status {
+                StageStatus::Running => "running",
+                StageStatus::Succeeded => "succeeded",
+                StageStatus::Failed => "failed",
+            },
+        })
+    }
+}
+
 fn bounded_dispatch_rationale_attributes(
     job: &JobRuntimeRecord,
     schedule_stage: &StageRecord,
@@ -1325,7 +1174,7 @@ fn bounded_dispatch_rationale_attributes(
         .get("fingerprint")
         .cloned()
         .unwrap_or_else(|| job.snapshot_digest());
-    BTreeMap::from([
+    let mut attrs = BTreeMap::from([
         ("job_id".to_string(), job.job_id.clone()),
         ("stage_count".to_string(), job.stage_records.len().to_string()),
         (
@@ -1372,7 +1221,21 @@ fn bounded_dispatch_rationale_attributes(
         ),
         ("decision_input_digest".to_string(), decision_input_digest),
         ("snapshot_digest".to_string(), job.snapshot_digest()),
-    ])
+    ]);
+    for key in [
+        "distributed.cluster_id",
+        "distributed.partition_count",
+        "distributed.partition_ids",
+        "distributed.preferred_workers",
+        "distributed.topology_digest_sha256",
+        "distributed.replay_token",
+        "distributed.topology_json",
+    ] {
+        if let Some(value) = job.metadata.get(key) {
+            attrs.insert(key.to_string(), value.clone());
+        }
+    }
+    attrs
 }
 
 impl JobRuntimeRecord {
@@ -1442,7 +1305,7 @@ impl KernelRuntimeStore {
             workflow_completion_ref: None,
             workflow_failure_ref: None,
             counts: BTreeMap::new(),
-            metadata: submission.replay_metadata_map(),
+            metadata: submission.workload_metadata.clone(),
             qfs_result_ref: None,
             error_code: None,
             error_summary: None,
@@ -4444,7 +4307,6 @@ fn canonical_submission_fingerprint(
     priority: i32,
     compiler_options: &BTreeMap<String, String>,
     metadata_kvs: &BTreeMap<String, String>,
-    replay_contract_digest: &str,
 ) -> String {
     let mut material = String::new();
     let parts = [
@@ -4487,24 +4349,7 @@ fn canonical_submission_fingerprint(
         material.push_str(v);
         material.push('|');
     }
-    material.push_str("replay_contract_digest=");
-    material.push_str(replay_contract_digest);
-    material.push('|');
     stable_hash_hex(&material)
-}
-
-const WORKLOAD_FAMILY_KIND_REPLAY_JOB: i32 = 6;
-
-fn workload_family_kind_label(kind: i32) -> &'static str {
-    match kind {
-        1 => "QuantumJob",
-        2 => "HybridWorkflow",
-        3 => "DistributedJob",
-        4 => "BenchmarkJob",
-        5 => "PipelineJob",
-        6 => "ReplayJob",
-        _ => "Unspecified",
-    }
 }
 
 fn stable_trace_id(request_id: &str, program_hash: &str) -> String {
@@ -4706,6 +4551,27 @@ mod tests {
         }
     }
 
+    fn make_distributed_request(name: &str) -> EnqueueJobRequest {
+        let mut request = make_request(name);
+        request.target = "cluster:auto".to_string();
+        request.metadata_kvs.insert(
+            "jobspec_workload".to_string(),
+            serde_json::json!({
+                "kind": "DistributedJob",
+                "execution_profile": "distributed",
+                "replayable": true,
+                "topology": {
+                    "cluster_id": "cluster:auto",
+                    "partition_count": 2,
+                    "partition_ids": ["partition-0", "partition-1"],
+                    "preferred_workers": ["worker-a", "worker-b"],
+                },
+            })
+            .to_string(),
+        );
+        request
+    }
+
     fn make_status_request(job_id: &str) -> GetJobStatusRequest {
         GetJobStatusRequest {
             metadata: Some(RequestMetadata {
@@ -4794,6 +4660,102 @@ mod tests {
         assert_eq!(results.state, TaskState::Done as i32);
         assert!(!results.qfs_result_ref.is_empty());
         assert!(!results.counts.is_empty());
+    }
+
+    #[tokio::test]
+    async fn distributed_jobspec_metadata_is_projected_into_kernel_lineage() {
+        let (svc, runtime) = make_service(None);
+        let response = svc
+            .enqueue_job(Request::new(make_distributed_request("distributed")))
+            .await
+            .expect("enqueue should succeed")
+            .into_inner();
+
+        let job = wait_for_terminal(runtime.clone(), &response.job_id).await;
+        assert_eq!(job.state, TaskState::Done);
+        assert_eq!(job.metadata.get("distributed.cluster_id").map(String::as_str), Some("cluster:auto"));
+        assert_eq!(job.metadata.get("distributed.partition_count").map(String::as_str), Some("2"));
+        assert_eq!(job.metadata.get("distributed.partition_ids").map(String::as_str), Some("[\"partition-0\",\"partition-1\"]"));
+        assert_eq!(job.metadata.get("distributed.preferred_workers").map(String::as_str), Some("[\"worker-a\",\"worker-b\"]"));
+        assert!(job.metadata.get("distributed.topology_digest_sha256").is_some());
+
+        let validate_stage = job
+            .stage_records
+            .iter()
+            .find(|stage| stage.stage_key == "validate-enqueue")
+            .expect("validate stage should exist");
+        assert_eq!(validate_stage.input.get("distributed.cluster_id").map(String::as_str), Some("cluster:auto"));
+        assert_eq!(validate_stage.input.get("distributed.partition_count").map(String::as_str), Some("2"));
+        assert_eq!(validate_stage.input.get("distributed.partition_ids").map(String::as_str), Some("[\"partition-0\",\"partition-1\"]"));
+        assert_eq!(validate_stage.input.get("distributed.preferred_workers").map(String::as_str), Some("[\"worker-a\",\"worker-b\"]"));
+        assert!(validate_stage.replay_token.len() >= 16);
+
+        let status = svc
+            .get_dispatch_rationale(Request::new(GetDispatchRationaleRequest {
+                metadata: Some(RequestMetadata {
+                    contract_version: "1.0.0".to_string(),
+                    request_id: format!("dispatch-{}", response.job_id),
+                    idempotency_key: format!("dispatch-{}", response.job_id),
+                    traceparent: "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01".to_string(),
+                    deadline: Some(ProtoDuration { seconds: 30, nanos: 0 }),
+                    tenant_id: "tenant-a".to_string(),
+                    project_id: "project-a".to_string(),
+                    subject: "alice".to_string(),
+                    role: "user".to_string(),
+                    source_service: "system-api".to_string(),
+                    trace_id: "".to_string(),
+                    retry_policy: "".to_string(),
+                    security_context: "".to_string(),
+                    workload: Some(Default::default()),
+                    ..Default::default()
+                }),
+                job_id: response.job_id.clone(),
+            }))
+            .await
+            .expect("dispatch rationale should succeed")
+            .into_inner();
+        let rationale = status.rationale.expect("rationale should exist");
+        assert_eq!(rationale.attributes.get("distributed.cluster_id").map(String::as_str), Some("cluster:auto"));
+        assert_eq!(rationale.attributes.get("distributed.partition_count").map(String::as_str), Some("2"));
+    }
+
+    #[tokio::test]
+    async fn distributed_jobspec_missing_or_conflicting_topology_is_rejected() {
+        let (svc, _) = make_service(None);
+
+        let mut missing = make_request("missing-topology");
+        missing.metadata_kvs.insert(
+            "jobspec_workload".to_string(),
+            serde_json::json!({
+                "kind": "DistributedJob",
+                "execution_profile": "distributed",
+                "replayable": true,
+            })
+            .to_string(),
+        );
+        let err = svc.enqueue_job(Request::new(missing)).await.expect_err("missing topology should fail");
+        assert_eq!(err.code(), Code::InvalidArgument);
+        assert!(err.message().contains("spec.workload.topology"));
+
+        let mut conflicting = make_request("conflicting-topology");
+        conflicting.metadata_kvs.insert(
+            "jobspec_workload".to_string(),
+            serde_json::json!({
+                "kind": "DistributedJob",
+                "execution_profile": "distributed",
+                "replayable": true,
+                "topology": {
+                    "cluster_id": "cluster:auto",
+                    "partition_count": 2,
+                    "partition_ids": ["partition-0"],
+                    "preferred_workers": ["worker-a", "worker-b"],
+                },
+            })
+            .to_string(),
+        );
+        let err = svc.enqueue_job(Request::new(conflicting)).await.expect_err("conflicting topology should fail");
+        assert_eq!(err.code(), Code::InvalidArgument);
+        assert!(err.message().contains("partition_ids"));
     }
 
     #[tokio::test]
