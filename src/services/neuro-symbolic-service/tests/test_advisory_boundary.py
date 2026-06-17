@@ -10,6 +10,7 @@ if str(SERVICE_SRC) not in sys.path:
     sys.path.insert(0, str(SERVICE_SRC))
 
 from neuro_symbolic_service import main as entrypoint  # noqa: E402
+from neuro_symbolic_service import advisor_boundary  # noqa: E402
 from neuro_symbolic_service.observability import (  # noqa: E402
     record_suggestion_outcome,
     render_metrics_text,
@@ -35,6 +36,34 @@ def test_suggestion_outcomes_are_exported(outcome: str) -> None:
     record_suggestion_outcome(outcome)
     metrics = render_metrics_text()
     assert f'eigen_neuro_suggestion_outcomes_total{{outcome="{outcome}"}} 1' in metrics
+
+
+def test_advisor_boundary_records_outcome(monkeypatch: pytest.MonkeyPatch) -> None:
+    recorded: list[str] = []
+
+    class _FakeResponse:
+        request_id = "req-1"
+        tenant_id = "tenant-1"
+        project_id = "project-1"
+        policy_snapshot_version = "1.0.0"
+        model_version = "dpda-model-v1"
+        decision = 2
+
+    def fake_record_suggestion_outcome(outcome: str) -> None:
+        recorded.append(outcome)
+
+    monkeypatch.setattr(advisor_boundary, "record_suggestion_outcome", fake_record_suggestion_outcome)
+    monkeypatch.setattr(advisor_boundary, "append_security_audit_event", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        advisor_boundary._BaseNeuroSymbolicService,
+        "ScoreCompilationPlan",
+        lambda self, request, context: _FakeResponse(),
+    )
+
+    response = advisor_boundary.NeuroSymbolicService().ScoreCompilationPlan(object(), object())
+
+    assert response.decision == 2
+    assert recorded == ["transformed"]
 
 
 def test_main_starts_grpc_server(monkeypatch: pytest.MonkeyPatch) -> None:
