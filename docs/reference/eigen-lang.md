@@ -145,7 +145,7 @@ Eigen-Lang source code is NEVER executed directly.
 The compiler:
 
 1. parses source into AST,
-2. validates allowed constructs,
+2. validates allowed constructs through the deterministic semantic rule engine,
 3. builds internal IR,
 4. emits deterministic AQO.
 
@@ -186,6 +186,10 @@ import socket
 ```
 
 Violation MUST fail compilation with: `INVALID_ARGUMENT`
+
+Rule-based validation is authoritative; advisory or neural suggestions must not bypass a rejected rule.
+
+Rule-based validation is authoritative; advisory or neural suggestions must not bypass a rejected rule.
 
 ---
 

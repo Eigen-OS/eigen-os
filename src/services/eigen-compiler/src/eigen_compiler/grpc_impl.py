@@ -147,7 +147,8 @@ class FeatureRedactionResult:
 _STAGE_LABELS = {
     "request_validation",
     "parse",
-    "validate_ast",
+    "semantic_validation",
+    "lowering_validation",
     "annotate",
     "lower_to_ir",
     "eigen_dpda",

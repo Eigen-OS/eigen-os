@@ -191,6 +191,8 @@ Examples:
 - invalid Eigen-Lang AST,
 - invalid distributed merge envelope.
 
+Compiler implementations SHOULD include the rule identifier in the human-readable description and use the failing field path as the violation field.
+
 Characteristics:
 
 - deterministic,
