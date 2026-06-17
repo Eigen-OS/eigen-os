@@ -10,7 +10,8 @@ import threading
 
 import grpc
 
-from .grpc_impl import CompilationService, NeuroSymbolicService, render_metrics_text, reset_metrics
+from .advisor_boundary import NeuroSymbolicService, render_metrics_text
+from .grpc_impl import CompilationService, reset_metrics
 from .proto_gen import ensure_generated
 
 _LOG = logging.getLogger("eigen_compiler")
