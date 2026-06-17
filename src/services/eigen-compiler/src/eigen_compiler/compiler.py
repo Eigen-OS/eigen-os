@@ -15,7 +15,12 @@ from time import perf_counter
 from typing import Callable, Iterator, TypeVar
 
 from .errors import FieldViolation
-from .validation import resolve_workload_profile, validate_workload_profile, workload_profile_payload
+from .validation import (
+    backend_contract_payload,
+    resolve_workload_profile,
+    validate_workload_profile,
+    workload_profile_payload,
+)
 
 AQO_VERSION = "1.0.0"
 
@@ -886,7 +891,8 @@ def compile_eigen_lang(
         raise CompilerValidationError(violations=profile_violations)
 
     workload_profile_json = _canonical_json_text(workload_profile_payload(workload_profile))
-
+    backend_contract_json = _canonical_json_text(backend_contract_payload(workload_profile, normalized_options))
+    
     aqo_request_payload = {
         "options": normalized_options,
         "request_context": asdict(normalized_request_context),
@@ -1025,6 +1031,8 @@ def compile_eigen_lang(
         ),
         "workload_profile": workload_profile.kind,
         "workload_profile_json": workload_profile_json,
+        "backend_contract_version": "1.0.0",
+        "backend_contract_json": backend_contract_json,
     }
     if has_minimize:
         metadata["hybrid_plan_marker"] = "minimize"

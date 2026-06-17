@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 import os
 from pathlib import Path
 from dataclasses import dataclass
@@ -20,6 +21,42 @@ _SUPPORTED_WORKLOAD_KINDS = {
     "BenchmarkJob",
     "PipelineJob",
     "ReplayJob",
+}
+
+
+_SUPPORTED_BACKEND_TARGETS = {
+    "sim:local",
+    "backend:quantum",
+    "backend:cluster",
+    "cluster:auto",
+    "cluster:gpu",
+    "cluster:quantum",
+    "runtime:auto",
+    "runtime:latency",
+    "runtime:cost",
+    "runtime:availability",
+    "runtime:deterministic",
+    "ibm:qpu",
+    "aws:braket",
+    "azure:quantum",
+}
+
+_PROFILE_ALLOWED_BACKEND_TARGET_CLASSES: dict[str, tuple[str, ...]] = {
+    "QuantumJob": ("implicit", "simulator", "provider", "policy"),
+    "HybridWorkflow": ("implicit", "simulator", "provider", "policy", "distributed"),
+    "DistributedJob": ("distributed",),
+    "BenchmarkJob": ("simulator", "provider", "policy", "distributed"),
+    "PipelineJob": ("implicit", "simulator", "provider", "policy", "distributed"),
+    "ReplayJob": ("implicit", "simulator", "provider", "policy", "distributed"),
+}
+
+_PROFILE_EMISSION_MODES: dict[str, tuple[str, ...]] = {
+    "QuantumJob": ("aqo_json", "aqo_json+driver_metadata"),
+    "HybridWorkflow": ("aqo_json", "aqo_json+driver_metadata", "aqo_json+runtime_metadata"),
+    "DistributedJob": ("aqo_json+topology_metadata", "aqo_json+runtime_metadata"),
+    "BenchmarkJob": ("aqo_json", "aqo_json+benchmark_metadata"),
+    "PipelineJob": ("aqo_json", "aqo_json+handoff_metadata"),
+    "ReplayJob": ("aqo_json", "aqo_json+replay_metadata"),
 }
 
 
@@ -168,6 +205,139 @@ def _profile_violation(rule: str, field: str, description: str) -> FieldViolatio
     return FieldViolation(field=field, description=f"{rule}: {description}")
 
 
+def _backend_target_class(target: str | None) -> str:
+    if not target:
+        return "implicit"
+    if target == "sim:local":
+        return "simulator"
+    if target in {"cluster:auto", "cluster:gpu", "cluster:quantum"}:
+        return "distributed"
+    if target in {"backend:quantum", "ibm:qpu", "aws:braket", "azure:quantum"}:
+        return "provider"
+    if target in {"backend:cluster", "runtime:auto", "runtime:latency", "runtime:cost", "runtime:availability", "runtime:deterministic"}:
+        return "policy"
+    return "unknown"
+
+
+def _resolve_backend_target(normalized: dict[str, str]) -> tuple[str, str, str]:
+    explicit = _first_option(normalized, "spec.workload.backend_target", "target", "runtime.target")
+    distributed_enabled = _parse_bool(normalized.get("distributed.enabled", "false")) is True
+    distributed_target = _first_option(normalized, "distributed.target")
+
+    if explicit:
+        return explicit, _backend_target_class(explicit), "explicit"
+    if distributed_enabled or distributed_target is not None:
+        return distributed_target or "cluster", "distributed", "distributed"
+    return "", "implicit", "implicit"
+
+
+def _profile_backend_targets(profile_kind: str) -> tuple[str, ...]:
+    if profile_kind == "DistributedJob":
+        return ("cluster:auto", "cluster:gpu", "cluster:quantum")
+    if profile_kind in {"QuantumJob", "HybridWorkflow", "BenchmarkJob", "PipelineJob", "ReplayJob"}:
+        return (
+            "sim:local",
+            "backend:quantum",
+            "backend:cluster",
+            "cluster:auto",
+            "cluster:gpu",
+            "cluster:quantum",
+            "runtime:auto",
+            "runtime:latency",
+            "runtime:cost",
+            "runtime:availability",
+            "runtime:deterministic",
+            "ibm:qpu",
+            "aws:braket",
+            "azure:quantum",
+        )
+    return ()
+
+
+def backend_contract_payload(profile: WorkloadProfile, options: dict[str, str] | None) -> dict[str, object]:
+    normalized = _normalize_options(options)
+    declared_backend_target, backend_target_class, target_resolution = _resolve_backend_target(normalized)
+    distributed_enabled = _parse_bool(normalized.get("distributed.enabled", "false")) is True
+    distributed_target = _first_option(normalized, "distributed.target")
+    emission_mode = (
+        "aqo_json+topology_metadata"
+        if backend_target_class == "distributed"
+        else "aqo_json+driver_metadata"
+        if backend_target_class == "provider"
+        else "aqo_json+policy_metadata"
+        if backend_target_class == "policy"
+        else "aqo_json"
+    )
+    return {
+        "contract_version": "1.0.0",
+        "workload_profile": profile.kind,
+        "declared_backend_target": declared_backend_target,
+        "backend_target_class": backend_target_class,
+        "target_resolution": target_resolution,
+        "allowed_backend_target_classes": (
+            ["implicit", "simulator", "provider", "policy", "distributed"]
+            if profile.kind != "DistributedJob"
+            else ["distributed"]
+        ),
+        "allowed_backend_targets": list(_profile_backend_targets(profile.kind)),
+        "allowed_emission_modes": list(_profile_emission_modes(profile.kind)),
+        "selected_emission_mode": emission_mode,
+        "backend_specific_decisions": {
+            "distributed.enabled": distributed_enabled,
+            "distributed.target": distributed_target or "",
+            "requires_explicit_target": profile.kind in {"BenchmarkJob", "DistributedJob"},
+            "core_ir_backend_agnostic": True,
+        },
+    }
+
+
+def _profile_emission_modes(profile_kind: str) -> tuple[str, ...]:
+    if profile_kind == "DistributedJob":
+        return ("aqo_json+topology_metadata", "aqo_json+runtime_metadata")
+    if profile_kind == "BenchmarkJob":
+        return ("aqo_json", "aqo_json+benchmark_metadata")
+    if profile_kind == "PipelineJob":
+        return ("aqo_json", "aqo_json+handoff_metadata")
+    if profile_kind == "ReplayJob":
+        return ("aqo_json", "aqo_json+replay_metadata")
+    if profile_kind == "HybridWorkflow":
+        return ("aqo_json", "aqo_json+driver_metadata", "aqo_json+runtime_metadata")
+    return ("aqo_json", "aqo_json+driver_metadata")
+
+
+def _backend_contract_payload(profile: WorkloadProfile, options: dict[str, str] | None) -> dict[str, object]:
+    normalized = _normalize_options(options)
+    declared_backend_target, backend_target_class, target_resolution = _resolve_backend_target(normalized)
+    distributed_enabled = _parse_bool(normalized.get("distributed.enabled", "false")) is True
+    distributed_target = _first_option(normalized, "distributed.target")
+    emission_mode = (
+        "aqo_json+topology_metadata"
+        if backend_target_class == "distributed"
+        else "aqo_json+driver_metadata"
+        if backend_target_class == "provider"
+        else "aqo_json+policy_metadata"
+        if backend_target_class == "policy"
+        else "aqo_json"
+    )
+    return {
+        "contract_version": "1.0.0",
+        "workload_profile": profile.kind,
+        "declared_backend_target": declared_backend_target,
+        "backend_target_class": backend_target_class,
+        "target_resolution": target_resolution,
+        "allowed_backend_target_classes": list(_PROFILE_ALLOWED_BACKEND_TARGET_CLASSES.get(profile.kind, ())),
+        "allowed_backend_targets": list(_profile_backend_targets(profile.kind)),
+        "allowed_emission_modes": list(_profile_emission_modes(profile.kind)),
+        "selected_emission_mode": emission_mode,
+        "backend_specific_decisions": {
+            "distributed.enabled": distributed_enabled,
+            "distributed.target": distributed_target or "",
+            "requires_explicit_target": profile.kind in {"BenchmarkJob", "DistributedJob"},
+            "core_ir_backend_agnostic": True,
+        },
+    }
+
+
 def workload_profile_payload(profile: WorkloadProfile) -> dict[str, object]:
     return {
         "kind": profile.kind,
@@ -177,6 +347,8 @@ def workload_profile_payload(profile: WorkloadProfile) -> dict[str, object]:
         "target_expectations": list(profile.target_expectations),
         "replay_or_benchmark_constraints": list(profile.replay_or_benchmark_constraints),
         "observability_requirements": list(profile.observability_requirements),
+        "backend_targets": list(_profile_backend_targets(profile.kind)),
+        "emission_modes": list(_profile_emission_modes(profile.kind)),
     }
 
 
@@ -239,6 +411,7 @@ def validate_workload_profile(
     distributed_enabled = _parse_bool(normalized.get("distributed.enabled", "false")) is True
     seed_value = _first_option(normalized, "spec.workload.seed", "workload.seed", "benchmark.seed")
     backend_target = _first_option(normalized, "spec.workload.backend_target", "target", "runtime.target")
+    declared_backend_target, backend_target_class, _target_resolution = _resolve_backend_target(normalized)
     pipeline_handoff_ref = _first_option(
         normalized, "spec.workload.pipeline.handoff_ref", "workload.pipeline.handoff_ref"
     )
@@ -283,6 +456,12 @@ def validate_workload_profile(
                 "compiler.profile.quantum.no_hybrid_markers",
                 "source",
                 "QuantumJob cannot be used with ExpectationValue or minimize markers",
+            )
+        if backend_target_class == "distributed":
+            add(
+                "compiler.backend.quantum.no_distributed_target",
+                "options.spec.workload.backend_target",
+                "QuantumJob cannot target distributed cluster backends",
             )
 
     elif profile.kind == "HybridWorkflow":
@@ -357,6 +536,18 @@ def validate_workload_profile(
                 "options.spec.workload.seed",
                 "BenchmarkJob requires spec.workload.seed",
             )
+        if backend_target is None and backend_target_class == "implicit":
+            add(
+                "compiler.profile.benchmark.requires_backend_target",
+                "options.spec.workload.backend_target",
+                "BenchmarkJob requires an explicit backend target",
+            )
+        if backend_target_class == "unknown":
+            add(
+                "compiler.backend.unknown_target",
+                "options.spec.workload.backend_target",
+                f"unsupported backend target '{declared_backend_target}'",
+            )
         else:
             try:
                 int(seed_value)
@@ -410,6 +601,12 @@ def validate_workload_profile(
                 "source",
                 "PipelineJob forbids minimize-based adaptive rewrites",
             )
+        if declared_backend_target and backend_target_class == "unknown":
+            add(
+                "compiler.backend.unknown_target",
+                "options.spec.workload.backend_target",
+                f"unsupported backend target '{declared_backend_target}'",
+            )
 
     elif profile.kind == "ReplayJob":
         if not replay_enabled:
@@ -429,6 +626,12 @@ def validate_workload_profile(
                 "compiler.profile.replay.no_adaptive_rewrite",
                 "source",
                 "ReplayJob forbids minimize-based adaptive rewrites",
+            )
+        if declared_backend_target and backend_target_class == "unknown":
+            add(
+                "compiler.backend.unknown_target",
+                "options.spec.workload.backend_target",
+                f"unsupported backend target '{declared_backend_target}'",
             )
 
     return tuple(violations)
