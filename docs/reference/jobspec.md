@@ -95,6 +95,8 @@ ReplayJob
 
 `HybridWorkflow` jobs are replayed as explicit multi-stage runtime graphs. Stage handoff is represented through runtime envelope fields and lineage refs, not by adding orchestration semantics to AQO. Each stage boundary must remain reconstructable from stage input/output refs, handoff refs, and QFS lineage metadata.
 
+`ReplayJob` is a fail-closed replay profile. Replay inputs MUST be canonical refs and hashes only, and the request MUST carry provenance evidence for program source, packaging, AQO, policy snapshot, trace context, and backend target. Missing, stale, ambiguous, or digest-mismatched evidence MUST be rejected rather than silently downgraded to a non-replay mode.
+
 ---
 
 # 3. Design Principles

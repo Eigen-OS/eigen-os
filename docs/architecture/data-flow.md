@@ -164,6 +164,8 @@ Workflow semantics, replay policy, and benchmark/distributed orchestration metad
 
 HybridWorkflow execution is represented in the kernel as a shared workflow graph with explicit stage nodes, stage-to-stage handoff refs, and replay-safe boundary events. Stage transitions are reconstructed from runtime envelopes and QFS lineage refs rather than from AQO payload shape.
 
+ReplayJob is handled as a dedicated fail-closed replay profile: its replay contract is reconstructed from canonical hashes/refs, policy snapshot evidence, trace context, and backend target evidence. Replay requests with missing or stale provenance are rejected deterministically instead of falling back to a non-replay execution mode.
+
 Minimal example:
 
 ```json
