@@ -55,7 +55,7 @@ eigen_kernel_contract_info{version="1.0.0"} 1
 
 QRTX is the authoritative coordinator for a job’s runtime lifecycle. It:
 
-- validates/normalizes internal execution requests (after System API validation),
+- validates/normalizes internal execution requests (after System API validation), including distributed topology metadata carried through `jobspec_workload`,
 - orchestrates the Product 1.0 DAG and all downstream handoff points,
 - executes PipelineJob artifact-handoff DAGs with deterministic stage replay and stage-local failure semantics,
 - materializes split-plan manifests for multi-device execution using caller-supplied replay metadata,

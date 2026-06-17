@@ -95,7 +95,7 @@ ReplayJob
 
 `HybridWorkflow` jobs are replayed as explicit multi-stage runtime graphs. Stage handoff is represented through runtime envelope fields and lineage refs, not by adding orchestration semantics to AQO. Each stage boundary must remain reconstructable from stage input/output refs, handoff refs, and QFS lineage metadata.
 
-`DistributedJob` is the bounded distributed profile. Its workload contract MAY declare deterministic topology hints under `spec.workload.topology` using a `cluster_id`, a bounded `partition_count`, explicit `partition_ids`, and aligned `preferred_workers`. These hints are execution metadata only; they MUST remain orthogonal to AQO top-level fields and MUST be mirrored into runtime lineage/dispatch metadata without mutating the AQO payload.
+`DistributedJob` is the bounded distributed profile. Its workload contract MAY declare deterministic topology hints under `spec.workload.topology` using a `cluster_id`, a bounded `partition_count`, explicit `partition_ids`, and aligned `preferred_workers`. These hints are execution metadata only; they MUST remain orthogonal to AQO top-level fields and are carried through the internal workload contract to Kernel/QRTX, which mirrors them into runtime lineage/dispatch metadata without mutating the AQO payload.
 
 `BenchmarkJob` is the reproducible measurement profile. Its canonical runtime contract is fail-closed and requires fixed seed metadata, stable backend/target selection, and isolated benchmark telemetry. The benchmark envelope MUST preserve the exact execution context in lineage metadata and result artifacts so repeated runs can be compared without ambiguity. Missing seed metadata or ambiguous target selection MUST be rejected deterministically.
 

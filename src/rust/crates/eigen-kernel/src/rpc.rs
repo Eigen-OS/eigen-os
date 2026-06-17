@@ -415,6 +415,7 @@ struct NormalizedSubmission {
     priority: i32,
     compiler_options: BTreeMap<String, String>,
     metadata_kvs: BTreeMap<String, String>,
+    workload_metadata: BTreeMap<String, String>,
     fingerprint: String,
     job_id: String,
 }
@@ -454,6 +455,7 @@ impl NormalizedSubmission {
             .and_then(|d| normalized_deadline_at(d));
         let compiler_options = canonical_string_map(&request.compiler_options);
         let metadata_kvs = canonical_string_map(&request.metadata_kvs);
+        let workload_metadata = distributed_workload_metadata(&metadata_kvs)?;
         let program_hash = hash_bytes_hex(&program);
         let trace_id = trace_id_from_traceparent(&traceparent)
             .unwrap_or_else(|| stable_trace_id(&request_id, &program_hash));
@@ -499,13 +501,14 @@ impl NormalizedSubmission {
             priority: request.priority,
             compiler_options,
             metadata_kvs,
+            workload_metadata,
             fingerprint,
             job_id,
         })
     }
 
     fn summary_map(&self) -> BTreeMap<String, String> {
-        BTreeMap::from([
+        let mut summary = BTreeMap::from([
             ("contract_version".to_string(), self.contract_version.clone()),
             ("request_id".to_string(), self.request_id.clone()),
             ("idempotency_key".to_string(), self.idempotency_key.clone()),
@@ -544,11 +547,14 @@ impl NormalizedSubmission {
                     .map(|ts| timestamp_to_ms(ts).to_string())
                     .unwrap_or_default(),
             ),
-        ])
+        ]);
+        summary.extend(self.workload_metadata.clone());
+        summary
     }
 
     fn stage_input(&self, stage: DagStageKind) -> BTreeMap<String, String> {
         let mut input = self.summary_map();
+        input.extend(self.workload_metadata.clone());
         input.insert("stage_id".to_string(), stage_id(&self.job_id, stage));
         input.insert("stage_key".to_string(), stage.key().to_string());
         input.insert("stage_index".to_string(), stage.index().to_string());
@@ -666,6 +672,91 @@ fn workflow_handoff_token(job_id: &str, stage: DagStageKind, phase: &str, materi
         normalized.insert(key.clone(), serde_json::Value::String(value.clone()));
     }
     hash_bytes_hex(&serde_json::to_vec(&normalized).unwrap_or_default())
+}
+
+fn distributed_workload_metadata(metadata_kvs: &BTreeMap<String, String>) -> Result<BTreeMap<String, String>, Status> {
+    let workload_raw = match metadata_kvs.get("jobspec_workload") {
+        Some(raw) if !raw.trim().is_empty() => raw,
+        _ => return Ok(BTreeMap::new()),
+    };
+
+    let workload: serde_json::Value = serde_json::from_str(workload_raw)
+        .map_err(|_| Status::invalid_argument("jobspec_workload metadata must be valid JSON"))?;
+
+    if workload.get("kind").and_then(|value| value.as_str()) != Some("DistributedJob") {
+        return Ok(BTreeMap::new());
+    }
+
+    let topology = workload
+        .get("topology")
+        .and_then(|value| value.as_object())
+        .ok_or_else(|| Status::invalid_argument("spec.workload.topology is required for DistributedJob"))?;
+
+    let cluster_id = topology
+        .get("cluster_id")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| Status::invalid_argument("spec.workload.topology.cluster_id is required"))?;
+
+    let partition_count = topology
+        .get("partition_count")
+        .and_then(|value| value.as_i64())
+        .filter(|value| *value > 0)
+        .ok_or_else(|| Status::invalid_argument("spec.workload.topology.partition_count must be >= 1"))? as usize;
+
+    let partition_ids = topology
+        .get("partition_ids")
+        .and_then(|value| value.as_array())
+        .ok_or_else(|| Status::invalid_argument("spec.workload.topology.partition_ids must be an array"))?
+        .iter()
+        .map(|value| value.as_str().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string))
+        .collect::<Option<Vec<String>>>()
+        .ok_or_else(|| Status::invalid_argument("spec.workload.topology.partition_ids must contain non-empty strings"))?;
+
+    let preferred_workers = topology
+        .get("preferred_workers")
+        .and_then(|value| value.as_array())
+        .ok_or_else(|| Status::invalid_argument("spec.workload.topology.preferred_workers must be an array"))?
+        .iter()
+        .map(|value| value.as_str().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string))
+        .collect::<Option<Vec<String>>>()
+        .ok_or_else(|| Status::invalid_argument("spec.workload.topology.preferred_workers must contain non-empty strings"))?;
+
+    if partition_ids.len() != partition_count {
+        return Err(Status::invalid_argument("spec.workload.topology.partition_ids must contain partition_count entries"));
+    }
+    if preferred_workers.len() != partition_ids.len() {
+        return Err(Status::invalid_argument("spec.workload.topology.preferred_workers must contain one worker per partition"));
+    }
+    let mut unique_partition_ids = partition_ids.clone();
+    unique_partition_ids.sort();
+    unique_partition_ids.dedup();
+    if unique_partition_ids.len() != partition_ids.len() {
+        return Err(Status::invalid_argument("spec.workload.topology.partition_ids must be unique"));
+    }
+
+    let canonical_topology = serde_json::json!({
+        "cluster_id": cluster_id,
+        "partition_count": partition_count,
+        "partition_ids": partition_ids,
+        "preferred_workers": preferred_workers,
+    });
+    let topology_json = serde_json::to_string(&canonical_topology).unwrap_or_default();
+    let topology_digest = hash_bytes_hex(topology_json.as_bytes());
+    let replay_token = hash_bytes_hex(
+        format!("distributed:{cluster_id}:{topology_digest}").as_bytes(),
+    );
+
+    Ok(BTreeMap::from([
+        ("distributed.cluster_id".to_string(), cluster_id.to_string()),
+        ("distributed.partition_count".to_string(), partition_count.to_string()),
+        ("distributed.partition_ids".to_string(), serde_json::to_string(&partition_ids).unwrap_or_default()),
+        ("distributed.preferred_workers".to_string(), serde_json::to_string(&preferred_workers).unwrap_or_default()),
+        ("distributed.topology_digest_sha256".to_string(), topology_digest),
+        ("distributed.replay_token".to_string(), replay_token),
+        ("distributed.topology_json".to_string(), topology_json),
+    ]))
 }
 
 #[derive(Debug, Clone)]
@@ -1083,7 +1174,7 @@ fn bounded_dispatch_rationale_attributes(
         .get("fingerprint")
         .cloned()
         .unwrap_or_else(|| job.snapshot_digest());
-    BTreeMap::from([
+    let mut attrs = BTreeMap::from([
         ("job_id".to_string(), job.job_id.clone()),
         ("stage_count".to_string(), job.stage_records.len().to_string()),
         (
@@ -1130,7 +1221,21 @@ fn bounded_dispatch_rationale_attributes(
         ),
         ("decision_input_digest".to_string(), decision_input_digest),
         ("snapshot_digest".to_string(), job.snapshot_digest()),
-    ])
+    ]);
+    for key in [
+        "distributed.cluster_id",
+        "distributed.partition_count",
+        "distributed.partition_ids",
+        "distributed.preferred_workers",
+        "distributed.topology_digest_sha256",
+        "distributed.replay_token",
+        "distributed.topology_json",
+    ] {
+        if let Some(value) = job.metadata.get(key) {
+            attrs.insert(key.to_string(), value.clone());
+        }
+    }
+    attrs
 }
 
 impl JobRuntimeRecord {
@@ -1200,7 +1305,7 @@ impl KernelRuntimeStore {
             workflow_completion_ref: None,
             workflow_failure_ref: None,
             counts: BTreeMap::new(),
-            metadata: BTreeMap::new(),
+            metadata: submission.workload_metadata.clone(),
             qfs_result_ref: None,
             error_code: None,
             error_summary: None,
@@ -1837,7 +1942,7 @@ impl KernelRuntimeStore {
         let job = jobs
             .get_mut(job_id)
             .ok_or_else(|| Status::not_found("job not found"))?;
-        job.metadata = metadata;
+        job.metadata.extend(metadata);
         job.updated_at = ts_now();
         Ok(())
     }
@@ -4446,6 +4551,27 @@ mod tests {
         }
     }
 
+    fn make_distributed_request(name: &str) -> EnqueueJobRequest {
+        let mut request = make_request(name);
+        request.target = "cluster:auto".to_string();
+        request.metadata_kvs.insert(
+            "jobspec_workload".to_string(),
+            serde_json::json!({
+                "kind": "DistributedJob",
+                "execution_profile": "distributed",
+                "replayable": true,
+                "topology": {
+                    "cluster_id": "cluster:auto",
+                    "partition_count": 2,
+                    "partition_ids": ["partition-0", "partition-1"],
+                    "preferred_workers": ["worker-a", "worker-b"],
+                },
+            })
+            .to_string(),
+        );
+        request
+    }
+
     fn make_status_request(job_id: &str) -> GetJobStatusRequest {
         GetJobStatusRequest {
             metadata: Some(RequestMetadata {
@@ -4534,6 +4660,102 @@ mod tests {
         assert_eq!(results.state, TaskState::Done as i32);
         assert!(!results.qfs_result_ref.is_empty());
         assert!(!results.counts.is_empty());
+    }
+
+    #[tokio::test]
+    async fn distributed_jobspec_metadata_is_projected_into_kernel_lineage() {
+        let (svc, runtime) = make_service(None);
+        let response = svc
+            .enqueue_job(Request::new(make_distributed_request("distributed")))
+            .await
+            .expect("enqueue should succeed")
+            .into_inner();
+
+        let job = wait_for_terminal(runtime.clone(), &response.job_id).await;
+        assert_eq!(job.state, TaskState::Done);
+        assert_eq!(job.metadata.get("distributed.cluster_id").map(String::as_str), Some("cluster:auto"));
+        assert_eq!(job.metadata.get("distributed.partition_count").map(String::as_str), Some("2"));
+        assert_eq!(job.metadata.get("distributed.partition_ids").map(String::as_str), Some("[\"partition-0\",\"partition-1\"]"));
+        assert_eq!(job.metadata.get("distributed.preferred_workers").map(String::as_str), Some("[\"worker-a\",\"worker-b\"]"));
+        assert!(job.metadata.get("distributed.topology_digest_sha256").is_some());
+
+        let validate_stage = job
+            .stage_records
+            .iter()
+            .find(|stage| stage.stage_key == "validate-enqueue")
+            .expect("validate stage should exist");
+        assert_eq!(validate_stage.input.get("distributed.cluster_id").map(String::as_str), Some("cluster:auto"));
+        assert_eq!(validate_stage.input.get("distributed.partition_count").map(String::as_str), Some("2"));
+        assert_eq!(validate_stage.input.get("distributed.partition_ids").map(String::as_str), Some("[\"partition-0\",\"partition-1\"]"));
+        assert_eq!(validate_stage.input.get("distributed.preferred_workers").map(String::as_str), Some("[\"worker-a\",\"worker-b\"]"));
+        assert!(validate_stage.replay_token.len() >= 16);
+
+        let status = svc
+            .get_dispatch_rationale(Request::new(GetDispatchRationaleRequest {
+                metadata: Some(RequestMetadata {
+                    contract_version: "1.0.0".to_string(),
+                    request_id: format!("dispatch-{}", response.job_id),
+                    idempotency_key: format!("dispatch-{}", response.job_id),
+                    traceparent: "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01".to_string(),
+                    deadline: Some(ProtoDuration { seconds: 30, nanos: 0 }),
+                    tenant_id: "tenant-a".to_string(),
+                    project_id: "project-a".to_string(),
+                    subject: "alice".to_string(),
+                    role: "user".to_string(),
+                    source_service: "system-api".to_string(),
+                    trace_id: "".to_string(),
+                    retry_policy: "".to_string(),
+                    security_context: "".to_string(),
+                    workload: Some(Default::default()),
+                    ..Default::default()
+                }),
+                job_id: response.job_id.clone(),
+            }))
+            .await
+            .expect("dispatch rationale should succeed")
+            .into_inner();
+        let rationale = status.rationale.expect("rationale should exist");
+        assert_eq!(rationale.attributes.get("distributed.cluster_id").map(String::as_str), Some("cluster:auto"));
+        assert_eq!(rationale.attributes.get("distributed.partition_count").map(String::as_str), Some("2"));
+    }
+
+    #[tokio::test]
+    async fn distributed_jobspec_missing_or_conflicting_topology_is_rejected() {
+        let (svc, _) = make_service(None);
+
+        let mut missing = make_request("missing-topology");
+        missing.metadata_kvs.insert(
+            "jobspec_workload".to_string(),
+            serde_json::json!({
+                "kind": "DistributedJob",
+                "execution_profile": "distributed",
+                "replayable": true,
+            })
+            .to_string(),
+        );
+        let err = svc.enqueue_job(Request::new(missing)).await.expect_err("missing topology should fail");
+        assert_eq!(err.code(), Code::InvalidArgument);
+        assert!(err.message().contains("spec.workload.topology"));
+
+        let mut conflicting = make_request("conflicting-topology");
+        conflicting.metadata_kvs.insert(
+            "jobspec_workload".to_string(),
+            serde_json::json!({
+                "kind": "DistributedJob",
+                "execution_profile": "distributed",
+                "replayable": true,
+                "topology": {
+                    "cluster_id": "cluster:auto",
+                    "partition_count": 2,
+                    "partition_ids": ["partition-0"],
+                    "preferred_workers": ["worker-a", "worker-b"],
+                },
+            })
+            .to_string(),
+        );
+        let err = svc.enqueue_job(Request::new(conflicting)).await.expect_err("conflicting topology should fail");
+        assert_eq!(err.code(), Code::InvalidArgument);
+        assert!(err.message().contains("partition_ids"));
     }
 
     #[tokio::test]
