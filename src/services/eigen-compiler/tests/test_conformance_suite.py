@@ -86,6 +86,24 @@ def test_compile_emits_full_stage_trace_for_valid_source() -> None:
     assert diagnostics["workload_profile"] == "QuantumJob"
 
 
+def test_compile_accepts_negative_and_arithmetic_scalar_literals() -> None:
+    source = (
+        b"from eigen_lang import Param, hybrid_program, ry, rz\n\n"
+        b"@hybrid_program(target=\"sim\")\n"
+        b"def main():\n"
+        b"    theta = Param(\"theta\", -0.20)\n"
+        b"    phi = Param(\"phi\", 1 + 2 * 3)\n"
+        b"    ry(0, theta=theta)\n"
+        b"    rz(0, theta=phi)\n"
+    )
+
+    compiled = json.loads(compile_eigen_lang(source).aqo_json.decode("utf-8"))
+
+    assert compiled["parameters"] == {"phi": 7, "theta": -0.2}
+    assert compiled["operations"][0]["params"]["theta"] == "theta"
+    assert compiled["operations"][1]["params"]["theta"] == "phi"
+
+
 @pytest.mark.parametrize(
     "source, options, expected_stages",
     [

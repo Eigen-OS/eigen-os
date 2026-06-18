@@ -43,14 +43,43 @@ def _free_port() -> int:
         return int(s.getsockname()[1])
 
 
+def _start_python_service(module: str, cwd: Path, env: dict[str, str], ready_port: int) -> subprocess.Popen:
+    proc = subprocess.Popen(
+        [sys.executable, "-m", module],
+        cwd=str(cwd),
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    deadline = time.time() + 120
+    while time.time() < deadline:
+        if proc.poll() is not None:
+            raise RuntimeError(f"{module} exited early with code {proc.returncode}")
+        try:
+            with socket.create_connection(("127.0.0.1", ready_port), timeout=0.25):
+                break
+        except OSError:
+            time.sleep(0.1)
+    else:
+        proc.terminate()
+        raise RuntimeError(f"{module} did not start on port {ready_port}")
+    return proc
+
+
 @pytest.fixture(scope="session")
 def kernel_addr(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
     cargo = shutil.which("cargo")
     if cargo is None:
         pytest.skip("cargo is required to start the kernel integration test server")
 
-    port = _free_port()
-    addr = f"127.0.0.1:{port}"
+    kernel_port = _free_port()
+    compiler_port = _free_port()
+    compiler_metrics_port = _free_port()
+    driver_port = _free_port()
+    driver_metrics_port = _free_port()
+    addr = f"127.0.0.1:{kernel_port}"
+    compiler_addr = f"127.0.0.1:{compiler_port}"
+    driver_addr = f"127.0.0.1:{driver_port}"
     qfs_root = tmp_path_factory.mktemp("kernel-qfs")
 
     env = os.environ.copy()
@@ -60,7 +89,33 @@ def kernel_addr(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
             "KERNEL_ENDPOINT": addr,
             "KERNEL_GRPC_ENDPOINT": addr,
             "EIGEN_QFS_ROOT": str(qfs_root),
+            "EIGEN_COMPILER_ENDPOINT": f"http://{compiler_addr}",
+            "DRIVER_MANAGER_ENDPOINT": f"http://{driver_addr}",
+            "EIGEN_COMPILER_GRPC_BIND": compiler_addr,
+            "EIGEN_COMPILER_METRICS_PORT": str(compiler_metrics_port),
+            "DRIVER_MANAGER_GRPC_BIND": driver_addr,
+            "DRIVER_MANAGER_METRICS_PORT": str(driver_metrics_port),
+            "PYTHONPATH": os.pathsep.join(
+                [
+                    str(REPO_ROOT / "src" / "services" / "eigen-compiler" / "src"),
+                    str(REPO_ROOT / "src" / "services" / "driver-manager" / "src"),
+                    env.get("PYTHONPATH", ""),
+                ]
+            ).strip(os.pathsep),
         }
+    )
+
+    compiler_proc = _start_python_service(
+        "eigen_compiler.main",
+        REPO_ROOT / "src" / "services" / "eigen-compiler" / "src",
+        env,
+        compiler_metrics_port,
+    )
+    driver_proc = _start_python_service(
+        "driver_manager.main",
+        REPO_ROOT / "src" / "services" / "driver-manager" / "src",
+        env,
+        driver_metrics_port,
     )
 
     proc = subprocess.Popen(
@@ -76,22 +131,33 @@ def kernel_addr(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
         if proc.poll() is not None:
             raise RuntimeError(f"kernel test server exited early with code {proc.returncode}")
         try:
-            with socket.create_connection(("127.0.0.1", port), timeout=0.25):
+            with socket.create_connection(("127.0.0.1", kernel_port), timeout=0.25):
                 break
         except OSError:
             time.sleep(0.1)
     else:
         proc.terminate()
+        driver_proc.terminate()
+        compiler_proc.terminate()
         raise RuntimeError(f"kernel test server did not start on {addr}")
 
-    yield addr
-
-    proc.terminate()
     try:
-        proc.wait(timeout=15)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait(timeout=15)
+        yield addr
+    finally:
+        proc.terminate()
+        driver_proc.terminate()
+        compiler_proc.terminate()
+        try:
+            proc.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=15)
+        for child in (driver_proc, compiler_proc):
+            try:
+                child.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                child.kill()
+                child.wait(timeout=15)
 
 
 @pytest.fixture(scope="module")

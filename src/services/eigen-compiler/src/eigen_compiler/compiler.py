@@ -199,12 +199,66 @@ def _sanitize_security_context(value: str) -> str:
 
 
 def _literal_scalar(node: ast.AST) -> str | int | float | None:
-    if not isinstance(node, ast.Constant):
+    """Resolve a closed literal/arithmetical scalar expression.
+
+    Eigen-Lang docs allow literals and limited arithmetic expressions in the
+    statically analyzable subset. We keep the evaluator deliberately narrow:
+    constants, unary +/- over numeric constants, and binary arithmetic over
+    numeric constants only. Names, calls, attributes, subscripts, and other
+    AST forms remain rejected.
+    """
+
+    if isinstance(node, ast.Constant):
+        if isinstance(node.value, str):
+            return node.value
+        if isinstance(node.value, int) and not isinstance(node.value, bool):
+            return node.value
+        if isinstance(node.value, float) and isfinite(node.value):
+            return float(node.value)
         return None
-    if isinstance(node.value, (str, int)):
-        return node.value
-    if isinstance(node.value, float) and isfinite(node.value):
-        return float(node.value)
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+        operand = _literal_scalar(node.operand)
+        if isinstance(operand, bool) or not isinstance(operand, (int, float)):
+            return None
+        value = operand if isinstance(node.op, ast.UAdd) else -operand
+        if isinstance(value, float) and not isfinite(value):
+            return None
+        return value
+
+    if isinstance(node, ast.BinOp) and isinstance(
+        node.op, (ast.Add, ast.Sub, ast.Mult, ast.Div, ast.FloorDiv, ast.Mod, ast.Pow)
+    ):
+        left = _literal_scalar(node.left)
+        right = _literal_scalar(node.right)
+        if (
+            isinstance(left, bool)
+            or isinstance(right, bool)
+            or not isinstance(left, (int, float))
+            or not isinstance(right, (int, float))
+        ):
+            return None
+        try:
+            if isinstance(node.op, ast.Add):
+                value = left + right
+            elif isinstance(node.op, ast.Sub):
+                value = left - right
+            elif isinstance(node.op, ast.Mult):
+                value = left * right
+            elif isinstance(node.op, ast.Div):
+                value = left / right
+            elif isinstance(node.op, ast.FloorDiv):
+                value = left // right
+            elif isinstance(node.op, ast.Mod):
+                value = left % right
+            else:
+                value = left**right
+        except (OverflowError, ZeroDivisionError, ValueError, TypeError):
+            return None
+        if isinstance(value, float) and not isfinite(value):
+            return None
+        if isinstance(value, bool):
+            return None
+        return value
     return None
 
 
