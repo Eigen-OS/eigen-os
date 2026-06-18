@@ -15,7 +15,12 @@ from time import perf_counter
 from typing import Callable, Iterator, TypeVar
 
 from .errors import FieldViolation
-from .validation import evaluate_compiler_rules
+from .validation import (
+    backend_contract_payload,
+    resolve_workload_profile,
+    validate_workload_profile,
+    workload_profile_payload,
+)
 
 AQO_VERSION = "1.0.0"
 
@@ -120,6 +125,22 @@ class DistributedCompileConfig:
     topology_hint: str | None
 
 
+@dataclass(frozen=True)
+class CompilerPassRecord:
+    name: str
+    kind: str
+    preconditions: tuple[str, ...]
+    postconditions: tuple[str, ...]
+    input: dict[str, object]
+    output: dict[str, object]
+
+
+@dataclass(frozen=True)
+class CompilerPassPipeline:
+    records: tuple[CompilerPassRecord, ...]
+    aqo: dict[str, object]
+
+
 @dataclass
 class CompilerValidationError(Exception):
     violations: tuple[FieldViolation, ...]
@@ -146,6 +167,25 @@ def _canonical_json_text(payload: dict[str, object]) -> str:
     return _canonical_json_bytes(payload).decode("utf-8")
 
 
+def _relabel_violations(
+    violations: tuple[FieldViolation, ...],
+    *,
+    stage: str,
+    rule: str,
+    pass_name: str,
+) -> tuple[FieldViolation, ...]:
+    return tuple(
+        FieldViolation(
+            field=violation.field,
+            description=violation.description,
+            stage=violation.stage or stage,
+            rule=violation.rule or rule,
+            pass_name=violation.pass_name or pass_name,
+        )
+        for violation in violations
+    )
+
+
 def _sanitize_security_context(value: str) -> str:
     if not value:
         return ""
@@ -159,12 +199,66 @@ def _sanitize_security_context(value: str) -> str:
 
 
 def _literal_scalar(node: ast.AST) -> str | int | float | None:
-    if not isinstance(node, ast.Constant):
+    """Resolve a closed literal/arithmetical scalar expression.
+
+    Eigen-Lang docs allow literals and limited arithmetic expressions in the
+    statically analyzable subset. We keep the evaluator deliberately narrow:
+    constants, unary +/- over numeric constants, and binary arithmetic over
+    numeric constants only. Names, calls, attributes, subscripts, and other
+    AST forms remain rejected.
+    """
+
+    if isinstance(node, ast.Constant):
+        if isinstance(node.value, str):
+            return node.value
+        if isinstance(node.value, int) and not isinstance(node.value, bool):
+            return node.value
+        if isinstance(node.value, float) and isfinite(node.value):
+            return float(node.value)
         return None
-    if isinstance(node.value, (str, int)):
-        return node.value
-    if isinstance(node.value, float) and isfinite(node.value):
-        return float(node.value)
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+        operand = _literal_scalar(node.operand)
+        if isinstance(operand, bool) or not isinstance(operand, (int, float)):
+            return None
+        value = operand if isinstance(node.op, ast.UAdd) else -operand
+        if isinstance(value, float) and not isfinite(value):
+            return None
+        return value
+
+    if isinstance(node, ast.BinOp) and isinstance(
+        node.op, (ast.Add, ast.Sub, ast.Mult, ast.Div, ast.FloorDiv, ast.Mod, ast.Pow)
+    ):
+        left = _literal_scalar(node.left)
+        right = _literal_scalar(node.right)
+        if (
+            isinstance(left, bool)
+            or isinstance(right, bool)
+            or not isinstance(left, (int, float))
+            or not isinstance(right, (int, float))
+        ):
+            return None
+        try:
+            if isinstance(node.op, ast.Add):
+                value = left + right
+            elif isinstance(node.op, ast.Sub):
+                value = left - right
+            elif isinstance(node.op, ast.Mult):
+                value = left * right
+            elif isinstance(node.op, ast.Div):
+                value = left / right
+            elif isinstance(node.op, ast.FloorDiv):
+                value = left // right
+            elif isinstance(node.op, ast.Mod):
+                value = left % right
+            else:
+                value = left**right
+        except (OverflowError, ZeroDivisionError, ValueError, TypeError):
+            return None
+        if isinstance(value, float) and not isfinite(value):
+            return None
+        if isinstance(value, bool):
+            return None
+        return value
     return None
 
 
@@ -572,9 +666,9 @@ def _collect_operations(tree: ast.AST, params: dict[str, dict[str, object]]) -> 
         elif name in {"x", "y", "z", "h", "s", "t", "reset"}:
             q = _extract_qubits_from_args(positional_qubits[:1], arity=1, name=name.upper())
             lowered = {"op": name.upper(), "q": q}
-        elif name in {"cx", "cz", "swap"}:
-            q = _extract_qubits_from_args(positional_qubits[:2], arity=2, name=name.upper())
-            lowered = {"op": name.upper(), "q": q}
+        elif name in {"cx", "cnot", "cz", "swap"}:
+            q = _extract_qubits_from_args(positional_qubits[:2], arity=2, name=("CX" if name == "cnot" else name.upper()))
+            lowered = {"op": "CX" if name == "cnot" else name.upper(), "q": q}
         elif name in {"ccx", "ccz"}:
             q = _extract_qubits_from_args(positional_qubits[:3], arity=3, name=name.upper())
             lowered = {"op": name.upper(), "q": q}
@@ -617,9 +711,6 @@ def _collect_operations(tree: ast.AST, params: dict[str, dict[str, object]]) -> 
             qubit_count = max(qubit_count, max(lowered["c"]) + 1)
         operations.append(lowered)
 
-    if not operations or operations[-1].get("op") != "MEASURE":
-        operations.append({"op": "MEASURE", "q": list(range(qubit_count)), "c": list(range(qubit_count))})
-
     return operations, qubit_count
 
 
@@ -661,6 +752,86 @@ def _distributed_compile_config(options: dict[str, str] | None) -> DistributedCo
         queue_provider=queue_provider,
         topology_hint=topology_hint,
     )
+
+
+def _rewrite_terminal_measurement(operations: list[dict], qubits: int) -> list[dict]:
+    rewritten = json.loads(json.dumps(operations, sort_keys=True, separators=(",", ":"), allow_nan=False))
+    if not rewritten or rewritten[-1].get("op") != "MEASURE":
+        rewritten.append({"op": "MEASURE", "q": list(range(qubits)), "c": list(range(qubits))})
+    return rewritten
+
+
+def _validate_lowering_payload(aqo: dict[str, object]) -> dict[str, object]:
+    violations = _validate_aqo_payload(aqo)
+    if violations:
+        raise CompilerValidationError(violations=violations)
+    return aqo
+
+
+def _build_compiler_pass_pipeline(
+    *,
+    qubits: int,
+    operations: list[dict],
+    params: dict[str, dict[str, object]],
+    source_digest: str,
+    source_precedence: str,
+    request_digest: str,
+    has_expectation: bool,
+    has_minimize: bool,
+    distributed: DistributedCompileConfig,
+) -> CompilerPassPipeline:
+    lowered_ir = {"qubits": qubits, "operations": json.loads(json.dumps(operations, sort_keys=True, separators=(",", ":"), allow_nan=False))}
+    rewritten_operations = _rewrite_terminal_measurement(lowered_ir["operations"], qubits)
+    rewritten_ir = {"qubits": qubits, "operations": rewritten_operations}
+
+    aqo_payload = _build_aqo_payload(
+        qubits=qubits,
+        operations=rewritten_operations,
+        params=params,
+        source_digest=source_digest,
+        source_ref=None,
+        request_digest=request_digest,
+        has_expectation=has_expectation,
+        has_minimize=has_minimize,
+        distributed=distributed,
+    )
+    validated_aqo = _validate_lowering_payload(aqo_payload)
+
+    records = (
+        CompilerPassRecord(
+            name="lower_to_ir",
+            kind="lowering",
+            preconditions=("ast_validated", "single_entrypoint_validated"),
+            postconditions=("ir_extracted",),
+            input={"source_sha256": source_digest, "source_precedence": source_precedence},
+            output=lowered_ir,
+        ),
+        CompilerPassRecord(
+            name="rewrite_ir",
+            kind="rewrite",
+            preconditions=("ir_extracted",),
+            postconditions=("terminal_measurement_normalized",),
+            input=lowered_ir,
+            output=rewritten_ir,
+        ),
+        CompilerPassRecord(
+            name="validate_lowering",
+            kind="validation",
+            preconditions=("ir_rewritten",),
+            postconditions=("aqo_contract_valid",),
+            input=rewritten_ir,
+            output={"status": "valid", "aqo_version": AQO_VERSION},
+        ),
+        CompilerPassRecord(
+            name="canonicalize_aqo",
+            kind="lowering",
+            preconditions=("aqo_contract_valid",),
+            postconditions=("canonical_json_ready",),
+            input=validated_aqo,
+            output={"operation_count": len(rewritten_operations), "qubit_count": qubits},
+        ),
+    )
+    return CompilerPassPipeline(records=records, aqo=validated_aqo)
 
 
 def _build_aqo_payload(
@@ -738,57 +909,74 @@ def compile_eigen_lang(
     normalized_request_context = _normalize_request_context(request_context)
     resolved_source, source_precedence = _resolve_source_bytes(source, source_ref)
     source_digest = hashlib.sha256(resolved_source).hexdigest()
-    tree = _run_stage("parse", observer, lambda: _parse_python_source(resolved_source))
-
-    def _validate_semantics() -> tuple[object, ...]:
-        results = evaluate_compiler_rules(
-            source=resolved_source,
-            tree=tree,
-            options=normalized_options,
-            request_context=asdict(normalized_request_context),
-            source_ref=source_ref,
-            source_precedence=source_precedence,
-            source_digest=source_digest,
-            categories={"syntax", "policy", "semantic"},
-        )
-        violations = tuple(v for result in results if not result.accepted for v in result.violations)
-        if violations:
-            raise CompilerValidationError(violations=violations)
-
-        return results
     
-    semantic_results = _run_stage("semantic_validation", observer, _validate_semantics)
+    def _parse_stage() -> ast.AST:
+        try:
+            return _parse_python_source(resolved_source)
+        except CompilerValidationError as exc:
+            raise CompilerValidationError(
+                violations=_relabel_violations(
+                    exc.violations, stage="parse", rule="compiler.source.parse", pass_name="parse"
+                )
+            ) from None
+
+    tree = _run_stage("parse", observer, _parse_stage)
+
+    def _validate_tree() -> None:
+        try:
+            violations = (
+                _enforce_resource_limits(tree)
+                + _reject_forbidden_imports(tree)
+                + _reject_forbidden_calls(tree)
+                + _reject_dynamic_control_flow(tree)
+                + _validate_single_entrypoint(tree)
+            )
+            if violations:
+                raise CompilerValidationError(violations=violations)
+        except CompilerValidationError as exc:
+            raise CompilerValidationError(
+                violations=_relabel_violations(
+                    exc.violations,
+                    stage="validate_ast",
+                    rule="compiler.source.validate_ast",
+                    pass_name="validate_ast",
+                )
+            ) from None
+
+    _run_stage("validate_ast", observer, _validate_tree)
 
     def _annotate_tree() -> dict[str, dict[str, object]]:
-        params, param_violations = _collect_params(tree)
-        if param_violations:
-            raise CompilerValidationError(violations=param_violations)
-        return params
+        try:
+            params, param_violations = _collect_params(tree)
+            if param_violations:
+                raise CompilerValidationError(violations=param_violations)
+            return params
+        except CompilerValidationError as exc:
+            raise CompilerValidationError(
+                violations=_relabel_violations(
+                    exc.violations,
+                    stage="annotate",
+                    rule="compiler.source.annotate",
+                    pass_name="annotate",
+                )
+            ) from None
 
     params = _run_stage("annotate", observer, _annotate_tree)
-    operations, qubits = _run_stage("lower_to_ir", observer, lambda: _collect_operations(tree, params))
     
-    def _validate_lowering() -> tuple[object, ...]:
-        results = evaluate_compiler_rules(
-            source=resolved_source,
-            tree=tree,
-            options=normalized_options,
-            request_context=asdict(normalized_request_context),
-            params=params,
-            operations=operations,
-            qubits=qubits,
-            source_ref=source_ref,
-            source_precedence=source_precedence,
-            source_digest=source_digest,
-            categories={"lowering"},
-        )
-        violations = tuple(v for result in results if not result.accepted for v in result.violations)
-        if violations:
-            raise CompilerValidationError(violations=violations)
-        return results
+    def _lower_to_ir() -> tuple[list[dict], int]:
+        try:
+            return _collect_operations(tree, params)
+        except CompilerValidationError as exc:
+            raise CompilerValidationError(
+                violations=_relabel_violations(
+                    exc.violations,
+                    stage="lower_to_ir",
+                    rule="compiler.source.lower_to_ir",
+                    pass_name="lower_to_ir",
+                )
+            ) from None
 
-    lowering_results = _run_stage("lowering_validation", observer, _validate_lowering)
-    
+    operations, qubits = _run_stage("lower_to_ir", observer, _lower_to_ir)
     has_minimize = _run_stage(
         "eigen_dpda",
         observer,
@@ -802,34 +990,103 @@ def compile_eigen_lang(
         ),
     )
     distributed = _distributed_compile_config(options)
+    
+    def _resolve_and_validate_profile() -> object:
+        try:
+            workload_profile, selection_violations = resolve_workload_profile(
+                normalized_options,
+                has_expectation=has_expectation,
+                has_minimize=has_minimize,
+            )
+            if selection_violations:
+                raise CompilerValidationError(violations=selection_violations)
+            
+            profile_violations = validate_workload_profile(
+                workload_profile,
+                normalized_options,
+                source_ref_present=source_ref is not None,
+                has_expectation=has_expectation,
+                has_minimize=has_minimize,
+            )
+            if profile_violations:
+                raise CompilerValidationError(violations=profile_violations)
+            return workload_profile
+        except CompilerValidationError as exc:
+            raise CompilerValidationError(
+                violations=_relabel_violations(
+                    exc.violations,
+                    stage="eigen_dpda",
+                    rule="compiler.profile.validation",
+                    pass_name="eigen_dpda",
+                )
+            ) from None
 
-    semantic_request_payload = {
+    workload_profile = _run_stage("eigen_dpda", observer, _resolve_and_validate_profile)
+
+    workload_profile_json = _canonical_json_text(workload_profile_payload(workload_profile))
+    backend_contract = backend_contract_payload(workload_profile, normalized_options)
+    backend_contract_json = _canonical_json_text(backend_contract)
+    
+    request_digest_payload = {
         "options": normalized_options,
         "request_context": asdict(normalized_request_context),
         "source_sha256": source_digest,
     }
-    request_digest = hashlib.sha256(_canonical_json_bytes(semantic_request_payload)).hexdigest()
-    aqo_request_digest = request_digest
+    aqo_request_digest = hashlib.sha256(_canonical_json_bytes(request_digest_payload)).hexdigest()
+
+    request_payload = {
+        "options": normalized_options,
+        "request_context": asdict(normalized_request_context),
+        "source_precedence": source_precedence,
+        "workload_profile": workload_profile.kind,
+        "workload_profile_json": workload_profile_json,
+        "source_ref": source_ref or "",
+        "source_sha256": source_digest,
+    }
+    request_digest = hashlib.sha256(_canonical_json_bytes(request_payload)).hexdigest()
     options_json = _canonical_json_bytes(normalized_options).decode("utf-8")
     request_context_json = _canonical_json_bytes(asdict(normalized_request_context)).decode("utf-8")
 
-    aqo = _run_stage(
-        "eigen_dpda",
-        observer,
-        lambda: _build_aqo_payload(
-            qubits=qubits,
-            operations=operations,
-            params=params,
-            source_digest=source_digest,
-            source_ref=None,
-            request_digest=aqo_request_digest,
-            has_expectation=has_expectation,
-            has_minimize=has_minimize,
-            distributed=distributed,
-        ),
-    )
+    def _build_pass_pipeline() -> CompilerPassPipeline:
+        try:
+            return _build_compiler_pass_pipeline(
+                qubits=qubits,
+                operations=operations,
+                params=params,
+                source_digest=source_digest,
+                source_precedence=source_precedence,
+                request_digest=aqo_request_digest,
+                has_expectation=has_expectation,
+                has_minimize=has_minimize,
+                distributed=distributed,
+            )
+        except CompilerValidationError as exc:
+            raise CompilerValidationError(
+                violations=_relabel_violations(
+                    exc.violations,
+                    stage="eigen_dpda",
+                    rule="compiler.pass_pipeline.build",
+                    pass_name="canonicalize_aqo",
+                )
+            ) from None
 
-    aqo_bytes = _run_stage("canonicalize_aqo", observer, lambda: _encode_aqo_payload(aqo))
+    pass_pipeline = _run_stage("eigen_dpda", observer, _build_pass_pipeline)
+
+    aqo = pass_pipeline.aqo
+
+    def _canonicalize_aqo() -> bytes:
+        try:
+            return _canonical_json_bytes(aqo)
+        except CompilerValidationError as exc:
+            raise CompilerValidationError(
+                violations=_relabel_violations(
+                    exc.violations,
+                    stage="canonicalize_aqo",
+                    rule="compiler.aqo.canonicalize",
+                    pass_name="canonicalize_aqo",
+                )
+            ) from None
+    aqo_bytes = _run_stage("canonicalize_aqo", observer, _canonicalize_aqo)
     aqo_digest = hashlib.sha256(aqo_bytes).hexdigest()
 
     decision_lineage = {
@@ -839,10 +1096,9 @@ def compile_eigen_lang(
         "source_precedence": source_precedence,
         "stage_order": [
             "parse",
-            "semantic_validation",
+            "validate_ast",
             "annotate",
             "lower_to_ir",
-            "lowering_validation",
             "eigen_dpda",
             "canonicalize_aqo",
             "emit",
@@ -850,6 +1106,7 @@ def compile_eigen_lang(
         "request_id": normalized_request_context.request_id,
         "trace_id": normalized_request_context.trace_id,
         "traceparent": normalized_request_context.traceparent,
+        "workload_profile": workload_profile.kind,
         "source_sha256": source_digest,
         "aqo_sha256": aqo_digest,
         "request_sha256": request_digest,
@@ -881,6 +1138,15 @@ def compile_eigen_lang(
             "request_sha256",
         ],
     }
+    compiler_diagnostics = {
+        "contract_version": "1.0.0",
+        "stage_order": decision_lineage["stage_order"],
+        "workload_profile": workload_profile.kind,
+        "backend_contract": backend_contract,
+        "decision_lineage": decision_lineage,
+        "observability": observability,
+        "explainability": explainability,
+    }
 
     metadata = {
         "compiler": "eigen-compiler",
@@ -904,6 +1170,28 @@ def compile_eigen_lang(
         "sandbox_profile": normalized_request_context.sandbox_profile,
         "tenant_id": normalized_request_context.tenant_id,
         "project_id": normalized_request_context.project_id,
+        "compiler_pass_pipeline_version": "1.0.0",
+        "compiler_passes_json": _canonical_json_text(
+            {
+                "version": "1.0.0",
+                "passes": [
+                    {
+                        "name": record.name,
+                        "kind": record.kind,
+                        "preconditions": list(record.preconditions),
+                        "postconditions": list(record.postconditions),
+                        "input": record.input,
+                        "output": record.output,
+                    }
+                    for record in pass_pipeline.records
+                ],
+            }
+        ),
+        "workload_profile": workload_profile.kind,
+        "workload_profile_json": workload_profile_json,
+        "backend_contract_version": "1.0.0",
+        "backend_contract_json": backend_contract_json,
+        "compiler_diagnostics_json": _canonical_json_text(compiler_diagnostics),
     }
     if has_minimize:
         metadata["hybrid_plan_marker"] = "minimize"
@@ -922,10 +1210,8 @@ def compile_eigen_lang(
     metadata["decision_lineage_json"] = _canonical_json_text(decision_lineage)
     metadata["observability_json"] = _canonical_json_text(observability)
     metadata["explainability_json"] = _canonical_json_text(explainability)
-    metadata["semantic_rule_report_json"] = _canonical_json_text([asdict(result) for result in semantic_results])
-    metadata["lowering_rule_report_json"] = _canonical_json_text([asdict(result) for result in lowering_results])
 
-    return CompilationResult(aqo_json=aqo_bytes, metadata=metadata)
+    return _run_stage("emit", observer, lambda: CompilationResult(aqo_json=aqo_bytes, metadata=metadata))
 
 
 @contextmanager
