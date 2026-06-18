@@ -18,7 +18,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::time::Instant;
 
 use parking_lot::Mutex;
-use prost_types::Timestamp;
+use prost_types::{Duration as ProtoDuration, Timestamp};
 use tokio_stream::iter;
 use tokio_stream::Stream;
 use tonic::transport::Endpoint;
@@ -2833,22 +2833,7 @@ impl FixtureAdapters {
             source: submission.program.clone(),
             options: submission.compiler_options.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
             source_ref: format!("qfs://jobs/{}/input/program.eigen.py", submission.job_id),
-            request_metadata: Some(RequestMetadata {
-                contract_version: submission.contract_version.clone(),
-                request_id: submission.request_id.clone(),
-                idempotency_key: submission.idempotency_key.clone(),
-                traceparent: submission.traceparent.clone(),
-                deadline: None,
-                tenant_id: submission.tenant_id.clone(),
-                project_id: submission.project_id.clone(),
-                subject: submission.subject.clone(),
-                role: submission.role.clone(),
-                source_service: submission.source_service.clone(),
-                trace_id: submission.trace_id.clone(),
-                retry_policy: String::new(),
-                security_context: String::new(),
-                workload: Some(Default::default()),
-            }),
+            request_metadata: Some(compiler_request_metadata_for_submission(submission)),
         });
 
         let response = client.compile_circuit(request).await.map_err(|status| {
@@ -4813,6 +4798,45 @@ fn reservation_lease_ms_for(submission: &NormalizedSubmission) -> u64 {
         .unwrap_or(60_000)
 }
 
+fn compiler_deadline_seconds_for_submission(submission: &NormalizedSubmission) -> u64 {
+    if let Some(seconds) = submission.deadline_seconds.filter(|seconds| *seconds > 0) {
+        return seconds;
+    }
+
+    if let Some(deadline_at) = submission.deadline_at.as_ref() {
+        let remaining_ms = timestamp_to_ms(deadline_at).saturating_sub(timestamp_to_ms(&ts_now()));
+        if remaining_ms > 0 {
+            return ((remaining_ms + 999) / 1000) as u64;
+        }
+    }
+
+    ((reservation_lease_ms_for(submission) + 999) / 1000).max(1)
+}
+
+fn compiler_request_metadata_for_submission(submission: &NormalizedSubmission) -> RequestMetadata {
+    let deadline_seconds = compiler_deadline_seconds_for_submission(submission);
+
+    RequestMetadata {
+        contract_version: submission.contract_version.clone(),
+        request_id: submission.request_id.clone(),
+        idempotency_key: submission.idempotency_key.clone(),
+        traceparent: submission.traceparent.clone(),
+        deadline: Some(ProtoDuration {
+            seconds: deadline_seconds.min(i64::MAX as u64) as i64,
+            nanos: 0,
+        }),
+        tenant_id: submission.tenant_id.clone(),
+        project_id: submission.project_id.clone(),
+        subject: submission.subject.clone(),
+        role: submission.role.clone(),
+        source_service: submission.source_service.clone(),
+        trace_id: submission.trace_id.clone(),
+        retry_policy: "retry-none".to_string(),
+        security_context: "mTLS".to_string(),
+        workload: Some(Default::default()),
+    }
+}
+
 fn canonical_submission_fingerprint(
     contract_version: &str,
     request_id: &str,
@@ -5543,6 +5567,23 @@ mod tests {
             }),
         };
         NormalizedSubmission::from_request(&req).expect("submission")
+    }
+
+    #[test]
+    fn compiler_request_metadata_uses_safe_defaults_and_submission_context() {
+        let submission = fixture_submission_with_lease_ms(45_000);
+        let metadata = compiler_request_metadata_for_submission(&submission);
+
+        assert_eq!(metadata.contract_version, "1.0.0");
+        assert_eq!(metadata.request_id, "req-live-ownership");
+        assert_eq!(metadata.idempotency_key, "req-live-ownership");
+        assert_eq!(metadata.traceparent, "00-11111111111111111111111111111111-2222222222222222-01");
+        assert_eq!(metadata.deadline.as_ref().map(|d| d.seconds), Some(45));
+        assert_eq!(metadata.retry_policy, "retry-none");
+        assert_eq!(metadata.security_context, "mTLS");
+        assert_eq!(metadata.tenant_id, "tenant-a");
+        assert_eq!(metadata.project_id, "project-a");
+        assert!(metadata.workload.is_some());
     }
 
     #[test]

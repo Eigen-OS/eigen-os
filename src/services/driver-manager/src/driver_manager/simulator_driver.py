@@ -95,7 +95,7 @@ class SimulatorDriver:
 
         state = [0j] * (1 << qubits)
         state[0] = 1 + 0j
-        measure_map = self._run_operations(state=state, qubits=qubits, operations=operations)
+        measure_map = self._run_operations(state=state, qubits=qubits, payload=payload, operations=operations, options=options)
         counts = self._sample_counts(state=state, qubits=qubits, shots=shots, measure_map=measure_map, options=options)
 
         elapsed = time.perf_counter() - start
@@ -203,7 +203,14 @@ class SimulatorDriver:
             if op not in _SUPPORTED_OPS:
                 raise DriverExecutionError(grpc.StatusCode.UNIMPLEMENTED, f"Unsupported Op: {op} at operation[{idx}]")
 
-    def _run_operations(self, state: list[complex], qubits: int, operations: list[dict]) -> list[_MeasureMap]:
+    def _run_operations(
+        self,
+        state: list[complex],
+        qubits: int,
+        payload: dict,
+        operations: list[dict],
+        options: dict[str, str],
+    ) -> list[_MeasureMap]:
         measures: list[_MeasureMap] = []
         for idx, raw_op in enumerate(operations):
             if not isinstance(raw_op, dict):
@@ -223,7 +230,7 @@ class SimulatorDriver:
             if op in {"RX", "RY", "RZ"}:
                 if len(q) != 1:
                     raise DriverExecutionError(grpc.StatusCode.INVALID_ARGUMENT, f"{op} requires exactly one qubit")
-                theta = self._get_theta(raw_op, idx)
+                theta = self._get_theta(raw_op, payload=payload, options=options, idx=idx)
                 self._apply_single_qubit_rotation(state, qubits, q[0], op, theta)
             elif op == "CX":
                 if len(q) != 2:
@@ -247,14 +254,55 @@ class SimulatorDriver:
             measures = [_MeasureMap(qubit=i, cbit=i) for i in range(qubits)]
         return measures
 
-    def _get_theta(self, raw_op: dict, idx: int) -> float:
+    def _get_theta(self, raw_op: dict, payload: dict, options: dict[str, str], idx: int) -> float:
         params = raw_op.get("params")
         if not isinstance(params, dict) or "theta" not in params:
             raise DriverExecutionError(grpc.StatusCode.INVALID_ARGUMENT, f"operation[{idx}] missing theta")
 
-        theta = params["theta"]
-        if isinstance(theta, (int, float)):
-            return float(theta)
+        return self._resolve_theta_value(params["theta"], payload=payload, options=options, idx=idx)
+
+    def _resolve_theta_value(
+        self,
+        value: object,
+        *,
+        payload: dict,
+        options: dict[str, str],
+        idx: int,
+        seen: set[str] | None = None,
+    ) -> float:
+        if isinstance(value, (int, float)):
+            return float(value)
+
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                raise DriverExecutionError(grpc.StatusCode.INVALID_ARGUMENT, f"operation[{idx}] theta must be numeric")
+
+            try:
+                return float(text)
+            except ValueError:
+                pass
+
+            seen = set() if seen is None else set(seen)
+            if text in seen:
+                raise DriverExecutionError(grpc.StatusCode.INVALID_ARGUMENT, f"operation[{idx}] theta binding is circular: {text}")
+            seen.add(text)
+
+            parameters = payload.get("parameters")
+            if isinstance(parameters, dict) and text in parameters:
+                return self._resolve_theta_value(parameters[text], payload=payload, options=options, idx=idx, seen=seen)
+
+            if text in options:
+                return self._resolve_theta_value(options[text], payload=payload, options=options, idx=idx, seen=seen)
+
+            for option_key in (f"param.{text}", f"param:{text}", f"parameters.{text}", f"parameters:{text}"):
+                if option_key in options:
+                    return self._resolve_theta_value(options[option_key], payload=payload, options=options, idx=idx, seen=seen)
+
+            raise DriverExecutionError(
+                grpc.StatusCode.INVALID_ARGUMENT,
+                f"operation[{idx}] theta must be numeric (unresolved symbol: {text})",
+            )
         raise DriverExecutionError(grpc.StatusCode.INVALID_ARGUMENT, f"operation[{idx}] theta must be numeric")
 
     def _sample_counts(

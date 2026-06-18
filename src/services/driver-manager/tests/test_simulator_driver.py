@@ -20,8 +20,11 @@ def _driver() -> SimulatorDriver:
     return drv
 
 
-def _aqo(operations: list[dict], qubits: int = 2) -> bytes:
-    return json.dumps({"version": "0.1", "qubits": qubits, "operations": operations}).encode("utf-8")
+def _aqo(operations: list[dict], qubits: int = 2, parameters: dict[str, object] | None = None) -> bytes:
+    payload: dict[str, object] = {"version": "0.1", "qubits": qubits, "operations": operations}
+    if parameters is not None:
+        payload["parameters"] = parameters
+    return json.dumps(payload).encode("utf-8")
 
 
 def test_circuit_ground_state_counts() -> None:
@@ -51,6 +54,25 @@ def test_circuit_rx_pi_then_measure() -> None:
         ),
         shots=32,
         options={"seed": "2"},
+    )
+
+    assert counts == {"01": 32}
+
+
+def test_circuit_symbolic_theta_resolves_from_top_level_parameters() -> None:
+    drv = _driver()
+
+    counts, _, _ = drv.execute_circuit(
+        device_id="sim:golden",
+        circuit=_aqo(
+            [
+                {"op": "RY", "q": [0], "params": {"theta": "theta"}},
+                {"op": "MEASURE", "q": [0, 1], "c": [0, 1]},
+            ],
+            parameters={"theta": math.pi},
+        ),
+        shots=32,
+        options={"seed": "4"},
     )
 
     assert counts == {"01": 32}

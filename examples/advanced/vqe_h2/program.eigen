@@ -1,6 +1,5 @@
 from eigen_lang import ExpectationValue, Param, hybrid_program, minimize, cnot, ry, rz
 
-
 @hybrid_program(target="simulator", shots=4096, optimization_level=3)
 def vqe_h2():
     """Beautiful H2 VQE demo for the local simulator.
@@ -19,10 +18,10 @@ def vqe_h2():
     rz(1, theta=lam)
     cnot(0, 1)
 
-    # Backend-side observable/hamiltonian labels keep the source declarative.
+    # Keep the energy objective in the canonical compiler-tested form.
     energy = ExpectationValue("ansatz_h2", "H2_sto-3g")
+
 
     # COBYLA is a good default for this small demonstration circuit.
     result = minimize(energy, [0.10, -0.20, 0.05], method="COBYLA")
     return result.fun
-    

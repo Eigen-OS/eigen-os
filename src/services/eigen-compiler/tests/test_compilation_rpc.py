@@ -17,6 +17,7 @@ ensure_generated()
 from eigen.internal.v1 import compilation_service_pb2 as comp_pb  # noqa: E402
 from eigen.internal.v1 import compilation_service_pb2_grpc as comp_pb_grpc  # noqa: E402
 from eigen.internal.v1 import neuro_symbolic_service_pb2 as nsc_pb  # noqa: E402
+from eigen.internal.v1 import kernel_gateway_pb2 as kernel_pb  # noqa: E402
 from eigen.internal.v1 import neuro_symbolic_service_pb2_grpc as nsc_pb_grpc  # noqa: E402
 from eigen.internal.v1 import types_pb2 as types_pb  # noqa: E402
 
@@ -72,6 +73,43 @@ def test_compile_circuit_happy_path(grpc_addr: str) -> None:
     assert len(resp.circuit.data) > 0
     assert resp.metadata["distributed.execution_metadata_version"] == "1.0.0"
     assert resp.metadata["distributed.enabled"] == "false"
+
+
+def test_compile_job_uses_request_metadata_workload_profile(grpc_addr: str) -> None:
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = comp_pb_grpc.CompilationServiceStub(channel)
+
+    request_metadata = kernel_pb.RequestMetadata()
+    request_metadata.contract_version = "1.0.0"
+    request_metadata.request_id = "req-hybrid-001"
+    request_metadata.trace_id = "trace-hybrid-001"
+    request_metadata.traceparent = "00-11111111111111111111111111111111-2222222222222222-01"
+    request_metadata.deadline.seconds = 60
+    request_metadata.retry_policy = "retry-none"
+    request_metadata.security_context = "compiler-test"
+    request_metadata.tenant_id = "tenant-a"
+    request_metadata.project_id = "project-a"
+    request_metadata.workload.kind = kernel_pb.WORKLOAD_FAMILY_KIND_HYBRID_WORKFLOW
+    request_metadata.workload.execution_profile = "hybrid"
+    request_metadata.workload.backend_target = "sim:local"
+
+    resp = stub.CompileJob(
+        comp_pb.CompileJobRequest(
+            job_id="job-hybrid-001",
+            language="eigen-lang",
+            source=(
+                b"from eigen_lang import hybrid_program, ry\n\n"
+                b"@hybrid_program(target=\"sim\", shots=1000)\n"
+                b"def main():\n"
+                b"    ry(0, theta=1.0)\n"
+            ),
+            request_metadata=request_metadata,
+        )
+    )
+
+    diagnostics = json.loads(resp.metadata["compiler_diagnostics_json"])
+    assert resp.metadata["workload_profile"] == "HybridWorkflow"
+    assert diagnostics["workload_profile"] == "HybridWorkflow"
 
 
 def test_compile_circuit_exposes_diagnostics_payload(grpc_addr: str) -> None:
