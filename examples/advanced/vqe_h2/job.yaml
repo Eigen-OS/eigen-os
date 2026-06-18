@@ -3,7 +3,7 @@ kind: QuantumJob
 metadata:
   name: vqe-h2-demo
   labels:
-    example: "true"
+    example: "false"
     algorithm: "vqe"
     molecule: "H2"
 spec:

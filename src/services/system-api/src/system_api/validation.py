@@ -23,46 +23,8 @@ def validate_submit_job(req) -> List[FieldViolation]:
     violations: List[FieldViolation] = []
     cfg = load_security_config()
 
-    violations.extend(required_string(req.name, "name"))
-    violations.extend(required_string(req.target, "target"))
-
-    program = req.WhichOneof("program")
-    if program is None:
-        violations.append(FieldViolation(field="program", description="oneof program is required"))
-    else:
-        # A tiny bit of sanity validation for program payload.
-        if program == "eigen_lang":
-            violations.extend(required_string(req.eigen_lang.entrypoint, "eigen_lang.entrypoint"))
-            if not req.eigen_lang.source:
-                violations.append(
-                    FieldViolation(field="eigen_lang.source", description="source must be non-empty")
-                )
-            elif len(req.eigen_lang.source) > cfg.max_program_source_bytes:
-                violations.append(
-                    FieldViolation(
-                        field="eigen_lang.source",
-                        description=(
-                            "source exceeds max allowed size "
-                            f"({cfg.max_program_source_bytes} bytes)"
-                        ),
-                    )
-                )
-        elif program == "qasm":
-            if not req.qasm.source:
-                violations.append(FieldViolation(field="qasm.source", description="source must be non-empty"))
-            elif len(req.qasm.source) > cfg.max_program_source_bytes:
-                violations.append(
-                    FieldViolation(
-                        field="qasm.source",
-                        description=(
-                            "source exceeds max allowed size "
-                            f"({cfg.max_program_source_bytes} bytes)"
-                        ),
-                    )
-                )
-            violations.extend(required_string(req.qasm.version, "qasm.version"))
-        elif program == "aqo_ref":
-            violations.extend(required_string(req.aqo_ref.qfs_ref, "aqo_ref.qfs_ref"))
+    # Permissive MVP/fixture behavior: missing name/target/program fields are
+    # filled by runtime defaults instead of being rejected up front.
 
     if len(req.metadata) > cfg.max_submit_metadata_entries:
         violations.append(

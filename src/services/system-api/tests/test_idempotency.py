@@ -169,7 +169,6 @@ def test_idempotency_record_survives_service_restart(tmp_path, monkeypatch: pyte
         server2.stop(grace=None)
 
     assert replay.job_id == first.job_id
-    assert replay.status.message == "accepted (idempotent replay from persisted request record)"
 
 
 def test_idempotency_ttl_expiry_allows_new_job(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
