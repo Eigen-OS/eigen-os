@@ -11,6 +11,8 @@ from pathlib import Path
 from datetime import UTC, datetime
 from typing import Callable, Protocol
 
+from botocore.config import Config
+
 
 class BlobBackend(Protocol):
     """Backend contract for byte-oriented object storage."""
@@ -138,7 +140,11 @@ class S3BlobBackend:
                 import boto3
             except ModuleNotFoundError as exc:
                 raise RuntimeError("boto3 is required for S3 backend") from exc
-            client = boto3.client("s3", endpoint_url=endpoint_url)
+            client = boto3.client(
+                "s3",
+                endpoint_url=endpoint_url,
+                config=Config(s3={"addressing_style": "path"}),
+            )
         self._bucket = bucket
         self._client = client
 
@@ -245,7 +251,7 @@ class QFSStore:
 
 
 def _build_qfs_store_from_env() -> QFSStore:
-    backend_name = os.getenv("EIGEN_QFS_BACKEND", "local").lower()
+    backend_name = os.getenv("EIGEN_QFS_BACKEND", "s3").lower()
     retry = RetryConfig(
         max_attempts=int(os.getenv("EIGEN_QFS_RETRY_ATTEMPTS", "3")),
         backoff_ms=int(os.getenv("EIGEN_QFS_RETRY_BACKOFF_MS", "25")),
@@ -258,7 +264,6 @@ def _build_qfs_store_from_env() -> QFSStore:
         bucket = os.getenv("EIGEN_QFS_S3_BUCKET", "eigen-qfs")
         endpoint = os.getenv("EIGEN_QFS_S3_ENDPOINT")
         primary = S3BlobBackend(bucket=bucket, endpoint_url=endpoint)
-        fallback.append(LocalBlobBackend())
     else:
         primary = LocalBlobBackend()
 

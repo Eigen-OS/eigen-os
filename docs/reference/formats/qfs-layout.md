@@ -388,18 +388,33 @@ Contains durable reservation lifecycle artifacts for compatibility-layer and rec
 
 ### 7.1 `results.parquet`
 
-Canonical analytics/result export artifact.
+Canonical tabular analytics/result export artifact.
 
 Required for successful jobs.
+
+`results.parquet` is the machine-optimized fact table for scientific and operational analysis across **all** workload families, not only quantum chemistry demos. Each row represents one normalized observation or metric event (for example: execution timing, backend-selection outcome, shot counts, stage durations, benchmark scores, replay deltas, or distributed-runtime signals).
+
+Recommended row-level fields include:
+
+- `job_id`, `workload_kind`, `schema_version`
+- `record_kind` (`summary`, `measurement`, `stage`, `benchmark`, `replay`, etc.)
+- `metric_name`, `metric_value_f64`, `metric_value_text`, `metric_unit`
+- `stage_id`, `stage_key`, `step_index`, `trial_index`
+- `seed`, `backend`, `target`, `trace_id`, `traceparent`
+- `artifact_ref`, `created_at_epoch_ms`
+- `context_json`, `summary_json`, `attributes_json`
 
 Purpose:
 
 - analytics,
 - batch export,
 - API retrieval,
-- offline processing.
+offline processing,
+- experiment comparison,
+- regression detection,
+- reproducibility analysis.
 
-If a job succeeds, `results.parquet` MUST exist.
+If a job succeeds, `results.parquet` MUST exist and MUST be readable by standard Parquet tooling.
 
 ---
 
@@ -462,6 +477,8 @@ results/result.json
 results/error.json
 ```
 
+`results/result.json` is the canonical scientific result bundle (summary + context + measurement descriptors). `results.parquet` is the analytics fact table derived from that bundle.
+
 ---
 
 ### 9.4 API Retrieval Phase
@@ -477,6 +494,8 @@ meta/release_evidence/bundle.json
 meta/release_evidence/manifest.json
 meta/release_evidence/provenance.json
 ```
+
+Consumers SHOULD read `results.parquet` for tabular analysis and `results/result.json` for human-readable summary, lineage, and workload context.
 
 ---
 

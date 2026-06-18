@@ -250,6 +250,7 @@ def test_compile_covers_all_workload_family_profiles(
         source_path = qfs_root / source_ref
         source_path.parent.mkdir(parents=True, exist_ok=True)
         source_path.write_bytes(source)
+        monkeypatch.setenv("EIGEN_QFS_BACKEND", "local")
         monkeypatch.setenv("EIGEN_QFS_ROOT", str(qfs_root))
         compiled = compile_eigen_lang(b"", source_ref=source_ref, options=options)
         assert compiled.metadata["source_precedence"] == "source_ref"
@@ -376,6 +377,7 @@ def test_source_ref_is_resolved_from_qfs_root(tmp_path: Path, monkeypatch: pytes
     path = qfs_root / "jobs" / "job-1" / "input" / "program.eigen.py"
     path.parent.mkdir(parents=True)
     path.write_bytes(source)
+    monkeypatch.setenv("EIGEN_QFS_BACKEND", "local")
     monkeypatch.setenv("EIGEN_QFS_ROOT", str(qfs_root))
 
     from_ref = compile_eigen_lang(b"", source_ref="jobs/job-1/input/program.eigen.py")

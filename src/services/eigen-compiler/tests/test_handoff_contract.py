@@ -215,6 +215,7 @@ def test_replay_determinism_fixture_preserves_source_precedence_and_handoff_dige
     program_path = qfs_root / "jobs" / "job-1" / "input" / "program.eigen.py"
     program_path.parent.mkdir(parents=True)
     program_path.write_bytes(TEST_SOURCE)
+    monkeypatch.setenv("EIGEN_QFS_BACKEND", "local")
     monkeypatch.setenv("EIGEN_QFS_ROOT", str(qfs_root))
 
     first = compile_eigen_lang(

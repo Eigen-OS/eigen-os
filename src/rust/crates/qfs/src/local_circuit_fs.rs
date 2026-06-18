@@ -1,20 +1,34 @@
 use std::fs;
 use std::fs::OpenOptions;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+use std::env;
+use std::future::Future;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::Arc;
+use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use thiserror::Error;
 use tempfile::NamedTempFile;
+
+use arrow_array::{ArrayRef, Float64Array, Int64Array, RecordBatch, StringArray};
+use arrow_schema::{DataType, Field, Schema};
+use parquet::arrow::ArrowWriter;
+use parquet::file::properties::WriterProperties;
+use thiserror::Error;
+use tokio::runtime::Handle;
+use tokio::task;
+
 
 /// Default filesystem root for CircuitFS (QFS-L3).
 ///
 /// For local development/tests, you should override this with a temp directory.
 pub const DEFAULT_CIRCUIT_FS_ROOT: &str = "/var/lib/eigen/circuit_fs";
 
+const MINIO_MIRROR_MAX_ATTEMPTS: usize = 3;
+const MINIO_MIRROR_BACKOFF_MS: u64 = 50;
 /// Represents the “source bundle” artifacts stored in QFS.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceBundle {
@@ -29,6 +43,39 @@ pub struct ResultArtifactDescriptor {
     pub size_bytes: u64,
 }
 
+/// Scientific measurement row embedded into the canonical result envelope.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ScientificMeasurement {
+    pub metric_name: String,
+    #[serde(default)]
+    pub metric_kind: String,
+    pub metric_value: String,
+    #[serde(default)]
+    pub metric_unit: String,
+    #[serde(default)]
+    pub stage_id: Option<String>,
+    #[serde(default)]
+    pub stage_key: Option<String>,
+    #[serde(default)]
+    pub step_index: Option<i64>,
+    #[serde(default)]
+    pub trial_index: Option<i64>,
+    #[serde(default)]
+    pub seed: Option<i64>,
+    #[serde(default)]
+    pub backend: Option<String>,
+    #[serde(default)]
+    pub target: Option<String>,
+    #[serde(default)]
+    pub trace_id: Option<String>,
+    #[serde(default)]
+    pub traceparent: Option<String>,
+    #[serde(default)]
+    pub artifact_ref: Option<String>,
+    #[serde(default)]
+    pub attributes: BTreeMap<String, String>,
+}
+
 #[derive(Debug, Error)]
 pub enum CircuitFsError {
     #[error("artifact already exists: {path}")]
@@ -39,6 +86,14 @@ pub enum CircuitFsError {
 
     #[error("artifact not found: {path}")]
     NotFound { path: PathBuf },
+
+    #[error("failed to mirror artifact to MinIO ({path} -> s3://{bucket}/{key}): {message}")]
+    MinioMirrorFailed {
+        path: PathBuf,
+        bucket: String,
+        key: String,
+        message: String,
+    },
 
     #[error("invalid job id: {job_id}")]
     InvalidJobId { job_id: String },
@@ -61,6 +116,97 @@ impl CircuitFsLocal {
         &self.root
     }
 
+    fn resolve_path(&self, path: &Path) -> PathBuf {
+        let raw = path.to_string_lossy();
+        if let Some(normalized) = raw.strip_prefix("qfs://").or_else(|| raw.strip_prefix("circuitfs://")) {
+            self.root.join(normalized.trim_start_matches('/'))
+        } else {
+            path.to_path_buf()
+        }
+    }
+
+    pub fn write_bytes(&self, path: impl AsRef<Path>, bytes: &[u8]) -> Result<(), CircuitFsError> {
+        atomic_write_bytes(&self.resolve_path(path.as_ref()), bytes)
+    }
+
+    pub fn read_bytes(&self, path: impl AsRef<Path>) -> Result<Vec<u8>, CircuitFsError> {
+        let path = self.resolve_path(path.as_ref());
+        if path.exists() {
+            return Ok(fs::read(&path)?);
+        }
+        if let Some(bytes) = download_path_from_minio(&path)? {
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(path, &bytes)?;
+            return Ok(bytes);
+        }
+        Err(CircuitFsError::NotFound { path: path.to_path_buf() })
+    }
+
+    pub fn object_exists(&self, path: impl AsRef<Path>) -> bool {
+        let path = self.resolve_path(path.as_ref());
+        if path.exists() {
+            return true;
+        }
+        if !minio_enabled() {
+            return false;
+        }
+        path_key(&path)
+            .and_then(|key| {
+                let bucket = minio_bucket();
+                block_on_maybe_in_place(async move {
+                    let client = minio_client().await?;
+                    Ok::<bool, CircuitFsError>(
+                        client
+                            .head_object()
+                            .bucket(bucket)
+                            .key(key)
+                            .send()
+                            .await
+                            .is_ok(),
+                    )
+                })
+                .ok()
+            })
+            .unwrap_or(false)
+    }
+
+    pub fn list_refs(&self, prefix: &str) -> Result<Vec<String>, CircuitFsError> {
+        let mut refs: Vec<String> = Vec::new();
+        let root = self.root.clone();
+        if root.exists() {
+            let mut stack = vec![root.clone()];
+            while let Some(dir) = stack.pop() {
+                for entry in fs::read_dir(&dir)? {
+                    let entry = entry?;
+                    let path = entry.path();
+                    if path.is_dir() {
+                        stack.push(path);
+                        continue;
+                    }
+                    if path.is_file() {
+                        let rel = path
+                            .strip_prefix(&root)
+                            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "path escapes qfs root"))?
+                            .to_string_lossy()
+                            .replace('\\', "/");
+                        let qfs_ref = format!("qfs://{rel}");
+                        if qfs_ref.starts_with(prefix) {
+                            refs.push(qfs_ref);
+                        }
+                    }
+                }
+            }
+        }
+        if minio_enabled() {
+            refs.extend(list_refs_from_minio(prefix)?);
+        }
+        refs.sort();
+        refs.dedup();
+        Ok(refs)
+    }
+
     pub fn ensure_job_layout(&self, job_id: &str) -> Result<(), CircuitFsError> {
         fs::create_dir_all(self.job_root_path(job_id)?)?;
         fs::create_dir_all(self.compiled_dir_path(job_id)?)?;
@@ -80,17 +226,19 @@ impl CircuitFsLocal {
             .ok_or_else(|| CircuitFsError::Io(io::Error::new(io::ErrorKind::InvalidInput, "missing log parent")))?;
         fs::create_dir_all(parent)?;
         let mut fh = OpenOptions::new().create(true).append(true).open(&path)?;
-        fh.write_all(line.trim_end_matches('\n').as_bytes())?;
+        let bytes = line.trim_end_matches('\n').as_bytes();
+        fh.write_all(bytes)?;
         fh.write_all(b"\n")?;
         fh.flush()?;
         fh.sync_all()?;
+        let _ = mirror_path_to_minio(&path, bytes);
         Ok(())
     }
 
     pub fn store_results_bundle(
         &self,
         job_id: &str,
-        payload: &[u8],
+        envelope: &ResultEnvelope,
         producer_version: &str,
     ) -> Result<(), CircuitFsError> {
         self.ensure_job_layout(job_id)?;
@@ -106,39 +254,28 @@ impl CircuitFsLocal {
             manifest_path.clone(),
             envelope_path.clone(),
         ] {
-            if path.exists() {
+            if self.object_exists(&path) {
                 return Err(CircuitFsError::AlreadyExists { path });
             }
         }
 
-        atomic_write_bytes(&parquet_path, payload)?;
-
-        let created_at_epoch_ms = unix_epoch_ms();
-        let envelope = ResultEnvelope {
-            artifact_version: "1.0.0".to_string(),
-            producer_version: producer_version.to_string(),
-            job_id: job_id.to_string(),
-            result_ref: "results/result.json".to_string(),
-            manifest_ref: "results/manifest.json".to_string(),
-            created_at_epoch_ms,
-            retention_policy: "pinned".to_string(),
-            lineage: CompiledArtifactLineage::default(),
-        };
-        let envelope_bytes = serde_json::to_vec_pretty(&envelope).map_err(to_io_error)?;
+        let envelope_bytes = serde_json::to_vec_pretty(envelope).map_err(to_io_error)?;
+        let parquet_bytes = write_scientific_results_parquet(envelope)?;
+        atomic_write_bytes(&parquet_path, &parquet_bytes)?;
         atomic_write_bytes(&result_json_path, &envelope_bytes)?;
         atomic_write_bytes(&envelope_path, &envelope_bytes)?;
 
         let manifest = ResultManifest {
-            artifact_version: "1.0.0".to_string(),
+            artifact_version: envelope.artifact_version.clone(),
             producer_version: producer_version.to_string(),
             schema_version: "result_manifest.v1".to_string(),
-            created_at_epoch_ms,
-            retention_policy: "pinned".to_string(),
+            created_at_epoch_ms: envelope.created_at_epoch_ms,
+            retention_policy: envelope.retention_policy.clone(),
             artifacts: vec![
                 ResultArtifactDescriptor {
                     path: "results.parquet".to_string(),
-                    content_hash: content_hash_hex(payload),
-                    size_bytes: payload.len() as u64,
+                    content_hash: content_hash_hex(&parquet_bytes),
+                    size_bytes: parquet_bytes.len() as u64,
                 },
                 ResultArtifactDescriptor {
                     path: "results/result.json".to_string(),
@@ -155,7 +292,7 @@ impl CircuitFsLocal {
     pub fn store_metrics_json(&self, job_id: &str, metrics: &[u8]) -> Result<(), CircuitFsError> {
         self.ensure_job_layout(job_id)?;
         let path = self.metrics_json_path(job_id)?;
-        if path.exists() {
+        if self.object_exists(&path) {
             return Err(CircuitFsError::AlreadyExists { path });
         }
         atomic_write_bytes(&path, metrics)
@@ -261,12 +398,8 @@ impl CircuitFsLocal {
 /// Represents the “results bundle” artifacts stored in QFS.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResultsBundle {
-    /// Apache Parquet payload stored at `/jobs/{job_id}/results.parquet`.
-    pub parquet: Vec<u8>,
     /// Versioned envelope describing the durable result artifact contract.
     pub envelope: ResultEnvelope,
-    /// Integrity manifest for the durable result artifacts.
-    pub manifest: ResultManifest,
 }
 
 /// Represents compilation outputs stored under `compiled/`.
@@ -336,8 +469,12 @@ pub struct CompiledMetadata {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResultEnvelope {
     pub artifact_version: String,
+    #[serde(default = "default_scientific_schema_version")]
+    pub schema_version: String,
     pub producer_version: String,
     pub job_id: String,
+    #[serde(default)]
+    pub workload_kind: String,
     pub result_ref: String,
     pub manifest_ref: String,
     #[serde(default)]
@@ -346,6 +483,12 @@ pub struct ResultEnvelope {
     pub retention_policy: String,
     #[serde(default)]
     pub lineage: CompiledArtifactLineage,
+    #[serde(default)]
+    pub context: BTreeMap<String, String>,
+    #[serde(default)]
+    pub summary: BTreeMap<String, String>,
+    #[serde(default)]
+    pub measurements: Vec<ScientificMeasurement>,
 }
 
 /// Durable artifact manifest for runtime outputs.
@@ -443,7 +586,7 @@ impl CircuitFsLocal {
             compiled_report_path.clone(),
         ];
         for path in compiled_paths {
-            if path.exists() {
+            if self.object_exists(&path) {
                 return Err(CircuitFsError::AlreadyExists { path });
             }
         }
@@ -494,7 +637,7 @@ impl CircuitFsLocal {
         let provenance_path = self.release_evidence_provenance_path(job_id)?;
 
         for path in [bundle_path.clone(), manifest_path.clone(), provenance_path.clone()] {
-            if path.exists() {
+            if self.object_exists(&path) {
                 return Err(CircuitFsError::AlreadyExists { path });
             }
         }
@@ -548,10 +691,152 @@ fn to_io_error(err: serde_json::Error) -> CircuitFsError {
     CircuitFsError::Io(io::Error::new(io::ErrorKind::InvalidData, err))
 }
 
+fn default_scientific_schema_version() -> String {
+    "scientific_result_bundle.v1".to_string()
+}
+
 fn content_hash_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     format!("{:x}", hasher.finalize())
+}
+
+fn normalize_nonempty(value: &str, fallback: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        fallback.to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn write_scientific_results_parquet(envelope: &ResultEnvelope) -> Result<Vec<u8>, CircuitFsError> {
+    let row_count = envelope.measurements.len();
+    let context_json = serde_json::to_string(&envelope.context).map_err(to_io_error)?;
+    let summary_json = serde_json::to_string(&envelope.summary).map_err(to_io_error)?;
+
+    let mut job_id = Vec::with_capacity(row_count);
+    let mut workload_kind = Vec::with_capacity(row_count);
+    let mut schema_version = Vec::with_capacity(row_count);
+    let mut record_kind = Vec::with_capacity(row_count);
+    let mut metric_name = Vec::with_capacity(row_count);
+    let mut metric_value_f64 = Vec::with_capacity(row_count);
+    let mut metric_value_text = Vec::with_capacity(row_count);
+    let mut metric_unit = Vec::with_capacity(row_count);
+    let mut stage_id = Vec::with_capacity(row_count);
+    let mut stage_key = Vec::with_capacity(row_count);
+    let mut step_index = Vec::with_capacity(row_count);
+    let mut trial_index = Vec::with_capacity(row_count);
+    let mut seed = Vec::with_capacity(row_count);
+    let mut backend = Vec::with_capacity(row_count);
+    let mut target = Vec::with_capacity(row_count);
+    let mut trace_id = Vec::with_capacity(row_count);
+    let mut traceparent = Vec::with_capacity(row_count);
+    let mut artifact_ref = Vec::with_capacity(row_count);
+    let mut created_at_epoch_ms = Vec::with_capacity(row_count);
+    let mut context_json_col = Vec::with_capacity(row_count);
+    let mut summary_json_col = Vec::with_capacity(row_count);
+    let mut attributes_json_col = Vec::with_capacity(row_count);
+
+    for measurement in &envelope.measurements {
+        job_id.push(envelope.job_id.clone());
+        workload_kind.push(envelope.workload_kind.clone());
+        schema_version.push(envelope.schema_version.clone());
+        record_kind.push(normalize_nonempty(&measurement.metric_kind, "measurement"));
+        metric_name.push(measurement.metric_name.clone());
+        match measurement.metric_value.parse::<f64>() {
+            Ok(value) => {
+                metric_value_f64.push(Some(value));
+                metric_value_text.push(None);
+            }
+            Err(_) => {
+                metric_value_f64.push(None);
+                metric_value_text.push(Some(measurement.metric_value.clone()));
+            }
+        }
+        metric_unit.push(if measurement.metric_unit.trim().is_empty() { None } else { Some(measurement.metric_unit.clone()) });
+        stage_id.push(measurement.stage_id.clone());
+        stage_key.push(measurement.stage_key.clone());
+        step_index.push(measurement.step_index);
+        trial_index.push(measurement.trial_index);
+        seed.push(measurement.seed);
+        backend.push(measurement.backend.clone());
+        target.push(measurement.target.clone());
+        trace_id.push(measurement.trace_id.clone());
+        traceparent.push(measurement.traceparent.clone());
+        artifact_ref.push(measurement.artifact_ref.clone());
+        created_at_epoch_ms.push(Some(envelope.created_at_epoch_ms as i64));
+        context_json_col.push(Some(context_json.clone()));
+        summary_json_col.push(Some(summary_json.clone()));
+        attributes_json_col.push(Some(serde_json::to_string(&measurement.attributes).map_err(to_io_error)?));
+    }
+
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("job_id", DataType::Utf8, false),
+        Field::new("workload_kind", DataType::Utf8, false),
+        Field::new("schema_version", DataType::Utf8, false),
+        Field::new("record_kind", DataType::Utf8, false),
+        Field::new("metric_name", DataType::Utf8, false),
+        Field::new("metric_value_f64", DataType::Float64, true),
+        Field::new("metric_value_text", DataType::Utf8, true),
+        Field::new("metric_unit", DataType::Utf8, true),
+        Field::new("stage_id", DataType::Utf8, true),
+        Field::new("stage_key", DataType::Utf8, true),
+        Field::new("step_index", DataType::Int64, true),
+        Field::new("trial_index", DataType::Int64, true),
+        Field::new("seed", DataType::Int64, true),
+        Field::new("backend", DataType::Utf8, true),
+        Field::new("target", DataType::Utf8, true),
+        Field::new("trace_id", DataType::Utf8, true),
+        Field::new("traceparent", DataType::Utf8, true),
+        Field::new("artifact_ref", DataType::Utf8, true),
+        Field::new("created_at_epoch_ms", DataType::Int64, true),
+        Field::new("context_json", DataType::Utf8, true),
+        Field::new("summary_json", DataType::Utf8, true),
+        Field::new("attributes_json", DataType::Utf8, true),
+    ]));
+
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![
+            Arc::new(StringArray::from(job_id)) as ArrayRef,
+            Arc::new(StringArray::from(workload_kind)) as ArrayRef,
+            Arc::new(StringArray::from(schema_version)) as ArrayRef,
+            Arc::new(StringArray::from(record_kind)) as ArrayRef,
+            Arc::new(StringArray::from(metric_name)) as ArrayRef,
+            Arc::new(Float64Array::from(metric_value_f64)) as ArrayRef,
+            Arc::new(StringArray::from(metric_value_text)) as ArrayRef,
+            Arc::new(StringArray::from(metric_unit)) as ArrayRef,
+            Arc::new(StringArray::from(stage_id)) as ArrayRef,
+            Arc::new(StringArray::from(stage_key)) as ArrayRef,
+            Arc::new(Int64Array::from(step_index)) as ArrayRef,
+            Arc::new(Int64Array::from(trial_index)) as ArrayRef,
+            Arc::new(Int64Array::from(seed)) as ArrayRef,
+            Arc::new(StringArray::from(backend)) as ArrayRef,
+            Arc::new(StringArray::from(target)) as ArrayRef,
+            Arc::new(StringArray::from(trace_id)) as ArrayRef,
+            Arc::new(StringArray::from(traceparent)) as ArrayRef,
+            Arc::new(StringArray::from(artifact_ref)) as ArrayRef,
+            Arc::new(Int64Array::from(created_at_epoch_ms)) as ArrayRef,
+            Arc::new(StringArray::from(context_json_col)) as ArrayRef,
+            Arc::new(StringArray::from(summary_json_col)) as ArrayRef,
+            Arc::new(StringArray::from(attributes_json_col)) as ArrayRef,
+        ],
+    )
+    .map_err(|err| CircuitFsError::Io(io::Error::new(io::ErrorKind::InvalidData, err)))?;
+
+    let tempdir = NamedTempFile::new_in(std::env::temp_dir())?;
+    let temp_path = tempdir.path().to_path_buf();
+    let writer_file = tempdir.reopen()?;
+    let mut writer = ArrowWriter::try_new(writer_file, schema, Some(WriterProperties::builder().build()))
+        .map_err(|err| CircuitFsError::Io(io::Error::new(io::ErrorKind::InvalidData, err)))?;
+    writer
+        .write(&batch)
+        .map_err(|err| CircuitFsError::Io(io::Error::new(io::ErrorKind::InvalidData, err)))?;
+    writer
+        .close()
+        .map_err(|err| CircuitFsError::Io(io::Error::new(io::ErrorKind::InvalidData, err)))?;
+    Ok(fs::read(temp_path)?)
 }
 
 fn atomic_write_bytes(path: &Path, bytes: &[u8]) -> Result<(), CircuitFsError> {
@@ -565,6 +850,9 @@ fn atomic_write_bytes(path: &Path, bytes: &[u8]) -> Result<(), CircuitFsError> {
     tmp.as_file().sync_all()?;
     tmp.persist(path)
         .map_err(|err| CircuitFsError::Io(err.error))?;
+    // Local persistence is authoritative; MinIO mirroring must not fail the job
+    // when the object store is temporarily unavailable.
+    let _ = mirror_path_to_minio(path, bytes);
     Ok(())
 }
 
@@ -583,6 +871,226 @@ fn unix_epoch_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or_default()
+}
+
+
+fn new_runtime() -> Result<tokio::runtime::Runtime, CircuitFsError> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| CircuitFsError::Io(io::Error::new(io::ErrorKind::Other, err)))
+}
+
+fn block_on_maybe_in_place<F, T>(future: F) -> Result<T, CircuitFsError>
+where
+    F: Future<Output = Result<T, CircuitFsError>>,
+{
+    if Handle::try_current().is_ok() {
+        task::block_in_place(|| Handle::current().block_on(future))
+    } else {
+        let runtime = new_runtime()?;
+        runtime.block_on(future)
+    }
+}
+
+fn is_retryable_minio_error(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    [
+        "service error",
+        "timeout",
+        "timed out",
+        "temporarily unavailable",
+        "connection refused",
+        "connection reset",
+        "broken pipe",
+        "503",
+        "502",
+        "504",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
+async fn ensure_minio_bucket_exists(client: &aws_sdk_s3::Client, bucket: &str) -> Result<(), CircuitFsError> {
+    if client.head_bucket().bucket(bucket).send().await.is_ok() {
+        return Ok(());
+    }
+
+    client
+        .create_bucket()
+        .bucket(bucket)
+        .send()
+        .await
+        .map_err(|err| CircuitFsError::Io(io::Error::new(io::ErrorKind::Other, err)))?;
+
+    Ok(())
+}
+
+fn minio_enabled() -> bool {
+    matches!(
+        env::var("EIGEN_QFS_BACKEND").ok().as_deref(),
+        Some("s3") | Some("minio")
+    )
+}
+
+fn minio_bucket() -> String {
+    env::var("EIGEN_QFS_S3_BUCKET").unwrap_or_else(|_| "eigen-qfs".to_string())
+}
+
+fn minio_endpoint() -> Option<String> {
+    env::var("EIGEN_QFS_S3_ENDPOINT").ok()
+}
+
+async fn minio_client() -> Result<aws_sdk_s3::Client, CircuitFsError> {
+    let endpoint = minio_endpoint()
+        .ok_or_else(|| CircuitFsError::Io(io::Error::new(io::ErrorKind::NotFound, "missing EIGEN_QFS_S3_ENDPOINT")))?;
+    let config = aws_config::defaults(aws_config::BehaviorVersion::latest())
+        .endpoint_url(endpoint)
+        .load()
+        .await;
+    let s3_config = aws_sdk_s3::config::Builder::from(&config)
+        .force_path_style(true)
+        .build();
+    Ok(aws_sdk_s3::Client::from_conf(s3_config))
+}
+
+fn canonicalize_path(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn path_key(path: &Path) -> Option<String> {
+    let canonical_path = canonicalize_path(path);
+    let mut roots: Vec<PathBuf> = Vec::new();
+    for env_name in ["EIGEN_QFS_LOCAL_ROOT", "EIGEN_QFS_ROOT"] {
+        if let Ok(root) = env::var(env_name) {
+            roots.push(PathBuf::from(root));
+        }
+    }
+    roots.push(PathBuf::from("/var/lib/eigen/circuit_fs"));
+    roots.push(PathBuf::from("/tmp/eigen/qfs"));
+    for root in roots {
+        let canonical_root = canonicalize_path(&root);
+        if let Ok(rel) = canonical_path.strip_prefix(&canonical_root) {
+            return Some(rel.to_string_lossy().replace('\\', "/"));
+        }
+    }
+    None
+}
+
+fn mirror_path_to_minio(path: &Path, bytes: &[u8]) -> Result<(), CircuitFsError> {
+    if !minio_enabled() {
+        return Ok(());
+    }
+    let bucket = minio_bucket();
+    let key = path_key(path).ok_or_else(|| CircuitFsError::MinioMirrorFailed {
+        path: path.to_path_buf(),
+        bucket: bucket.clone(),
+        key: String::new(),
+        message: "path is outside the configured QFS root".to_string(),
+    })?;
+    block_on_maybe_in_place(async move {
+        let client = minio_client().await?;
+        let payload_bytes = bytes.to_vec();
+
+        for attempt in 0..MINIO_MIRROR_MAX_ATTEMPTS {
+            if let Err(err) = ensure_minio_bucket_exists(&client, &bucket).await {
+                let message = err.to_string();
+                if attempt + 1 < MINIO_MIRROR_MAX_ATTEMPTS && is_retryable_minio_error(&message) {
+                    thread::sleep(Duration::from_millis(MINIO_MIRROR_BACKOFF_MS * (attempt as u64 + 1)));
+                    continue;
+                }
+                return Err(CircuitFsError::MinioMirrorFailed {
+                    path: path.to_path_buf(),
+                    bucket: bucket.clone(),
+                    key: key.clone(),
+                    message,
+                });
+            }
+
+            match client
+                .put_object()
+                .bucket(bucket.clone())
+                .key(key.clone())
+                .body(aws_sdk_s3::primitives::ByteStream::from(payload_bytes.clone()))
+                .send()
+                .await
+            {
+                Ok(_) => return Ok::<(), CircuitFsError>(()),
+                Err(err) => {
+                    let message = err.to_string();
+                    if attempt + 1 < MINIO_MIRROR_MAX_ATTEMPTS && is_retryable_minio_error(&message) {
+                        thread::sleep(Duration::from_millis(MINIO_MIRROR_BACKOFF_MS * (attempt as u64 + 1)));
+                        continue;
+                    }
+                    return Err(CircuitFsError::MinioMirrorFailed {
+                        path: path.to_path_buf(),
+                        bucket: bucket.clone(),
+                        key: key.clone(),
+                        message,
+                    });
+                }
+            }
+        }
+
+        Err(CircuitFsError::MinioMirrorFailed {
+            path: path.to_path_buf(),
+            bucket,
+            key,
+            message: "exhausted MinIO mirror retries".to_string(),
+        })
+    })
+}
+
+fn download_path_from_minio(path: &Path) -> Result<Option<Vec<u8>>, CircuitFsError> {
+    if !minio_enabled() {
+        return Ok(None);
+    }
+    let key = match path_key(path) {
+        Some(key) => key,
+        None => return Ok(None),
+    };
+    let bucket = minio_bucket();
+    block_on_maybe_in_place(async move {
+        let client = minio_client().await?;
+        match client.get_object().bucket(bucket).key(key).send().await {
+            Ok(output) => {
+                let data = output
+                    .body
+                    .collect()
+                    .await
+                    .map_err(|err| CircuitFsError::Io(io::Error::new(io::ErrorKind::Other, err)))?;
+                Ok(Some(data.into_bytes().to_vec()))
+            }
+            Err(_) => Ok(None),
+        }
+    })
+}
+
+fn list_refs_from_minio(prefix: &str) -> Result<Vec<String>, CircuitFsError> {
+    if !minio_enabled() {
+        return Ok(Vec::new());
+    }
+    let bucket = minio_bucket();
+    block_on_maybe_in_place(async move {
+        let client = minio_client().await?;
+        let key_prefix = prefix.strip_prefix("qfs://").unwrap_or(prefix);
+        let resp = client
+            .list_objects_v2()
+            .bucket(&bucket)
+            .prefix(key_prefix)
+            .send()
+            .await
+            .map_err(|err| CircuitFsError::Io(io::Error::new(io::ErrorKind::Other, err)))?;
+        let mut refs = Vec::new();
+        for item in resp.contents() {
+            if let Some(key) = item.key() {
+                refs.push(format!("qfs://{key}"));
+            }
+        }
+        refs.sort();
+        refs.dedup();
+        Ok(refs)
+    })
 }
 
 #[cfg(test)]
@@ -735,8 +1243,61 @@ mod tests {
         let tempdir = tempdir().expect("tempdir");
         let fs = CircuitFsLocal::new(tempdir.path());
 
-        let payload = b"PAR1-synthetic-parquet-payload";
-        fs.store_results_bundle("job-789", payload, "1.0.0")
+        let envelope = ResultEnvelope {
+            artifact_version: "1.0.0".to_string(),
+            schema_version: "scientific_result_bundle.v1".to_string(),
+            producer_version: "1.0.0".to_string(),
+            job_id: "job-789".to_string(),
+            workload_kind: "HybridWorkflow".to_string(),
+            result_ref: "results/result.json".to_string(),
+            manifest_ref: "results/manifest.json".to_string(),
+            created_at_epoch_ms: 1_718_181_234_000,
+            retention_policy: "pinned".to_string(),
+            lineage: CompiledArtifactLineage {
+                request_id: Some("req-789".to_string()),
+                source_ref: Some("qfs://jobs/job-789/input/program.eigen.py".to_string()),
+                source_sha256: Some("abc123".to_string()),
+            },
+            context: BTreeMap::from([("target".to_string(), "sim:local".to_string())]),
+            summary: BTreeMap::from([("execution_time_sec".to_string(), "0.015573".to_string())]),
+            measurements: vec![
+                ScientificMeasurement {
+                    metric_name: "execution_time_sec".to_string(),
+                    metric_kind: "summary".to_string(),
+                    metric_value: "0.015573".to_string(),
+                    metric_unit: "s".to_string(),
+                    stage_id: None,
+                    stage_key: None,
+                    step_index: Some(0),
+                    trial_index: Some(0),
+                    seed: Some(7),
+                    backend: Some("sim:local".to_string()),
+                    target: Some("sim:local".to_string()),
+                    trace_id: Some("trace-789".to_string()),
+                    traceparent: Some("00-trace-789-parent-01".to_string()),
+                    artifact_ref: Some("qfs://jobs/job-789/execution/execution.json".to_string()),
+                    attributes: BTreeMap::from([("kind".to_string(), "execution_summary".to_string())]),
+                },
+                ScientificMeasurement {
+                    metric_name: "shot_count".to_string(),
+                    metric_kind: "measurement".to_string(),
+                    metric_value: "8123".to_string(),
+                    metric_unit: "shots".to_string(),
+                    stage_id: Some("execute".to_string()),
+                    stage_key: Some("execute".to_string()),
+                    step_index: Some(5),
+                    trial_index: Some(0),
+                    seed: Some(7),
+                    backend: Some("sim:local".to_string()),
+                    target: Some("sim:local".to_string()),
+                    trace_id: Some("trace-789".to_string()),
+                    traceparent: Some("00-trace-789-parent-01".to_string()),
+                    artifact_ref: Some("qfs://jobs/job-789/results/counts.json".to_string()),
+                    attributes: BTreeMap::from([("bitstring".to_string(), "00".to_string())]),
+                },
+            ],
+        };
+        fs.store_results_bundle("job-789", &envelope, "1.0.0")
             .expect("store results bundle");
 
         let job_root = tempdir.path().join("jobs").join("job-789");
@@ -747,8 +1308,11 @@ mod tests {
 
         let result_json = read_json(&job_root.join("results/result.json"));
         assert_eq!(result_json["job_id"], "job-789");
+        assert_eq!(result_json["schema_version"], "scientific_result_bundle.v1");
+        assert_eq!(result_json["workload_kind"], "HybridWorkflow");
         assert_eq!(result_json["result_ref"], "results/result.json");
         assert_eq!(result_json["manifest_ref"], "results/manifest.json");
+        assert_eq!(result_json["measurements"].as_array().map(|rows| rows.len()), Some(2));
 
         let manifest_json = read_json(&job_root.join("results/manifest.json"));
         let artifacts = manifest_json["artifacts"]
@@ -761,8 +1325,16 @@ mod tests {
         assert!(artifact_paths.contains("results.parquet"));
         assert!(artifact_paths.contains("results/result.json"));
 
-        let parquet_bytes = fs::read(job_root.join("results.parquet")).expect("read parquet");
-        assert_eq!(parquet_bytes, payload);
+        let parquet_path = job_root.join("results.parquet");
+        let parquet_bytes = fs::read(&parquet_path).expect("read parquet");
+        assert!(parquet_bytes.starts_with(b"PAR1"));
+        assert!(parquet_bytes.ends_with(b"PAR1"));
+        let parquet_reader = parquet::file::reader::SerializedFileReader::new(
+            std::fs::File::open(&parquet_path).expect("open parquet"),
+        )
+        .expect("valid parquet");
+        let metadata = parquet::file::reader::FileReader::metadata(&parquet_reader);
+        assert_eq!(metadata.file_metadata().num_rows(), 2);
     }
 
     #[test]

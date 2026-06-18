@@ -16,9 +16,11 @@ spec:
     execution_profile: hybrid
     backend_target: sim:local
   metadata:
-    shots: "4096"
-    max_iters: "40"
+    shots: "8192"
+    max_iters: "60"
     optimizer: "cobyla"
     basis: "sto-3g"
     molecule: "H2"
+    seed: "7"
+    noise_model: "depolarizing:0.001"
     

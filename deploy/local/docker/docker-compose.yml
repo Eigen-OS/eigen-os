@@ -8,12 +8,12 @@ services:
       SYSTEM_API_GRPC_BIND: 0.0.0.0:50051
       SYSTEM_API_METRICS_PORT: 9090
       SYSTEM_API_AUTH_MODE: allow_all
-      EIGEN_QFS_LOCAL_ROOT: ${EIGEN_QFS_LOCAL_ROOT:-/tmp/eigen/qfs}
       EIGEN_QFS_BACKEND: s3
       EIGEN_QFS_S3_BUCKET: eigen-qfs
       EIGEN_QFS_S3_ENDPOINT: http://minio:9000
       AWS_ACCESS_KEY_ID: eigen
       AWS_SECRET_ACCESS_KEY: eigen-password
+      AWS_REGION: us-east-1
       KERNEL_ENDPOINT: eigen-kernel:50052
       EIGEN_KERNEL_ENDPOINT: eigen-kernel:50052
       EIGEN_COMPILER_ENDPOINT: eigen-compiler:50071
@@ -21,8 +21,6 @@ services:
     ports:
       - "50051:50051"
       - "9090:9090"
-    volumes:
-      - ${EIGEN_QFS_LOCAL_ROOT:-/tmp/eigen/qfs}:${EIGEN_QFS_LOCAL_ROOT:-/tmp/eigen/qfs}
       
     depends_on:
       - minio
@@ -62,18 +60,23 @@ services:
     container_name: eigen-kernel
     environment:
       EIGEN_KERNEL_ADDR: 0.0.0.0:50052
-      EIGEN_QFS_LOCAL_ROOT: ${EIGEN_QFS_LOCAL_ROOT:-/tmp/eigen/qfs}
-      EIGEN_QFS_ROOT: /tmp/eigen/qfs
+      EIGEN_QFS_BACKEND: s3
+      EIGEN_QFS_S3_BUCKET: eigen-qfs
+      EIGEN_QFS_S3_ENDPOINT: http://minio:9000
+      EIGEN_QFS_LOCAL_ROOT: /tmp/eigen/qfs
+      AWS_ACCESS_KEY_ID: eigen
+      AWS_SECRET_ACCESS_KEY: eigen-password
+      AWS_REGION: us-east-1
       EIGEN_COMPILER_ENDPOINT: http://eigen-compiler:50071
       DRIVER_MANAGER_ENDPOINT: http://driver-manager:50061
       RUST_LOG: info
     ports:
       - "50052:50052"
-    volumes:
-      - ${EIGEN_QFS_LOCAL_ROOT:-/tmp/eigen/qfs}:${EIGEN_QFS_LOCAL_ROOT:-/tmp/eigen/qfs}
     depends_on:
       - eigen-compiler
       - driver-manager
+      - minio
+      - minio-init
     restart: unless-stopped
 
   eigen-compiler:
@@ -84,6 +87,12 @@ services:
     environment:
       EIGEN_COMPILER_GRPC_BIND: 0.0.0.0:50071
       EIGEN_COMPILER_METRICS_PORT: 9093
+      EIGEN_QFS_BACKEND: s3
+      EIGEN_QFS_S3_BUCKET: eigen-qfs
+      EIGEN_QFS_S3_ENDPOINT: http://minio:9000
+      AWS_ACCESS_KEY_ID: eigen
+      AWS_SECRET_ACCESS_KEY: eigen-password
+      AWS_REGION: us-east-1
     ports:
       - "50071:50071"
       - "9093:9093"

@@ -13,6 +13,7 @@ dependencies = [
   "grpcio-status>=1.76",
   "protobuf>=6.33",
   "googleapis-common-protos>=1.72",
+  "boto3>=1.34",
 ]
 
 [tool.setuptools]

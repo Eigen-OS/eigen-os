@@ -41,9 +41,11 @@ RUST_ROOT = REPO_ROOT / "src" / "rust"
 def _shared_qfs_root(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
     previous_local_root = os.environ.get("EIGEN_QFS_LOCAL_ROOT")
     previous_root = os.environ.get("EIGEN_QFS_ROOT")
+    previous_backend = os.environ.get("EIGEN_QFS_BACKEND")
     qfs_root = tmp_path_factory.mktemp("system-api-qfs")
     os.environ["EIGEN_QFS_LOCAL_ROOT"] = str(qfs_root)
     os.environ["EIGEN_QFS_ROOT"] = str(qfs_root)
+    os.environ["EIGEN_QFS_BACKEND"] = "local"
     try:
         yield
     finally:
@@ -55,6 +57,10 @@ def _shared_qfs_root(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]
             os.environ.pop("EIGEN_QFS_ROOT", None)
         else:
             os.environ["EIGEN_QFS_ROOT"] = previous_root
+        if previous_backend is None:
+            os.environ.pop("EIGEN_QFS_BACKEND", None)
+        else:
+            os.environ["EIGEN_QFS_BACKEND"] = previous_backend
 
 
 def _free_port() -> int:

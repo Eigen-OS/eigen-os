@@ -1,6 +1,6 @@
 # H2 VQE demo (simulator)
 
-A polished VQE example for the local simulator. This variant keeps the source fully Eigen-Lang-native and avoids external optimizer imports so it stays aligned with the current language contract.
+A reproducible VQE example for the local simulator. This variant is designed to be useful beyond a smoke test: it exposes optimizer state, explicit observables, and metadata that make runs comparable across versions.
 
 ## What it shows
 
@@ -11,7 +11,7 @@ A polished VQE example for the local simulator. This variant keeps the source fu
 
 ## Files
 
-- `program.eigen` / `program.eigen.py` — simulator-targeted H2 demo program.
+- `program.eigen` / `program.eigen.py` — simulator-targeted H2 benchmark program.
 - `job.yaml` — JobSpec for `eigen submit`.
 
 ## Run
@@ -24,16 +24,19 @@ eigen watch <job_id>
 eigen results <job_id>
 ```
 
-## Expected behavior
+## What to expect
 
 A healthy simulator run should produce:
 
 - non-empty counts,
-- several optimization iterations,
-- a decreasing objective trend in the early steps,
-- stable terminal results once the optimizer converges.
+- reproducible results for the same seed and backend configuration,
+- a final report with `energy`, `parameters`, `method`, and `optimizer_metadata`,
+- stable terminal results that are easy to compare in CI or benchmark runs.
 
 ## Notes
 
-- The Hamiltonian label (`H2_sto-3g`) is intentionally declarative.
-- The example stays within the Eigen-Lang surface documented in `docs/reference/eigen-lang.md`.
+- The Hamiltonian is represented as an explicit observable so the example is
+  easier to reason about and extend.
+- The program returns structured data rather than a bare scalar, which makes it
+  more convenient for downstream analysis and regression tracking.
+- The example stays within the Eigen-Lang surface documented ineigen-lang.md`.
