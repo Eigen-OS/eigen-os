@@ -90,6 +90,8 @@ Identical inputs:
 - target metadata,
 - referenced artifacts
 
+The compiler also resolves a workload-family profile from the normalized workload contract before lowering. That profile becomes part of compiler metadata and can change validation and lowering decisions without changing AQO's top-level schema.
+
 MUST produce identical AQO output.
 
 Server-side user code execution is prohibited. Compilation operates on an allowlisted Python AST subset and performs parsing/validation/transformation only.
@@ -103,6 +105,10 @@ The same Eigen-Lang program SHOULD execute on any supported backend through comp
 - compiler target passes,
 - driver translation layers,
 - runtime scheduling logic.
+
+The compiler MUST validate backend / target compatibility before emission. Backend-specific routing decisions are visible only in compiler metadata and runtime envelopes, not in AQO top-level fields. The compiler emits a deterministic backend contract summary that records the resolved target class, allowed emission mode, and bounded routing decisions.
+
+Unsupported backend transformations MUST fail at compile time. The core IR remains backend-agnostic; backend details are projected into metadata that is stable, bounded, and testable.
 
 ---
 

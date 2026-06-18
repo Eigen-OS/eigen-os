@@ -27,8 +27,4 @@ for entry in "${services[@]}"; do
   fi
 done
 
-if [[ -d "$ROOT_DIR/src/services/eigen-lang" ]]; then
-  echo "==> Skipping eigen-lang (service scaffold has no tests yet)"
-fi
-
 echo "Coverage XML reports are available in: $COVERAGE_DIR"

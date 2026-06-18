@@ -14,18 +14,24 @@ from eigen.api.v1 import types_pb2 as types_pb
 
 from .grpc_server import serve
 from .knowledge_base import KnowledgeBaseService
-from .production_trace_training import prepare_training_dataset_manifest
 from .observability import JsonFormatter, start_metrics_server
+from .production_trace_training import prepare_training_dataset_manifest
 
 
 def _load_manifest(path: Path) -> dict[str, object]:
     return json.loads(path.read_text(encoding="utf-8"))
- 
+
 
 def _serve() -> int:
-
     metrics_port = int(os.getenv("NEURO_SYMBOLIC_METRICS_PORT", "50082"))
     start_metrics_server(metrics_port)
+    server = serve()
+    try:
+        server.wait_for_termination()
+    except KeyboardInterrupt:  # pragma: no cover
+        server.stop(grace=0)
+    return 0
+
 
 def _ingest_dataset(manifest_path: Path, *, caller_identity: str) -> int:
     service = KnowledgeBaseService(kb_pb=kb_pb, types_pb=types_pb)
@@ -82,10 +88,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "ingest-production-traces":
         return _ingest_production_traces(args.manifest, caller_identity=args.caller_identity)
     return _serve()
-
-    server = serve()
-    server.wait_for_termination()
-    return 0
 
 
 if __name__ == "__main__":

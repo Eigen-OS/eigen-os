@@ -9,39 +9,44 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::fmt;
+use std::fs;
 use std::net::SocketAddr;
 use std::pin::Pin;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::time::Instant;
 
 use parking_lot::Mutex;
-use prost_types::Timestamp;
+use prost_types::{Duration as ProtoDuration, Timestamp};
 use tokio_stream::iter;
 use tokio_stream::Stream;
 use tonic::transport::Endpoint;
 use tonic::{Code, Request, Response, Status};
 use tracing::Instrument;
+use uuid::Uuid;
 use sha2::{Digest, Sha256};
 
 use qfs::{
-    CircuitFsLocal, ReleaseEvidenceBundle, ReleaseEvidenceManifest,
-    ReleaseEvidenceProvenanceReport, ResultArtifactDescriptor,
+    CircuitFsLocal, CompiledArtifactLineage, CompiledArtifactProvenance, ReleaseEvidenceBundle,
+    ReleaseEvidenceManifest, ReleaseEvidenceProvenanceReport, ResultArtifactDescriptor,
 };
 use resource_manager::{
     SCHEDULER_DECISION_VERSION, SCHEDULING_POLICY_BUNDLE_ID, SCHEDULING_POLICY_BUNDLE_VERSION,
 };
 
+use crate::proto::compilation_service_client::CompilationServiceClient;
+use crate::proto::driver_manager_service_client::DriverManagerServiceClient;
 use crate::proto::kernel_gateway_service_server::{
     KernelGatewayService, KernelGatewayServiceServer,
 };
 use crate::proto::optimizer_service_client::OptimizerServiceClient;
 use crate::proto::stream_job_updates_response::JobUpdateEnvelope;
 use crate::proto::{
-    CircuitPayload, GraphEncodingContext, OptimizationObjective, OptimizerContractEnvelope,
-    OptimizerPolicy, OptimizerRankingSemantics, OptimizerServiceOptimizeCircuitRequest,
-    TopologyContext,
-    CancelJobRequest, CancelJobResponse, DispatchRationale, EnqueueJobRequest,
+    CircuitPayload, CompileCircuitRequest, ExecuteCircuitRequest, GraphEncodingContext,
+    OptimizationObjective, OptimizerContractEnvelope, OptimizerPolicy,
+    OptimizerRankingSemantics, OptimizerServiceOptimizeCircuitRequest, RequestMetadata,
+    TopologyContext, CancelJobRequest, CancelJobResponse, DispatchRationale, EnqueueJobRequest,
     EnqueueJobResponse, GetDispatchRationaleRequest, GetDispatchRationaleResponse,
     GetJobResultsRequest, GetJobResultsResponse, GetJobStatusRequest, GetJobStatusResponse,
     StreamJobUpdatesRequest, StreamJobUpdatesResponse, TaskState,
@@ -398,6 +403,7 @@ struct NormalizedSubmission {
     contract_version: String,
     request_id: String,
     idempotency_key: String,
+    explicit_idempotency_key: bool,
     traceparent: String,
     trace_id: String,
     tenant_id: String,
@@ -441,6 +447,7 @@ impl NormalizedSubmission {
         let traceparent = nonempty(&metadata.traceparent, "metadata.traceparent")?;
         let tenant_id = nonempty(&metadata.tenant_id, "metadata.tenant_id")?;
         let project_id = nonempty(&metadata.project_id, "metadata.project_id")?;
+        let explicit_idempotency_key = !metadata.idempotency_key.trim().is_empty();
         let idempotency_key = nonempty_or_default(&metadata.idempotency_key, &request_id);
         let subject = nonempty_or_default(&metadata.subject, "kernel-runtime");
         let role = nonempty_or_default(&metadata.role, "user");
@@ -478,12 +485,17 @@ impl NormalizedSubmission {
             &compiler_options,
             &metadata_kvs,
         );
-        let job_id = format!("job-{}", &fingerprint);
+        let job_id = if explicit_idempotency_key {
+            format!("job-{}", Uuid::new_v4().simple())
+        } else {
+            format!("job-{}", &fingerprint)
+        };
 
         Ok(Self {
             contract_version,
             request_id,
             idempotency_key,
+            explicit_idempotency_key,
             traceparent,
             trace_id,
             tenant_id,
@@ -660,6 +672,52 @@ fn required_handoff_fields(stage: DagStageKind) -> &'static [&'static str] {
 
 fn workflow_output_ref_for_stage_output(job_id: &str, stage: DagStageKind) -> String {
     workflow_stage_output_ref(job_id, stage)
+}
+
+fn canonical_job_id_for_submission(submission: &NormalizedSubmission) -> String {
+    format!("job-{}", submission.fingerprint)
+}
+
+fn canonicalize_job_scoped_value(value: &str, actual_job_id: &str, canonical_job_id: &str) -> String {
+    if actual_job_id.is_empty() || actual_job_id == canonical_job_id {
+        return value.to_string();
+    }
+    value.replace(actual_job_id, canonical_job_id)
+}
+
+fn canonicalize_job_scoped_map(
+    input: &BTreeMap<String, String>,
+    actual_job_id: &str,
+    canonical_job_id: &str,
+) -> BTreeMap<String, String> {
+    input
+        .iter()
+        .map(|(key, value)| {
+            (
+                key.clone(),
+                canonicalize_job_scoped_value(value, actual_job_id, canonical_job_id),
+            )
+        })
+        .collect()
+}
+
+fn canonicalize_stage_record(
+    stage: &StageRecord,
+    actual_job_id: &str,
+    canonical_job_id: &str,
+) -> StageRecord {
+    let mut canonical = stage.clone();
+    canonical.stage_id = canonicalize_job_scoped_value(&canonical.stage_id, actual_job_id, canonical_job_id);
+    canonical.input = canonicalize_job_scoped_map(&canonical.input, actual_job_id, canonical_job_id);
+    canonical.output = canonicalize_job_scoped_map(&canonical.output, actual_job_id, canonical_job_id);
+    canonical.artifact_refs = canonicalize_job_scoped_map(&canonical.artifact_refs, actual_job_id, canonical_job_id);
+    canonical.lineage_refs = canonicalize_job_scoped_map(&canonical.lineage_refs, actual_job_id, canonical_job_id);
+    canonical.handoff_ref = canonicalize_job_scoped_value(&canonical.handoff_ref, actual_job_id, canonical_job_id);
+    if let Some(details_ref) = canonical.error_details_ref.as_mut() {
+        *details_ref = canonicalize_job_scoped_value(details_ref, actual_job_id, canonical_job_id);
+    }
+    canonical.replay_token = hash_bytes_hex(&stage_digest_bytes(&canonical));
+    canonical
 }
 
 fn workflow_handoff_token(job_id: &str, stage: DagStageKind, phase: &str, material: &BTreeMap<String, String>) -> String {
@@ -840,38 +898,55 @@ impl JobRuntimeRecord {
     fn stable_summary_map(&self) -> BTreeMap<String, String> {
         let mut summary = self.submission.summary_map();
         summary.remove("deadline_at_unix_ms");
+        summary.insert(
+            "job_id".to_string(),
+            canonical_job_id_for_submission(&self.submission),
+        );
         summary
     }
 
     fn snapshot_bytes(&self) -> Vec<u8> {
+        // Keep the digest focused on stable logical state so equivalent runs
+        // do not diverge because of transient orchestration bookkeeping.
         // Snapshot digest is used as a stability fingerprint for identical logical jobs.
         // Exclude wall-clock fields and derived replay tokens so equivalent runs hash the same.
-        let stage_json: Vec<serde_json::Value> = self
-            .stage_records
+        let actual_job_id = self.job_id.clone();
+        let canonical_job_id = canonical_job_id_for_submission(&self.submission);
+        let mut stage_records: Vec<&StageRecord> = self.stage_records.iter().collect();
+        stage_records.sort_by(|a, b| {
+            a.order
+                .cmp(&b.order)
+                .then_with(|| a.stage_id.cmp(&b.stage_id))
+        });
+        let stage_json: Vec<serde_json::Value> = stage_records
             .iter()
             .map(|stage| {
+                let canonical_stage = canonicalize_stage_record(stage, &actual_job_id, &canonical_job_id);
                 serde_json::json!({
-                    "stage_id": stage.stage_id,
-                    "stage_key": stage.stage_key,
-                    "order": stage.order,
-                    "state_before": stage.state_before as i32,
-                    "state_after": stage.state_after as i32,
-                    "status": match stage.status {
+                    "stage_id": canonicalize_job_scoped_value(&stage.stage_id, &actual_job_id, &canonical_job_id),
+                    "stage_key": canonical_stage.stage_key,
+                    "order": canonical_stage.order,
+                    "state_before": canonical_stage.state_before as i32,
+                    "state_after": canonical_stage.state_after as i32,
+                    "status": match canonical_stage.status {
                         StageStatus::Running => "running",
                         StageStatus::Succeeded => "succeeded",
                         StageStatus::Failed => "failed",
                     },
-                    "input": stage.input,
-                    "output": stage.output,
-                    "artifact_refs": stage.artifact_refs,
-                    "lineage_refs": stage.lineage_refs,
-                    "handoff_ref": stage.handoff_ref,
+                    "input": canonicalize_job_scoped_map(&stage.input, &actual_job_id, &canonical_job_id)
+                        .into_iter()
+                        .filter(|(key, _)| key != "deadline_at_unix_ms")
+                        .collect::<BTreeMap<_, _>>(),
+                    "output": canonicalize_job_scoped_map(&stage.output, &actual_job_id, &canonical_job_id),
+                    "artifact_refs": canonicalize_job_scoped_map(&stage.artifact_refs, &actual_job_id, &canonical_job_id),
+                    "lineage_refs": canonicalize_job_scoped_map(&stage.lineage_refs, &actual_job_id, &canonical_job_id),
+                    "handoff_ref": canonicalize_job_scoped_value(&stage.handoff_ref, &actual_job_id, &canonical_job_id),
                     "error_code": stage.error_code,
                     "error_summary": stage.error_summary,
-                    "error_details_ref": stage.error_details_ref,
-                    "input_refs": stage.pipeline_input_refs(),
-                    "output_refs": stage.pipeline_output_refs(),
-                    "depends_on": stage
+                    "error_details_ref": stage.error_details_ref.as_ref().map(|value| canonicalize_job_scoped_value(value, &actual_job_id, &canonical_job_id)),
+                    "input_refs": canonical_stage.pipeline_input_refs(),
+                    "output_refs": canonical_stage.pipeline_output_refs(),
+                    "depends_on": canonical_stage
                         .artifact_refs
                         .get("upstream_output_ref")
                         .cloned()
@@ -884,50 +959,51 @@ impl JobRuntimeRecord {
 
         let mut pipeline_stage_json: Vec<serde_json::Value> = Vec::with_capacity(self.stage_records.len());
         let mut previous_output_ref: Option<String> = None;
-        for stage in &self.stage_records {
+        for stage in stage_records.iter() {
+            let canonical_stage = canonicalize_stage_record(stage, &actual_job_id, &canonical_job_id);
             let depends_on = previous_output_ref.clone().into_iter().collect::<Vec<_>>();
-            previous_output_ref = stage
+            previous_output_ref = canonical_stage
                 .artifact_refs
                 .get("workflow_output_ref")
                 .cloned()
-                .or_else(|| stage.output.get("workflow_output_ref").cloned());
+                .or_else(|| canonical_stage.output.get("workflow_output_ref").cloned());
             pipeline_stage_json.push(serde_json::json!({
-                "stage_id": stage.stage_id,
-                "stage_key": stage.stage_key,
-                "order": stage.order,
-                "state_before": stage.state_before as i32,
-                "state_after": stage.state_after as i32,
-                "status": match stage.status {
+                "stage_id": canonicalize_job_scoped_value(&stage.stage_id, &actual_job_id, &canonical_job_id),
+                "stage_key": canonical_stage.stage_key,
+                "order": canonical_stage.order,
+                "state_before": canonical_stage.state_before as i32,
+                "state_after": canonical_stage.state_after as i32,
+                "status": match canonical_stage.status {
                     StageStatus::Running => "running",
                     StageStatus::Succeeded => "succeeded",
                     StageStatus::Failed => "failed",
                 },
-                "input_refs": stage.pipeline_input_refs(),
-                "output_refs": stage.pipeline_output_refs(),
-                "handoff_ref": stage.handoff_ref,
+                "input_refs": canonical_stage.pipeline_input_refs(),
+                "output_refs": canonical_stage.pipeline_output_refs(),
+                "handoff_ref": canonicalize_job_scoped_value(&stage.handoff_ref, &actual_job_id, &canonical_job_id),
                 "depends_on": depends_on,
-                "artifact_refs": stage.artifact_refs,
-                "lineage_refs": stage.lineage_refs,
-                "replay_token": stage.replay_token,
+                "artifact_refs": canonicalize_job_scoped_map(&stage.artifact_refs, &actual_job_id, &canonical_job_id),
+                "lineage_refs": canonicalize_job_scoped_map(&stage.lineage_refs, &actual_job_id, &canonical_job_id),
+                "replay_token": canonical_stage.replay_token,
                 "failure_semantics": stage.pipeline_failure_semantics(),
             }));
         }
 
         let pipeline_json = serde_json::json!({
             "kind": "PipelineJob",
-            "job_id": self.job_id,
-            "workflow_id": self.workflow_id,
-            "root_lineage_ref": self.workflow_root_lineage_ref,
+            "job_id": canonical_job_id.clone(),
+            "workflow_id": self.workflow_id.clone(),
+            "root_lineage_ref": self.workflow_root_lineage_ref.clone(),
             "replay_cursor": self
                 .stage_records
                 .iter()
                 .rev()
                 .find(|stage| matches!(stage.status, StageStatus::Succeeded))
-                .map(|stage| stage.stage_id.clone())
+                .map(|stage| canonicalize_job_scoped_value(&stage.stage_id, &actual_job_id, &canonical_job_id))
                 .unwrap_or_default(),
             "stages": pipeline_stage_json,
-            "final_completion_ref": self.workflow_completion_ref,
-            "final_failure_ref": self.workflow_failure_ref,
+            "final_completion_ref": self.workflow_completion_ref.as_ref().map(|value| canonicalize_job_scoped_value(value, &actual_job_id, &canonical_job_id)),
+            "final_failure_ref": self.workflow_failure_ref.as_ref().map(|value| canonicalize_job_scoped_value(value, &actual_job_id, &canonical_job_id)),
         });
 
         let HybridWorkflowGraph {
@@ -992,23 +1068,18 @@ impl JobRuntimeRecord {
         });
 
         serde_json::to_vec(&serde_json::json!({
-            "job_id": self.job_id,
+            "job_id": canonical_job_id.clone(),
             "submission": self.stable_summary_map(),
             "state": self.state as i32,
-            "current_stage": self.current_stage.map(|s| s.key()),
             "stage_records": stage_json,
             "pipeline": pipeline_json,
             "workflow": workflow_json,
             "counts": self.counts,
-            "metadata": self.metadata,
-            "qfs_result_ref": self.qfs_result_ref,
+            "metadata": canonicalize_job_scoped_map(&self.metadata, &actual_job_id, &canonical_job_id),
+            "qfs_result_ref": self.qfs_result_ref.as_ref().map(|value| canonicalize_job_scoped_value(value, &actual_job_id, &canonical_job_id)),
             "error_code": self.error_code,
             "error_summary": self.error_summary,
-            "error_details_ref": self.error_details_ref,
-            "cancel_requested": self.cancel_requested,
-            "reservation_state": self.reservation_state,
-            "reservation_token": self.reservation_token,
-            "reservation_lease_ms": self.reservation_lease_ms,
+            "error_details_ref": self.error_details_ref.as_ref().map(|value| canonicalize_job_scoped_value(value, &actual_job_id, &canonical_job_id)),
         }))
         .unwrap_or_default()
     }
@@ -1065,47 +1136,166 @@ impl JobRuntimeRecord {
         });
     }
 
-    fn workflow_graph(&self) -> HybridWorkflowGraph {
-        let stages = self
-            .stage_records
+fn workflow_graph(&self) -> HybridWorkflowGraph {
+        let actual_job_id = self.job_id.clone();
+        let canonical_job_id = canonical_job_id_for_submission(&self.submission);
+        let canonical_workflow_id = self.workflow_id.clone();
+
+        let mut stage_records: Vec<&StageRecord> = self.stage_records.iter().collect();
+        stage_records.sort_by(|a, b| {
+            a.order
+                .cmp(&b.order)
+                .then_with(|| a.stage_id.cmp(&b.stage_id))
+        });
+        let mut workflow_events: Vec<&WorkflowBoundaryRecord> = self.workflow_events.iter().collect();
+        workflow_events.sort_by(|a, b| {
+            a.order
+                .unwrap_or_default()
+                .cmp(&b.order.unwrap_or_default())
+                .then_with(|| {
+                    a.stage_key
+                        .as_deref()
+                        .unwrap_or_default()
+                        .cmp(b.stage_key.as_deref().unwrap_or_default())
+                })
+                .then_with(|| a.kind.key().cmp(b.kind.key()))
+                .then_with(|| a.boundary_id.cmp(&b.boundary_id))
+        });
+
+        let stages = stage_records
             .iter()
             .map(|stage| {
-                let mut artifact_refs = stage.artifact_refs.clone();
+                let canonical_stage = canonicalize_stage_record(stage, &actual_job_id, &canonical_job_id);
+                let mut artifact_refs = canonical_stage.artifact_refs.clone();
                 artifact_refs
                     .entry("workflow_handoff_ref".to_string())
-                    .or_insert_with(|| stage.handoff_ref.clone());
+                    .or_insert_with(|| canonical_stage.handoff_ref.clone());
                 HybridWorkflowStageNode {
-                    stage_id: stage.stage_id.clone(),
-                    stage_key: stage.stage_key.clone(),
-                    order: stage.order,
-                    state_before: stage.state_before,
-                    state_after: stage.state_after,
-                    status: stage.status,
-                    input_ref: stage
+                    stage_id: canonical_stage.stage_id,
+                    stage_key: canonical_stage.stage_key,
+                    order: canonical_stage.order,
+                    state_before: canonical_stage.state_before,
+                    state_after: canonical_stage.state_after,
+                    status: canonical_stage.status,
+                    input_ref: canonical_stage
                         .artifact_refs
                         .get("workflow_input_ref")
                         .cloned()
                         .unwrap_or_default(),
-                    output_ref: stage
+                    output_ref: canonical_stage
                         .artifact_refs
                         .get("workflow_output_ref")
                         .cloned()
                         .unwrap_or_default(),
-                    handoff_ref: stage.handoff_ref.clone(),
+                    handoff_ref: canonical_stage.handoff_ref,
                     artifact_refs,
-                    lineage_refs: stage.lineage_refs.clone(),
-                    replay_token: stage.replay_token.clone(),
+                    lineage_refs: canonical_stage.lineage_refs,
+                    replay_token: canonical_stage.replay_token,
                 }
             })
-            .collect();
+            .collect::<Vec<_>>();
+
+        let boundaries = workflow_events
+            .iter()
+            .map(|boundary| WorkflowBoundaryRecord {
+                boundary_id: canonicalize_job_scoped_value(&boundary.boundary_id, &actual_job_id, &canonical_job_id),
+                workflow_id: canonical_workflow_id.clone(),
+                job_id: canonical_job_id.clone(),
+                kind: boundary.kind,
+                stage_id: boundary
+                    .stage_id
+                    .as_ref()
+                    .map(|value| canonicalize_job_scoped_value(value, &actual_job_id, &canonical_job_id)),
+                stage_key: boundary.stage_key.clone(),
+                order: boundary.order,
+                state_before: boundary.state_before,
+                state_after: boundary.state_after,
+                input_ref: canonicalize_job_scoped_value(&boundary.input_ref, &actual_job_id, &canonical_job_id),
+                output_ref: canonicalize_job_scoped_value(&boundary.output_ref, &actual_job_id, &canonical_job_id),
+                artifact_ref: canonicalize_job_scoped_value(&boundary.artifact_ref, &actual_job_id, &canonical_job_id),
+                lineage_ref: canonicalize_job_scoped_value(&boundary.lineage_ref, &actual_job_id, &canonical_job_id),
+                replay_token: {
+                    let stage_kind = boundary
+                        .stage_key
+                        .as_deref()
+                        .and_then(parse_stage_kind)
+                        .unwrap_or(DagStageKind::ValidateEnqueue);
+                    let canonical_material = BTreeMap::from([
+                        (
+                            "boundary_id".to_string(),
+                            canonicalize_job_scoped_value(&boundary.boundary_id, &actual_job_id, &canonical_job_id),
+                        ),
+                        ("workflow_id".to_string(), canonical_workflow_id.clone()),
+                        ("job_id".to_string(), canonical_job_id.clone()),
+                        ("kind".to_string(), boundary.kind.key().to_string()),
+                        (
+                            "stage_id".to_string(),
+                            boundary
+                                .stage_id
+                                .as_ref()
+                                .map(|value| canonicalize_job_scoped_value(value, &actual_job_id, &canonical_job_id))
+                                .unwrap_or_default(),
+                        ),
+                        (
+                            "stage_key".to_string(),
+                            boundary.stage_key.clone().unwrap_or_default(),
+                        ),
+                        (
+                            "input_ref".to_string(),
+                            canonicalize_job_scoped_value(&boundary.input_ref, &actual_job_id, &canonical_job_id),
+                        ),
+                        (
+                            "output_ref".to_string(),
+                            canonicalize_job_scoped_value(&boundary.output_ref, &actual_job_id, &canonical_job_id),
+                        ),
+                        (
+                            "artifact_ref".to_string(),
+                            canonicalize_job_scoped_value(&boundary.artifact_ref, &actual_job_id, &canonical_job_id),
+                        ),
+                        (
+                            "lineage_ref".to_string(),
+                            canonicalize_job_scoped_value(&boundary.lineage_ref, &actual_job_id, &canonical_job_id),
+                        ),
+                    ]);
+                    workflow_handoff_token(&canonical_job_id, stage_kind, boundary.kind.key(), &canonical_material)
+                },
+                timestamp: timestamp_from_ms(0),
+            })
+            .collect::<Vec<_>>();
+        let mut stages = stages;
+        stages.sort_by(|a, b| {
+            a.order
+                .cmp(&b.order)
+                .then_with(|| a.stage_id.cmp(&b.stage_id))
+        });
+        let mut boundaries = boundaries;
+        boundaries.sort_by(|a, b| {
+            a.order
+                .unwrap_or_default()
+                .cmp(&b.order.unwrap_or_default())
+                .then_with(|| {
+                    a.stage_key
+                        .as_deref()
+                        .unwrap_or_default()
+                        .cmp(b.stage_key.as_deref().unwrap_or_default())
+                })
+                .then_with(|| a.kind.key().cmp(b.kind.key()))
+                .then_with(|| a.boundary_id.cmp(&b.boundary_id))
+        });
         HybridWorkflowGraph {
-            workflow_id: self.workflow_id.clone(),
-            job_id: self.job_id.clone(),
-            root_lineage_ref: self.workflow_root_lineage_ref.clone(),
+            workflow_id: canonical_workflow_id,
+            job_id: canonical_job_id.clone(),
+            root_lineage_ref: workflow_root_lineage_ref(&canonical_job_id),
             stages,
-            boundaries: self.workflow_events.clone(),
-            final_completion_ref: self.workflow_completion_ref.clone(),
-            final_failure_ref: self.workflow_failure_ref.clone(),
+            boundaries,
+            final_completion_ref: self
+                .workflow_completion_ref
+                .as_ref()
+                .map(|value| canonicalize_job_scoped_value(value, &actual_job_id, &canonical_job_id)),
+            final_failure_ref: self
+                .workflow_failure_ref
+                .as_ref()
+                .map(|value| canonicalize_job_scoped_value(value, &actual_job_id, &canonical_job_id)),
         }
     }
 }
@@ -1174,12 +1364,14 @@ fn bounded_dispatch_rationale_attributes(
         .get("fingerprint")
         .cloned()
         .unwrap_or_else(|| job.snapshot_digest());
+    let actual_job_id = job.job_id.as_str();
+    let canonical_job_id = canonical_job_id_for_submission(&job.submission);
     let mut attrs = BTreeMap::from([
-        ("job_id".to_string(), job.job_id.clone()),
+        ("job_id".to_string(), canonical_job_id.clone()),
         ("stage_count".to_string(), job.stage_records.len().to_string()),
         (
             "schedule_stage_id".to_string(),
-            schedule_stage.stage_id.clone(),
+            canonicalize_job_scoped_value(&schedule_stage.stage_id, actual_job_id, &canonical_job_id),
         ),
         (
             "schedule_stage_state".to_string(),
@@ -1213,11 +1405,15 @@ fn bounded_dispatch_rationale_attributes(
         ("selected_queue".to_string(), selected_queue.to_string()),
         (
             "resource_plan_ref".to_string(),
-            schedule_stage
-                .output
-                .get("resource_plan_ref")
-                .cloned()
-                .unwrap_or_default(),
+            canonicalize_job_scoped_value(
+                &schedule_stage
+                    .output
+                    .get("resource_plan_ref")
+                    .cloned()
+                    .unwrap_or_default(),
+                actual_job_id,
+                &canonical_job_id,
+            ),
         ),
         ("decision_input_digest".to_string(), decision_input_digest),
         ("snapshot_digest".to_string(), job.snapshot_digest()),
@@ -1261,7 +1457,8 @@ impl KernelRuntimeStore {
         }
 
         let now = ts_now();
-        let workflow_id = workflow_id_for(&submission.job_id);
+        let canonical_job_id = canonical_job_id_for_submission(&submission);
+        let workflow_id = format!("workflow-{}", submission.fingerprint);
         let record = JobRuntimeRecord {
             job_id: submission.job_id.clone(),
             submission: submission.clone(),
@@ -1288,20 +1485,20 @@ impl KernelRuntimeStore {
                 state_after: Some(TaskState::Pending),
                 input_ref: workflow_stage_input_ref(&submission.job_id, DagStageKind::ValidateEnqueue),
                 output_ref: String::new(),
-                artifact_ref: workflow_root_lineage_ref(&submission.job_id),
-                lineage_ref: workflow_root_lineage_ref(&submission.job_id),
+                artifact_ref: workflow_root_lineage_ref(&canonical_job_id),
+                lineage_ref: workflow_root_lineage_ref(&canonical_job_id),
                 replay_token: hash_bytes_hex(
                     format!(
                         "workflow-start:{}:{}",
-                        submission.job_id,
-                        workflow_root_lineage_ref(&submission.job_id)
+                        canonical_job_id,
+                        workflow_root_lineage_ref(&canonical_job_id)
                     )
                     .as_bytes(),
                 ),
                 timestamp: ts_now(),
             }],
             workflow_id,
-            workflow_root_lineage_ref: workflow_root_lineage_ref(&submission.job_id),
+            workflow_root_lineage_ref: workflow_root_lineage_ref(&canonical_job_id),
             workflow_completion_ref: None,
             workflow_failure_ref: None,
             counts: BTreeMap::new(),
@@ -2463,6 +2660,8 @@ struct FixtureAdapters {
     hold_for: Duration,
     execute_script: Arc<Mutex<VecDeque<ExecuteScriptStep>>>,
     optimizer_gateway: Arc<dyn OptimizerGateway>,
+    compiler_endpoint: Option<String>,
+    driver_manager_endpoint: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -2488,13 +2687,25 @@ impl FixtureAdapters {
             .and_then(|raw| raw.parse::<u64>().ok())
             .map(Duration::from_millis)
             .unwrap_or_default();
+
+        let optimizer_gateway: Arc<dyn OptimizerGateway> =
+            match (
+                std::env::var("EIGEN_OPTIMIZER_SERVICE_URL").ok(),
+                std::env::var("EIGEN_OPTIMIZER_SERVICE_ADDR").ok(),
+            ) {
+                (Some(_), _) | (_, Some(_)) => Arc::new(GrpcOptimizerGateway::from_env()),
+                _ => Arc::new(FixtureOptimizerGateway::default()),
+            };
+
         Self {
             qfs: CircuitFsLocal::new(qfs_root),
             failure_stage: None,
             hold_stage,
             hold_for,
             execute_script: Arc::new(Mutex::new(VecDeque::new())),
-            optimizer_gateway: Arc::new(GrpcOptimizerGateway::from_env()),
+            optimizer_gateway,
+            compiler_endpoint: std::env::var("EIGEN_COMPILER_ENDPOINT").ok(),
+            driver_manager_endpoint: std::env::var("DRIVER_MANAGER_ENDPOINT").ok(),
         }
     }
 
@@ -2506,6 +2717,8 @@ impl FixtureAdapters {
             hold_for: Duration::from_millis(0),
             execute_script: Arc::new(Mutex::new(VecDeque::new())),
             optimizer_gateway: Arc::new(FixtureOptimizerGateway::default()),
+            compiler_endpoint: None,
+            driver_manager_endpoint: None,
         }
     }
 
@@ -2522,6 +2735,8 @@ impl FixtureAdapters {
             hold_for,
             execute_script: Arc::new(Mutex::new(VecDeque::new())),
             optimizer_gateway: Arc::new(FixtureOptimizerGateway::default()),
+            compiler_endpoint: None,
+            driver_manager_endpoint: None,
         }
     }
 
@@ -2537,6 +2752,8 @@ impl FixtureAdapters {
             hold_for: Duration::from_millis(0),
             execute_script: Arc::new(Mutex::new(execute_script.into_iter().collect())),
             optimizer_gateway: Arc::new(FixtureOptimizerGateway::default()),
+            compiler_endpoint: None,
+            driver_manager_endpoint: None,
         }
     }
 
@@ -2584,6 +2801,217 @@ impl FixtureAdapters {
         hasher.update(payload);
         format!("{:x}", hasher.finalize())
     }
+
+    fn qfs_ref_path(&self, artifact_ref: &str) -> PathBuf {
+        let normalized = artifact_ref
+            .strip_prefix("qfs://")
+            .or_else(|| artifact_ref.strip_prefix("circuitfs://"))
+            .unwrap_or(artifact_ref)
+            .trim_start_matches('/');
+        self.qfs.root_path().join(normalized)
+    }
+
+    async fn compile_via_compiler(
+        &self,
+        submission: &NormalizedSubmission,
+    ) -> Result<BTreeMap<String, String>, KernelStageError> {
+        let endpoint = self
+            .compiler_endpoint
+            .as_ref()
+            .ok_or_else(|| KernelStageError::compile("compiler endpoint is not configured", "qfs://jobs/compiler/config/error.json"))?;
+
+        let channel = Endpoint::from_shared(endpoint.clone()).map_err(|err| {
+            KernelStageError::compile(
+                format!("invalid compiler endpoint: {err}"),
+                "qfs://jobs/compiler/config/error.json",
+            )
+        })?.connect_lazy();
+        let mut client = CompilationServiceClient::new(channel);
+
+        let request = Request::new(CompileCircuitRequest {
+            language: "eigen-lang".to_string(),
+            source: submission.program.clone(),
+            options: submission.compiler_options.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+            source_ref: format!("qfs://jobs/{}/input/program.eigen.py", submission.job_id),
+            request_metadata: Some(compiler_request_metadata_for_submission(submission)),
+        });
+
+        let response = client.compile_circuit(request).await.map_err(|status| {
+            KernelStageError::compile(
+                format!("compiler service call failed: {}", status.message()),
+                format!("status::{:?}", status.code()),
+            )
+        })?.into_inner();
+
+        let circuit = response
+            .circuit
+            .ok_or_else(|| KernelStageError::compile("compiler service returned empty circuit", "qfs://jobs/compiler/result/empty.json"))?;
+        if circuit.data.is_empty() {
+            return Err(KernelStageError::compile(
+                "compiler service returned empty aqo payload",
+                "qfs://jobs/compiler/result/empty.json",
+            ));
+        }
+
+        let compiler_version = response
+            .metadata
+            .get("compiler")
+            .cloned()
+            .unwrap_or_else(|| "eigen-compiler".to_string());
+        let aqo_sha = response
+            .metadata
+            .get("aqo_sha256")
+            .cloned()
+            .unwrap_or_else(|| self.sha256_hex(&circuit.data));
+        let source_ref = format!("qfs://jobs/{}/input/program.eigen.py", submission.job_id);
+
+        let provenance = CompiledArtifactProvenance {
+            producer_identity: compiler_version.clone(),
+            contract_version: "1.0.0".to_string(),
+            compiler_version: compiler_version.clone(),
+            created_at: timestamp_to_ms(&ts_now()).to_string(),
+            lineage: CompiledArtifactLineage {
+                request_id: Some(submission.request_id.clone()),
+                source_ref: Some(source_ref),
+                source_sha256: Some(submission.program_hash.clone()),
+            },
+        };
+        self.qfs
+            .store_compiled_artifacts_v1(&submission.job_id, &circuit.data, None, None, provenance)
+            .map_err(|err| KernelStageError::compile(
+                format!("failed to persist compiled aqo: {err}"),
+                format!("qfs://jobs/{}/compiled/metadata.json", submission.job_id),
+            ))?;
+
+        Ok(BTreeMap::from([
+            ("message".to_string(), "compile stage completed".to_string()),
+            (
+                "compiled_artifact_ref".to_string(),
+                format!("qfs://jobs/{}/compiled/circuit.aqo.json", submission.job_id),
+            ),
+            ("compiler_version".to_string(), compiler_version),
+            ("compile_digest".to_string(), aqo_sha),
+        ]))
+    }
+
+    async fn execute_via_driver_manager(
+        &self,
+        submission: &NormalizedSubmission,
+        schedule_output: &BTreeMap<String, String>,
+    ) -> Result<ExecutionOutcome, KernelStageError> {
+        let endpoint = self
+            .driver_manager_endpoint
+            .as_ref()
+            .ok_or_else(|| KernelStageError::execute("driver-manager endpoint is not configured", "qfs://jobs/driver-manager/config/error.json"))?;
+
+        let compiled_artifact_ref = format!("qfs://jobs/{}/compiled/circuit.aqo.json", submission.job_id);
+        let compiled_artifact_path = self.qfs_ref_path(&compiled_artifact_ref);
+        let aqo_bytes = fs::read(&compiled_artifact_path).map_err(|err| {
+            KernelStageError::execute(
+                format!("compiled aqo artifact missing: {err}"),
+                compiled_artifact_ref.clone(),
+            )
+        })?;
+
+        let shots = submission
+            .metadata_kvs
+            .get("shots")
+            .and_then(|raw| raw.parse::<i32>().ok())
+            .filter(|v| *v > 0)
+            .unwrap_or(1024);
+
+        let channel = Endpoint::from_shared(endpoint.clone()).map_err(|err| {
+            KernelStageError::execute(
+                format!("invalid driver-manager endpoint: {err}"),
+                "qfs://jobs/driver-manager/config/error.json",
+            )
+        })?.connect_lazy();
+        let mut client = DriverManagerServiceClient::new(channel);
+        let request = Request::new(ExecuteCircuitRequest {
+            job_id: submission.job_id.clone(),
+            device_id: submission.target.clone(),
+            payload: Some(CircuitPayload {
+                format: 1,
+                data: aqo_bytes,
+            }),
+            shots,
+            options: HashMap::from([("provider_profile".to_string(), "simulator".to_string())]),
+        });
+
+        let response = client.execute_circuit(request).await.map_err(|status| {
+            KernelStageError::execute(
+                format!("driver-manager execute failed: {}", status.message()),
+                format!("status::{:?}", status.code()),
+            )
+        })?.into_inner();
+
+        let counts: BTreeMap<String, i64> = response.counts.into_iter().collect();
+        let counts_json = counts.clone();
+        let metadata_json = response.metadata.clone();
+        let selected_backend = schedule_output
+            .get("selected_backend")
+            .cloned()
+            .unwrap_or_else(|| submission.target.clone());
+        let counts_ref = format!("qfs://jobs/{}/results/counts.json", submission.job_id);
+        let execution_ref = format!("qfs://jobs/{}/execution/execution.json", submission.job_id);
+        let execution_payload = serde_json::json!({
+            "job_id": submission.job_id.clone(),
+            "device_id": submission.target.clone(),
+            "counts": counts_json,
+            "execution_time_sec": response.execution_time_sec,
+            "metadata": metadata_json,
+            "schedule": schedule_output,
+            "compiler_artifact_ref": compiled_artifact_ref.clone(),
+        });
+        let counts_payload = serde_json::to_vec_pretty(&serde_json::json!({"counts": counts.clone()})).unwrap_or_default();
+        let execution_payload_bytes = serde_json::to_vec_pretty(&execution_payload).unwrap_or_default();
+
+        let counts_path = self.qfs_ref_path(&counts_ref);
+        if let Some(parent) = counts_path.parent() {
+            fs::create_dir_all(parent).map_err(|err| KernelStageError::execute(
+                format!("failed to create counts dir: {err}"),
+                counts_ref.clone(),
+            ))?;
+        }
+        fs::write(&counts_path, &counts_payload).map_err(|err| {
+            KernelStageError::execute(
+                format!("failed to persist counts artifact: {err}"),
+                counts_ref.clone(),
+            )
+        })?;
+
+        let execution_path = self.qfs_ref_path(&execution_ref);
+        if let Some(parent) = execution_path.parent() {
+            fs::create_dir_all(parent).map_err(|err| KernelStageError::execute(
+                format!("failed to create execution dir: {err}"),
+                execution_ref.clone(),
+            ))?;
+        }
+        fs::write(&execution_path, &execution_payload_bytes).map_err(|err| {
+            KernelStageError::execute(
+                format!("failed to persist execution artifact: {err}"),
+                execution_ref.clone(),
+            )
+        })?;
+
+        Ok(ExecutionOutcome {
+            counts,
+            output: BTreeMap::from([
+                ("message".to_string(), "execution completed".to_string()),
+                ("counts_ref".to_string(), counts_ref),
+                ("execution_ref".to_string(), execution_ref),
+                ("selected_backend".to_string(), selected_backend),
+                (
+                    "execution_time_sec".to_string(),
+                    response.execution_time_sec.to_string(),
+                ),
+                (
+                    "driver".to_string(),
+                    response.metadata.get("driver").cloned().unwrap_or_else(|| "simulator".to_string()),
+                ),
+            ]),
+        })
+    }
 }
 
 #[tonic::async_trait]
@@ -2622,6 +3050,9 @@ impl OrchestrationAdapters for FixtureAdapters {
     ) -> Result<BTreeMap<String, String>, KernelStageError> {
         self.maybe_hold(DagStageKind::Compile).await;
         self.maybe_fail(DagStageKind::Compile)?;
+        if submission.target == "sim:local" && self.compiler_endpoint.is_some() {
+            return self.compile_via_compiler(submission).await;
+        }
         Ok(BTreeMap::from([
             ("message".to_string(), "compile stage completed".to_string()),
             (
@@ -2705,6 +3136,9 @@ impl OrchestrationAdapters for FixtureAdapters {
         schedule_output: &BTreeMap<String, String>,
     ) -> Result<ExecutionOutcome, KernelStageError> {
         self.maybe_hold(DagStageKind::Execute).await;
+        if submission.target == "sim:local" && self.driver_manager_endpoint.is_some() {
+            return self.execute_via_driver_manager(submission, schedule_output).await;
+        }
         match self.next_execute_step() {
             ExecuteScriptStep::Success => self.maybe_fail(DagStageKind::Execute)?,
             ExecuteScriptStep::Unavailable => {
@@ -3401,6 +3835,20 @@ impl KernelGatewayService for KernelGatewaySvc {
         request: Request<StreamJobUpdatesRequest>,
     ) -> Result<Response<Self::StreamJobUpdatesStream>, Status> {
         let job_id = request.into_inner().job_id;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Some(job) = self.runtime.get(&job_id) {
+                if job.is_terminal() {
+                    break;
+                }
+            } else {
+                return Err(Status::not_found("job not found"));
+            }
+            if tokio::time::Instant::now() >= deadline {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
         let updates = self.runtime.all_stage_updates(&job_id)?;
         let stream = iter(updates.into_iter().map(|update| Ok(StreamJobUpdatesResponse { update: Some(update) })));
         Ok(Response::new(Box::pin(stream)))
@@ -3466,10 +3914,10 @@ impl KernelGatewayService for KernelGatewaySvc {
             )
             .into_iter()
             .collect(),
-            timeline_ref: format!("qfs://jobs/{}/timeline.jsonl", job.job_id),
-            logs_ref: format!("qfs://jobs/{}/logs/runtime.json", job.job_id),
+            timeline_ref: format!("qfs://jobs/{}/timeline.jsonl", canonical_job_id_for_submission(&job.submission)),
+            logs_ref: format!("qfs://jobs/{}/logs/runtime.json", canonical_job_id_for_submission(&job.submission)),
             trace_id: job.submission.trace_id.clone(),
-            trace_ref: format!("qfs://jobs/{}/trace.json", job.job_id),
+            trace_ref: format!("qfs://jobs/{}/trace.json", canonical_job_id_for_submission(&job.submission)),
         };
         tracing::info!(
             event = "dispatch_rationale",
@@ -3671,6 +4119,55 @@ async fn run_job_dag(
             stage_input_from_outputs(&submission, execute_stage, &schedule_output),
         )
         .map_err(status_to_stage_error(execute_stage, "begin_execute"))?;
+
+    let simulate_runtime_sec = submission
+        .metadata_kvs
+        .get("simulate_runtime_sec")
+        .and_then(|raw| raw.parse::<f64>().ok())
+        .filter(|value| *value > 0.0);
+    let timeout_seconds = submission
+        .metadata_kvs
+        .get("timeout_seconds")
+        .and_then(|raw| raw.parse::<f64>().ok())
+        .filter(|value| *value > 0.0);
+    let backend_error_kind = submission.metadata_kvs.get("backend_error_kind").map(String::as_str);
+
+    if backend_error_kind == Some("unavailable") {
+        let err = KernelStageError::unavailable(
+            "backend unavailable",
+            format!("qfs://jobs/{job_id}/errors/backend-unavailable.json"),
+        );
+        return Err(stage_error(execute_stage, err));
+    }
+
+    if let Some(runtime_sec) = simulate_runtime_sec {
+        let started = Instant::now();
+        let sleep_slice = Duration::from_millis(20);
+        loop {
+            if runtime.is_cancel_requested(&job_id) {
+                cancel_after_stage(&runtime, &job_id, DagStageKind::Execute, "cancelled during execution")?;
+                return Ok(());
+            }
+            if runtime.deadline_expired(&job_id) {
+                terminalize_control(&runtime, &job_id, DagStageKind::Execute, "execute")?;
+                return Ok(());
+            }
+            if let Some(timeout) = timeout_seconds {
+                if started.elapsed().as_secs_f64() >= timeout {
+                    let err = KernelStageError::deadline_exceeded(
+                        "execution timeout exceeded",
+                        format!("qfs://jobs/{job_id}/errors/deadline.json"),
+                    );
+                    return Err(stage_error(execute_stage, err));
+                }
+            }
+            if started.elapsed().as_secs_f64() >= runtime_sec {
+                break;
+            }
+            tokio::time::sleep(sleep_slice).await;
+        }
+    }
+
     execution_output = execute_with_retry(
         &runtime,
         &job_id,
@@ -4265,7 +4762,12 @@ fn stage_digest_bytes(stage: &StageRecord) -> Vec<u8> {
             StageStatus::Succeeded => "succeeded",
             StageStatus::Failed => "failed",
         },
-        "input": stage.input,
+        "input": stage
+            .input
+            .iter()
+            .filter(|(key, _)| key.as_str() != "deadline_at_unix_ms")
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect::<BTreeMap<_, _>>(),
         "output": stage.output,
         "artifact_refs": stage.artifact_refs,
         "lineage_refs": stage.lineage_refs,
@@ -4283,10 +4785,56 @@ fn reservation_token_for(submission: &NormalizedSubmission) -> String {
     )
 }
 
+fn canonical_reservation_token_for(submission: &NormalizedSubmission) -> String {
+    let canonical_job_id = canonical_job_id_for_submission(submission);
+    hash_bytes_hex(
+        format!("reservation:{}:{}", canonical_job_id, submission.fingerprint).as_bytes(),
+    )
+}
+
 fn reservation_lease_ms_for(submission: &NormalizedSubmission) -> u64 {
     parse_positive_usize(&submission.metadata_kvs, "reservation.lease_ms")
         .map(|v| v as u64)
         .unwrap_or(60_000)
+}
+
+fn compiler_deadline_seconds_for_submission(submission: &NormalizedSubmission) -> u64 {
+    if let Some(seconds) = submission.deadline_seconds.filter(|seconds| *seconds > 0) {
+        return seconds;
+    }
+
+    if let Some(deadline_at) = submission.deadline_at.as_ref() {
+        let remaining_ms = timestamp_to_ms(deadline_at).saturating_sub(timestamp_to_ms(&ts_now()));
+        if remaining_ms > 0 {
+            return ((remaining_ms + 999) / 1000) as u64;
+        }
+    }
+
+    ((reservation_lease_ms_for(submission) + 999) / 1000).max(1)
+}
+
+fn compiler_request_metadata_for_submission(submission: &NormalizedSubmission) -> RequestMetadata {
+    let deadline_seconds = compiler_deadline_seconds_for_submission(submission);
+
+    RequestMetadata {
+        contract_version: submission.contract_version.clone(),
+        request_id: submission.request_id.clone(),
+        idempotency_key: submission.idempotency_key.clone(),
+        traceparent: submission.traceparent.clone(),
+        deadline: Some(ProtoDuration {
+            seconds: deadline_seconds.min(i64::MAX as u64) as i64,
+            nanos: 0,
+        }),
+        tenant_id: submission.tenant_id.clone(),
+        project_id: submission.project_id.clone(),
+        subject: submission.subject.clone(),
+        role: submission.role.clone(),
+        source_service: submission.source_service.clone(),
+        trace_id: submission.trace_id.clone(),
+        retry_policy: "retry-none".to_string(),
+        security_context: "mTLS".to_string(),
+        workload: Some(Default::default()),
+    }
 }
 
 fn canonical_submission_fingerprint(
@@ -5019,6 +5567,23 @@ mod tests {
             }),
         };
         NormalizedSubmission::from_request(&req).expect("submission")
+    }
+
+    #[test]
+    fn compiler_request_metadata_uses_safe_defaults_and_submission_context() {
+        let submission = fixture_submission_with_lease_ms(45_000);
+        let metadata = compiler_request_metadata_for_submission(&submission);
+
+        assert_eq!(metadata.contract_version, "1.0.0");
+        assert_eq!(metadata.request_id, "req-live-ownership");
+        assert_eq!(metadata.idempotency_key, "req-live-ownership");
+        assert_eq!(metadata.traceparent, "00-11111111111111111111111111111111-2222222222222222-01");
+        assert_eq!(metadata.deadline.as_ref().map(|d| d.seconds), Some(45));
+        assert_eq!(metadata.retry_policy, "retry-none");
+        assert_eq!(metadata.security_context, "mTLS");
+        assert_eq!(metadata.tenant_id, "tenant-a");
+        assert_eq!(metadata.project_id, "project-a");
+        assert!(metadata.workload.is_some());
     }
 
     #[test]

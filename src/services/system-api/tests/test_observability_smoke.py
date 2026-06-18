@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import socket
 import urllib.request
+from datetime import datetime, timezone
 
 import pytest
 
@@ -199,7 +200,7 @@ def test_public_contract_marker_uses_bounded_labels_and_contract_version():
     }
 
 
-def test_submit_job_marker_and_traceparent_correlation_from_public_envelope(caplog):
+def test_submit_job_marker_and_traceparent_correlation_from_public_envelope(caplog, tmp_path, monkeypatch):
     class _Context:
         def invocation_metadata(self):
             return []
@@ -208,6 +209,8 @@ def test_submit_job_marker_and_traceparent_correlation_from_public_envelope(capl
             raise RuntimeError(f"{code}: {details}")
 
     _reset_public_contract_metrics()
+    monkeypatch.setenv("SYSTEM_API_IDEMPOTENCY_STORE_PATH", str(tmp_path / "idempotency.json"))
+    monkeypatch.setenv("SYSTEM_API_IDEMPOTENCY_TTL_SECONDS", "60")
     traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
     request = job_pb.SubmitJobRequest(
         name="observability-smoke",
@@ -221,8 +224,26 @@ def test_submit_job_marker_and_traceparent_correlation_from_public_envelope(capl
     )
 
     caplog.set_level("INFO", logger="system_api")
-    response = JobService(job_pb=job_pb, types_pb=types_pb).SubmitJob(request, _Context())
+    class _KernelClient:
+        _closed = False
 
+        async def enqueue_job(self, **_kwargs):
+            return {
+                "job_id": "job-observability-smoke",
+                "state": "TASK_STATE_PENDING",
+                "created_at": datetime.now(timezone.utc),
+            }
+
+        async def get_job_status(self, **_kwargs):
+            return {
+                "job_id": "job-observability-smoke",
+                "state": "TASK_STATE_PENDING",
+                "message": "accepted",
+                "created_at": datetime.now(timezone.utc),
+            }
+
+    service = JobService(job_pb=job_pb, types_pb=types_pb, kernel_client=_KernelClient())
+    response = service.SubmitJob(request, _Context())
     assert response.job_id
     assert _MetricsState.public_api_contract_requests_total[("1.0.0", "accepted")] == 1
     assert any(record.message == "rpc_start" for record in caplog.records)

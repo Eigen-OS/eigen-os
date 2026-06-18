@@ -93,6 +93,36 @@ PipelineJob
 ReplayJob
 ```
 
+### 2.1 Compiler workload profiles
+
+The compiler resolves a workload-family profile deterministically from `spec.workload.kind`, `runtime.mode`, and bounded compiler options. The compiler recognizes these profile-shaping keys:
+
+- `spec.workload.kind`
+- `runtime.mode`
+- `spec.workload.seed`
+- `spec.workload.backend_target`
+- `spec.workload.pipeline.stage_id`
+- `spec.workload.pipeline.handoff_ref`
+- `spec.workload.replay.enabled`
+- `distributed.enabled`
+- `distributed.target`
+- `distributed.partition_count`
+- `distributed.queue_provider`
+- `distributed.topology_hint`
+
+| Profile | Required semantic checks | Allowed rewrites | Forbidden transformations | Target / backend expectations | Replay or benchmark constraints | Observability requirements |
+|---|---|---|---|---|---|---|
+| `QuantumJob` | static AST subset, single entrypoint, no adaptive markers | normalization of measurements and literal angles | distributed, replay, benchmark, pipeline transforms | local simulator or quantum backend | benchmark/replay disabled | bounded trace + request identifiers |
+| `HybridWorkflow` | static AST subset, single entrypoint, hybrid markers allowed | hybrid annotation projection, expectation annotation projection | distributed, replay, pipeline transforms | simulator or cluster-adjacent backend | benchmark/replay disabled | bounded trace + request identifiers |
+| `DistributedJob` | static AST subset, single entrypoint, explicit topology | distributed topology projection, partition hints | benchmark, replay, pipeline transforms | `distributed.enabled=true`, `distributed.target`, `distributed.partition_count` | topology must be bounded | tenant/project-aware bounded observability |
+| `BenchmarkJob` | static AST subset, single entrypoint, fixed seed | none beyond deterministic metadata projection | adaptive minimize rewrites, distributed transforms | explicit backend target | seed and target required | benchmark-safe bounded telemetry only |
+| `PipelineJob` | static AST subset, single entrypoint, explicit handoff refs | pipeline handoff projection | benchmark and replay transforms | `source_ref` plus canonical handoff refs | stage id and handoff ref required | lineage-preserving bounded telemetry |
+| `ReplayJob` | static AST subset, single entrypoint, canonical source ref | replay lineage projection | adaptive minimize and pipeline transforms | `source_ref` required | replay enabled marker required | replay-safe bounded telemetry |
+
+Profile mismatches MUST fail with `INVALID_ARGUMENT`. The compiler MAY surface the selected profile in compiler metadata, but the AQO top-level contract remains unchanged.
+
+---
+
 `HybridWorkflow` jobs are replayed as explicit multi-stage runtime graphs. Stage handoff is represented through runtime envelope fields and lineage refs, not by adding orchestration semantics to AQO. Each stage boundary must remain reconstructable from stage input/output refs, handoff refs, and QFS lineage metadata.
 
 `DistributedJob` is the bounded distributed profile. Its workload contract MAY declare deterministic topology hints under `spec.workload.topology` using a `cluster_id`, a bounded `partition_count`, explicit `partition_ids`, and aligned `preferred_workers`. These hints are execution metadata only; they MUST remain orthogonal to AQO top-level fields and are carried through the internal workload contract to Kernel/QRTX, which mirrors them into runtime lineage/dispatch metadata without mutating the AQO payload.
@@ -180,6 +210,17 @@ Implicit runtime behavior is prohibited where it affects:
 - observability,
 - retry behavior,
 - distributed execution semantics.
+
+Backend target selection is normalized before emission. The compiler rejects unsupported backend/target combinations at compile time and records the resolved backend contract in compiler metadata. AQO stays backend-agnostic: backend routing, topology hints, and provider aliases are carried outside AQO top-level fields.
+
+Supported backend routing classes are:
+
+- `sim:local`
+- `cluster:*`
+- provider aliases such as `ibm:qpu`, `aws:braket`, `azure:quantum`
+- policy routing such as `runtime:auto`, `runtime:latency`, `runtime:cost`, `runtime:availability`, `runtime:deterministic`
+
+Unknown backend targets MUST fail with `INVALID_ARGUMENT`.
 
 ---
 

@@ -1,4 +1,4 @@
-from eigen_lang import Param, ExpectationValue, hybrid_program, minimize
+from eigen_lang import Param, ExpectationValue, hybrid_program, minimize, cnot, ry
 
 
 @hybrid_program(target="sim", shots=1024)

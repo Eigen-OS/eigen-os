@@ -86,6 +86,7 @@ def _build_handoff_bundle(result, *, optimizer_contract_version: str = "1.0.0") 
         "source_sha256": result.metadata["source_sha256"],
         "aqo_sha256": result.metadata["aqo_sha256"],
         "request_sha256": result.metadata["request_sha256"],
+        "compiler_passes_json": result.metadata["compiler_passes_json"],
         "decision_lineage_json": result.metadata["decision_lineage_json"],
         "observability_json": result.metadata["observability_json"],
         "explainability_json": result.metadata["explainability_json"],
@@ -131,10 +132,25 @@ def test_handoff_schema_is_versioned_and_bounded() -> None:
     assert set(handoff["envelope"]) == ALLOWED_HANDFOFF_ENVELOPE_FIELDS
     assert handoff["input_aqo"]["version"] == "1.0.0"
     assert handoff["input_aqo"]["operations"]
+    assert result.metadata["workload_profile"] == "QuantumJob"
 
+    pass_pipeline = json.loads(handoff["compiler_metadata"]["compiler_passes_json"])    
     decision_lineage = json.loads(handoff["compiler_metadata"]["decision_lineage_json"])
     observability = json.loads(handoff["compiler_metadata"]["observability_json"])
     explainability = json.loads(handoff["compiler_metadata"]["explainability_json"])
+    
+    assert pass_pipeline["version"] == "1.0.0"
+    assert [item["name"] for item in pass_pipeline["passes"]] == [
+        "lower_to_ir",
+        "rewrite_ir",
+        "validate_lowering",
+        "canonicalize_aqo",
+    ]
+    assert pass_pipeline["passes"][0]["output"]["operations"] == [
+        {"op": "RY", "params": {"theta": 1.0}, "q": [0]}
+    ]
+    assert pass_pipeline["passes"][1]["output"]["operations"][-1] == {"op": "MEASURE", "q": [0], "c": [0]}
+    assert decision_lineage["workload_profile"] == "QuantumJob"
 
     assert decision_lineage["contract_version"] == "1.0.0"
     assert decision_lineage["compiler_contract_version"] == "1.0.0"
@@ -175,7 +191,7 @@ def test_stable_identifier_propagation_across_boundary_is_deterministic() -> Non
         assert first.metadata[key] == second.metadata[key]
         assert first_handoff["envelope"][key] == second_handoff["envelope"][key]
 
-    for key in ("decision_lineage_json", "observability_json", "explainability_json"):
+    for key in ("compiler_passes_json", "decision_lineage_json", "observability_json", "explainability_json"):
         assert first.metadata[key] == second.metadata[key]
         assert first_handoff["compiler_metadata"][key] == second_handoff["compiler_metadata"][key]
 

@@ -3,7 +3,7 @@ kind: QuantumJob
 metadata:
   name: vqe-h2-demo
   labels:
-    example: "true"
+    example: "false"
     algorithm: "vqe"
     molecule: "H2"
 spec:
@@ -11,6 +11,10 @@ spec:
   entrypoint: vqe_h2
   target: sim:local
   priority: 60
+  workload:
+    kind: HybridWorkflow
+    execution_profile: hybrid
+    backend_target: sim:local
   metadata:
     shots: "4096"
     max_iters: "40"

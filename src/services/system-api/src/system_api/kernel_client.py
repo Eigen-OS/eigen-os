@@ -32,8 +32,14 @@ class KernelClientConfig:
     
     grpc_endpoint: str = field(
         default_factory=lambda: os.getenv(
-            "EIGEN_KERNEL_ADDR",
-            os.getenv("KERNEL_ENDPOINT", os.getenv("KERNEL_GRPC_ENDPOINT", "localhost:50052")),
+            "EIGEN_KERNEL_ENDPOINT",
+            os.getenv(
+                "KERNEL_ENDPOINT",
+                os.getenv(
+                    "KERNEL_GRPC_ENDPOINT",
+                    os.getenv("EIGEN_KERNEL_ADDR", "localhost:50052"),
+                ),
+            ),
         )
     )
     timeout_seconds: float = field(default_factory=lambda: float(os.getenv("KERNEL_GATEWAY_TIMEOUT_SECONDS", "30")))
@@ -217,7 +223,7 @@ class KernelGatewayClient:
             "security_context": md["security_context"],
         }
 
-        workload_obj = self._workload_proto(md.get("workload"))
+        workload_obj = self._workload_proto(workload)
         if workload_obj is not None:
             payload["workload"] = workload_obj
         deadline = md.get("deadline")

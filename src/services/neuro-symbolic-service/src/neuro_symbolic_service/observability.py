@@ -10,6 +10,7 @@ _METRICS_LOCK = threading.Lock()
 _REQUESTS_TOTAL = Counter()
 _DENIALS_TOTAL = Counter()
 _DECISIONS_TOTAL = Counter()
+_SUGGESTION_OUTCOMES_TOTAL = Counter()
 _READY = False
 _CONTRACT_VERSION = "1.0.0"
 
@@ -35,6 +36,11 @@ def record_decision(decision: str) -> None:
         _DECISIONS_TOTAL[str(decision)] += 1
 
 
+def record_suggestion_outcome(outcome: str) -> None:
+    with _METRICS_LOCK:
+        _SUGGESTION_OUTCOMES_TOTAL[str(outcome)] += 1
+
+
 def render_metrics_text() -> str:
     with _METRICS_LOCK:
         lines = [
@@ -43,6 +49,7 @@ def render_metrics_text() -> str:
             '# TYPE eigen_neuro_requests_total counter',
             '# TYPE eigen_neuro_denials_total counter',
             '# TYPE eigen_neuro_decisions_total counter',
+            '# TYPE eigen_neuro_suggestion_outcomes_total counter',
         ]
         for outcome, count in sorted(_REQUESTS_TOTAL.items()):
             lines.append(f'eigen_neuro_requests_total{{outcome="{outcome}"}} {count}')
@@ -50,6 +57,8 @@ def render_metrics_text() -> str:
             lines.append(f'eigen_neuro_denials_total{{reason="{reason}"}} {count}')
         for decision, count in sorted(_DECISIONS_TOTAL.items()):
             lines.append(f'eigen_neuro_decisions_total{{decision="{decision}"}} {count}')
+        for outcome, count in sorted(_SUGGESTION_OUTCOMES_TOTAL.items()):
+            lines.append(f'eigen_neuro_suggestion_outcomes_total{{outcome="{outcome}"}} {count}')
         return "\n".join(lines) + "\n"
 
 
@@ -71,6 +80,7 @@ class JsonFormatter(logging.Formatter):
             "policy_snapshot_version",
             "model_version",
             "decision",
+            "suggestion_outcome",
             "caller_id",
             "trace_id",
             "traceparent",

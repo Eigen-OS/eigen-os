@@ -17,6 +17,7 @@ ensure_generated()
 from eigen.internal.v1 import compilation_service_pb2 as comp_pb  # noqa: E402
 from eigen.internal.v1 import compilation_service_pb2_grpc as comp_pb_grpc  # noqa: E402
 from eigen.internal.v1 import neuro_symbolic_service_pb2 as nsc_pb  # noqa: E402
+from eigen.internal.v1 import kernel_gateway_pb2 as kernel_pb  # noqa: E402
 from eigen.internal.v1 import neuro_symbolic_service_pb2_grpc as nsc_pb_grpc  # noqa: E402
 from eigen.internal.v1 import types_pb2 as types_pb  # noqa: E402
 
@@ -38,6 +39,18 @@ def _extract_bad_request(err: grpc.RpcError) -> error_details_pb2.BadRequest:
     return bad
 
 
+def _extract_error_info(err: grpc.RpcError) -> error_details_pb2.ErrorInfo:
+    st = rpc_status.from_call(err)
+    assert st is not None
+    info = error_details_pb2.ErrorInfo()
+    assert len(st.details) >= 2
+    for detail in st.details:
+        if detail.Is(error_details_pb2.ErrorInfo.DESCRIPTOR):
+            assert detail.Unpack(info)
+            return info
+    raise AssertionError("expected ErrorInfo in grpc status details")
+
+
 def test_compile_circuit_happy_path(grpc_addr: str) -> None:
     channel = grpc.insecure_channel(grpc_addr)
     stub = comp_pb_grpc.CompilationServiceStub(channel)
@@ -56,9 +69,58 @@ def test_compile_circuit_happy_path(grpc_addr: str) -> None:
 
     assert resp.circuit.format == _enum_value(types_pb, "CIRCUIT_FORMAT_AQO_JSON", "AQO_JSON")
     assert resp.metadata["aqo_version"] == "1.0.0"
+    assert resp.metadata["workload_profile"] == "QuantumJob"
     assert len(resp.circuit.data) > 0
     assert resp.metadata["distributed.execution_metadata_version"] == "1.0.0"
     assert resp.metadata["distributed.enabled"] == "false"
+
+
+def test_compile_job_uses_request_metadata_workload_profile(grpc_addr: str) -> None:
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = comp_pb_grpc.CompilationServiceStub(channel)
+
+    request_metadata = kernel_pb.RequestMetadata()
+    request_metadata.contract_version = "1.0.0"
+    request_metadata.request_id = "req-hybrid-001"
+    request_metadata.trace_id = "trace-hybrid-001"
+    request_metadata.traceparent = "00-11111111111111111111111111111111-2222222222222222-01"
+    request_metadata.deadline.seconds = 60
+    request_metadata.retry_policy = "retry-none"
+    request_metadata.security_context = "compiler-test"
+    request_metadata.tenant_id = "tenant-a"
+    request_metadata.project_id = "project-a"
+    request_metadata.workload.kind = kernel_pb.WORKLOAD_FAMILY_KIND_HYBRID_WORKFLOW
+    request_metadata.workload.execution_profile = "hybrid"
+    request_metadata.workload.backend_target = "sim:local"
+
+    resp = stub.CompileJob(
+        comp_pb.CompileJobRequest(
+            job_id="job-hybrid-001",
+            language="eigen-lang",
+            source=(
+                b"from eigen_lang import hybrid_program, ry\n\n"
+                b"@hybrid_program(target=\"sim\", shots=1000)\n"
+                b"def main():\n"
+                b"    ry(0, theta=1.0)\n"
+            ),
+            request_metadata=request_metadata,
+        )
+    )
+
+    diagnostics = json.loads(resp.metadata["compiler_diagnostics_json"])
+    assert resp.metadata["workload_profile"] == "HybridWorkflow"
+    assert diagnostics["workload_profile"] == "HybridWorkflow"
+
+
+def test_compile_circuit_exposes_diagnostics_payload(grpc_addr: str) -> None:
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = comp_pb_grpc.CompilationServiceStub(channel)
+    resp = stub.CompileCircuit(comp_pb.CompileCircuitRequest(language="eigen-lang", source=b"from eigen_lang import hybrid_program\n@hybrid_program(target=\"sim\")\ndef main():\n    ry(0, theta=1.0)\n"))
+    diagnostics = json.loads(resp.metadata["compiler_diagnostics_json"])
+    assert diagnostics["contract_version"] == "1.0.0"
+    assert diagnostics["stage_order"] == ["parse", "validate_ast", "annotate", "lower_to_ir", "eigen_dpda", "canonicalize_aqo", "emit"]
+    assert diagnostics["backend_contract"]["backend_target_class"] == "implicit"
+    assert diagnostics["explainability"]["decision"] == "compiler_to_optimizer_handoff"
 
 
 def test_compile_circuit_emits_distributed_metadata_hints(grpc_addr: str) -> None:
@@ -87,6 +149,7 @@ def test_compile_circuit_emits_distributed_metadata_hints(grpc_addr: str) -> Non
     assert resp.metadata["distributed.execution_metadata_version"] == "1.0.0"
     assert resp.metadata["distributed.topology_hints_version"] == "1.0.0"
     assert resp.metadata["distributed.enabled"] == "true"
+    assert resp.metadata["workload_profile"] == "DistributedJob"
     assert resp.metadata["distributed.target"] == "cluster"
     assert resp.metadata["distributed.partition_count"] == "8"
     assert resp.metadata["distributed.queue_provider"] == "redis"
@@ -263,6 +326,107 @@ def test_compile_circuit_rejects_unsupported_distributed_config(grpc_addr: str) 
         "options.distributed.queue_provider",
         "options.distributed.topology_hint",
     ]
+
+
+def test_compile_circuit_rejects_backend_target_mismatch(grpc_addr: str) -> None:
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = comp_pb_grpc.CompilationServiceStub(channel)
+
+    with pytest.raises(grpc.RpcError) as e:
+        stub.CompileCircuit(
+            comp_pb.CompileCircuitRequest(
+                language="eigen-lang",
+                source=(
+                    b"from eigen_lang import hybrid_program\n\n"
+                    b"@hybrid_program()\n"
+                    b"def main():\n"
+                    b"    ry(0, theta=1.0)\n"
+                ),
+                options={
+                    "spec.workload.kind": "DistributedJob",
+                    "distributed.enabled": "true",
+                    "distributed.target": "cluster",
+                    "distributed.partition_count": "2",
+                    "spec.workload.backend_target": "sim:local",
+                },
+            )
+        )
+
+    assert e.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+    bad = _extract_bad_request(e.value)
+    info = _extract_error_info(e.value)
+    fields = {v.field for v in bad.field_violations}
+    assert "options.spec.workload.backend_target" in fields
+    descriptions = [v.description for v in bad.field_violations]
+    assert info.metadata["stage"] == "eigen_dpda"
+    assert info.metadata["rule"] == "compiler.profile.distributed.target_mismatch"
+    diagnostics = json.loads(info.metadata["diagnostics_json"])
+    assert diagnostics[0]["stage"] == "eigen_dpda"
+    assert diagnostics[0]["rule"] == "compiler.profile.distributed.target_mismatch"
+    assert any("distributed backend target" in v.description or "unsupported backend target" in v.description for v in bad.field_violations)
+
+
+@pytest.mark.parametrize(
+    "options,expected_fields,expected_snippet",
+    [
+        (
+            {
+                "workload.kind": "BenchmarkJob",
+                "spec.workload.backend_target": "sim:local",
+            },
+            {"options.spec.workload.seed"},
+            "BenchmarkJob requires spec.workload.seed",
+        ),
+        (
+            {
+                "workload.kind": "ReplayJob",
+                "spec.workload.replay.enabled": "true",
+            },
+            {"source_ref"},
+            "ReplayJob requires source_ref",
+        ),
+        (
+            {
+                "workload.kind": "PipelineJob",
+                "spec.workload.pipeline.stage_id": "stage-1",
+            },
+            {"options.spec.workload.pipeline.handoff_ref", "source_ref"},
+            "PipelineJob requires",
+        ),
+    ],
+)
+def test_compile_circuit_rejects_profile_specific_constraints(
+    grpc_addr: str,
+    options: dict[str, str],
+    expected_fields: set[str],
+    expected_snippet: str,
+) -> None:
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = comp_pb_grpc.CompilationServiceStub(channel)
+
+    with pytest.raises(grpc.RpcError) as e:
+        stub.CompileCircuit(
+            comp_pb.CompileCircuitRequest(
+                language="eigen-lang",
+                source=(
+                    b"from eigen_lang import hybrid_program\n\n"
+                    b"@hybrid_program()\n"
+                    b"def main():\n"
+                    b"    ry(0, theta=1.0)\n"
+                ),
+                options=options,
+            )
+        )
+
+    assert e.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+    bad = _extract_bad_request(e.value)
+    info = _extract_error_info(e.value)
+    assert expected_fields <= {v.field for v in bad.field_violations}
+    assert any(expected_snippet in v.description for v in bad.field_violations)
+    assert info.metadata["stage"] in {"request_validation", "eigen_dpda"}
+    assert info.metadata["rule"]
+    diagnostics = json.loads(info.metadata["diagnostics_json"])
+    assert diagnostics
 
 
 def _nsc_request(

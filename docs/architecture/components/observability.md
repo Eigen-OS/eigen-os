@@ -125,9 +125,17 @@ Errors MUST follow canonical gRPC status semantics and structured details (see e
 - correlation IDs,
 - optional artifact references (never raw sensitive payloads).
 
+Compiler failures additionally MUST carry stage-attributed diagnostics in structured details so that validation, lowering, and emission failures can be attributed without reading source code. The compiler service uses bounded diagnostics payloads with `stage`, `rule`, and `pass_name` fields, and logs the same correlation context already required for traces (`request_id`, `trace_id`, `traceparent`).
+
 ---
 
-### 4.3 Bounded label cardinality
+### 4.3 Compiler observability baseline
+
+The compiler service MUST keep stage labels bounded to the compiler stage contract and MUST surface machine-readable diagnostics for failed requests. Compiler explainability payloads are carried in metadata, while failure diagnostics are encoded in structured error details.
+
+---
+
+### 4.4 Bounded label cardinality
 
 Metric labels MUST remain bounded and deterministic.
 Metric labels MUST NOT include:
@@ -141,7 +149,7 @@ Correlation belongs in traces/logs and QFS artifacts, not metric labels.
 
 ---
 
-### 4.4 No sensitive leakage
+### 4.5 No sensitive leakage
 
 Telemetry MUST NOT expose:
 
@@ -153,7 +161,7 @@ Telemetry MUST NOT expose:
 
 ---
 
-### 4.5 “No silent degradation”
+### 4.6 “No silent degradation”
 
 If telemetry drops, sampling increases, or explainability is disabled, the system MUST emit explicit indicators (metrics + logs).
 

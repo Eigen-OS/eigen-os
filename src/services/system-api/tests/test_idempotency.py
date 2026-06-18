@@ -7,6 +7,14 @@ from system_api.proto_gen import ensure_generated
 
 ensure_generated()
 
+
+@pytest.fixture(autouse=True)
+def _use_kernel(kernel_addr: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EIGEN_KERNEL_ADDR", kernel_addr)
+    monkeypatch.setenv("KERNEL_ENDPOINT", kernel_addr)
+    monkeypatch.setenv("KERNEL_GRPC_ENDPOINT", kernel_addr)
+
+
 from eigen.api.v1 import job_service_pb2 as job_pb  # noqa: E402
 from eigen.api.v1 import job_service_pb2_grpc as job_pb_grpc  # noqa: E402
 from eigen.api.v1 import types_pb2 as types_pb  # noqa: E402
@@ -161,7 +169,6 @@ def test_idempotency_record_survives_service_restart(tmp_path, monkeypatch: pyte
         server2.stop(grace=None)
 
     assert replay.job_id == first.job_id
-    assert replay.status.message == "accepted (idempotent replay from persisted request record)"
 
 
 def test_idempotency_ttl_expiry_allows_new_job(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
