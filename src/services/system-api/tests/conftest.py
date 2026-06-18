@@ -37,6 +37,26 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 RUST_ROOT = REPO_ROOT / "src" / "rust"
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _shared_qfs_root(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
+    previous_local_root = os.environ.get("EIGEN_QFS_LOCAL_ROOT")
+    previous_root = os.environ.get("EIGEN_QFS_ROOT")
+    qfs_root = tmp_path_factory.mktemp("system-api-qfs")
+    os.environ["EIGEN_QFS_LOCAL_ROOT"] = str(qfs_root)
+    os.environ["EIGEN_QFS_ROOT"] = str(qfs_root)
+    try:
+        yield
+    finally:
+        if previous_local_root is None:
+            os.environ.pop("EIGEN_QFS_LOCAL_ROOT", None)
+        else:
+            os.environ["EIGEN_QFS_LOCAL_ROOT"] = previous_local_root
+        if previous_root is None:
+            os.environ.pop("EIGEN_QFS_ROOT", None)
+        else:
+            os.environ["EIGEN_QFS_ROOT"] = previous_root
+
+
 def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
@@ -67,7 +87,7 @@ def _start_python_service(module: str, cwd: Path, env: dict[str, str], ready_por
 
 
 @pytest.fixture(scope="session")
-def kernel_addr(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
+def kernel_addr(_shared_qfs_root: None) -> Iterator[str]:
     cargo = shutil.which("cargo")
     if cargo is None:
         pytest.skip("cargo is required to start the kernel integration test server")
@@ -80,7 +100,7 @@ def kernel_addr(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
     addr = f"127.0.0.1:{kernel_port}"
     compiler_addr = f"127.0.0.1:{compiler_port}"
     driver_addr = f"127.0.0.1:{driver_port}"
-    qfs_root = tmp_path_factory.mktemp("kernel-qfs")
+    qfs_root = Path(os.environ["EIGEN_QFS_LOCAL_ROOT"])
 
     env = os.environ.copy()
     env.update(
@@ -163,7 +183,6 @@ def kernel_addr(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
 @pytest.fixture(scope="module")
 def grpc_addr(kernel_addr: str, tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
     previous_store_path = os.environ.get("SYSTEM_API_IDEMPOTENCY_STORE_PATH")
-    previous_qfs_root = os.environ.get("EIGEN_QFS_LOCAL_ROOT")
     previous_kernel_addr = os.environ.get("EIGEN_KERNEL_ADDR")
     previous_kernel_endpoint = os.environ.get("KERNEL_ENDPOINT")
     previous_kernel_grpc_endpoint = os.environ.get("KERNEL_GRPC_ENDPOINT")
@@ -189,11 +208,6 @@ def grpc_addr(kernel_addr: str, tmp_path_factory: pytest.TempPathFactory) -> Ite
         os.environ.pop("SYSTEM_API_IDEMPOTENCY_STORE_PATH", None)
     else:
         os.environ["SYSTEM_API_IDEMPOTENCY_STORE_PATH"] = previous_store_path
-    if previous_qfs_root is None:
-        os.environ.pop("EIGEN_QFS_LOCAL_ROOT", None)
-    else:
-        os.environ["EIGEN_QFS_LOCAL_ROOT"] = previous_qfs_root
- 
     if previous_kernel_addr is None:
         os.environ.pop("EIGEN_KERNEL_ADDR", None)
     else:
@@ -209,7 +223,7 @@ def grpc_addr(kernel_addr: str, tmp_path_factory: pytest.TempPathFactory) -> Ite
 
 
 @pytest.fixture(autouse=True)
-def _clean_qfs_store() -> Iterator[None]:
+def _clean_qfs_store(_shared_qfs_root: None) -> Iterator[None]:
     QFS_STORE.clear()
     yield
     QFS_STORE.clear()
