@@ -309,6 +309,54 @@ def _circuit_format_value(types_pb, *names: str) -> int:
     raise AttributeError(f"None of the enum names exist: {names}")
 
 
+def _workload_kind_name(raw_kind: object) -> str | None:
+    kind_aliases = {
+        1: "QuantumJob",
+        2: "HybridWorkflow",
+        3: "DistributedJob",
+        4: "BenchmarkJob",
+        5: "PipelineJob",
+        6: "ReplayJob",
+        "QuantumJob": "QuantumJob",
+        "HybridWorkflow": "HybridWorkflow",
+        "DistributedJob": "DistributedJob",
+        "BenchmarkJob": "BenchmarkJob",
+        "PipelineJob": "PipelineJob",
+        "ReplayJob": "ReplayJob",
+        "WORKLOAD_FAMILY_KIND_QUANTUM_JOB": "QuantumJob",
+        "WORKLOAD_FAMILY_KIND_HYBRID_WORKFLOW": "HybridWorkflow",
+        "WORKLOAD_FAMILY_KIND_DISTRIBUTED_JOB": "DistributedJob",
+        "WORKLOAD_FAMILY_KIND_BENCHMARK_JOB": "BenchmarkJob",
+        "WORKLOAD_FAMILY_KIND_PIPELINE_JOB": "PipelineJob",
+        "WORKLOAD_FAMILY_KIND_REPLAY_JOB": "ReplayJob",
+    }
+    if raw_kind in (None, "", 0):
+        return None
+    try:
+        return kind_aliases[int(raw_kind)]
+    except Exception:
+        return kind_aliases.get(raw_kind)
+
+
+def _request_metadata_workload_options(request_metadata) -> dict[str, str]:
+    workload = getattr(request_metadata, "workload", None)
+    kind = _workload_kind_name(getattr(workload, "kind", None))
+    if kind is None:
+        return {}
+
+    options: dict[str, str] = {"spec.workload.kind": kind}
+    backend_target = str(getattr(workload, "backend_target", "") or "").strip()
+    if backend_target:
+        options["spec.workload.backend_target"] = backend_target
+    execution_profile = str(getattr(workload, "execution_profile", "") or "").strip()
+    if execution_profile:
+        options["spec.workload.execution_profile"] = execution_profile
+    replayable = getattr(workload, "replayable", None)
+    if replayable is not None:
+        options["spec.workload.replayable"] = "true" if bool(replayable) else "false"
+    return options
+
+
 class CompilationService:
     """Implementation of eigen.internal.v1.CompilationService."""
 
@@ -407,12 +455,14 @@ class CompilationService:
         source = request.source if request.source else b""
         source_ref = request.source_ref or None
 
+        options = _request_metadata_workload_options(getattr(request, "request_metadata", None))
+        options.update({str(k): str(v) for k, v in dict(request.options).items()})
         try:
             resp = self._compile_response(
                 rpc="CompileCircuit",
                 source=source,
                 source_ref=source_ref,
-                options=dict(request.options),
+                options=options,
                 request_context=request_context,
             )
 
@@ -492,12 +542,14 @@ class CompilationService:
         source = request.source if request.source else b""
         source_ref = request.source_ref or None
 
+        options = _request_metadata_workload_options(getattr(request, "request_metadata", None))
+        options.update({str(k): str(v) for k, v in dict(request.options).items()})
         try:
             compiled = self._compile_response(
                 rpc="CompileJob",
                 source=source,
                 source_ref=source_ref,
-                options=dict(request.options),
+                options=options,
                 request_context=request_context,
             )
 
