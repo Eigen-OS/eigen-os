@@ -84,26 +84,33 @@ impl DurableJobStore {
     ///
     /// Scans `qfs://jobs/*/state/events.jsonl` and replays each job's event sequence.
     pub fn recover_from_qfs(&self) -> Result<usize, Box<dyn std::error::Error>> {
-        let jobs_root = self.qfs.root_path().join("jobs");
-        if !jobs_root.exists() {
-            return Ok(0);
-        }
 
         let mut recovered = 0usize;
-        for entry in fs::read_dir(&jobs_root)? {
-            let entry = entry?;
-            if !entry.file_type()?.is_dir() {
-                continue;
+        let refs = self.qfs.list_refs("qfs://jobs/")?;
+        let mut job_ids = std::collections::BTreeSet::new();
+        for qfs_ref in refs {
+            let trimmed = qfs_ref.strip_prefix("qfs://").unwrap_or(&qfs_ref);
+            let mut parts = trimmed.split('/');
+            if matches!(parts.next(), Some("jobs")) {
+                if let Some(job_id) = parts.next() {
+                    job_ids.insert(job_id.to_string());
+                }
             }
+        }
 
-            let job_id = entry.file_name().to_string_lossy().to_string();
-            let state_events_path = entry.path().join("logs").join("state_events.jsonl");
-            let snapshot_path = entry.path().join("logs").join("replay_snapshot.jsonl");
-            if !state_events_path.exists() || !snapshot_path.exists() {
-                continue;
-            }
+        for job_id in job_ids {
+            let state_events_ref = format!("qfs://jobs/{job_id}/logs/state_events.jsonl");
+            let snapshot_ref = format!("qfs://jobs/{job_id}/logs/replay_snapshot.jsonl");
+            let snapshot_bytes = match self.qfs.read_bytes(&snapshot_ref) {
+                Ok(bytes) => bytes,
+                Err(_) => continue,
+            };
+            let events_bytes = match self.qfs.read_bytes(&state_events_ref) {
+                Ok(bytes) => bytes,
+                Err(_) => continue,
+            };
 
-            let snapshot_text = fs::read_to_string(&snapshot_path)?;
+            let snapshot_text = String::from_utf8(snapshot_bytes)?;
             let snapshot_line = snapshot_text
                 .lines()
                 .next()
@@ -111,7 +118,7 @@ impl DurableJobStore {
             let snapshot: DurableJobReplaySnapshot = serde_json::from_str(snapshot_line)?;
 
             let mut log = JobEventLog::new(job_id.clone());
-            for line in fs::read_to_string(&state_events_path)?.lines() {
+            for line in String::from_utf8(events_bytes)?.lines() {
                 if line.trim().is_empty() {
                     continue;
                 }

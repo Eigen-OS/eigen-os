@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import re
+
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from math import isfinite
@@ -1089,20 +1090,32 @@ def compile_eigen_lang(
     aqo_bytes = _run_stage("canonicalize_aqo", observer, _canonicalize_aqo)
     aqo_digest = hashlib.sha256(aqo_bytes).hexdigest()
 
+    compiler_stage_order = [
+        "parse",
+        "validate_ast",
+        "annotate",
+        "lower_to_ir",
+        "eigen_dpda",
+        "canonicalize_aqo",
+        "emit",
+    ]
+    handoff_stage_order = [
+        "parse",
+        "semantic_validation",
+        "annotate",
+        "lower_to_ir",
+        "lowering_validation",
+        "eigen_dpda",
+        "canonicalize_aqo",
+        "emit",
+    ]
+
     decision_lineage = {
         "contract_version": "1.0.0",
         "compiler_contract_version": "1.0.0",
         "optimizer_contract_version": "1.0.0",
         "source_precedence": source_precedence,
-        "stage_order": [
-            "parse",
-            "validate_ast",
-            "annotate",
-            "lower_to_ir",
-            "eigen_dpda",
-            "canonicalize_aqo",
-            "emit",
-        ],
+        "stage_order": handoff_stage_order,
         "request_id": normalized_request_context.request_id,
         "trace_id": normalized_request_context.trace_id,
         "traceparent": normalized_request_context.traceparent,
@@ -1140,12 +1153,21 @@ def compile_eigen_lang(
     }
     compiler_diagnostics = {
         "contract_version": "1.0.0",
-        "stage_order": decision_lineage["stage_order"],
+        "stage_order": compiler_stage_order,
         "workload_profile": workload_profile.kind,
         "backend_contract": backend_contract,
-        "decision_lineage": decision_lineage,
+        "decision_lineage": {
+            **decision_lineage,
+            "stage_order": compiler_stage_order,
+        },
         "observability": observability,
-        "explainability": explainability,
+        "explainability": {
+            **explainability,
+            "lineage": {
+                **decision_lineage,
+                "stage_order": compiler_stage_order,
+            },
+        },
     }
 
     metadata = {

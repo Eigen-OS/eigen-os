@@ -35,6 +35,8 @@ REST API → System API → QRTX → Runtime Services
 
 REST is a **transport adapter only**.
 
+The same scientific result bundle contract used by the runtime applies here as well: benchmark runs emit a human-readable JSON summary plus a tabular `results.parquet` fact table so the output can be compared with hybrid, replay, and distributed workloads using the same analysis tools.
+
 The canonical contract for benchmark execution is defined in protobuf/gRPC specifications.
 
 ---

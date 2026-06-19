@@ -14,7 +14,7 @@ pub use local_circuit_fs::{
     CircuitFsError, CircuitFsLocal, CompiledArtifactLineage, CompiledArtifactProvenance,
     CompiledArtifacts, CompiledMetadata, ErrorDetails, ReleaseEvidenceBundle,
     ReleaseEvidenceManifest, ReleaseEvidenceProvenanceReport, ResultArtifactDescriptor,
-    ResultEnvelope, ResultManifest, ResultsBundle, SourceBundle, SourceMetadata,
+    ResultEnvelope, ResultManifest, ResultsBundle, ScientificMeasurement, SourceBundle, SourceMetadata,
     DEFAULT_CIRCUIT_FS_ROOT,
 };
 

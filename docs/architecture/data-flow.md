@@ -371,11 +371,12 @@ Canonical layout (abridged):
 │   ├── circuit.aqo.pb
 │   ├── circuit.qasm
 │   └── metadata.json
-├── results/
-│   ├── result.json
-│   ├── manifest.json
-│   └── error.json
-└── results.parquet
+├── results.parquet
+└── results/
+    ├── result.json
+    ├── envelope.json
+    ├── manifest.json
+    └── error.json
 ```
 
 Normative requirements:
@@ -426,12 +427,15 @@ Driver Manager responsibilities:
 Execution persistence:
 
 - Kernel persists successful outputs:
-  - `results.parquet` (required on `DONE`)
-  - `results/result.json` (optional extended metadata)
-  - `results/manifest.json` (optional checksums + listing)
+  - `results.parquet` (required on `DONE`, tabular fact table)
+  - `results/result.json` (canonical scientific result bundle)
+  - `results/envelope.json` (compatibility alias for the same bundle)
+  - `results/manifest.json` (checksums + listing)
 - Kernel persists failures:
   - `results/error.json` (recommended durable failure artifact)
   - optional logs under `logs/`
+
+The scientific bundle SHOULD contain workload-kind metadata, summary metrics, normalized observations, and lineage references. The Parquet table SHOULD be derivable from that bundle without ambiguity.
 
 ---
 
@@ -445,6 +449,7 @@ Retrieval paths:
 Contract rules:
 
 - Large artifacts MUST be referenced via QFS, not embedded.
+- `results.parquet` SHOULD be used for machine analysis and `results/result.json` for context-rich reading.
 - If results are requested before the job reaches terminal state:
   - MUST return `FAILED_PRECONDITION` (sync call behavior), OR
   - return an envelope that clearly indicates non-terminal state (only if the API contract defines it).

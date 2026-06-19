@@ -30,6 +30,7 @@ use sha2::{Digest, Sha256};
 use qfs::{
     CircuitFsLocal, CompiledArtifactLineage, CompiledArtifactProvenance, ReleaseEvidenceBundle,
     ReleaseEvidenceManifest, ReleaseEvidenceProvenanceReport, ResultArtifactDescriptor,
+    ResultEnvelope, ScientificMeasurement,
 };
 use resource_manager::{
     SCHEDULER_DECISION_VERSION, SCHEDULING_POLICY_BUNDLE_ID, SCHEDULING_POLICY_BUNDLE_VERSION,
@@ -2905,8 +2906,7 @@ impl FixtureAdapters {
             .ok_or_else(|| KernelStageError::execute("driver-manager endpoint is not configured", "qfs://jobs/driver-manager/config/error.json"))?;
 
         let compiled_artifact_ref = format!("qfs://jobs/{}/compiled/circuit.aqo.json", submission.job_id);
-        let compiled_artifact_path = self.qfs_ref_path(&compiled_artifact_ref);
-        let aqo_bytes = fs::read(&compiled_artifact_path).map_err(|err| {
+        let aqo_bytes = self.qfs.read_bytes(&compiled_artifact_ref).map_err(|err| {
             KernelStageError::execute(
                 format!("compiled aqo artifact missing: {err}"),
                 compiled_artifact_ref.clone(),
@@ -2966,28 +2966,14 @@ impl FixtureAdapters {
         let counts_payload = serde_json::to_vec_pretty(&serde_json::json!({"counts": counts.clone()})).unwrap_or_default();
         let execution_payload_bytes = serde_json::to_vec_pretty(&execution_payload).unwrap_or_default();
 
-        let counts_path = self.qfs_ref_path(&counts_ref);
-        if let Some(parent) = counts_path.parent() {
-            fs::create_dir_all(parent).map_err(|err| KernelStageError::execute(
-                format!("failed to create counts dir: {err}"),
-                counts_ref.clone(),
-            ))?;
-        }
-        fs::write(&counts_path, &counts_payload).map_err(|err| {
+        self.qfs.write_bytes(&counts_ref, &counts_payload).map_err(|err| {
             KernelStageError::execute(
                 format!("failed to persist counts artifact: {err}"),
                 counts_ref.clone(),
             )
         })?;
 
-        let execution_path = self.qfs_ref_path(&execution_ref);
-        if let Some(parent) = execution_path.parent() {
-            fs::create_dir_all(parent).map_err(|err| KernelStageError::execute(
-                format!("failed to create execution dir: {err}"),
-                execution_ref.clone(),
-            ))?;
-        }
-        fs::write(&execution_path, &execution_payload_bytes).map_err(|err| {
+        self.qfs.write_bytes(&execution_ref, &execution_payload_bytes).map_err(|err| {
             KernelStageError::execute(
                 format!("failed to persist execution artifact: {err}"),
                 execution_ref.clone(),
@@ -3221,34 +3207,81 @@ impl OrchestrationAdapters for FixtureAdapters {
     ) -> Result<BTreeMap<String, String>, KernelStageError> {
         self.maybe_hold(DagStageKind::Persist).await;
         self.maybe_fail(DagStageKind::Persist)?;
-        let artifact = serde_json::json!({
-            "job_id": submission.job_id,
-            "submission_digest": submission.fingerprint,
-            "execution_output": execution_output.output,
-            "stage_records": stage_records.iter().map(|stage| serde_json::json!({
-                "stage_id": stage.stage_id,
-                "stage_key": stage.stage_key,
-                "order": stage.order,
-                "status": match stage.status {
-                    StageStatus::Running => "running",
-                    StageStatus::Succeeded => "succeeded",
-                    StageStatus::Failed => "failed",
-                },
-            })).collect::<Vec<_>>(),
-        });
-        let payload = serde_json::to_vec(&artifact).unwrap_or_default();
+        let compile_stage = stage_records.iter().find(|stage| stage.stage_key == "compile");
+        let optimize_stage = stage_records.iter().find(|stage| stage.stage_key == "optimize");
+        let selected_backend = execution_output
+            .output
+            .get("selected_backend")
+            .cloned()
+            .unwrap_or_else(|| submission.target.clone());
+        let workload_kind = workload_kind_label(submission);
+        let execution_time_sec = execution_output
+            .output
+            .get("execution_time_sec")
+            .and_then(|value| value.parse::<f64>().ok())
+            .unwrap_or_default();
+        let total_shots: i64 = execution_output.counts.values().copied().sum();
+        let nonzero_bitstrings = execution_output.counts.len() as i64;
+        let dominant_bitstring = execution_output
+            .counts
+            .iter()
+            .max_by_key(|(_, count)| *count)
+            .map(|(bitstring, count)| format!("{bitstring}:{count}"))
+            .unwrap_or_default();
+        let stage_count = stage_records.len() as i64;
+        let summary_context = submission.summary_map();
+        let mut summary = BTreeMap::from([
+            ("workload_kind".to_string(), workload_kind.clone()),
+            ("target".to_string(), submission.target.clone()),
+            ("selected_backend".to_string(), selected_backend.clone()),
+            ("shots_total".to_string(), total_shots.to_string()),
+            ("nonzero_bitstrings".to_string(), nonzero_bitstrings.to_string()),
+            ("dominant_bitstring".to_string(), dominant_bitstring.clone()),
+            ("execution_time_sec".to_string(), format!("{execution_time_sec:.6}")),
+            ("stage_count".to_string(), stage_count.to_string()),
+        ]);
+        if let Some(optimizer) = execution_output.output.get("optimizer") {
+            summary.insert("optimizer".to_string(), optimizer.clone());
+        }
+        if let Some(driver) = execution_output.output.get("driver") {
+            summary.insert("driver".to_string(), driver.clone());
+        }
+        let measurements = scientific_measurements(
+            submission,
+            execution_output,
+            stage_records,
+            &selected_backend,
+            &workload_kind,
+            execution_time_sec,
+        );
+        let envelope = ResultEnvelope {
+            artifact_version: "1.0.0".to_string(),
+            schema_version: "scientific_result_bundle.v1".to_string(),
+            producer_version: env!("CARGO_PKG_VERSION").to_string(),
+            job_id: submission.job_id.clone(),
+            workload_kind: workload_kind.clone(),
+            result_ref: "results/result.json".to_string(),
+            manifest_ref: "results/manifest.json".to_string(),
+            created_at_epoch_ms: unix_epoch_ms_u64(),
+            retention_policy: "pinned".to_string(),
+            lineage: qfs::CompiledArtifactLineage {
+                request_id: Some(submission.request_id.clone()),
+                source_ref: Some(format!("qfs://jobs/{}/input/program.eigen.py", submission.job_id)),
+                source_sha256: Some(submission.program_hash.clone()),
+            },
+            context: summary_context,
+            summary,
+            measurements,
+        };
         if let Err(err) = self.qfs.ensure_job_layout(&submission.job_id) {
             tracing::warn!(job_id = %submission.job_id, error = %err, "failed to prepare QFS job layout");
         }
         if let Err(err) = self
             .qfs
-            .store_results_bundle(&submission.job_id, &payload, env!("CARGO_PKG_VERSION"))
+            .store_results_bundle(&submission.job_id, &envelope, env!("CARGO_PKG_VERSION"))
         {
             tracing::warn!(job_id = %submission.job_id, error = %err, "failed to persist results bundle");
         }
-
-        let compile_stage = stage_records.iter().find(|stage| stage.stage_key == "compile");
-        let optimize_stage = stage_records.iter().find(|stage| stage.stage_key == "optimize");
 
         let compiled_artifact_ref = compile_stage
             .and_then(|stage| stage.output.get("compiled_artifact_ref"))
@@ -5968,4 +6001,157 @@ fn unix_epoch_ms_u64() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or_default()
+}
+
+fn workload_kind_label(submission: &NormalizedSubmission) -> String {
+    let raw = submission
+        .metadata_kvs
+        .get("workload_kind")
+        .cloned()
+        .or_else(|| submission.metadata_kvs.get("kind").cloned())
+        .or_else(|| submission.metadata_kvs.get("execution_profile").cloned())
+        .unwrap_or_else(|| "HybridWorkflow".to_string());
+
+    match raw.as_str() {
+        "hybrid" | "HybridWorkflow" => "HybridWorkflow".to_string(),
+        "benchmark" | "BenchmarkJob" => "BenchmarkJob".to_string(),
+        "distributed" | "DistributedJob" => "DistributedJob".to_string(),
+        "pipeline" | "PipelineJob" => "PipelineJob".to_string(),
+        "replay" | "ReplayJob" => "ReplayJob".to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn scientific_measurements(
+    submission: &NormalizedSubmission,
+    execution_output: &ExecutionOutcome,
+    stage_records: &[StageRecord],
+    selected_backend: &str,
+    workload_kind: &str,
+    execution_time_sec: f64,
+) -> Vec<ScientificMeasurement> {
+    let mut measurements = Vec::new();
+    let trace_id = submission.trace_id.clone();
+    let traceparent = submission.traceparent.clone();
+    let created_at_marker = unix_epoch_ms_u64().to_string();
+
+    measurements.push(ScientificMeasurement {
+        metric_name: "execution_time_sec".to_string(),
+        metric_kind: "summary".to_string(),
+        metric_value: format!("{execution_time_sec:.6}"),
+        metric_unit: "s".to_string(),
+        stage_id: None,
+        stage_key: None,
+        step_index: Some(0),
+        trial_index: Some(0),
+        seed: submission.metadata_kvs.get("seed").and_then(|value| value.parse::<i64>().ok()),
+        backend: Some(selected_backend.to_string()),
+        target: Some(submission.target.clone()),
+        trace_id: Some(trace_id.clone()),
+        traceparent: Some(traceparent.clone()),
+        artifact_ref: Some(format!("qfs://jobs/{}/execution/execution.json", submission.job_id)),
+        attributes: BTreeMap::from([
+            ("workload_kind".to_string(), workload_kind.to_string()),
+            ("kind".to_string(), "execution_summary".to_string()),
+            ("observed_at_epoch_ms".to_string(), created_at_marker.clone()),
+        ]),
+    });
+
+    measurements.push(ScientificMeasurement {
+        metric_name: "total_shots".to_string(),
+        metric_kind: "summary".to_string(),
+        metric_value: execution_output.counts.values().copied().sum::<i64>().to_string(),
+        metric_unit: "shots".to_string(),
+        stage_id: None,
+        stage_key: None,
+        step_index: Some(0),
+        trial_index: Some(0),
+        seed: submission.metadata_kvs.get("seed").and_then(|value| value.parse::<i64>().ok()),
+        backend: Some(selected_backend.to_string()),
+        target: Some(submission.target.clone()),
+        trace_id: Some(trace_id.clone()),
+        traceparent: Some(traceparent.clone()),
+        artifact_ref: Some(format!("qfs://jobs/{}/results/counts.json", submission.job_id)),
+        attributes: BTreeMap::from([
+            ("workload_kind".to_string(), workload_kind.to_string()),
+            ("kind".to_string(), "execution_counts".to_string()),
+            ("observed_at_epoch_ms".to_string(), created_at_marker.clone()),
+        ]),
+    });
+
+    for (bitstring, count) in &execution_output.counts {
+        measurements.push(ScientificMeasurement {
+            metric_name: "shot_count".to_string(),
+            metric_kind: "measurement".to_string(),
+            metric_value: count.to_string(),
+            metric_unit: "shots".to_string(),
+            stage_id: Some("execute".to_string()),
+            stage_key: Some("execute".to_string()),
+            step_index: Some(5),
+            trial_index: Some(0),
+            seed: submission.metadata_kvs.get("seed").and_then(|value| value.parse::<i64>().ok()),
+            backend: Some(selected_backend.to_string()),
+            target: Some(submission.target.clone()),
+            trace_id: Some(trace_id.clone()),
+            traceparent: Some(traceparent.clone()),
+            artifact_ref: Some(format!("qfs://jobs/{}/results/counts.json", submission.job_id)),
+            attributes: BTreeMap::from([
+                ("bitstring".to_string(), bitstring.clone()),
+                ("workload_kind".to_string(), workload_kind.to_string()),
+                ("kind".to_string(), "bitstring_count".to_string()),
+                ("observed_at_epoch_ms".to_string(), created_at_marker.clone()),
+            ]),
+        });
+    }
+
+    for stage in stage_records {
+        if let Some(completed_at) = stage.completed_at.as_ref() {
+            let duration_ms = (timestamp_to_ms(completed_at) - timestamp_to_ms(&stage.started_at)).max(0) as i64;
+            measurements.push(ScientificMeasurement {
+                metric_name: "stage_duration_ms".to_string(),
+                metric_kind: "stage".to_string(),
+                metric_value: duration_ms.to_string(),
+                metric_unit: "ms".to_string(),
+                stage_id: Some(stage.stage_id.clone()),
+                stage_key: Some(stage.stage_key.clone()),
+                step_index: Some(stage.order as i64),
+                trial_index: Some(0),
+                seed: submission.metadata_kvs.get("seed").and_then(|value| value.parse::<i64>().ok()),
+                backend: Some(selected_backend.to_string()),
+                target: Some(submission.target.clone()),
+                trace_id: Some(trace_id.clone()),
+                traceparent: Some(traceparent.clone()),
+                artifact_ref: Some(format!("qfs://jobs/{}/timeline.jsonl", submission.job_id)),
+                attributes: BTreeMap::from([
+                    ("status".to_string(), match stage.status {
+                        StageStatus::Running => "running".to_string(),
+                        StageStatus::Succeeded => "succeeded".to_string(),
+                        StageStatus::Failed => "failed".to_string(),
+                    }),
+                    ("workload_kind".to_string(), workload_kind.to_string()),
+                    ("kind".to_string(), "stage_timing".to_string()),
+                    ("observed_at_epoch_ms".to_string(), created_at_marker.clone()),
+                ]),
+            });
+        }
+    }
+
+    measurements.sort_by(|left, right| {
+        (
+            left.metric_kind.as_str(),
+            left.metric_name.as_str(),
+            left.stage_key.as_deref().unwrap_or(""),
+            left.step_index.unwrap_or_default(),
+            left.metric_value.as_str(),
+        )
+            .cmp(&(
+                right.metric_kind.as_str(),
+                right.metric_name.as_str(),
+                right.stage_key.as_deref().unwrap_or(""),
+                right.step_index.unwrap_or_default(),
+                right.metric_value.as_str(),
+            ))
+    });
+
+    measurements
 }

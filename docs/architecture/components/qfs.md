@@ -432,6 +432,8 @@ Default root: `/var/lib/eigen/circuit_fs`
 
 May be enabled via environment/configuration such as: `EIGEN_QFS_BACKEND=s3`
 
+When S3/MinIO mirroring is enabled, QFS resolves the job path against the canonical configured QFS root before deriving the object key. Mirroring is expected to be durable and failures should surface as storage errors rather than being silently ignored.
+
 (Exact flags are deployment-specific; behavior must remain contract-compatible.)
 
 ---
