@@ -188,7 +188,7 @@ Expected outcome:
 
 - `submit` prints a `job_id`;
 - `watch` reaches `DONE`;
-- `results` returns `state: DONE`, `counts` и `metadata`.
+- `results` returns `state: DONE`, a `summary` block when available, `counts`, and `metadata`.
 
 ## AWS Braket degradation runbook (Phase-8D)
 

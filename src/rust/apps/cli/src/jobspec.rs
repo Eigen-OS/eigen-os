@@ -131,6 +131,15 @@ pub struct WorkloadContract {
     pub observability: WorkloadObservability,
     pub security: WorkloadSecurity,
     pub backend_target: String,
+    pub topology: Option<WorkloadTopology>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct WorkloadTopology {
+    pub cluster_id: String,
+    pub partition_count: i32,
+    pub partition_ids: Vec<String>,
+    pub preferred_workers: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -235,6 +244,12 @@ pub fn parse_and_validate_jobspec(yaml: &str) -> Result<JobSpec, JobSpecValidati
     let mut workload_execution_profile = String::new();
     let mut workload_replayable: Option<bool> = None;
     let mut workload_backend_target = String::new();
+    let mut workload_topology_cluster_id = String::new();
+    let mut workload_topology_partition_count: i32 = 0;
+    let mut workload_topology_partition_ids: Vec<String> = Vec::new();
+    let mut workload_topology_preferred_workers: Vec<String> = Vec::new();
+    let mut workload_topology_present = false;
+    let mut workload_topology_list: Option<&'static str> = None;
     let mut workload_artifact_root_ref = String::new();
     let mut workload_artifact_parent_ref = String::new();
     let mut workload_artifact_policy_snapshot_ref = String::new();
@@ -399,6 +414,11 @@ pub fn parse_and_validate_jobspec(yaml: &str) -> Result<JobSpec, JobSpecValidati
                         workload_backend_target = v;
                         continue;
                     }
+                    if trimmed == "topology:" {
+                        subsection = "workload_topology";
+                        workload_topology_present = true;
+                        continue;
+                    }
                     if trimmed == "artifact_lineage:" {
                         subsection = "workload_artifact_lineage";
                         continue;
@@ -410,6 +430,40 @@ pub fn parse_and_validate_jobspec(yaml: &str) -> Result<JobSpec, JobSpecValidati
                     if trimmed == "security:" {
                         subsection = "workload_security";
                         continue;
+                    }
+                }
+                "workload_topology" => {
+                    if let Some(v) = value_for(trimmed, "cluster_id:") {
+                        workload_topology_cluster_id = v;
+                        workload_topology_present = true;
+                        workload_topology_list = None;
+                        continue;
+                    }
+                    if let Some(v) = value_for(trimmed, "partition_count:") {
+                        if let Ok(parsed) = v.parse::<i32>() {
+                            workload_topology_partition_count = parsed;
+                        }
+                        workload_topology_present = true;
+                        workload_topology_list = None;
+                        continue;
+                    }
+                    if trimmed == "partition_ids:" {
+                        workload_topology_present = true;
+                        workload_topology_list = Some("partition_ids");
+                        continue;
+                    }
+                    if trimmed == "preferred_workers:" {
+                        workload_topology_present = true;
+                        workload_topology_list = Some("preferred_workers");
+                        continue;
+                    }
+                    if let Some(v) = trimmed.strip_prefix('-') {
+                        let value = strip_quotes(v.trim());
+                        match workload_topology_list {
+                            Some("partition_ids") => workload_topology_partition_ids.push(value),
+                            Some("preferred_workers") => workload_topology_preferred_workers.push(value),
+                            _ => {}
+                        }
                     }
                 }
                 "workload_artifact_lineage" => {
@@ -577,6 +631,16 @@ pub fn parse_and_validate_jobspec(yaml: &str) -> Result<JobSpec, JobSpecValidati
                     tenant_id: workload_security_tenant_id,
                 },
                 backend_target: workload_backend_target,
+                topology: if workload_topology_present {
+                    Some(WorkloadTopology {
+                        cluster_id: workload_topology_cluster_id,
+                        partition_count: workload_topology_partition_count,
+                        partition_ids: workload_topology_partition_ids,
+                        preferred_workers: workload_topology_preferred_workers,
+                    })
+                } else {
+                    None
+                },
             },
         },
     })
@@ -745,20 +809,36 @@ fn string_vec_json(values: &[String]) -> String {
     format!("[{}]", parts.join(","))
 }
 
+fn workload_topology_json(topology: &WorkloadTopology) -> String {
+    format!(
+        r#"{{"cluster_id":"{}","partition_count":{},"partition_ids":{},"preferred_workers":{}}}"#,
+        json_escape(&topology.cluster_id),
+        topology.partition_count,
+        string_vec_json(&topology.partition_ids),
+        string_vec_json(&topology.preferred_workers),
+    )
+}
+
 fn workload_json(workload: &WorkloadContract) -> String {
     let artifact = &workload.artifact_lineage;
     let observability = &workload.observability;
     let security = &workload.security;
+    let topology = workload
+        .topology
+        .as_ref()
+        .map(|value| format!(r#","topology":{}"#, workload_topology_json(value)))
+        .unwrap_or_default();
     format!(
-        r#"{{"artifact_lineage":{{"execution_ref":"{}","parent_ref":"{}","policy_snapshot_ref":"{}","root_ref":"{}"}},"backend_target":"{}","execution_profile":"{}","kind":"{}","observability":{{"emit_metrics":{},"trace_id":"{}","trace_ref":"{}","traceparent":"{}"}},"replayable":{},"security":{{"fail_closed":{},"policy_snapshot_ref":"{}","project_id":"{}","service_identity":"{}","tenant_id":"{}"}}}}"#,
+        r#"{{"artifact_lineage":{{"execution_ref":"{}","parent_ref":"{}","policy_snapshot_ref":"{}","root_ref":"{}"}},"backend_target":"{}"{},"execution_profile":"{}","kind":"{}","observability":{{"emit_metrics":{},"trace_id":"{}","trace_ref":"{}","traceparent":"{}"}},"replayable":{},"security":{{"fail_closed":{},"policy_snapshot_ref":"{}","project_id":"{}","service_identity":"{}","tenant_id":"{}"}}}}"#,
         json_escape(&artifact.execution_ref),
         json_escape(&artifact.parent_ref),
         json_escape(&artifact.policy_snapshot_ref),
         json_escape(&artifact.root_ref),
         json_escape(&workload.backend_target),
+        topology,
         json_escape(&workload.execution_profile),
         json_escape(&workload.kind),
-        workload.observability.emit_metrics,
+        observability.emit_metrics,
         json_escape(&observability.trace_id),
         json_escape(&observability.trace_ref),
         json_escape(&observability.traceparent),
@@ -780,6 +860,7 @@ fn default_workload_contract() -> WorkloadContract {
         observability: WorkloadObservability::default(),
         security: WorkloadSecurity::default(),
         backend_target: String::new(),
+        topology: None,
     }
 }
 
@@ -991,6 +1072,15 @@ impl eigen::api::v1::job_service_server::JobService for TestJobService {
                         "qfs_result_ref".to_string(),
                         format!("qfs://jobs/{}/results.parquet", "job-demo-done"),
                     ),
+                    ("result.summary.workload_kind".to_string(), "HybridWorkflow".to_string()),
+                    ("result.summary.target".to_string(), "sim:local".to_string()),
+                    ("result.summary.execution_time_sec".to_string(), "0.015573".to_string()),
+                    ("result.summary.nonzero_bitstrings".to_string(), "2".to_string()),
+                    ("result.summary.energy".to_string(), "-1.137270".to_string()),
+                    (
+                        "result.summary.parameters".to_string(),
+                        "[0.121,-0.233,0.055,0.019]".to_string(),
+                    ),
                 ]),
                 ..Default::default()
             })),
@@ -1134,6 +1224,12 @@ fn workload_to_proto(workload: &WorkloadContract) -> eigen::api::v1::WorkloadCon
         kind,
         execution_profile: workload.execution_profile.clone(),
         replayable: workload.replayable,
+        topology: workload.topology.as_ref().map(|topology| eigen::api::v1::WorkloadTopology {
+            cluster_id: topology.cluster_id.clone(),
+            partition_count: topology.partition_count,
+            partition_ids: topology.partition_ids.clone(),
+            preferred_workers: topology.preferred_workers.clone(),
+        }),
     }
 }
 
@@ -1556,6 +1652,7 @@ pub struct JobResultsView {
     pub job_id: String,
     pub state: String,
     pub counts: BTreeMap<String, i64>,
+    pub summary: BTreeMap<String, String>,
     pub metadata: BTreeMap<String, String>,
     pub error_code: Option<String>,
     pub error_summary: Option<String>,
@@ -1943,6 +2040,23 @@ pub fn stream_job_updates_from_system_api(
     })
 }
 
+const RESULT_SUMMARY_PREFIX: &str = "result.summary.";
+
+fn split_result_summary(
+    metadata: BTreeMap<String, String>,
+) -> (BTreeMap<String, String>, BTreeMap<String, String>) {
+    let mut summary = BTreeMap::new();
+    let mut remaining = BTreeMap::new();
+    for (key, value) in metadata {
+        if let Some(summary_key) = key.strip_prefix(RESULT_SUMMARY_PREFIX) {
+            summary.insert(summary_key.to_string(), value);
+        } else {
+            remaining.insert(key, value);
+        }
+    }
+    (summary, remaining)
+}
+
 pub fn get_job_results_from_system_api(job_id: &str) -> Result<JobResultsView, GrpcLikeError> {
     if job_id.trim().is_empty() {
         return Err(GrpcLikeError {
@@ -1973,10 +2087,13 @@ pub fn get_job_results_from_system_api(job_id: &str) -> Result<JobResultsView, G
             metadata.insert(k, v);
         }
 
+    let (summary, metadata) = split_result_summary(metadata);
+
     Ok(JobResultsView {
         job_id: resp.job_id,
         state: map_job_state(resp.state),
         counts,
+        summary,
         metadata,
         error_code: if resp.error_code.is_empty() {
             None
@@ -2235,6 +2352,82 @@ spec:
     }
 
     #[test]
+    fn distributed_topology_is_preserved_in_jobspec_workload_metadata() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../..");
+        let example = repo.join("examples/workload_kinds/distributed_job_network_partition");
+        let dir = temp_dir();
+
+        fs::write(
+            dir.join("job.yaml"),
+            fs::read_to_string(example.join("job.yaml")).expect("distributed example"),
+        )
+        .unwrap();
+        fs::write(
+            dir.join("program.eigen.py"),
+            fs::read_to_string(example.join("program.eigen.py")).expect("distributed program"),
+        )
+        .unwrap();
+
+        let req = build_submit_request_from_job_file(&dir.join("job.yaml")).expect("request");
+        let workload = req.metadata.get("jobspec_workload").expect("jobspec_workload");
+
+        assert!(workload.contains(r#""topology":{"#));
+        assert!(workload.contains(r#""cluster_id":"cluster:auto""#));
+        assert!(workload.contains(r#""partition_count":8"#));
+        assert!(workload.contains(r#""partition_ids":["partition-0","partition-1","partition-2","partition-3","partition-4","partition-5","partition-6","partition-7"]"#));
+        assert!(workload.contains(r#""preferred_workers":["worker-a","worker-b","worker-c","worker-d","worker-e","worker-f","worker-g","worker-h"]"#));
+    }
+
+    #[test]
+    fn distributed_topology_is_preserved_in_public_submit_proto() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../..");
+        let example = repo.join("examples/workload_kinds/distributed_job_network_partition");
+        let dir = temp_dir();
+
+        fs::write(
+            dir.join("job.yaml"),
+            fs::read_to_string(example.join("job.yaml")).expect("distributed example"),
+        )
+        .unwrap();
+        fs::write(
+            dir.join("program.eigen.py"),
+            fs::read_to_string(example.join("program.eigen.py")).expect("distributed program"),
+        )
+        .unwrap();
+
+        let req = build_submit_request_from_job_file(&dir.join("job.yaml")).expect("request");
+        let proto_req = build_submit_proto_request(&req, &PublicSubmitOptions::default());
+        let workload = proto_req.workload.expect("workload proto");
+
+        assert_eq!(workload.kind, 3);
+        assert_eq!(workload.execution_profile, "distributed");
+        assert!(workload.replayable);
+        let topology = workload.topology.expect("topology proto");
+        assert_eq!(topology.cluster_id, "cluster:auto");
+        assert_eq!(topology.partition_count, 8);
+        assert_eq!(topology.partition_ids, vec![
+            "partition-0".to_string(),
+            "partition-1".to_string(),
+            "partition-2".to_string(),
+            "partition-3".to_string(),
+            "partition-4".to_string(),
+            "partition-5".to_string(),
+            "partition-6".to_string(),
+            "partition-7".to_string(),
+        ]);
+        assert_eq!(topology.preferred_workers, vec![
+            "worker-a".to_string(),
+            "worker-b".to_string(),
+            "worker-c".to_string(),
+            "worker-d".to_string(),
+            "worker-e".to_string(),
+            "worker-f".to_string(),
+            "worker-g".to_string(),
+            "worker-h".to_string(),
+        ]);
+    }
+
+    #[test]
     fn public_submit_payload_normalizes_full_file_reference_fixture() {
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../..");
         let dir = temp_dir();
@@ -2283,6 +2476,10 @@ spec:
         let results = get_job_results_from_system_api("job-demo-done").expect("results");
         assert_eq!(results.state, "DONE");
         assert_eq!(results.counts.get("00"), Some(&512));
+        assert_eq!(results.summary.get("workload_kind").map(String::as_str), Some("HybridWorkflow"));
+        assert_eq!(results.summary.get("target").map(String::as_str), Some("sim:local"));
+        assert_eq!(results.summary.get("energy").map(String::as_str), Some("-1.137270"));
+        assert_eq!(results.summary.get("parameters").map(String::as_str), Some("[0.121,-0.233,0.055,0.019]"));
     }
 
     #[test]

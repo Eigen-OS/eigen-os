@@ -477,7 +477,7 @@ results/result.json
 results/error.json
 ```
 
-`results/result.json` is the canonical scientific result bundle (summary + context + measurement descriptors). `results.parquet` is the analytics fact table derived from that bundle.
+`results/result.json` is the canonical scientific result bundle (summary + context + measurement descriptors). The kernel promotes the bundle summary, plus any backend-provided execution metadata that is safe for human-readable output, into the reserved `result.summary.*` namespace so CLI and SDK consumers can render a stable summary without changing the public results contract. When a backend can evaluate a statically annotated expectation, Eigen OS also exposes the numeric value as `result.summary.energy` for hybrid workflows. Structured values should be serialized as JSON strings before they are published there. `results.parquet` is the analytics fact table derived from that bundle.
 
 ---
 

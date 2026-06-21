@@ -49,7 +49,7 @@ def test_missing_contract_version_defaults_to_product_1(grpc_addr: str) -> None:
     assert status.status.job_id == submitted.job_id
 
     devices = dev_stub.ListDevices(dev_pb.ListDevicesRequest())
-    assert [device.device_id for device in devices.devices] == ["sim:local"]
+    assert {device.device_id for device in devices.devices} == {"cluster:auto", "sim:local"}
 
 
 @pytest.mark.parametrize(

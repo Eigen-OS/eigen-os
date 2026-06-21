@@ -111,6 +111,32 @@ def test_simulated_errors() -> None:
     assert exhausted.value.code == grpc.StatusCode.RESOURCE_EXHAUSTED
 
 
+def test_static_expectation_annotation_surfaces_energy_metadata() -> None:
+    drv = _driver()
+    payload = {
+        "version": "0.1",
+        "qubits": 1,
+        "operations": [
+            {"op": "RY", "q": [0], "params": {"theta": math.pi}},
+            {"op": "MEASURE", "q": [0], "c": [0]},
+        ],
+        "annotations": {
+            "observables": {
+                "observable": {"Z": 0},
+            },
+            "expectation": {
+                "kind": "ExpectationValue",
+                "observable_name": "observable",
+            },
+        },
+    }
+
+    counts, _, meta = drv.execute_circuit("sim:golden", json.dumps(payload).encode("utf-8"), 32, {})
+
+    assert counts == {"1": 32}
+    assert meta["energy"] == "-1.000000"
+
+
 def test_aqo_version_is_required() -> None:
     drv = _driver()
     payload = json.dumps({"qubits": 1, "operations": [{"op": "MEASURE", "q": [0], "c": [0]}]}).encode("utf-8")

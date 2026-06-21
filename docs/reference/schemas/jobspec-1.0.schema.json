@@ -150,6 +150,36 @@
             "backend_target": {
               "type": "string"
             },
+            "topology": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "cluster_id",
+                "partition_count",
+                "partition_ids",
+                "preferred_workers"
+              ],
+              "properties": {
+                "cluster_id": {
+                  "type": "string"
+                },
+                "partition_count": {
+                  "type": "integer"
+                },
+                "partition_ids": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "preferred_workers": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
             "artifact_lineage": {
               "type": "object",
               "additionalProperties": false,

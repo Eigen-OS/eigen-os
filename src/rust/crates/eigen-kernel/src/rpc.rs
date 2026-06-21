@@ -48,6 +48,7 @@ use crate::proto::{
     OptimizationObjective, OptimizerContractEnvelope, OptimizerPolicy,
     OptimizerRankingSemantics, OptimizerServiceOptimizeCircuitRequest, RequestMetadata,
     TopologyContext, CancelJobRequest, CancelJobResponse, DispatchRationale, EnqueueJobRequest,
+    WorkloadContract, WorkloadTopology,
     EnqueueJobResponse, GetDispatchRationaleRequest, GetDispatchRationaleResponse,
     GetJobResultsRequest, GetJobResultsResponse, GetJobStatusRequest, GetJobStatusResponse,
     StreamJobUpdatesRequest, StreamJobUpdatesResponse, TaskState,
@@ -463,7 +464,10 @@ impl NormalizedSubmission {
             .and_then(|d| normalized_deadline_at(d));
         let compiler_options = canonical_string_map(&request.compiler_options);
         let metadata_kvs = canonical_string_map(&request.metadata_kvs);
-        let workload_metadata = distributed_workload_metadata(&metadata_kvs)?;
+        let request_workload = metadata
+            .workload
+            .as_ref();
+        let workload_metadata = distributed_workload_metadata(&metadata_kvs, &compiler_options, request_workload)?;
         let program_hash = hash_bytes_hex(&program);
         let trace_id = trace_id_from_traceparent(&traceparent)
             .unwrap_or_else(|| stable_trace_id(&request_id, &program_hash));
@@ -675,6 +679,28 @@ fn workflow_output_ref_for_stage_output(job_id: &str, stage: DagStageKind) -> St
     workflow_stage_output_ref(job_id, stage)
 }
 
+fn persist_stage_output_artifact(
+    qfs: &CircuitFsLocal,
+    job_id: &str,
+    stage: DagStageKind,
+    output: &BTreeMap<String, String>,
+) -> Result<(), KernelStageError> {
+    let output_ref = workflow_output_ref_for_stage_output(job_id, stage);
+    let payload = serde_json::to_vec_pretty(output).map_err(|err| {
+        KernelStageError::internal(
+            format!("failed to serialize {} workflow output: {err}", stage.key()),
+            output_ref.clone(),
+        )
+    })?;
+    qfs.write_bytes(&output_ref, &payload).map_err(|err| {
+        KernelStageError::internal(
+            format!("failed to persist {} workflow output: {err}", stage.key()),
+            output_ref.clone(),
+        )
+    })?;
+    Ok(())
+}
+
 fn canonical_job_id_for_submission(submission: &NormalizedSubmission) -> String {
     format!("job-{}", submission.fingerprint)
 }
@@ -733,14 +759,192 @@ fn workflow_handoff_token(job_id: &str, stage: DagStageKind, phase: &str, materi
     hash_bytes_hex(&serde_json::to_vec(&normalized).unwrap_or_default())
 }
 
-fn distributed_workload_metadata(metadata_kvs: &BTreeMap<String, String>) -> Result<BTreeMap<String, String>, Status> {
-    let workload_raw = match metadata_kvs.get("jobspec_workload") {
-        Some(raw) if !raw.trim().is_empty() => raw,
-        _ => return Ok(BTreeMap::new()),
+fn workload_contract_to_json_value(workload: &WorkloadContract) -> serde_json::Value {
+    let kind = match workload.kind {
+        1 => "QuantumJob",
+        2 => "HybridWorkflow",
+        3 => "DistributedJob",
+        4 => "BenchmarkJob",
+        5 => "PipelineJob",
+        6 => "ReplayJob",
+        _ => "QuantumJob",
     };
 
-    let workload: serde_json::Value = serde_json::from_str(workload_raw)
-        .map_err(|_| Status::invalid_argument("jobspec_workload metadata must be valid JSON"))?;
+    let artifact_lineage = workload.artifact_lineage.as_ref().map(|artifact| {
+        serde_json::json!({
+            "execution_ref": artifact.execution_ref.clone(),
+            "parent_ref": artifact.parent_ref.clone(),
+            "policy_snapshot_ref": artifact.policy_snapshot_ref.clone(),
+            "root_ref": artifact.root_ref.clone(),
+        })
+    }).unwrap_or_else(|| serde_json::json!({}));
+
+    let observability = workload.observability.as_ref().map(|observability| {
+        serde_json::json!({
+            "emit_metrics": observability.emit_metrics,
+            "trace_id": observability.trace_id.clone(),
+            "trace_ref": observability.trace_ref.clone(),
+            "traceparent": observability.traceparent.clone(),
+        })
+    }).unwrap_or_else(|| serde_json::json!({}));
+
+    let security = workload.security.as_ref().map(|security| {
+        serde_json::json!({
+            "fail_closed": security.fail_closed,
+            "policy_snapshot_ref": security.policy_snapshot_ref.clone(),
+            "project_id": security.project_id.clone(),
+            "service_identity": security.service_identity.clone(),
+            "tenant_id": security.tenant_id.clone(),
+        })
+    }).unwrap_or_else(|| serde_json::json!({}));
+
+    let mut value = serde_json::json!({
+        "artifact_lineage": artifact_lineage,
+        "backend_target": workload.backend_target.clone(),
+        "execution_profile": workload.execution_profile.clone(),
+        "kind": kind,
+        "observability": observability,
+        "replayable": workload.replayable,
+        "security": security,
+    });
+
+    if let Some(topology) = workload.topology.as_ref() {
+        if let Some(obj) = value.as_object_mut() {
+            obj.insert(
+                "topology".to_string(),
+                serde_json::json!({
+                    "cluster_id": topology.cluster_id.clone(),
+                    "partition_count": topology.partition_count,
+                    "partition_ids": topology.partition_ids.clone(),
+                    "preferred_workers": topology.preferred_workers.clone(),
+                }),
+            );
+        }
+    }
+
+    value
+}
+
+fn canonical_worker_name(index: usize) -> String {
+    let mut n = index;
+    let mut suffix = String::new();
+    loop {
+        let ch = (b'a' + (n % 26) as u8) as char;
+        suffix.insert(0, ch);
+        if n < 26 {
+            break;
+        }
+        n = n / 26 - 1;
+    }
+    format!("worker-{suffix}")
+}
+
+fn synthesize_distributed_topology(
+    metadata_kvs: &BTreeMap<String, String>,
+    compiler_options: &BTreeMap<String, String>,
+) -> Option<serde_json::Value> {
+    let partition_count = metadata_kvs
+        .get("distributed.partition_count")
+        .or_else(|| metadata_kvs.get("partition_count"))
+        .or_else(|| compiler_options.get("distributed.partition_count"))
+        .and_then(|raw| raw.trim().parse::<usize>().ok())
+        .filter(|value| *value >= 1)?;
+
+    let cluster_id = metadata_kvs
+        .get("distributed.cluster_id")
+        .or_else(|| metadata_kvs.get("cluster_id"))
+        .or_else(|| metadata_kvs.get("distributed.target"))
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "cluster:auto".to_string());
+
+    let partition_ids = (0..partition_count)
+        .map(|index| format!("partition-{index}"))
+        .collect::<Vec<String>>();
+    let preferred_workers = (0..partition_count)
+        .map(canonical_worker_name)
+        .collect::<Vec<String>>();
+
+    Some(serde_json::json!({
+        "cluster_id": cluster_id,
+        "partition_count": partition_count,
+        "partition_ids": partition_ids,
+        "preferred_workers": preferred_workers,
+    }))
+}
+
+fn merge_distributed_workload_topology(
+    mut workload: serde_json::Value,
+    request_workload: Option<&WorkloadContract>,
+    metadata_kvs: &BTreeMap<String, String>,
+    compiler_options: &BTreeMap<String, String>,
+) -> serde_json::Value {
+    let needs_topology = workload
+        .as_object()
+        .map(|obj| obj.get("topology").is_none())
+        .unwrap_or(false);
+    if !needs_topology {
+        return workload;
+    }
+
+    let topology = request_workload
+        .and_then(|value| value.topology.as_ref())
+        .map(|topology| serde_json::json!({
+            "cluster_id": topology.cluster_id.clone(),
+            "partition_count": topology.partition_count,
+            "partition_ids": topology.partition_ids.clone(),
+            "preferred_workers": topology.preferred_workers.clone(),
+        }))
+        .or_else(|| synthesize_distributed_topology(metadata_kvs, compiler_options));
+
+    let Some(topology) = topology else {
+        return workload;
+    };
+
+    if let Some(obj) = workload.as_object_mut() {
+        obj.insert("topology".to_string(), topology);
+    }
+    workload
+}
+
+fn workload_from_jobspec_yaml(metadata_kvs: &BTreeMap<String, String>) -> Result<Option<serde_json::Value>, Status> {
+    let yaml_raw = match metadata_kvs.get("jobspec_yaml") {
+        Some(raw) if !raw.trim().is_empty() => raw,
+        _ => return Ok(None),
+    };
+
+    let jobspec: serde_yaml::Value = serde_yaml::from_str(yaml_raw)
+        .map_err(|_| Status::invalid_argument("jobspec_yaml metadata must be valid YAML"))?;
+    let workload = jobspec
+        .get("spec")
+        .and_then(|spec| spec.get("workload"))
+        .cloned();
+
+    Ok(workload.and_then(|value| serde_json::to_value(value).ok()))
+}
+
+fn distributed_workload_metadata(
+    metadata_kvs: &BTreeMap<String, String>,
+    compiler_options: &BTreeMap<String, String>,
+    request_workload: Option<&WorkloadContract>,
+) -> Result<BTreeMap<String, String>, Status> {
+    let workload = match metadata_kvs.get("jobspec_workload") {
+        Some(raw) if !raw.trim().is_empty() => serde_json::from_str(raw)
+            .map_err(|_| Status::invalid_argument("jobspec_workload metadata must be valid JSON"))?,
+        _ => match request_workload {
+            Some(workload) => workload_contract_to_json_value(workload),
+            None => match workload_from_jobspec_yaml(metadata_kvs)? {
+                Some(value) => value,
+                None => return Ok(BTreeMap::new()),
+            },
+        },
+    };
+
+    let workload = if workload.get("kind").and_then(|value| value.as_str()) == Some("DistributedJob") {
+        merge_distributed_workload_topology(workload, request_workload, metadata_kvs, compiler_options)
+    } else {
+        workload
+    };
 
     if workload.get("kind").and_then(|value| value.as_str()) != Some("DistributedJob") {
         return Ok(BTreeMap::new());
@@ -2513,6 +2717,115 @@ impl std::error::Error for KernelStageError {}
 struct ExecutionOutcome {
     counts: BTreeMap<String, i64>,
     output: BTreeMap<String, String>,
+    metadata: BTreeMap<String, String>,
+}
+
+const RESULT_SUMMARY_PREFIX: &str = "result.summary.";
+
+fn is_result_summary_bookkeeping_key(key: &str) -> bool {
+    matches!(
+        key,
+        "message"
+            | "counts_ref"
+            | "execution_ref"
+            | "selected_backend"
+            | "selected_queue"
+            | "qfs_result_ref"
+            | "result_manifest_ref"
+            | "release_evidence_bundle_ref"
+            | "release_evidence_manifest_ref"
+            | "release_provenance_ref"
+            | "trace_context"
+            | "trace_id"
+            | "traceparent"
+            | "timeline_ref"
+            | "contract_marker"
+    )
+}
+
+fn merge_result_summary_fields(
+    summary: &mut BTreeMap<String, String>,
+    source: &BTreeMap<String, String>,
+) {
+    for (key, value) in source {
+        let summary_key = key.strip_prefix(RESULT_SUMMARY_PREFIX).unwrap_or(key.as_str());
+        if is_result_summary_bookkeeping_key(summary_key) {
+            continue;
+        }
+        summary.entry(summary_key.to_string()).or_insert_with(|| value.clone());
+    }
+}
+
+fn merge_result_summary_json_value(
+    summary: &mut BTreeMap<String, String>,
+    key_prefix: &str,
+    value: &serde_json::Value,
+) {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (key, child) in map {
+                let next_prefix = if key_prefix.is_empty() && key == "summary" {
+                    String::new()
+                } else if key_prefix.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{key_prefix}.{key}")
+                };
+                merge_result_summary_json_value(summary, &next_prefix, child);
+            }
+        }
+        serde_json::Value::Array(_) => {
+            if !key_prefix.is_empty() {
+                summary
+                    .entry(key_prefix.to_string())
+                    .or_insert_with(|| serde_json::to_string(value).unwrap_or_default());
+            }
+        }
+        serde_json::Value::String(text) => {
+            if !key_prefix.is_empty() {
+                summary.entry(key_prefix.to_string()).or_insert_with(|| text.clone());
+            }
+        }
+        serde_json::Value::Number(number) => {
+            if !key_prefix.is_empty() {
+                summary.entry(key_prefix.to_string()).or_insert_with(|| number.to_string());
+            }
+        }
+        serde_json::Value::Bool(flag) => {
+            if !key_prefix.is_empty() {
+                summary.entry(key_prefix.to_string()).or_insert_with(|| flag.to_string());
+            }
+        }
+        serde_json::Value::Null => {}
+    }
+}
+
+fn merge_result_summary_artifact(
+    qfs: &CircuitFsLocal,
+    summary: &mut BTreeMap<String, String>,
+    artifact_ref: &str,
+) {
+    if artifact_ref.is_empty() {
+        return;
+    }
+
+    let bytes = match qfs.read_bytes(artifact_ref) {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            tracing::debug!(artifact_ref = %artifact_ref, error = %err, "workflow output artifact unavailable");
+            return;
+        }
+    };
+
+    let payload: serde_json::Value = match serde_json::from_slice(&bytes) {
+        Ok(payload) => payload,
+        Err(err) => {
+            tracing::debug!(artifact_ref = %artifact_ref, error = %err, "workflow output artifact is not valid json");
+            return;
+        }
+    };
+
+    merge_result_summary_json_value(summary, "", &payload);
 }
 
 #[derive(Debug, Clone)]
@@ -2996,6 +3309,7 @@ impl FixtureAdapters {
                     response.metadata.get("driver").cloned().unwrap_or_else(|| "simulator".to_string()),
                 ),
             ]),
+            metadata: response.metadata.into_iter().collect(),
         })
     }
 }
@@ -3026,6 +3340,7 @@ impl OrchestrationAdapters for FixtureAdapters {
             stage = "validate-enqueue",
             "submission accepted into orchestration DAG"
         );
+        persist_stage_output_artifact(&self.qfs, &submission.job_id, DagStageKind::ValidateEnqueue, &output)?;
         Ok(output)
     }
 
@@ -3036,24 +3351,27 @@ impl OrchestrationAdapters for FixtureAdapters {
     ) -> Result<BTreeMap<String, String>, KernelStageError> {
         self.maybe_hold(DagStageKind::Compile).await;
         self.maybe_fail(DagStageKind::Compile)?;
-        if submission.target == "sim:local" && self.compiler_endpoint.is_some() {
-            return self.compile_via_compiler(submission).await;
-        }
-        Ok(BTreeMap::from([
-            ("message".to_string(), "compile stage completed".to_string()),
-            (
-                "compiled_artifact_ref".to_string(),
-                format!("qfs://jobs/{}/compiled/circuit.aqo.json", submission.job_id),
-            ),
-            (
-                "compiler_version".to_string(),
-                env!("CARGO_PKG_VERSION").to_string(),
-            ),
-            (
-                "compile_digest".to_string(),
-                format!("compile-{}", submission.program_hash),
-            ),
-        ]))
+        let output = if self.compiler_endpoint.is_some() {
+            self.compile_via_compiler(submission).await?
+        } else {
+            BTreeMap::from([
+                ("message".to_string(), "compile stage completed".to_string()),
+                (
+                    "compiled_artifact_ref".to_string(),
+                    format!("qfs://jobs/{}/compiled/circuit.aqo.json", submission.job_id),
+                ),
+                (
+                    "compiler_version".to_string(),
+                    env!("CARGO_PKG_VERSION").to_string(),
+                ),
+                (
+                    "compile_digest".to_string(),
+                    format!("compile-{}", submission.program_hash),
+                ),
+            ])
+        };
+        persist_stage_output_artifact(&self.qfs, &submission.job_id, DagStageKind::Compile, &output)?;
+        Ok(output)
     }
 
     async fn optimize(
@@ -3063,7 +3381,8 @@ impl OrchestrationAdapters for FixtureAdapters {
     ) -> Result<BTreeMap<String, String>, KernelStageError> {
         self.maybe_hold(DagStageKind::Optimize).await;
         self.maybe_fail(DagStageKind::Optimize)?;
-        self.optimizer_gateway
+        let output = self
+            .optimizer_gateway
             .optimize(submission, compile_output)
             .await
             .map_err(|err| match err.grpc_code {
@@ -3072,7 +3391,9 @@ impl OrchestrationAdapters for FixtureAdapters {
                 Code::ResourceExhausted => KernelStageError::resource_exhausted(err.summary, err.details_ref),
                 Code::InvalidArgument => KernelStageError::invalid_argument(err.summary, err.details_ref),
                 _ => KernelStageError::optimize(err.summary, err.details_ref),
-            })
+            })?;
+        persist_stage_output_artifact(&self.qfs, &submission.job_id, DagStageKind::Optimize, &output)?;
+        Ok(output)
     }
 
     async fn schedule(
@@ -3113,6 +3434,7 @@ impl OrchestrationAdapters for FixtureAdapters {
         if let Some(optimize_output) = _optimize_output.get("model_version") {
             output.insert("optimizer_model_version".to_string(), optimize_output.clone());
         }
+        persist_stage_output_artifact(&self.qfs, &submission.job_id, DagStageKind::Schedule, &output)?;
         Ok(output)
     }
 
@@ -3122,81 +3444,85 @@ impl OrchestrationAdapters for FixtureAdapters {
         schedule_output: &BTreeMap<String, String>,
     ) -> Result<ExecutionOutcome, KernelStageError> {
         self.maybe_hold(DagStageKind::Execute).await;
-        if submission.target == "sim:local" && self.driver_manager_endpoint.is_some() {
-            return self.execute_via_driver_manager(submission, schedule_output).await;
-        }
-        match self.next_execute_step() {
-            ExecuteScriptStep::Success => self.maybe_fail(DagStageKind::Execute)?,
-            ExecuteScriptStep::Unavailable => {
-                return Err(KernelStageError::unavailable(
-                    "execution backend unavailable",
-                    format!("qfs://fixtures/execute/unavailable-{}.json", submission.job_id),
-                ));
+        let outcome = if self.driver_manager_endpoint.is_some() {
+            self.execute_via_driver_manager(submission, schedule_output).await?
+        } else {
+            match self.next_execute_step() {
+                ExecuteScriptStep::Success => self.maybe_fail(DagStageKind::Execute)?,
+                ExecuteScriptStep::Unavailable => {
+                    return Err(KernelStageError::unavailable(
+                        "execution backend unavailable",
+                        format!("qfs://fixtures/execute/unavailable-{}.json", submission.job_id),
+                    ));
+                }
+                ExecuteScriptStep::ResourceExhausted => {
+                    return Err(KernelStageError::resource_exhausted(
+                        "execution capacity exhausted",
+                        format!("qfs://fixtures/execute/resource-exhausted-{}.json", submission.job_id),
+                    ));
+                }
+                ExecuteScriptStep::Aborted => {
+                    return Err(KernelStageError::aborted(
+                        "execution aborted by runtime coordination conflict",
+                        format!("qfs://fixtures/execute/aborted-{}.json", submission.job_id),
+                    ));
+                }
+                ExecuteScriptStep::DeadlineExceeded => {
+                    return Err(KernelStageError::deadline_exceeded(
+                        "execution exceeded deadline",
+                        format!("qfs://fixtures/execute/deadline-{}.json", submission.job_id),
+                    ));
+                }
+                ExecuteScriptStep::InvalidArgument => {
+                    return Err(KernelStageError::invalid_argument(
+                        "execution request invalid",
+                        format!("qfs://fixtures/execute/invalid-{}.json", submission.job_id),
+                    ));
+                }
+                ExecuteScriptStep::FailedPrecondition => {
+                    return Err(KernelStageError::failed_precondition(
+                        "execution precondition not met",
+                        format!("qfs://fixtures/execute/precondition-{}.json", submission.job_id),
+                    ));
+                }
+                ExecuteScriptStep::Internal => {
+                    return Err(KernelStageError::internal(
+                        "execution internal invariant failure",
+                        format!("qfs://fixtures/execute/internal-{}.json", submission.job_id),
+                    ));
+                }
             }
-            ExecuteScriptStep::ResourceExhausted => {
-                return Err(KernelStageError::resource_exhausted(
-                    "execution capacity exhausted",
-                    format!("qfs://fixtures/execute/resource-exhausted-{}.json", submission.job_id),
-                ));
-            }
-            ExecuteScriptStep::Aborted => {
-                return Err(KernelStageError::aborted(
-                    "execution aborted by runtime coordination conflict",
-                    format!("qfs://fixtures/execute/aborted-{}.json", submission.job_id),
-                ));
-            }
-            ExecuteScriptStep::DeadlineExceeded => {
-                return Err(KernelStageError::deadline_exceeded(
-                    "execution exceeded deadline",
-                    format!("qfs://fixtures/execute/deadline-{}.json", submission.job_id),
-                ));
-            }
-            ExecuteScriptStep::InvalidArgument => {
-                return Err(KernelStageError::invalid_argument(
-                    "execution request invalid",
-                    format!("qfs://fixtures/execute/invalid-{}.json", submission.job_id),
-                ));
-            }
-            ExecuteScriptStep::FailedPrecondition => {
-                return Err(KernelStageError::failed_precondition(
-                    "execution precondition not met",
-                    format!("qfs://fixtures/execute/precondition-{}.json", submission.job_id),
-                ));
-            }
-            ExecuteScriptStep::Internal => {
-                return Err(KernelStageError::internal(
-                    "execution internal invariant failure",
-                    format!("qfs://fixtures/execute/internal-{}.json", submission.job_id),
-                ));
-            }
-        }
-        let shots = submission
-            .metadata_kvs
-            .get("shots")
-            .and_then(|raw| raw.parse::<i64>().ok())
-            .filter(|v| *v > 0)
-            .unwrap_or(1024);
+            let shots = submission
+                .metadata_kvs
+                .get("shots")
+                .and_then(|raw| raw.parse::<i64>().ok())
+                .filter(|v| *v > 0)
+                .unwrap_or(1024);
 
-        let mut counts = BTreeMap::new();
-        counts.insert("0".to_string(), shots);
-        let counts_ref = format!("qfs://jobs/{}/results/counts.json", submission.job_id);
-        let execution_ref = format!("qfs://jobs/{}/execution/execution.json", submission.job_id);
+            let mut counts = BTreeMap::new();
+            counts.insert("0".to_string(), shots);
+            let counts_ref = format!("qfs://jobs/{}/results/counts.json", submission.job_id);
+            let execution_ref = format!("qfs://jobs/{}/execution/execution.json", submission.job_id);
 
-        Ok(ExecutionOutcome {
-            counts,
-            output: BTreeMap::from([
-                ("message".to_string(), "execution completed".to_string()),
-                ("counts_ref".to_string(), counts_ref),
-                ("execution_ref".to_string(), execution_ref),
-                (
-                    "selected_backend".to_string(),
-                    schedule_output
-                        .get("selected_backend")
-                        .cloned()
-                        .unwrap_or_else(|| submission.target.clone()),
-                ),
-            ]),
-        })
+            ExecutionOutcome {
+                counts,
+                output: BTreeMap::from([
+                    ("message".to_string(), "execution completed".to_string()),
+                    ("counts_ref".to_string(), counts_ref),
+                    ("execution_ref".to_string(), execution_ref),
+                    (
+                        "selected_backend".to_string(),
+                        schedule_output
+                            .get("selected_backend")
+                            .cloned()
+                            .unwrap_or_else(|| submission.target.clone()),
+                    ),
+                ]),
+                metadata: BTreeMap::new(),
+            }
+            };
+        persist_stage_output_artifact(&self.qfs, &submission.job_id, DagStageKind::Execute, &outcome.output)?;
+        Ok(outcome)
     }
 
     async fn persist(
@@ -3246,6 +3572,24 @@ impl OrchestrationAdapters for FixtureAdapters {
         if let Some(driver) = execution_output.output.get("driver") {
             summary.insert("driver".to_string(), driver.clone());
         }
+        if let Some(optimize_stage) = optimize_stage {
+            merge_result_summary_fields(&mut summary, &optimize_stage.output);
+        }
+        if let Some(workflow_output_ref) = summary.get("workflow_output_ref").cloned() {
+            merge_result_summary_artifact(&self.qfs, &mut summary, &workflow_output_ref);
+        }
+        merge_result_summary_fields(&mut summary, &execution_output.output);
+        merge_result_summary_fields(&mut summary, &execution_output.metadata);
+        if let Some(objective) = summary.get("objective").cloned() {
+            if objective.parse::<f64>().is_ok() {
+                summary.entry("energy".to_string()).or_insert(objective);
+            }
+        }
+        let summary_metadata: BTreeMap<String, String> = summary
+            .iter()
+            .map(|(key, value)| (format!("result.summary.{key}"), value.clone()))
+            .collect();
+        summary.extend(summary_metadata.clone());
         let measurements = scientific_measurements(
             submission,
             execution_output,
@@ -3369,7 +3713,7 @@ impl OrchestrationAdapters for FixtureAdapters {
         };
         let _ = self.qfs.store_release_evidence_bundle_v1(&submission.job_id, &bundle, &manifest, &provenance_report);
 
-        Ok(BTreeMap::from([
+        let mut persist_output = BTreeMap::from([
             ("message".to_string(), "results persisted to qfs".to_string()),
             (
                 "qfs_result_ref".to_string(),
@@ -3398,7 +3742,10 @@ impl OrchestrationAdapters for FixtureAdapters {
             ("optimizer_policy".to_string(), optimizer_policy),
             ("compiler_version".to_string(), compiler_version),
             ("optimizer_version".to_string(), optimizer_version),
-        ]))
+        ]);
+        persist_output.extend(summary_metadata);
+        persist_stage_output_artifact(&self.qfs, &submission.job_id, DagStageKind::Persist, &persist_output)?;
+        Ok(persist_output)
     }
 
     async fn record_knowledge_observability(
@@ -3409,23 +3756,47 @@ impl OrchestrationAdapters for FixtureAdapters {
     ) -> Result<BTreeMap<String, String>, KernelStageError> {
         self.maybe_hold(DagStageKind::RecordKnowledgeObservability).await;
         self.maybe_fail(DagStageKind::RecordKnowledgeObservability)?;
-        let payload = serde_json::json!({
-            "job_id": submission.job_id,
-            "request_id": submission.request_id,
-            "trace_id": submission.trace_id,
-            "traceparent": submission.traceparent,
-            "timeline_ref": format!("qfs://jobs/{}/timeline.jsonl", submission.job_id),
-            "qfs_result_ref": persist_output
-                .get("qfs_result_ref")
-                .cloned()
-                .unwrap_or_default(),
-            "counts_ref": execution_output
-                .output
-                .get("counts_ref")
-                .cloned()
-                .unwrap_or_default(),
-            "contract_marker": r#"eigen_orch_contract_info{version="1.0.0"} 1"#,
-        });
+        let mut payload = serde_json::Map::new();
+        payload.insert("job_id".to_string(), serde_json::Value::String(submission.job_id.clone()));
+        payload.insert("request_id".to_string(), serde_json::Value::String(submission.request_id.clone()));
+        payload.insert("trace_id".to_string(), serde_json::Value::String(submission.trace_id.clone()));
+        payload.insert(
+            "traceparent".to_string(),
+            serde_json::Value::String(submission.traceparent.clone()),
+        );
+        payload.insert(
+            "timeline_ref".to_string(),
+            serde_json::Value::String(format!("qfs://jobs/{}/timeline.jsonl", submission.job_id)),
+        );
+        payload.insert(
+            "qfs_result_ref".to_string(),
+            serde_json::Value::String(
+                persist_output
+                    .get("qfs_result_ref")
+                    .cloned()
+                    .unwrap_or_default(),
+            ),
+        );
+        payload.insert(
+            "counts_ref".to_string(),
+            serde_json::Value::String(
+                execution_output
+                    .output
+                    .get("counts_ref")
+                    .cloned()
+                    .unwrap_or_default(),
+            ),
+        );
+        payload.insert(
+            "contract_marker".to_string(),
+            serde_json::Value::String(r#"eigen_orch_contract_info{version="1.0.0"} 1"#.to_string()),
+        );
+        for (key, value) in persist_output {
+            if key.starts_with("result.summary.") {
+                payload.insert(key.clone(), serde_json::Value::String(value.clone()));
+            }
+        }
+        let payload = serde_json::Value::Object(payload);
         let metrics = serde_json::to_vec(&payload).unwrap_or_default();
         let _ = self
             .qfs
@@ -3439,7 +3810,7 @@ impl OrchestrationAdapters for FixtureAdapters {
             "result reference recorded"
         );
 
-        Ok(BTreeMap::from([
+        let output = BTreeMap::from([
             ("message".to_string(), "knowledge and observability recorded".to_string()),
             (
                 "timeline_ref".to_string(),
@@ -3453,7 +3824,9 @@ impl OrchestrationAdapters for FixtureAdapters {
                 "trace_ref".to_string(),
                 format!("qfs://jobs/{}/trace.json", submission.job_id),
             ),
-        ]))
+        ]);
+        persist_stage_output_artifact(&self.qfs, &submission.job_id, DagStageKind::RecordKnowledgeObservability, &output)?;
+        Ok(output)
     }
 
     async fn finalize(
@@ -3463,7 +3836,7 @@ impl OrchestrationAdapters for FixtureAdapters {
     ) -> Result<BTreeMap<String, String>, KernelStageError> {
         self.maybe_hold(DagStageKind::Finalize).await;
         self.maybe_fail(DagStageKind::Finalize)?;
-        Ok(BTreeMap::from([
+        let output = BTreeMap::from([
             ("message".to_string(), "job finalized".to_string()),
             ("final_state".to_string(), "DONE".to_string()),
             (
@@ -3480,7 +3853,9 @@ impl OrchestrationAdapters for FixtureAdapters {
                     .cloned()
                     .unwrap_or_else(|| format!("qfs://jobs/{}/results/result.json", submission.job_id)),
             ),
-        ]))
+        ]);
+        persist_stage_output_artifact(&self.qfs, &submission.job_id, DagStageKind::Finalize, &output)?;
+        Ok(output)
     }
 }
 
@@ -3980,6 +4355,7 @@ async fn run_job_dag(
     let mut execution_output = ExecutionOutcome {
         counts: BTreeMap::new(),
         output: BTreeMap::new(),
+        metadata: BTreeMap::new(),
     };
     let mut persist_output = BTreeMap::new();
     let mut observability_output = BTreeMap::new();
@@ -4247,6 +4623,29 @@ async fn run_job_dag(
         .persist(&submission, &execution_output, &runtime.get(&job_id).map(|job| job.stage_records.clone()).unwrap_or_default())
         .await
         .map_err(|err| stage_error(persist_stage, err))?;
+
+    if !persist_output.contains_key("result.summary.objective") {
+        if let Some(objective) = optimize_output
+            .get("objective")
+            .cloned()
+            .or_else(|| execution_output.metadata.get("objective").cloned())
+        {
+            persist_output.insert("result.summary.objective".to_string(), objective);
+        }
+    }
+
+    let result_summary_metadata: BTreeMap<String, String> = persist_output
+        .iter()
+        .filter_map(|(key, value)| {
+            key.strip_prefix(RESULT_SUMMARY_PREFIX)
+                .map(|summary_key| (format!("{RESULT_SUMMARY_PREFIX}{summary_key}"), value.clone()))
+        })
+        .collect();
+    if !result_summary_metadata.is_empty() {
+        runtime
+            .set_metadata(&job_id, result_summary_metadata)
+            .map_err(status_to_stage_error(persist_stage, "set_result_summary_metadata"))?;
+    }
 
     if runtime.is_cancel_requested(&job_id) || runtime.deadline_expired(&job_id) {
         terminalize_control(&runtime, &job_id, DagStageKind::Persist, "persist")?;
@@ -5058,7 +5457,7 @@ mod tests {
 
     static TEST_QFS_SEQ: AtomicU64 = AtomicU64::new(0);
 
-    fn test_qfs_root(tag: &str) -> String {
+    pub(crate) fn test_qfs_root(tag: &str) -> String {
         let seq = TEST_QFS_SEQ.fetch_add(1, Ordering::Relaxed);
         let mut root = std::env::temp_dir();
         root.push(format!(
@@ -5240,7 +5639,27 @@ mod tests {
             .into_inner();
         assert_eq!(results.state, TaskState::Done as i32);
         assert!(!results.qfs_result_ref.is_empty());
-        assert!(!results.counts.is_empty());
+        assert_eq!(job.metadata.get("result.summary.objective").map(String::as_str), Some("balanced"));
+        assert!(!job.metadata.contains_key("result.summary.energy"));
+    }
+
+    #[test]
+    fn result_summary_metadata_promotion_is_generic() {
+        let mut summary = BTreeMap::from([("workload_kind".to_string(), "HybridWorkflow".to_string())]);
+        let mut source = BTreeMap::new();
+        source.insert("energy".to_string(), "-1.137270".to_string());
+        source.insert("parameters".to_string(), "[0.121,-0.233,0.055,0.019]".to_string());
+        source.insert("result.summary.objective".to_string(), "-1.137270".to_string());
+        source.insert("message".to_string(), "ignored".to_string());
+        source.insert("counts_ref".to_string(), "qfs://jobs/job-1/results/counts.json".to_string());
+
+        merge_result_summary_fields(&mut summary, &source);
+
+        assert_eq!(summary.get("energy").map(String::as_str), Some("-1.137270"));
+        assert_eq!(summary.get("parameters").map(String::as_str), Some("[0.121,-0.233,0.055,0.019]"));
+        assert_eq!(summary.get("objective").map(String::as_str), Some("-1.137270"));
+        assert!(!summary.contains_key("message"));
+        assert!(!summary.contains_key("counts_ref"));
     }
 
     #[tokio::test]
@@ -5298,6 +5717,107 @@ mod tests {
         let rationale = status.rationale.expect("rationale should exist");
         assert_eq!(rationale.attributes.get("distributed.cluster_id").map(String::as_str), Some("cluster:auto"));
         assert_eq!(rationale.attributes.get("distributed.partition_count").map(String::as_str), Some("2"));
+    }
+
+    #[tokio::test]
+    async fn distributed_jobspec_topology_can_fall_back_to_jobspec_yaml() {
+        let (svc, _) = make_service(None);
+
+        let mut request = make_request("yaml-fallback");
+        request.target = "cluster:auto".to_string();
+        request.metadata_kvs.insert(
+            "jobspec_yaml".to_string(),
+            r#"apiVersion: eigen.os/v1
+kind: QuantumJob
+spec:
+  target: cluster:auto
+  workload:
+    kind: DistributedJob
+    execution_profile: distributed
+    replayable: true
+    topology:
+      cluster_id: cluster:auto
+      partition_count: 2
+      partition_ids:
+        - partition-0
+        - partition-1
+      preferred_workers:
+        - worker-a
+        - worker-b
+"#
+                .to_string(),
+        );
+
+        let response = svc
+            .enqueue_job(Request::new(request))
+            .await
+            .expect("yaml fallback should succeed")
+            .into_inner();
+
+        assert!(response.job_id.starts_with("job-"));
+    }
+
+    #[tokio::test]
+    async fn distributed_jobspec_topology_can_fall_back_to_request_workload() {
+        let (svc, _) = make_service(None);
+
+        let mut request = make_distributed_request("proto-fallback");
+        request.metadata_kvs.insert(
+            "jobspec_workload".to_string(),
+            serde_json::json!({
+                "kind": "DistributedJob",
+                "execution_profile": "distributed",
+                "replayable": true,
+            })
+            .to_string(),
+        );
+        request.metadata.as_mut().expect("metadata").workload = Some(WorkloadContract {
+            kind: 3,
+            execution_profile: "distributed".to_string(),
+            replayable: true,
+            topology: Some(WorkloadTopology {
+                cluster_id: "cluster:auto".to_string(),
+                partition_count: 2,
+                partition_ids: vec!["partition-0".to_string(), "partition-1".to_string()],
+                preferred_workers: vec!["worker-a".to_string(), "worker-b".to_string()],
+            }),
+            ..Default::default()
+        });
+
+        let response = svc
+            .enqueue_job(Request::new(request))
+            .await
+            .expect("proto workload fallback should succeed")
+            .into_inner();
+
+        assert!(response.job_id.starts_with("job-"));
+    }
+
+    #[tokio::test]
+    async fn distributed_jobspec_topology_can_fall_back_to_distributed_hints() {
+        let (svc, _) = make_service(None);
+
+        let mut request = make_request("distributed-hints");
+        request.target = "cluster:auto".to_string();
+        request.compiler_options.insert("distributed.partition_count".to_string(), "2".to_string());
+        request.metadata_kvs.insert("cluster_id".to_string(), "cluster:auto".to_string());
+        request.metadata_kvs.insert(
+            "jobspec_workload".to_string(),
+            serde_json::json!({
+                "kind": "DistributedJob",
+                "execution_profile": "distributed",
+                "replayable": true,
+            })
+            .to_string(),
+        );
+
+        let response = svc
+            .enqueue_job(Request::new(request))
+            .await
+            .expect("distributed hints fallback should succeed")
+            .into_inner();
+
+        assert!(response.job_id.starts_with("job-"));
     }
 
     #[tokio::test]
@@ -6155,3 +6675,32 @@ fn scientific_measurements(
 
     measurements
 }
+
+    #[test]
+    fn merge_result_summary_artifact_promotes_nested_json_leafs() {
+        let qfs_root = tests::test_qfs_root("summary-artifact");
+        let qfs = CircuitFsLocal::new(&qfs_root);
+        let artifact_ref = "qfs://jobs/job-test/workflow/stages/03-optimize-output.json";
+        let payload = serde_json::json!({
+            "energy": -1.2345,
+            "parameters": [0.10, -0.20, 0.05, 0.02],
+            "summary": {
+                "objective": "balanced",
+                "confidence": 0.92
+            }
+        });
+        qfs.write_bytes(
+            artifact_ref,
+            &serde_json::to_vec_pretty(&payload).expect("json serialization should succeed"),
+        )
+        .expect("workflow artifact should be persisted");
+
+        let mut summary = BTreeMap::new();
+        merge_result_summary_artifact(&qfs, &mut summary, artifact_ref);
+
+        assert_eq!(summary.get("energy").map(String::as_str), Some("-1.2345"));
+        assert_eq!(summary.get("parameters").map(String::as_str), Some("[0.1,-0.2,0.05,0.02]"));
+        assert_eq!(summary.get("objective").map(String::as_str), Some("balanced"));
+        assert_eq!(summary.get("confidence").map(String::as_str), Some("0.92"));
+    }
+

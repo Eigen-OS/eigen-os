@@ -111,6 +111,13 @@ message WorkloadSecurity {
   bool fail_closed = 5;
 }
 
+message WorkloadTopology {
+  string cluster_id = 1;
+  int32 partition_count = 2;
+  repeated string partition_ids = 3;
+  repeated string preferred_workers = 4;
+}
+
 message WorkloadContract {
   WorkloadFamilyKind kind = 1;
   string execution_profile = 2;
@@ -119,6 +126,7 @@ message WorkloadContract {
   WorkloadObservability observability = 5;
   WorkloadSecurity security = 6;
   string backend_target = 7;
+  WorkloadTopology topology = 8;
 }
 
 

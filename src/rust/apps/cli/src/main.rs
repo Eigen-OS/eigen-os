@@ -946,6 +946,12 @@ fn render_results_output(results: &jobspec::JobResultsView) {
     render_title("results", Some(&results.job_id));
     println!("  job_id: {}", results.job_id);
     println!("  state: {}", format_state_label(&results.state));
+    if !results.summary.is_empty() {
+        println!("  summary:");
+        for (k, v) in &results.summary {
+            print_key_value(4, k, v);
+        }
+    }
     println!("  counts:");
     for (k, v) in &results.counts {
         println!("    {k}: {v}");

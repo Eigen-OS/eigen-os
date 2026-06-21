@@ -73,7 +73,7 @@ def get_paths() -> ProtoGenPaths:
 
 
 def ensure_generated(files: Iterable[Path] | None = None) -> None:
-    """Generate python stubs if they're missing."""
+    """Generate python stubs if they're missing or stale."""
     paths = get_paths()
     if files is None:
         files = _default_proto_files(paths.proto_root)
@@ -83,7 +83,17 @@ def ensure_generated(files: Iterable[Path] | None = None) -> None:
         paths.out_dir / "eigen" / "api" / "v1" / "job_service_pb2.py",
         paths.out_dir / "eigen" / "internal" / "v1" / "kernel_gateway_pb2.py",
     ]
-    if all(s.exists() for s in sentinels):
+    
+    def _mtime(path: Path) -> float:
+        try:
+            return path.stat().st_mtime
+        except FileNotFoundError:
+            return -1.0
+
+    newest_proto_mtime = max((_mtime(p) for p in files), default=-1.0)
+    oldest_sentinel_mtime = min((_mtime(s) for s in sentinels), default=-1.0)
+
+    if all(s.exists() for s in sentinels) and oldest_sentinel_mtime >= newest_proto_mtime:
         return
 
     try:

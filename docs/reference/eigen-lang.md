@@ -452,7 +452,7 @@ Defines symbolic parameters.
 
 ### 13.2 `Observable`
 
-Defines measurement observables.
+Defines measurement observables. When an observable literal is bound to a name and then referenced by `ExpectationValue`, the compiler records it in AQO annotations so supported runtimes can surface a numeric `result.summary.energy` without special-casing the workload kind.
 
 Example:
 

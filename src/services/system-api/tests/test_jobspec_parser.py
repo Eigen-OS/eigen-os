@@ -46,6 +46,11 @@ def test_jobspec_positive_fixtures_are_mapped_deterministically() -> None:
         assert req.workload.kind == WORKLOAD_KIND_VALUES[normalized["spec"]["workload"]["kind"]]
         assert req.workload.execution_profile == normalized["spec"]["workload"]["execution_profile"]
         assert req.workload.replayable == normalized["spec"]["workload"]["replayable"]
+        if normalized["spec"]["workload"].get("topology") is not None:
+            assert req.workload.topology.cluster_id == normalized["spec"]["workload"]["topology"]["cluster_id"]
+            assert req.workload.topology.partition_count == normalized["spec"]["workload"]["topology"]["partition_count"]
+            assert list(req.workload.topology.partition_ids) == normalized["spec"]["workload"]["topology"]["partition_ids"]
+            assert list(req.workload.topology.preferred_workers) == normalized["spec"]["workload"]["topology"]["preferred_workers"]
         assert json.loads(req.metadata["jobspec_workload"]) == normalized["spec"]["workload"]
         assert req.metadata["jobspec_version"] == "1.0.0"
         assert req.metadata["jobspec_digest"] == normalized["digest"]

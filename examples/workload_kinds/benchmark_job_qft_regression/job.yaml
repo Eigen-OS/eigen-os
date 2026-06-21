@@ -1,0 +1,30 @@
+apiVersion: eigen.os/v1
+kind: QuantumJob
+metadata:
+  name: qft-benchmark-regression
+  labels:
+    example: "true"
+    domain: benchmarking
+    workload: benchmark
+spec:
+  program:
+    path: program.eigen.py
+    entrypoint: main
+  target: sim:local
+  priority: 60
+  compiler_options:
+    spec.workload.seed: "42"
+    spec.workload.backend_target: "sim:local"
+  workload:
+    kind: BenchmarkJob
+    execution_profile: benchmark
+    replayable: false
+    backend_target: sim:local
+    seed: 42
+  metadata:
+    shots: "16384"
+    optimizer: "none"
+    benchmark: "qft-depth-regression"
+    domain: "benchmarking"
+    seed: "42"
+    

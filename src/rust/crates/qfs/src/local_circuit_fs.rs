@@ -231,7 +231,13 @@ impl CircuitFsLocal {
         fh.write_all(b"\n")?;
         fh.flush()?;
         fh.sync_all()?;
-        let _ = mirror_path_to_minio(&path, bytes);
+        if let Err(err) = mirror_path_to_minio(&path, bytes) {
+            eprintln!(
+                "failed to mirror log line to MinIO: path={} error={}",
+                path.display(),
+                err
+            );
+        }
         Ok(())
     }
 
@@ -850,9 +856,15 @@ fn atomic_write_bytes(path: &Path, bytes: &[u8]) -> Result<(), CircuitFsError> {
     tmp.as_file().sync_all()?;
     tmp.persist(path)
         .map_err(|err| CircuitFsError::Io(err.error))?;
-    // Local persistence is authoritative; MinIO mirroring must not fail the job
-    // when the object store is temporarily unavailable.
-    let _ = mirror_path_to_minio(path, bytes);
+    // Local persistence is authoritative; MinIO mirroring should still be attempted,
+    // but failures are surfaced in logs so the object-store path can be diagnosed.
+    if let Err(err) = mirror_path_to_minio(path, bytes) {
+        eprintln!(
+            "failed to mirror artifact to MinIO: path={} error={}",
+            path.display(),
+            err
+        );
+    }
     Ok(())
 }
 
@@ -930,7 +942,7 @@ fn minio_enabled() -> bool {
     matches!(
         env::var("EIGEN_QFS_BACKEND").ok().as_deref(),
         Some("s3") | Some("minio")
-    )
+    ) || env::var("EIGEN_QFS_S3_ENDPOINT").is_ok()
 }
 
 fn minio_bucket() -> String {

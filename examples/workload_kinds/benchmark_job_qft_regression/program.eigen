@@ -1,0 +1,41 @@
+from eigen_lang import (
+    ClassicalRegister,
+    QubitRegister,
+    cnot,
+    hybrid_program,
+    rx,
+    rz,
+)
+
+
+@hybrid_program(
+    compiler="eigen",
+    target="simulator",
+    shots=16384,
+    optimization_level=1,
+    seed=42,
+    metadata={
+        "example": "qft-benchmark-regression",
+        "domain": "benchmarking",
+        "benchmark": "qft-depth-regression",
+        "seed": 42,
+    },
+)
+def main():
+    """A reproducible benchmark workload for compiler/runtime regression checks."""
+    qreg = QubitRegister(16)
+    creg = ClassicalRegister(16)
+
+    for index in range(16):
+        rx(index, theta=0.13)
+        rz(index, theta=0.07)
+
+    for index in range(15):
+        cnot(index, index + 1)
+
+    return {
+        "qubits": qreg.size,
+        "classical_bits": creg.size,
+        "benchmark": "qft-depth-regression",
+        "seed": 42,
+    }

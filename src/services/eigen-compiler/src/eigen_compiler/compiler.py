@@ -612,6 +612,94 @@ def _collect_params(tree: ast.AST) -> tuple[dict[str, dict[str, object]], tuple[
     return params, tuple(violations)
 
 
+def _literal_jsonish(node: ast.AST) -> object | None:
+    scalar = _literal_scalar(node)
+    if scalar is not None:
+        return scalar
+    if isinstance(node, ast.List):
+        values = []
+        for item in node.elts:
+            value = _literal_jsonish(item)
+            if value is None:
+                return None
+            values.append(value)
+        return values
+    if isinstance(node, ast.Tuple):
+        values = []
+        for item in node.elts:
+            value = _literal_jsonish(item)
+            if value is None:
+                return None
+            values.append(value)
+        return values
+    if isinstance(node, ast.Dict):
+        result: dict[str, object] = {}
+        for key_node, value_node in zip(node.keys, node.values, strict=True):
+            key_value = _literal_jsonish(key_node)
+            if not isinstance(key_value, str):
+                return None
+            value = _literal_jsonish(value_node)
+            if value is None:
+                return None
+            result[key_value] = value
+        return result
+    return None
+
+
+def _resolve_observable_terms(node: ast.AST) -> dict[str, object] | None:
+    if not isinstance(node, ast.Call) or _call_name(node.func) != "Observable":
+        return None
+    terms: dict[str, object] = {}
+    for keyword in node.keywords:
+        if keyword.arg is None:
+            return None
+        value = _literal_jsonish(keyword.value)
+        if value is None:
+            return None
+        terms[keyword.arg] = value
+    return terms or None
+
+
+def _collect_observable_bindings(tree: ast.AST) -> tuple[dict[str, dict[str, object]], tuple[FieldViolation, ...]]:
+    bindings: dict[str, dict[str, object]] = {}
+    violations: list[FieldViolation] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        if len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name):
+            continue
+        target = node.targets[0].id
+        terms = _resolve_observable_terms(node.value)
+        if terms is None:
+            continue
+        bindings[target] = terms
+    return bindings, tuple(violations)
+
+
+def _collect_expectation_annotation(
+    tree: ast.AST,
+    observable_bindings: dict[str, dict[str, object]],
+) -> dict[str, object] | None:
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or _call_name(node.func) != "ExpectationValue":
+            continue
+        observable_expr = next((keyword.value for keyword in node.keywords if keyword.arg == "observable"), None)
+        if observable_expr is None:
+            continue
+        if isinstance(observable_expr, ast.Name) and observable_expr.id in observable_bindings:
+            return {
+                "kind": "ExpectationValue",
+                "observable_name": observable_expr.id,
+            }
+        terms = _resolve_observable_terms(observable_expr)
+        if terms is not None:
+            return {
+                "kind": "ExpectationValue",
+                "observable_terms": terms,
+            }
+    return None
+
+
 def _resolve_int_expr(expr: ast.AST, *, context: str) -> int:
     value = _literal_scalar(expr)
     if isinstance(value, int):
@@ -779,6 +867,8 @@ def _build_compiler_pass_pipeline(
     request_digest: str,
     has_expectation: bool,
     has_minimize: bool,
+    observable_bindings: dict[str, dict[str, object]],
+    expectation_annotation: dict[str, object] | None,
     distributed: DistributedCompileConfig,
 ) -> CompilerPassPipeline:
     lowered_ir = {"qubits": qubits, "operations": json.loads(json.dumps(operations, sort_keys=True, separators=(",", ":"), allow_nan=False))}
@@ -794,6 +884,8 @@ def _build_compiler_pass_pipeline(
         request_digest=request_digest,
         has_expectation=has_expectation,
         has_minimize=has_minimize,
+        observable_bindings=observable_bindings,
+        expectation_annotation=expectation_annotation,
         distributed=distributed,
     )
     validated_aqo = _validate_lowering_payload(aqo_payload)
@@ -845,6 +937,8 @@ def _build_aqo_payload(
     request_digest: str,
     has_expectation: bool,
     has_minimize: bool,
+    observable_bindings: dict[str, dict[str, object]],
+    expectation_annotation: dict[str, object] | None,
     distributed: DistributedCompileConfig,
 ) -> dict[str, object]:
     aqo: dict[str, object] = {
@@ -876,8 +970,10 @@ def _build_aqo_payload(
     aqo["checksums"] = checksums
 
     annotations: dict[str, object] = {}
+    if observable_bindings:
+        annotations["observables"] = observable_bindings
     if has_expectation:
-        annotations["expectation"] = {"kind": "ExpectationValue"}
+        annotations["expectation"] = expectation_annotation or {"kind": "ExpectationValue"}
     if has_minimize:
         annotations["hybrid_plan_marker"] = {"kind": "minimize", "expanded_by": "kernel"}
     if annotations:
@@ -946,12 +1042,16 @@ def compile_eigen_lang(
 
     _run_stage("validate_ast", observer, _validate_tree)
 
-    def _annotate_tree() -> dict[str, dict[str, object]]:
+    def _annotate_tree() -> tuple[dict[str, dict[str, object]], dict[str, dict[str, object]], dict[str, object] | None]:
         try:
             params, param_violations = _collect_params(tree)
             if param_violations:
                 raise CompilerValidationError(violations=param_violations)
-            return params
+            observable_bindings, observable_violations = _collect_observable_bindings(tree)
+            if observable_violations:
+                raise CompilerValidationError(violations=observable_violations)
+            expectation_annotation = _collect_expectation_annotation(tree, observable_bindings)
+            return params, observable_bindings, expectation_annotation
         except CompilerValidationError as exc:
             raise CompilerValidationError(
                 violations=_relabel_violations(
@@ -962,7 +1062,7 @@ def compile_eigen_lang(
                 )
             ) from None
 
-    params = _run_stage("annotate", observer, _annotate_tree)
+    params, observable_bindings, expectation_annotation = _run_stage("annotate", observer, _annotate_tree)
     
     def _lower_to_ir() -> tuple[list[dict], int]:
         try:
@@ -1059,6 +1159,8 @@ def compile_eigen_lang(
                 request_digest=aqo_request_digest,
                 has_expectation=has_expectation,
                 has_minimize=has_minimize,
+                observable_bindings=observable_bindings,
+                expectation_annotation=expectation_annotation,
                 distributed=distributed,
             )
         except CompilerValidationError as exc:

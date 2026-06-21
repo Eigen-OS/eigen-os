@@ -102,7 +102,7 @@ Example qualitative sanity checks for this VQE sample:
 
 - `counts` is populated with measured bitstrings;
 - metadata includes backend/runtime fields;
-- objective/energy behavior can vary between implementations, but early iterations should typically improve before flattening.
+- `result.summary.objective` is the canonical optimization metric; when the optimizer emits a numeric objective, hybrid workflows may also surface `result.summary.energy` as a compatibility alias.
 
 ## Troubleshooting
 

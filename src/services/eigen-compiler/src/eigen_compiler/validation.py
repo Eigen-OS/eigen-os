@@ -11,7 +11,7 @@ from typing import List
 from .errors import FieldViolation
 
 _SUPPORTED_LANGUAGES = {"eigen-lang"}
-_SUPPORTED_DISTRIBUTED_TARGETS = {"cluster"}
+_SUPPORTED_DISTRIBUTED_TARGETS = {"cluster", "cluster:auto", "cluster:gpu", "cluster:quantum"}
 _SUPPORTED_QUEUE_PROVIDERS = {"memory", "redis", "sqs"}
 _SUPPORTED_TOPOLOGY_HINTS = {"data_parallel", "pipeline"}
 _SUPPORTED_WORKLOAD_KINDS = {

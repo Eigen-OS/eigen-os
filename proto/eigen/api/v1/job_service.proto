@@ -66,10 +66,18 @@ enum WorkloadFamilyKind {
   WORKLOAD_FAMILY_KIND_REPLAY_JOB = 6;
 }
 
+message WorkloadTopology {
+  string cluster_id = 1;
+  int32 partition_count = 2;
+  repeated string partition_ids = 3;
+  repeated string preferred_workers = 4;
+}
+
 message WorkloadContract {
   WorkloadFamilyKind kind = 1;
   string execution_profile = 2;
   bool replayable = 3;
+  WorkloadTopology topology = 4;
 }
 
 message SubmitJobResponse {
