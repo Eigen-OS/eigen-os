@@ -5,7 +5,7 @@ import warnings
 
 from eigen.api.v1 import job_service_pb2 as eigen_dot_api_dot_v1_dot_job__service__pb2
 
-GRPC_GENERATED_VERSION = '1.80.0'
+GRPC_GENERATED_VERSION = '1.81.0'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 

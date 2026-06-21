@@ -11,4 +11,5 @@ spec:
           return 1
   workload:
     kind: BenchmarkJob
+    seed: 42
     

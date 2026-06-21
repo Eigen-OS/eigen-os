@@ -156,23 +156,23 @@ def _ensure_normalized_driver_registered() -> None:
         _SERVER.driver_registry.add_driver(_NormalizedDriver().name, _NormalizedDriver())
 
 
-def test_list_devices_returns_simulator_device(grpc_addr: str) -> None:
+def test_list_devices_returns_simulator_devices(grpc_addr: str) -> None:
     channel = grpc.insecure_channel(grpc_addr)
     stub = drv_pb_grpc.DriverManagerServiceStub(channel)
 
     resp = stub.ListDevices(drv_pb.ListDevicesRequest())
 
-    assert len(resp.devices) == 1
-    assert resp.devices[0].device_id == "sim:local"
+    assert {device.device_id for device in resp.devices} == {"cluster:auto", "sim:local"}
 
 
-def test_get_device_status_returns_simulator_status(grpc_addr: str) -> None:
+@pytest.mark.parametrize("device_id", ["cluster:auto", "sim:local"])
+def test_get_device_status_returns_simulator_status(grpc_addr: str, device_id: str) -> None:
     channel = grpc.insecure_channel(grpc_addr)
     stub = drv_pb_grpc.DriverManagerServiceStub(channel)
 
-    resp = stub.GetDeviceStatus(drv_pb.DeviceStatusRequest(device_id="sim:local"))
+    resp = stub.GetDeviceStatus(drv_pb.DeviceStatusRequest(device_id=device_id))
 
-    assert resp.device_id == "sim:local"
+    assert resp.device_id == device_id
     assert resp.metadata["driver"] == "simulator"
 
 

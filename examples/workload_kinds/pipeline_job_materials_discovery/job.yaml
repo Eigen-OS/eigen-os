@@ -1,0 +1,40 @@
+apiVersion: eigen.os/v1
+kind: QuantumJob
+metadata:
+  name: materials-pipeline-demo
+  labels:
+    example: "true"
+    domain: materials-science
+    workload: pipeline
+spec:
+  target: sim:local
+  program:
+    path: program.eigen.py
+    entrypoint: main
+  priority: 65
+  workload:
+    kind: PipelineJob
+    execution_profile: pipeline
+    replayable: true
+    backend_target: sim:local
+    pipeline:
+      stage_id: quantum_refine
+      handoff_ref: qfs://stages/quantum_refine/energies.parquet
+      source_ref: qfs://stages/preprocess/features.parquet
+      input_refs:
+        - qfs://stages/preprocess/features.parquet
+      output_refs:
+        - qfs://stages/quantum_refine/energies.parquet
+        - qfs://stages/quantum_refine/report.json
+      depends_on:
+        - preprocess
+      failure_semantics: invalidate_downstream
+      replay:
+        enabled: true
+        deterministic_seed: 99
+  metadata:
+    shots: "4096"
+    optimizer: "cobyla"
+    domain: "materials-science"
+    pipeline_stage: "quantum_refine"
+    source_ref: "qfs://stages/preprocess/features.parquet"

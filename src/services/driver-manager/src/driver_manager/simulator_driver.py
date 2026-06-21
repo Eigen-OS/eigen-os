@@ -18,6 +18,54 @@ _SUPPORTED_OPS = {"RX", "RY", "RZ", "CX", "MEASURE"}
 _MAX_QUBITS = 16
 
 
+def _observable_terms_from_payload(payload: dict) -> dict[str, dict[str, object]]:
+    annotations = payload.get("annotations")
+    if not isinstance(annotations, dict):
+        return {}
+    observables = annotations.get("observables")
+    if not isinstance(observables, dict):
+        return {}
+    normalized: dict[str, dict[str, object]] = {}
+    for name, raw_terms in observables.items():
+        if not isinstance(name, str) or not isinstance(raw_terms, dict):
+            continue
+        terms: dict[str, object] = {}
+        for key, value in raw_terms.items():
+            if not isinstance(key, str):
+                break
+            if isinstance(value, (int, float, str, bool)):
+                terms[key.upper()] = value
+            elif isinstance(value, list) and all(isinstance(item, int) for item in value):
+                terms[key.upper()] = list(value)
+            else:
+                break
+        else:
+            if terms:
+                normalized[name] = terms
+    return normalized
+
+
+def _statevector_expectation(state: list[complex], qubits: list[int], operator: str) -> float:
+    operator = operator.upper()
+    if not qubits or operator not in {"X", "Y", "Z"}:
+        return 0.0
+
+    total = 0j
+    for basis, amplitude in enumerate(state):
+        target = basis
+        phase = 1 + 0j
+        for qubit in qubits:
+            bit = (basis >> qubit) & 1
+            if operator in {"X", "Y"}:
+                target ^= 1 << qubit
+            if operator in {"Z", "Y"} and bit:
+                phase *= -1
+            if operator == "Y":
+                phase *= 1j if bit == 0 else -1j
+        total += amplitude.conjugate() * phase * state[target]
+    return float(total.real)
+
+
 class DriverExecutionError(Exception):
     """Driver-level execution error mapped to a gRPC status."""
 
@@ -59,7 +107,21 @@ class SimulatorDriver:
         return DriverHealth(ready=True, details={"driver": self.name})
 
     def get_devices(self) -> list[object]:
+        simulator_capabilities = {
+            "formats": "AQO_JSON",
+            "ops": "RX,RY,RZ,CX,MEASURE",
+            "bitstring_order": "msb_first_by_classical_index",
+        }
         return [
+            self._types_pb.DeviceInfo(
+                device_id="cluster:auto",
+                name="Auto-dispatched distributed simulator",
+                backend_type="simulator",
+                status=self._types_pb.ONLINE,
+                queue_depth=0,
+                estimated_wait_sec=0,
+                capabilities=dict(simulator_capabilities),
+            ),
             self._types_pb.DeviceInfo(
                 device_id="sim:local",
                 name="Local AQO simulator",
@@ -67,12 +129,17 @@ class SimulatorDriver:
                 status=self._types_pb.ONLINE,
                 queue_depth=0,
                 estimated_wait_sec=0,
-                capabilities={
-                    "formats": "AQO_JSON",
-                    "ops": "RX,RY,RZ,CX,MEASURE",
-                    "bitstring_order": "msb_first_by_classical_index",
-                },
-            )
+                capabilities=dict(simulator_capabilities),
+            ),
+            self._types_pb.DeviceInfo(
+                device_id="runtime:deterministic",
+                name="Deterministic replay runtime",
+                backend_type="simulator",
+                status=self._types_pb.ONLINE,
+                queue_depth=0,
+                estimated_wait_sec=0,
+                capabilities=dict(simulator_capabilities),
+            ),
         ]
 
     def execute_circuit(
@@ -107,6 +174,28 @@ class SimulatorDriver:
             "shots": str(shots),
             "bitstring_order": "msb_first_by_classical_index",
         }
+
+        observable_bindings = _observable_terms_from_payload(payload)
+        annotations = payload.get("annotations") if isinstance(payload.get("annotations"), dict) else {}
+        expectation_info = annotations.get("expectation") if isinstance(annotations, dict) else None
+        if isinstance(expectation_info, dict):
+            observable_terms = expectation_info.get("observable_terms")
+            if not isinstance(observable_terms, dict):
+                observable_name = expectation_info.get("observable_name")
+                if isinstance(observable_name, str):
+                    observable_terms = observable_bindings.get(observable_name)
+            if isinstance(observable_terms, dict):
+                energy = 0.0
+                for operator_name, qubit_spec in observable_terms.items():
+                    if isinstance(qubit_spec, int):
+                        qubit_indices = [qubit_spec]
+                    elif isinstance(qubit_spec, list) and all(isinstance(item, int) for item in qubit_spec):
+                        qubit_indices = list(qubit_spec)
+                    else:
+                        continue
+                    energy += _statevector_expectation(state, qubit_indices, operator_name)
+                metadata["energy"] = f"{energy:.6f}"
+
         return counts, elapsed, metadata
 
     def get_device_status(self, device_id: str) -> DeviceStatusInfo:

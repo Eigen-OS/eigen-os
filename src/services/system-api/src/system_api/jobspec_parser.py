@@ -266,6 +266,23 @@ def _normalize_workload_contract(
         violations.append(FieldViolation(field="spec.workload.backend_target", description="must be string"))
         backend_target = target
 
+    seed_value = workload_raw.get("seed")
+    if seed_value is not None:
+        if isinstance(seed_value, bool):
+            violations.append(FieldViolation(field="spec.workload.seed", description="must be integer"))
+            seed_value = None
+        elif isinstance(seed_value, int):
+            seed_value = int(seed_value)
+        elif isinstance(seed_value, str):
+            try:
+                seed_value = int(seed_value.strip())
+            except ValueError:
+                violations.append(FieldViolation(field="spec.workload.seed", description="must be integer"))
+                seed_value = None
+        else:
+            violations.append(FieldViolation(field="spec.workload.seed", description="must be integer"))
+            seed_value = None
+
     result = {
         "kind": kind,
         "execution_profile": execution_profile,
@@ -275,6 +292,8 @@ def _normalize_workload_contract(
         "security": security,
         "backend_target": backend_target.strip() if isinstance(backend_target, str) else target,
     }
+    if seed_value is not None:
+        result["seed"] = seed_value
     if topology is not None:
         result["topology"] = topology
     return result
@@ -516,13 +535,25 @@ def parse_jobspec_to_submit_request(jobspec_path: Path) -> job_pb.SubmitJobReque
             "jobspec_workload": _canonical_json(normalized["spec"]["workload"]),
         }
     )
+    workload_seed = normalized["spec"]["workload"].get("seed")
+    if workload_seed is not None and "seed" not in public_metadata:
+        public_metadata["seed"] = str(workload_seed)
 
     workload = normalized["spec"]["workload"]
-    workload_proto = job_pb.WorkloadContract(
-        kind=job_pb.WorkloadFamilyKind.Value(JOBSPEC_WORKLOAD_ENUM_NAMES[workload["kind"]]),
-        execution_profile=workload["execution_profile"],
-        replayable=workload["replayable"],
-    )
+    workload_kwargs: dict[str, Any] = {
+        "kind": job_pb.WorkloadFamilyKind.Value(JOBSPEC_WORKLOAD_ENUM_NAMES[workload["kind"]]),
+        "execution_profile": workload["execution_profile"],
+        "replayable": workload["replayable"],
+    }
+    topology = workload.get("topology")
+    if isinstance(topology, dict):
+        workload_kwargs["topology"] = job_pb.WorkloadTopology(
+            cluster_id=str(topology.get("cluster_id", "")),
+            partition_count=int(topology.get("partition_count", 0) or 0),
+            partition_ids=[str(item) for item in list(topology.get("partition_ids", []))],
+            preferred_workers=[str(item) for item in list(topology.get("preferred_workers", []))],
+        )
+    workload_proto = job_pb.WorkloadContract(**workload_kwargs)
 
     return job_pb.SubmitJobRequest(
         name=normalized["metadata"]["name"],

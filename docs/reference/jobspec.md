@@ -114,7 +114,7 @@ The compiler resolves a workload-family profile deterministically from `spec.wor
 |---|---|---|---|---|---|---|
 | `QuantumJob` | static AST subset, single entrypoint, no adaptive markers | normalization of measurements and literal angles | distributed, replay, benchmark, pipeline transforms | local simulator or quantum backend | benchmark/replay disabled | bounded trace + request identifiers |
 | `HybridWorkflow` | static AST subset, single entrypoint, hybrid markers allowed | hybrid annotation projection, expectation annotation projection | distributed, replay, pipeline transforms | simulator or cluster-adjacent backend | benchmark/replay disabled | bounded trace + request identifiers |
-| `DistributedJob` | static AST subset, single entrypoint, explicit topology | distributed topology projection, partition hints | benchmark, replay, pipeline transforms | `distributed.enabled=true`, `distributed.target`, `distributed.partition_count` | topology must be bounded | tenant/project-aware bounded observability |
+| `DistributedJob` | static AST subset, single entrypoint, explicit topology | distributed topology projection, partition hints | benchmark, replay, pipeline transforms | `distributed.enabled=true`, `distributed.target` in `{cluster, cluster:auto, cluster:gpu, cluster:quantum}`, `distributed.partition_count` | topology must be bounded | tenant/project-aware bounded observability |
 | `BenchmarkJob` | static AST subset, single entrypoint, fixed seed | none beyond deterministic metadata projection | adaptive minimize rewrites, distributed transforms | explicit backend target | seed and target required | benchmark-safe bounded telemetry only |
 | `PipelineJob` | static AST subset, single entrypoint, explicit handoff refs | pipeline handoff projection | benchmark and replay transforms | `source_ref` plus canonical handoff refs | stage id and handoff ref required | lineage-preserving bounded telemetry |
 | `ReplayJob` | static AST subset, single entrypoint, canonical source ref | replay lineage projection | adaptive minimize and pipeline transforms | `source_ref` required | replay enabled marker required | replay-safe bounded telemetry |
@@ -444,6 +444,7 @@ sim:local
 #### Distributed Runtime
 
 ```yaml
+cluster
 cluster:auto
 cluster:gpu
 cluster:quantum
@@ -470,7 +471,7 @@ runtime:deterministic
 ### Validation Rules
 
 - target MUST be explicitly declared,
-- unknown targets MUST fail validation,
+- unsupported distributed targets MUST fail validation (supported values: `cluster`, `cluster:auto`, `cluster:gpu`, `cluster:quantum`),
 - backend aliases MUST resolve through Driver Manager normalization.
 
 ---

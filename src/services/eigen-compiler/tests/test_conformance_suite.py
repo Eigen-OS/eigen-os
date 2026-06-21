@@ -302,6 +302,18 @@ def test_compile_preserves_annotations_and_topology() -> None:
     assert compiled["topology"]["partition_count"] == 4
 
 
+def test_compile_records_literal_observable_annotations() -> None:
+    source = b"""from eigen_lang import Observable, ExpectationValue, hybrid_program
+@hybrid_program(target="sim")
+def main():
+    observable = Observable(Z=0, X=1)
+    return {"energy": ExpectationValue(observable=observable)}
+"""
+    compiled = json.loads(compile_eigen_lang(source).aqo_json.decode("utf-8"))
+    assert compiled["annotations"]["observables"]["observable"] == {"Z": 0, "X": 1}
+    assert compiled["annotations"]["expectation"] == {"kind": "ExpectationValue", "observable_name": "observable"}
+
+
 def test_compile_exposes_compiler_diagnostics_payload() -> None:
     source = b'from eigen_lang import Param, ExpectationValue, hybrid_program, minimize\n@hybrid_program(target="sim")\ndef main():\n    theta = Param("theta")\n    ry(0, theta=theta)\n    minimize(ExpectationValue("a", "b"), [0.1])\n'
     compiled = compile_eigen_lang(

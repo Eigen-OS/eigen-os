@@ -1,0 +1,52 @@
+apiVersion: eigen.os/v1
+kind: QuantumJob
+metadata:
+  name: distributed-network-partition-demo
+  labels:
+    example: "true"
+    domain: telecom
+    workload: distributed
+spec:
+  target: cluster:auto
+  program:
+    path: program.eigen.py
+    entrypoint: main
+  priority: 80
+  compiler_options:
+    distributed.enabled: "true"
+    distributed.target: "cluster:auto"
+    distributed.partition_count: "8"
+    distributed.queue_provider: "memory"
+    distributed.topology_hint: "data_parallel"
+  workload:
+    kind: DistributedJob
+    execution_profile: distributed
+    replayable: true
+    backend_target: cluster:auto
+    topology:
+      cluster_id: cluster:auto
+      partition_count: 8
+      partition_ids:
+        - partition-0
+        - partition-1
+        - partition-2
+        - partition-3
+        - partition-4
+        - partition-5
+        - partition-6
+        - partition-7
+      preferred_workers:
+        - worker-a
+        - worker-b
+        - worker-c
+        - worker-d
+        - worker-e
+        - worker-f
+        - worker-g
+        - worker-h
+  metadata:
+    shots: "2048"
+    domain: "telecom-network"
+    partition_strategy: "data_parallel"
+    cluster_id: "cluster:auto"
+    

@@ -156,6 +156,34 @@ def test_compile_circuit_emits_distributed_metadata_hints(grpc_addr: str) -> Non
     assert resp.metadata["distributed.topology_hint"] == "data_parallel"
 
 
+def test_compile_circuit_accepts_cluster_auto_distributed_target(grpc_addr: str) -> None:
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = comp_pb_grpc.CompilationServiceStub(channel)
+
+    resp = stub.CompileCircuit(
+        comp_pb.CompileCircuitRequest(
+            language="eigen-lang",
+            source=(
+                b"from eigen_lang import hybrid_program\n\n"
+                b"@hybrid_program()\n"
+                b"def main():\n"
+                b"    ry(0, theta=1.0)\n"
+            ),
+            options={
+                "distributed.enabled": "true",
+                "distributed.target": "cluster:auto",
+                "distributed.partition_count": "8",
+                "distributed.queue_provider": "redis",
+                "distributed.topology_hint": "data_parallel",
+            },
+        )
+    )
+
+    assert resp.metadata["distributed.enabled"] == "true"
+    assert resp.metadata["distributed.target"] == "cluster:auto"
+    assert resp.metadata["workload_profile"] == "DistributedJob"
+
+
 def test_compile_circuit_requires_input(grpc_addr: str) -> None:
     channel = grpc.insecure_channel(grpc_addr)
     stub = comp_pb_grpc.CompilationServiceStub(channel)
