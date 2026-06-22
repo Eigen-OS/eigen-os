@@ -110,6 +110,8 @@ def test_pattern_miner_ingest_is_idempotent_and_deterministic() -> None:
     mined_first = service.mine_patterns(snapshot_id="s1", tenant_id="tenant-a", project_id="project-a")
     mined_second = service.mine_patterns(snapshot_id="s1", tenant_id="tenant-a", project_id="project-a")
     assert mined_first == mined_second
+    assert mined_first["patterns"][0]["provenance"]["source"]["snapshot_id"] == "s1"
+    assert mined_first["patterns"][0]["provenance"]["validation_status"]["state"] == "catalogued"
 
 
 def test_recommendation_payload_has_versioned_contract_and_provenance_links() -> None:
@@ -163,6 +165,13 @@ def test_get_pattern_returns_canonical_template_and_separates_candidates() -> No
     assert result["candidate_patterns"][0]["selected"] is True
     assert result["candidate_patterns"][0]["pattern_family"] == "alpha"
     assert result["candidate_patterns"][0]["rank"] == 1
+    assert result["candidate_patterns"][0]["provenance"]["source"]["snapshot_id"] == "s1"
+    assert result["candidate_patterns"][0]["provenance"]["version"]["contract_version"] == "1.0.0"
+    assert result["candidate_patterns"][0]["provenance"]["compilation_context"]["query_mode"] == "structural"
+    assert result["candidate_patterns"][0]["provenance"]["validation_status"]["state"] == "selected"
+    assert result["candidate_patterns"][0]["provenance"]["validation_status"]["selected"] is True
+    assert result["canonical_pattern"]["provenance"]["validation_status"]["state"] == "canonical"
+    assert result["explanation_pattern"]["provenance"]["validation_status"]["state"] == "explanation"
     assert len(result["candidate_patterns"]) <= 8
     assert any(
         candidate["pattern_family"] == "beta"
@@ -205,6 +214,9 @@ def test_get_pattern_returns_diagnostics_when_no_canonical_pattern_exists() -> N
     assert result["diagnostics"]["fallback_reason"] == "NO_CANONICAL_PATTERN"
     assert "COMPILER_MISMATCH" in result["diagnostics"]["incompatibility_reason_codes"]
     assert all(candidate["selected"] is False for candidate in result["candidate_patterns"])
+    assert result["candidate_patterns"][0]["provenance"]["validation_status"]["state"] == "incompatible"
+    assert result["candidate_patterns"][0]["provenance"]["validation_status"]["selected"] is False
+    assert result["explanation_pattern"]["provenance"]["validation_status"]["state"] == "explanation"
     assert result["explanation_pattern"]["canonical_pattern_id"] == ""
     assert result["candidate_patterns"][0]["pattern_kind"] == "candidate"
 
