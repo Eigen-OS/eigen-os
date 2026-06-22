@@ -13,7 +13,7 @@ from dataclasses import asdict, dataclass
 from math import isfinite
 from pathlib import Path
 from time import perf_counter
-from typing import Callable, Iterator, TypeVar
+from typing import Any, Callable, Iterator, TypeVar
 
 from .errors import FieldViolation
 from .validation import (
@@ -27,6 +27,24 @@ AQO_VERSION = "1.0.0"
 
 _SYMBOLIC_CANDIDATE_ENUMERATION_VERSION = "1.0.0"
 _SYMBOLIC_CANDIDATE_BUDGET = 8
+_TABULAR_FEATURE_SCHEMA_VERSION = "telemetry-tabular-v1"
+_TABULAR_FEATURE_ORDER = (
+    "graph_size_nodes",
+    "graph_size_edges",
+    "graph_size_total",
+    "graph_fanout_max",
+    "graph_fanout_mean",
+    "stage_count",
+    "stage_success_count",
+    "stage_failure_count",
+    "stage_success_rate",
+    "past_success_count",
+    "past_failure_count",
+    "past_success_rate",
+    "latency_ms",
+    "backend",
+    "policy_state",
+)
 
 _REPLAY_MODE_DETERMINISTIC = "deterministic"
 _NEURO_MODEL_VERSION_ENV = "EIGEN_NEURO_SYMBOLIC_MODEL_VERSION"
@@ -191,6 +209,14 @@ def _canonical_json_text(payload: dict[str, object]) -> str:
     return _canonical_json_bytes(payload).decode("utf-8")
 
 
+def _stable_json(payload: object) -> str:
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+
+def _stable_hash(payload: object) -> str:
+    return f"sha256:{hashlib.sha256(_stable_json(payload).encode('utf-8')).hexdigest()}"
+
+
 def _compiler_replay_snapshot() -> dict[str, str]:
     return {
         "model_version": os.getenv(_NEURO_MODEL_VERSION_ENV, "").strip(),
@@ -211,6 +237,7 @@ def _compiler_replay_bundle(
     pass_pipeline: CompilerPassPipeline,
     symbolic_candidate_set: SymbolicCandidateSet,
     logical_graph_schema: dict[str, object],
+    telemetry_feature_set: dict[str, object],
 ) -> tuple[dict[str, object], str]:
     snapshot = _compiler_replay_snapshot()
     symbolic_rules = []
@@ -255,6 +282,7 @@ def _compiler_replay_bundle(
         "model_snapshot": snapshot,
         "symbolic_candidate_set": symbolic_candidates,
         "logical_graph_schema": logical_graph_schema,
+        "telemetry_feature_set": telemetry_feature_set,
         "model_recommendations": [],
     }
     replay_bundle_json = _canonical_json_text(replay_bundle)
@@ -888,6 +916,119 @@ def _logical_graph_schema_payload() -> dict[str, object]:
             "replay_safe": True,
             "training_safe": True,
             "inference_safe": True,
+        },
+    }
+
+
+def _graph_summary_from_encoding(graph_encoding: dict[str, object] | None) -> dict[str, object]:
+    graph = dict(graph_encoding or {})
+    nodes = graph.get("nodes", [])
+    edges = graph.get("edges", [])
+    if not isinstance(nodes, list):
+        nodes = []
+    if not isinstance(edges, list):
+        edges = []
+
+    outgoing_counts: dict[str, int] = {}
+    for edge in edges:
+        if not isinstance(edge, dict):
+            continue
+        source = str(edge.get("source", "")).strip()
+        if not source:
+            continue
+        outgoing_counts[source] = outgoing_counts.get(source, 0) + 1
+
+    graph_size_nodes = len(nodes)
+    graph_size_edges = len(edges)
+    graph_fanout_max = max(outgoing_counts.values(), default=0)
+    graph_fanout_mean = round(graph_size_edges / max(graph_size_nodes, 1), 6)
+
+    return {
+        "graph_kind": str(graph.get("graph_kind", "rewrite_candidate")).strip() or "rewrite_candidate",
+        "graph_size_nodes": graph_size_nodes,
+        "graph_size_edges": graph_size_edges,
+        "graph_size_total": graph_size_nodes + graph_size_edges,
+        "graph_fanout_max": graph_fanout_max,
+        "graph_fanout_mean": graph_fanout_mean,
+    }
+
+
+def _telemetry_feature_set_payload(
+    *,
+    graph_encoding: dict[str, object] | None,
+    compiler_telemetry: dict[str, object] | None,
+    kb_telemetry: dict[str, object] | None,
+    source: str,
+) -> dict[str, object]:
+    graph_summary = _graph_summary_from_encoding(graph_encoding)
+    compiler_telemetry = dict(compiler_telemetry or {})
+    kb_telemetry = dict(kb_telemetry or {})
+
+    stage_count = max(int(compiler_telemetry.get("stage_count", 0) or 0), 0)
+    stage_success_count = max(int(compiler_telemetry.get("stage_success_count", stage_count) or stage_count), 0)
+    stage_failure_count = max(int(compiler_telemetry.get("stage_failure_count", 0) or 0), 0)
+    if stage_count <= 0:
+        stage_count = stage_success_count + stage_failure_count
+    stage_success_rate = round(
+        stage_success_count / max(stage_success_count + stage_failure_count, 1),
+        6,
+    )
+    latency_ms = float(max(int(float(compiler_telemetry.get("latency_ms", 0.0) or 0.0)), 0))
+    backend = str(compiler_telemetry.get("backend", "")).strip()
+    policy_state = str(compiler_telemetry.get("policy_state", "")).strip()
+
+    past_success_count = max(int(kb_telemetry.get("past_success_count", 0) or 0), 0)
+    past_failure_count = max(int(kb_telemetry.get("past_failure_count", 0) or 0), 0)
+    past_success_rate = kb_telemetry.get("past_success_rate")
+    if past_success_rate in (None, ""):
+        past_success_rate = round(
+            past_success_count / max(past_success_count + past_failure_count, 1),
+            6,
+        )
+    else:
+        past_success_rate = round(float(past_success_rate), 6)
+
+    feature_values = {
+        "graph_size_nodes": graph_summary["graph_size_nodes"],
+        "graph_size_edges": graph_summary["graph_size_edges"],
+        "graph_size_total": graph_summary["graph_size_total"],
+        "graph_fanout_max": graph_summary["graph_fanout_max"],
+        "graph_fanout_mean": graph_summary["graph_fanout_mean"],
+        "stage_count": stage_count,
+        "stage_success_count": stage_success_count,
+        "stage_failure_count": stage_failure_count,
+        "stage_success_rate": stage_success_rate,
+        "past_success_count": past_success_count,
+        "past_failure_count": past_failure_count,
+        "past_success_rate": past_success_rate,
+        "latency_ms": latency_ms,
+        "backend": backend,
+        "policy_state": policy_state,
+    }
+    feature_digest_sha256 = _stable_hash(feature_values)
+
+    return {
+        "schema_version": _TABULAR_FEATURE_SCHEMA_VERSION,
+        "source": source,
+        "offline_online_parity": True,
+        "feature_order": list(_TABULAR_FEATURE_ORDER),
+        "feature_count": len(feature_values),
+        "feature_values": feature_values,
+        "feature_digest_sha256": feature_digest_sha256,
+        "graph": graph_summary,
+        "compiler": {
+            "stage_count": stage_count,
+            "stage_success_count": stage_success_count,
+            "stage_failure_count": stage_failure_count,
+            "stage_success_rate": stage_success_rate,
+            "latency_ms": latency_ms,
+            "backend": backend,
+            "policy_state": policy_state,
+        },
+        "kb": {
+            "past_success_count": past_success_count,
+            "past_failure_count": past_failure_count,
+            "past_success_rate": past_success_rate,
         },
     }
 
@@ -1599,6 +1740,7 @@ def compile_eigen_lang(
     normalized_request_context = _normalize_request_context(request_context)
     resolved_source, source_precedence = _resolve_source_bytes(source, source_ref)
     source_digest = hashlib.sha256(resolved_source).hexdigest()
+    compile_started = perf_counter()
     
     def _parse_stage() -> ast.AST:
         try:
@@ -1826,6 +1968,33 @@ def compile_eigen_lang(
         "emit",
     ]
 
+    ranked_candidates = symbolic_candidate_set_payload.get("ranked_candidates", [])
+    telemetry_graph_encoding = ranked_candidates[0]["graph_encoding"] if ranked_candidates and isinstance(ranked_candidates[0], dict) else (
+        symbolic_candidate_set_payload["candidates"][0].get("graph_encoding") if symbolic_candidate_set_payload.get("candidates") else {}
+    )
+    telemetry_feature_set_payload = _telemetry_feature_set_payload(
+        graph_encoding=telemetry_graph_encoding if isinstance(telemetry_graph_encoding, dict) else {},
+        compiler_telemetry={
+            "stage_count": len(compiler_stage_order),
+            "stage_success_count": len(compiler_stage_order),
+            "stage_failure_count": 0,
+            "latency_ms": round((perf_counter() - compile_started) * 1000.0, 6),
+            "backend": backend_contract.get("declared_backend_target", "") or backend_contract.get("backend_target_class", ""),
+            "policy_state": workload_profile.kind,
+        },
+        kb_telemetry={
+            "past_success_count": len(ranked_candidates),
+            "past_failure_count": max(int(symbolic_candidate_set_payload.get("candidate_count", 0) or 0) - len(ranked_candidates), 0),
+            "past_success_rate": round(
+                len(ranked_candidates) / max(int(symbolic_candidate_set_payload.get("candidate_count", 0) or 0), 1),
+                6,
+            ),
+        },
+        source="compiler_and_kb_telemetry",
+    )
+    telemetry_feature_set_json = _canonical_json_text(telemetry_feature_set_payload)
+    telemetry_feature_set_sha256 = hashlib.sha256(telemetry_feature_set_json.encode("utf-8")).hexdigest()
+
     replay_bundle, replay_bundle_sha256 = _compiler_replay_bundle(
         request_context=normalized_request_context,
         workload_profile=workload_profile.kind,
@@ -1838,6 +2007,7 @@ def compile_eigen_lang(
         pass_pipeline=pass_pipeline,
         symbolic_candidate_set=symbolic_candidate_set,
         logical_graph_schema=logical_graph_schema_payload,
+        telemetry_feature_set=telemetry_feature_set_payload,
     )
 
     decision_lineage = {
@@ -1904,6 +2074,7 @@ def compile_eigen_lang(
         },
         "symbolic_candidate_set": symbolic_candidate_set_payload,
         "logical_graph_schema": logical_graph_schema_payload,
+        "telemetry_feature_set": telemetry_feature_set_payload,
     }
 
     metadata = {
@@ -1957,6 +2128,8 @@ def compile_eigen_lang(
         "symbolic_candidate_set_sha256": symbolic_candidate_set_sha256,
         "logical_graph_schema_json": logical_graph_schema_json,
         "logical_graph_schema_sha256": logical_graph_schema_sha256,
+        "telemetry_feature_set_json": telemetry_feature_set_json,
+        "telemetry_feature_set_sha256": telemetry_feature_set_sha256,
     }
     if has_minimize:
         metadata["hybrid_plan_marker"] = "minimize"
