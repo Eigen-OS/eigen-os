@@ -111,6 +111,7 @@ It serves as:
 - **GNN Optimizer** (placement/routing): AQO + topology → QASM (or backend-native)
 
 The source-of-truth boundary for the symbolic core, KB, optimizer, and driver-manager integrations is `docs/architecture/components/neuro-symbolic-core.md`.
+The stable KB request/response contract used by compiler queries is defined in `docs/architecture/components/knowledge-base.md` and `docs/reference/api/grpc-internal.md`.
 
 #### Responsibilities
 

@@ -53,7 +53,7 @@ The symbolic core is implemented as a deterministic pushdown automaton (DPDA) pl
 
 The knowledge base stores and serves replay-safe facts, historical decisions, candidate patterns, canonical patterns, snapshots, and decision logs.
 
-The knowledge base may return ranked candidates and canonical matches, but it does not invent new semantic truth.
+The knowledge base may return ranked candidates and canonical matches, but it does not invent new semantic truth. The stable request/response envelope for compiler queries is defined in `docs/architecture/components/knowledge-base.md` and `docs/reference/api/grpc-internal.md`.
 
 ### 1.3 ML advisor
 

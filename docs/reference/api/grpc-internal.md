@@ -172,6 +172,148 @@ Returned responses MUST expose:
 
 The canonical pattern MUST be distinct from the candidate pattern list and MUST not be recomputed from an arbitrary nearest neighbor.
 
+#### KB request/response contract
+
+The internal KnowledgeBaseService MUST use the same versioned envelope as the architecture contract in `docs/architecture/components/knowledge-base.md`.
+
+Canonical request/response shapes:
+
+```protobuf
+message KnowledgeContext {
+  string contract_version = 1;
+  string schema_version = 2;
+  string request_id = 3;
+  string tenant_id = 4;
+  string project_id = 5;
+  string caller_component = 6;
+  string request_kind = 7;
+  bool deterministic = 8;
+  uint64 seed = 9;
+  string snapshot_id = 10;
+  string policy_snapshot_version = 11;
+  string policy_mode = 12;
+  string policy_digest = 13;
+  string model_snapshot_id = 14;
+  string model_snapshot_digest = 15;
+  string compiler_version = 16;
+  string optimizer_version = 17;
+  string aqo_version = 18;
+  string backend_class = 19;
+  string circuit_id = 20;
+  string semantic_hash = 21;
+  string aqo_hash = 22;
+  string capability_scope = 23;
+  repeated string capability_tags = 24;
+  uint32 candidate_budget = 25;
+  string query_mode = 26;
+  bool include_provenance = 27;
+  string request_digest_sha256 = 28;
+}
+
+message CompatibilityWindow {
+  string schema_version = 1;
+  string compiler_version = 2;
+  string aqo_version = 3;
+  string optimizer_version = 4;
+  string policy_mode = 5;
+  string policy_digest = 6;
+  string snapshot_id = 7;
+  string backend_class = 8;
+  string capability_scope = 9;
+}
+
+message PatternQuery {
+  string semantic_hash = 1;
+  string aqo_hash = 2;
+  string circuit_id = 3;
+  string backend_class = 4;
+  CompatibilityWindow compatibility_window = 5;
+}
+
+message ResponseProvenance {
+  string contract_version = 1;
+  string request_id = 2;
+  string request_digest_sha256 = 3;
+  string response_digest_sha256 = 4;
+  string snapshot_id = 5;
+  string policy_snapshot_version = 6;
+  string model_snapshot_id = 7;
+  string retrieval_mode = 8;
+  string selected_pattern_id = 9;
+  repeated string source_record_ids = 10;
+  string generated_at = 11;
+  bool replay_safe = 12;
+}
+
+message PatternRecord {
+  string pattern_id = 1;
+  string pattern_family = 2;
+  string pattern_kind = 3;
+  string tenant_id = 4;
+  string project_id = 5;
+  string circuit_id = 6;
+  string backend_class = 7;
+  repeated string source_record_ids = 8;
+  uint64 support = 9;
+  CompatibilityWindow compatibility_window = 10;
+  string compatibility_signature = 11;
+  bool canonical_eligible = 12;
+  bool selected = 13;
+  uint32 rank = 14;
+  map<string, double> score_breakdown = 15;
+  double score_total = 16;
+  double confidence = 17;
+  repeated string incompatibility_reasons = 18;
+  map<string, string> metadata = 19;
+  ResponseProvenance provenance = 20;
+}
+
+message SearchSimilarRequest {
+  string contract_version = 1;
+  KnowledgeContext knowledge_context = 2;
+  PatternQuery pattern_query = 3;
+  uint32 candidate_budget = 4;
+  string query_mode = 5;
+  bool deterministic = 6;
+}
+
+message SearchSimilarResponse {
+  string contract_version = 1;
+  KnowledgeContext knowledge_context = 2;
+  repeated PatternRecord candidate_patterns = 3;
+  PatternRecord selected_candidate = 4;
+  PatternRecord explanation_pattern = 5;
+  ResponseProvenance provenance = 6;
+  Diagnostics diagnostics = 7;
+}
+
+message GetPatternRequest {
+  string contract_version = 1;
+  KnowledgeContext knowledge_context = 2;
+  PatternQuery pattern_query = 3;
+  uint32 candidate_budget = 4;
+  bool deterministic = 5;
+}
+
+message GetPatternResponse {
+  string contract_version = 1;
+  KnowledgeContext knowledge_context = 2;
+  PatternRecord canonical_pattern = 3;
+  repeated PatternRecord candidate_patterns = 4;
+  PatternRecord explanation_pattern = 5;
+  ResponseProvenance provenance = 6;
+  Diagnostics diagnostics = 7;
+}
+```
+
+Contract rules:
+
+- `knowledge_context` is the only request context that compiler queries may rely on.
+- `PatternRecord` is the only stable record shape returned to compiler, optimizer, and driver-manager integrations.
+- `ResponseProvenance` MUST be attached to every KB response, including empty results and diagnostics-only fallbacks.
+- The ML layer MAY rank candidates, but it MUST NOT infer the boundary fields in `KnowledgeContext`, the compatibility window, or the provenance fields.
+- The contract version is pinned to `1.0.0` for this interface family. Any incompatible schema change requires a version bump and a new documented contract.
+
 ---
 
 ```text

@@ -18,6 +18,7 @@ Companion docs:
 
 - `docs/architecture/adr/compiler-rule-engine-and-advisory-boundary.md`
 - `docs/reference/compiler-model-migration-notes.md`
+- `docs/architecture/components/knowledge-base.md`
 - `docs/reference/formats/aqo.md`
 - `docs/reference/eigen-lang.md`
 
