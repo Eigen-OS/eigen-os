@@ -25,6 +25,8 @@ The gRPC Internal API is the backbone of:
 - Continuous Learning workflows,
 - storage operations.
 
+The authoritative semantic boundary for the neuro-DPDA compiler path, KB retrieval, optimizer advice, and driver-manager truth is defined in `docs/architecture/components/neuro-symbolic-core.md`.
+
 This specification supersedes informal implementation behavior and acts as the **source of truth** for all internal service-to-service communication. All implementations **MUST** conform to this document.
 
 ---
@@ -41,7 +43,7 @@ This API layer directly implements the architecture defined in Eigen OS Target S
 | QRTX                        | Central orchestration |
 | Compilation Service         | Neuro-DPDA compiler |
 | Optimizer Service           | GNN routing & placement |
-| Neuro-Symbolic Service      | Internal-only DPDA advisory scoring |
+| Neuro-Symbolic Service      | Internal-only Neuro-DPDA + ML advisor; source-of-truth boundary in `docs/architecture/components/neuro-symbolic-core.md` |
 | Driver Manager              | Hardware abstraction |
 | QFS                         | Artifact and state persistence |
 | Knowledge Base              | Long-term learning memory |

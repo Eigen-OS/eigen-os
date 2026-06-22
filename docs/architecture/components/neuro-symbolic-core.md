@@ -1,20 +1,30 @@
-# Neuro-Symbolic Core (NSC)
+# Neuro-DPDA + ML Advisor Architecture Specification
+
+- **Document status:** Normative architecture source of truth
+- **Subsystem:** Compiler, Knowledge Base, Optimizer, Driver Manager integration boundary
+
 - **Contract version:** `1.0.0`
-- **Phase:** Phase 1+ / Post-MVP strategic runtime capability
-- **Status:** Target architecture contract with documented implemented prerequisites; **no standalone NSC service is currently active in the production execution path**
-- **Applies to:** `src/services/neuro-symbolic-service/` (deployable internal service), Compiler (Neuro-DPDA path), Kernel/QRTX, HWE, GNN Optimizer, Knowledge Base / OKB, Driver Manager, QFS lineage layer, Telemetry exporters
+- **Applies to:** `src/services/neuro-symbolic-service/`, Compiler (Neuro-DPDA path), Knowledge Base, GNN Optimizer, Driver Manager, Kernel/QRTX, QFS lineage, observability exporters
+- **Last updated:** 2026-06-22
 
-This document defines the **normative target architecture**, contracts, responsibilities, integration boundaries, and implementation requirements for the Eigen OS **Neuro-Symbolic Core (NSC)**. It is aligned with:
+This document is the single source of truth for the boundary between:
 
-- deterministic compilation and execution invariants,
-- DPDA-based semantic admissibility control,
-- Knowledge Base / Optimization Knowledge Base (OKB) integration,
-- hardware-aware GNN optimization,
-- policy execution, explainability, and replay safety.
+1. the **symbolic core** (deterministic Neuro-DPDA / rule engine),
+2. the **knowledge base** (authoritative retrieval and replay evidence store), and
+3. the **ML advisor** (advisory scoring, ranking, and explanation).
+
+If this document conflicts with any component note, this document wins.
+
+The architecture defined here is deliberately strict:
+
+- the symbolic core is **deterministic**,
+- the knowledge base is **authoritative for stored facts and retrieved evidence**,
+- the ML advisor is **advisory only**,
+- no model may infer anything that is required to remain authoritative, replay-safe, or policy-bound.
 
 ---
 
-## 0. Contract Marker (Observability)
+## 0. Contract marker
 
 All NSC telemetry exporters MUST expose:
 
@@ -24,388 +34,280 @@ eigen_nsc_contract_info{version="1.0.0"} 1
 
 ---
 
-## 1. Purpose
+## 1. Normative terms
 
-The Neuro-Symbolic Core (NSC) is the central intelligent decision subsystem of Eigen OS responsible for combining:
+### 1.1 Symbolic core
 
-1. symbolic reasoning,
-2. deterministic compiler/runtime constraints,
-3. neural inference models,
-4. graph-based hardware optimization,
-5. adaptive execution policies,
-6. knowledge retrieval and reuse,
+The symbolic core is the deterministic execution path that performs:
 
-into a unified decision framework for **compilation and execution optimization**.
+- grammar and state tracking,
+- semantic legality checks,
+- rewrite admissibility checks,
+- lowering precondition checks,
+- policy enforcement for hard constraints,
+- replay evidence capture for the accepted rule chain.
 
-NSC operates as a **bounded advisory orchestration layer** above deterministic baseline runtime behavior.
+The symbolic core is implemented as a deterministic pushdown automaton (DPDA) plus the compiler rule engine and the fixed policy evaluation path.
 
-**Deterministic baseline behavior remains authoritative at all times.**
+### 1.2 Knowledge base
 
-**Implementation note:** the repository’s deployable NSC boundary is the internal `src/services/neuro-symbolic-service/` package. Compiler-side use remains advisory-only and must not expose a public ingress path.
+The knowledge base stores and serves replay-safe facts, historical decisions, candidate patterns, canonical patterns, snapshots, and decision logs.
 
----
+The knowledge base may return ranked candidates and canonical matches, but it does not invent new semantic truth.
 
-## 2. Scope and Non-Goals
+### 1.3 ML advisor
 
-### 2.1 In scope
+The ML advisor is any neural, graph-based, boosted, heuristic, or statistical component used to:
 
-NSC governs:
+- rank deterministic options,
+- score candidates,
+- explain an observed decision,
+- suggest a bounded rewrite or routing option,
+- estimate relative preference under an explicit policy snapshot.
 
-- semantic enrichment of compiler/runtime decisions,
-- symbolic validation and constraint reasoning (DPDA authority),
-- optimization strategy scoring and selection recommendations,
-- topology-aware backend mapping recommendations,
-- orchestration of GNN-based hardware optimization (advisory),
-- OKB retrieval and feedback integration (optional dependency),
-- explainability and replay bundle generation for NSC decisions,
-- deterministic fallback preservation.
+The ML advisor never becomes the source of truth for legality, topology, policy, or device state.
 
 ---
 
-### 2.2 Out of scope
+## 2. Deterministic and advisory boundaries
 
-NSC MUST NOT:
+### 2.1 Deterministic
 
-- execute user code,
-- bypass compiler AST safety policies,
-- bypass deterministic AQO guarantees,
-- directly call vendor SDKs or backends,
-- own job lifecycle state transitions (Kernel/HWE own lifecycle),
-- introduce unbounded nondeterminism into compile/execute paths.
+The following are deterministic and must be decided without model inference:
 
----
+- source parsing and AST acceptance,
+- semantic legality,
+- allowed rewrite admission,
+- AQO validation,
+- workload-profile resolution,
+- canonical pattern selection when the matching rule is exact,
+- device capability truth,
+- device health truth,
+- device topology truth,
+- policy evaluation,
+- replay identity,
+- final acceptance or rejection of a compiler / optimizer / driver action.
 
-## 3. Versioning and Compatibility (SemVer)
+### 2.2 Advisory only
 
-This contract follows SemVer.
+The following may use the ML advisor, but only as input to deterministic logic:
 
-### MAJOR
+- rewrite ranking,
+- candidate ranking,
+- explanation ranking,
+- routing preference ranking,
+- placement preference ranking,
+- candidate retrieval prioritization,
+- bounded confidence summaries.
 
-Required for:
+Advisory output must never directly change semantics. It may only be consumed by a deterministic checker, reducer, or selector.
 
-- RPC method/field removals or renames,
-- incompatible response semantics,
-- incompatible decision taxonomy changes,
-- changes to determinism/replay semantics.
+### 2.3 Must never be inferred by the model
 
-### MINOR
+A model, score function, or learned policy MUST NOT infer any of the following as authoritative truth:
 
-Allowed:
+- semantic legality,
+- compiler acceptance,
+- backend capability,
+- backend availability,
+- device topology,
+- device health,
+- queue state,
+- tenant or project ownership,
+- policy approval,
+- authorization state,
+- canonical pattern identity,
+- replay identity,
+- hidden compiler state,
+- hidden driver state,
+- secret material,
+- unredacted payloads,
+- success of a rule that has not been deterministically validated.
 
-- additive fields and optional RPCs,
-- additive reason codes,
-- additive explainability levels,
-- bounded-cardinality telemetry dimensions.
-
-### PATCH
-
-Allowed:
-
-- documentation corrections,
-- observability tuning without semantic changes,
-- implementation fixes preserving semantics.
-
----
-
-## 4. Architectural Role
-
-NSC provides:
-
-- optimization recommendations and rankings,
-- semantic legality checks (symbolic/DPDA),
-- bounded neural scoring (advisory),
-- orchestrated GNN hardware adaptation (advisory),
-- OKB-aware reuse hints (optional),
-- explainability and replay metadata for all NSC decisions.
-
-NSC never bypasses:
-
-- compiler safety policies,
-- deterministic AQO guarantees,
-- runtime isolation boundaries,
-- policy enforcement layers.
-- workload-family profile resolution,
-- profile-specific compiler preconditions,
+If any of the above is missing or ambiguous, the system MUST fail closed or fall back to the deterministic baseline.
 
 ---
 
-## 5. Current Implementation Status (Repository Truth)
+## 3. Replay and snapshot rules
 
-### 5.1 Implemented prerequisites (today)
+The same input, the same model snapshot, and the same policy snapshot MUST reproduce the same output.
 
-Compiler/runtime baseline:
+Replay identity is therefore a function of:
 
-- deterministic AST-only compilation path,
-- AQO canonical lowering pipeline,
-- kernel execution orchestration,
-- driver-manager execution abstraction,
-- structured runtime metadata propagation,
-- VQE iterative optimization metadata flow (heuristic).
+- normalized request input,
+- compiler/options state,
+- model snapshot identifier and digest,
+- policy snapshot identifier and digest,
+- KB snapshot / record version where retrieval is part of the decision,
+- deterministic rule version,
+- deterministic serialization rules.
 
-Ecosystem and governance groundwork:
+The following artifacts MUST be persisted for replay:
 
-- plugin architecture includes `optimizer` plugin category,
-- governance framework and RFC/ADR workflow exist,
-- runtime tracing and structured logging exist,
-- internal model registry activation uses signed artifact verification and frozen policy snapshot binding.
+- selected symbolic rule identifiers,
+- rejected symbolic rule identifiers when relevant,
+- model recommendation identifiers,
+- model snapshot version and digest,
+- policy snapshot version and digest,
+- KB record identifiers and snapshot identifiers used in the decision,
+- final deterministic decision,
+- final output digest,
+- replay-safe explanation envelope.
 
-Intelligent-adjacent behavior:
-
-- simple heuristic optimization loops exist in VQE paths,
-- backend capability metadata exists through runtime contracts,
-- limited runtime telemetry propagation exists.
-
----
-
-### 5.2 Not implemented (today)
-
-- standalone `neuro-symbolic-core` service,
-- protobuf/gRPC NSC API,
-- runtime neural inference engine,
-- DPDA semantic engine implementation,
-- production GNN optimizer runtime,
-- OKB-driven optimization retrieval on the request path,
-- explainability engine producing stable NSC decision artifacts,
-- confidence-aware policy gating and deterministic rollback controller.
-
-The implemented NSC compiler path MUST still capture an immutable policy snapshot at service start and use that frozen snapshot for all inference requests. Live policy lookups MUST NOT be part of request-time scoring.
-
-**Production execution MUST NOT depend on NSC availability.**
+The ML advisor may change across versions, but a replay run may only use the exact frozen snapshot recorded for the original decision. Live snapshot discovery on the replay path is prohibited.
 
 ---
 
-## 6. Core Principles (Normative)
+## 4. Component responsibilities
 
-### 6.1 Deterministic Baseline First
+### 4.1 Compiler integration
 
-Deterministic compiler/runtime path remains authoritative.
+The compiler is authoritative for:
 
-NSC outputs:
+- parsing Eigen-Lang,
+- AST validation,
+- rule-engine approval,
+- lowering,
+- AQO emission,
+- compiler diagnostics,
+- replay evidence for accepted and rejected rules.
 
-- MAY recommend,
-- MAY rank,
-- MAY enrich,
-- MAY optimize (advisory),
+The compiler may consume ML advisor output only as advisory input.
 
-but MUST never invalidate deterministic correctness guarantees.
+The compiler must never:
 
-If uncertainty, timeout, policy violation, untrusted model, or degradation occurs, the system MUST revert to deterministic baseline execution.
+- accept an invalid IR because a model favored it,
+- infer legality from model confidence,
+- skip a rule-engine check,
+- resolve a workload profile from model output,
+- emit AQO that is not validated by the deterministic pipeline.
 
----
+### 4.2 Knowledge base integration
 
-### 6.2 Bounded Intelligence
+The knowledge base is authoritative for:
 
-NSC operates only inside explicitly defined policy boundaries.
+- historical compile and runtime decision logs,
+- candidate pattern retrieval,
+- canonical pattern lookup,
+- replay evidence storage,
+- model/policy snapshot references stored with a decision.
 
-NSC:
+The knowledge base must never:
 
-- cannot mutate source semantics,
-- cannot bypass compiler validation,
-- cannot introduce unsafe runtime behavior,
-- cannot emit unverifiable transformations,
-- cannot violate tenant/runtime policies.
+- merge cross-tenant or cross-project evidence,
+- treat model scores as canonical facts,
+- fabricate canonicality,
+- promote an unvalidated candidate to truth,
+- hide the provenance of retrieved records.
 
----
+Retrieval may be deterministic similarity search, exact lookup, or replay-safe candidate ranking, but the final choice still belongs to deterministic logic.
 
-### 6.3 Explainability Required
+### 4.3 Optimizer integration
 
-Every accepted NSC recommendation MUST include:
+The optimizer is authoritative for:
 
-- provenance,
-- model version (or “heuristic/symbolic-only”),
-- confidence score (bounded numeric),
-- feature set summary (bounded and reproducible),
-- retrieval references for the scored evidence,
-- reasoning metadata (bounded),
-- fallback eligibility,
-- reproducibility hash (digest),
-- policy context summary (bounded).
+- placement and routing decisions,
+- topology-aware transformations,
+- fidelity/cost trade-off selection,
+- backend-adaptive planning,
+- deterministic fallback when advice is unavailable or invalid.
 
-Opaque decisions are prohibited.
+The optimizer may use ML advisor output to rank or compare candidates, but it must not:
 
----
+- infer topology from stale observations,
+- infer device availability from model scores,
+- infer noise or calibration truth from learned similarity alone,
+- bypass explicit policy constraints,
+- bypass canonical device capabilities published by the driver manager.
 
-### 6.4 Determinism and Replay
+### 4.4 Driver Manager integration
 
-NSC MUST support deterministic mode.
+The driver manager is authoritative for:
 
-When `deterministic=true`, outputs MUST be a pure function of canonical inputs + seed and MUST be replayable byte-for-byte at the decision artifact level (canonical serialization).
+- device identity,
+- device availability,
+- device health,
+- topology truth,
+- capability truth,
+- queue and capacity truth,
+- provider normalization,
+- execution dispatch outcomes.
 
-The active policy snapshot version used for scoring MUST be included in response metadata and audit logs so replay evidence is bound to the same immutable snapshot.
+The ML advisor may observe driver-manager snapshots, but it must not infer or override any driver-manager authority.
 
-The audit record MUST also retain the explainability envelope with model version, feature set summary, confidence, and retrieval references so the same inference can be replayed deterministically from immutable artifacts.
-
-The immutable audit trail MUST additionally capture caller identity, tenant, policy snapshot version, model version, retrieval sources, and final decision for every scoring operation.
-
----
-
-## 7. Major Internal Subsystems (Target Architecture)
-
-### 7.1 Symbolic Reasoning Engine (DPDA authority)
-
-#### Responsibility
-
-Deterministic symbolic reasoning and semantic validation.
-
-#### Responsibilities include
-
-- semantic constraint evaluation,
-- optimization legality checks,
-- policy validation (hard constraints),
-- transformation verification,
-- rule enforcement,
-- admissibility proof artifacts (or references),
-- explainability scaffolding.
-
-#### DPDA integration (mandatory)
-
-NSC symbolic engine SHALL include a deterministic pushdown automaton (DPDA)-based semantic controller responsible for:
-
-- deterministic grammar/state tracking,
-- semantic stack discipline,
-- admissibility gating,
-- bounded replay evidence generation,
-- fallback-safe rejection on ambiguity or policy mismatch.
+If the driver-manager snapshot and the model recommendation disagree, the driver-manager snapshot wins and the request must be evaluated again under deterministic rules.
 
 ---
 
-### 7.2 Neural Scoring Subsystem
+## 5. Integration contract matrix
 
-#### Responsibility
-
-Provide bounded advisory scoring for compiler/runtime optimization proposals.
-
-#### Requirements
-
-- scoring must be bounded and reproducible,
-- all model use must be tied to an immutable model/version contract,
-- no request-time model discovery from untrusted sources,
-- model outputs are advisory only.
+| Subsystem | Deterministic authority | ML advisor role | Forbidden inference |
+|---|---|---|---|
+| Compiler | legality, lowering, AQO validation, rule admission | rank rewrites and explain decisions | legality, profile, replay identity |
+| Knowledge Base | record truth, canonical lookup, replay evidence | rank retrieval candidates | canonicality, cross-scope truth, hidden provenance |
+| Optimizer | routing, placement, deterministic fallback | score candidate plans | topology, noise, availability, policy |
+| Driver Manager | device truth, health, capability, queue | summarize or rank observed snapshots | device state, provider truth, secret state |
 
 ---
 
-### 7.3 Knowledge Retrieval Subsystem
+## 6. Deployment and boundary rules
 
-#### Responsibility
-
-Lookup reusable evidence from OKB / KB.
-
-#### Requirements
-
-- retrieval must be bounded,
-- evidence references must be recorded in audit logs,
-- retrieval failures fall back to deterministic baseline,
-- live policy lookups are prohibited on the request path.
-
----
-
-### 7.4 Explainability and Replay Subsystem
-
-#### Responsibility
-
-Capture stable decision artifacts for audit and replay.
-
-#### Requirements
-
-- include reasoning summaries,
-- include feature provenance,
-- include model/version references,
-- include policy snapshot version,
-- include reproducibility digest,
-- support offline reconstruction.
-
----
-
-### 7.5 Internal model registry and signed loading contract
-
-#### Responsibility
-
-Publish, verify, activate, and roll back internal Neuro-DPDA model artifacts inside the deployable NSC service boundary.
-
-#### Requirements
-
-- model artifacts MUST have stable version identifiers, digests, and signature metadata,
-- model activation MUST be bound to the frozen policy snapshot version and internal service identity,
-- loading MUST verify the artifact digest before activation,
-- loading MUST verify the registry signature before activation,
-- missing artifact, missing policy snapshot, bad signature, or identity mismatch MUST fail closed,
-- rollback MUST be auditable and MUST preserve deterministic baseline behavior when activation cannot be verified.
-
----
-
-## 8. Integration Boundaries
-
-### 8.1 Compiler integration
-
-Compiler MAY call NSC for bounded advisory scoring only.
-
-Compiler MUST:
-
-- preserve deterministic baseline semantics,
-- keep NSC optional,
-- capture frozen policy snapshot,
-- degrade safely when NSC is unavailable.
-
-### 8.2 Kernel/QRTX integration
-
-Kernel/QRTX MAY call NSC for routing or optimization advice where appropriate.
-
-Kernel/QRTX remains authoritative for execution and lifecycle decisions.
-
-### 8.3 Public ingress restriction
+### 6.1 Public ingress
 
 NSC MUST NOT be exposed through public ingress.
 
-Requests from public API boundaries must never reach NSC directly.
+Only internal callers may reach the service boundary.
+
+### 6.2 Frozen snapshot rule
+
+Every scoring or replay request MUST bind to:
+
+- a frozen policy snapshot,
+- a frozen model snapshot,
+- a deterministic rule snapshot,
+- a deterministic KB snapshot when KB evidence participates in the decision.
+
+Live lookup of policy or model versions during request handling is forbidden.
+
+### 6.3 Fail-closed rule
+
+Missing snapshots, digest mismatches, integrity failures, policy mismatches, and tenant/project boundary violations MUST fail closed.
 
 ---
 
-### 8.4 Mandatory preprocessing redaction layer
+## 7. Explainability and auditability
 
-All data that can enter model loading, knowledge retrieval, decision logging, or replay packaging paths MUST pass through a mandatory preprocessing redaction layer before persistence or external emission.
+Every accepted advisor-influenced decision MUST include a bounded replay envelope containing:
 
----
+- caller identity,
+- tenant and project identifiers,
+- policy snapshot version,
+- model snapshot version,
+- KB record identifiers,
+- selected symbolic rule identifiers,
+- final deterministic outcome,
+- a replay digest,
+- a bounded explanation summary.
 
-### 8.5 Deployment shape
-
-The implementation boundary for NSC is a **standalone internal service** packaged as `src/services/neuro-symbolic-service/`.
-
-This service boundary is intentionally separate from `src/services/system-api/`:
-
-- `system-api` remains the sole public ingress.
-- `eigen-kernel` / QRTX is the primary runtime caller.
-- `eigen-compiler` may call the service only through the bounded advisory scoring path.
-- Internal offline workflows such as model loading, dataset ingestion, and privacy-governed training remain inside the same internal service boundary and must not be exposed through public ingress.
-
----
-
-### 8.6 Offline training dataset ingestion
-
-The internal Neuro-Symbolic Service MAY expose a CLI-only ingestion path for KB-backed training datasets.
-
-That workflow MUST:
-
-- remain inside `src/services/neuro-symbolic-service/`,
-- require a stable manifest with dataset version and record schema version,
-- validate ownership, provenance, redaction, approval, replay identifiers, and policy snapshot evidence,
-- fail closed on missing or mismatched integrity digests,
-- preserve replay-safe dataset records for later training runs,
-- avoid public ingress and live model discovery on the request path.
+The explanation summary may describe why an advisory suggestion was accepted, rejected, or transformed, but it must not expose unbounded model output or unredacted KB data.
 
 ---
 
-### 8.7 Privacy-safe production-trace retraining
+## 8. Relationships to other contracts
 
-Production execution traces MAY feed the training corpus only after an offline governance bundle has been selected and approved.
+This document narrows the compiler role described in:
 
-The bundle MUST be tenant-scoped and MUST include:
+- `docs/architecture/components/compiler.md`
+- `docs/architecture/components/compiler-neuro-symbolic-advisor.md`
+- `docs/architecture/components/neuro-symbolic-advisory-boundary.md`
 
-- tenant/project binding,
-- record-level provenance digests,
-- replay identifiers,
-- explicit selection metadata,
-- explicit approval metadata,
-- redaction validation evidence,
-- policy snapshot version.
+It also defines the boundaries that downstream docs must follow for:
 
-Cross-tenant mixing is prohibited. Any missing or mismatched provenance, approval, replay, or redaction evidence MUST fail closed before a dataset manifest is emitted.
+- `docs/architecture/components/knowledge-base.md`
+- `docs/architecture/components/gnn-optimizer.md`
+- `docs/architecture/components/driver-manager.md`
+- `docs/reference/api/grpc-internal.md`
+- `docs/reference/compiler-observability-contract.md`
+- `docs/reference/compiler-model-migration-notes.md`
+
+Any document that describes one of these integrations MUST defer to this document for boundary semantics.
