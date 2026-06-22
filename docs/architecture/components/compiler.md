@@ -49,6 +49,8 @@ The compiler metadata contract is also stable and deterministic. The canonical n
 
 - `workload_profile`
 - `compiler_passes_json`
+- `compiler_replay_json`
+- `compiler_replay_sha256`
 - `backend_contract_json`
 
 These are compiler metadata fields, not AQO top-level fields.
@@ -267,6 +269,7 @@ The compiler must persist:
 - explainability lineage,
 - workload profile,
 - pass pipeline snapshot,
+- deterministic replay bundle with symbolic rule attribution,
 - advisor influence outcome when present.
 
 Observability records must be bounded and must not leak secrets.

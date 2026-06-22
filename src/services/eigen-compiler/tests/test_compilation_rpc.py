@@ -73,6 +73,8 @@ def test_compile_circuit_happy_path(grpc_addr: str) -> None:
     assert len(resp.circuit.data) > 0
     assert resp.metadata["distributed.execution_metadata_version"] == "1.0.0"
     assert resp.metadata["distributed.enabled"] == "false"
+    assert resp.metadata["compiler_replay_json"]
+    assert len(resp.metadata["compiler_replay_sha256"]) == 64
 
 
 def test_compile_job_uses_request_metadata_workload_profile(grpc_addr: str) -> None:
@@ -108,8 +110,16 @@ def test_compile_job_uses_request_metadata_workload_profile(grpc_addr: str) -> N
     )
 
     diagnostics = json.loads(resp.metadata["compiler_diagnostics_json"])
+    replay = json.loads(resp.metadata["compiler_replay_json"])
     assert resp.metadata["workload_profile"] == "HybridWorkflow"
     assert diagnostics["workload_profile"] == "HybridWorkflow"
+    assert replay["replay_mode"] == "deterministic"
+    assert [rule["rule"] for rule in replay["symbolic_rules"]] == [
+        "compiler.source.lower_to_ir",
+        "compiler.rewrite.terminal_measurement",
+        "compiler.aqo.validate",
+        "compiler.aqo.canonicalize",
+    ]
 
 
 def test_compile_circuit_exposes_diagnostics_payload(grpc_addr: str) -> None:
@@ -117,10 +127,13 @@ def test_compile_circuit_exposes_diagnostics_payload(grpc_addr: str) -> None:
     stub = comp_pb_grpc.CompilationServiceStub(channel)
     resp = stub.CompileCircuit(comp_pb.CompileCircuitRequest(language="eigen-lang", source=b"from eigen_lang import hybrid_program\n@hybrid_program(target=\"sim\")\ndef main():\n    ry(0, theta=1.0)\n"))
     diagnostics = json.loads(resp.metadata["compiler_diagnostics_json"])
+    replay = diagnostics["replay"]
     assert diagnostics["contract_version"] == "1.0.0"
     assert diagnostics["stage_order"] == ["parse", "validate_ast", "annotate", "lower_to_ir", "eigen_dpda", "canonicalize_aqo", "emit"]
     assert diagnostics["backend_contract"]["backend_target_class"] == "implicit"
     assert diagnostics["explainability"]["decision"] == "compiler_to_optimizer_handoff"
+    assert replay["replay_mode"] == "deterministic"
+    assert set(replay["model_snapshot"]) == {"model_version", "policy_snapshot_version"}
 
 
 def test_compile_circuit_emits_distributed_metadata_hints(grpc_addr: str) -> None:

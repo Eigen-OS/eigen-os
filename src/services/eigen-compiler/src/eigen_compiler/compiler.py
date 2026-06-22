@@ -25,6 +25,10 @@ from .validation import (
 
 AQO_VERSION = "1.0.0"
 
+_REPLAY_MODE_DETERMINISTIC = "deterministic"
+_NEURO_MODEL_VERSION_ENV = "EIGEN_NEURO_SYMBOLIC_MODEL_VERSION"
+_NEURO_POLICY_SNAPSHOT_VERSION_ENV = "EIGEN_NEURO_SYMBOLIC_POLICY_SNAPSHOT_VERSION"
+
 _ALLOWED_IMPORT_PREFIXES = ("eigen_lang",)
 _FORBIDDEN_MODULE_ROOTS = {"os", "sys", "subprocess"}
 _FORBIDDEN_CALLS = {"exec", "eval", "compile"}
@@ -130,6 +134,7 @@ class DistributedCompileConfig:
 class CompilerPassRecord:
     name: str
     kind: str
+    rule: str
     preconditions: tuple[str, ...]
     postconditions: tuple[str, ...]
     input: dict[str, object]
@@ -166,6 +171,71 @@ def _canonical_json_bytes(payload: dict[str, object]) -> bytes:
 
 def _canonical_json_text(payload: dict[str, object]) -> str:
     return _canonical_json_bytes(payload).decode("utf-8")
+
+
+def _compiler_replay_snapshot() -> dict[str, str]:
+    return {
+        "model_version": os.getenv(_NEURO_MODEL_VERSION_ENV, "").strip(),
+        "policy_snapshot_version": os.getenv(_NEURO_POLICY_SNAPSHOT_VERSION_ENV, "").strip(),
+    }
+
+
+def _compiler_replay_bundle(
+    *,
+    request_context: CompileRequestContext,
+    workload_profile: str,
+    source_precedence: str,
+    source_digest: str,
+    request_digest: str,
+    aqo_digest: str,
+    compiler_stage_order: list[str],
+    handoff_stage_order: list[str],
+    pass_pipeline: CompilerPassPipeline,
+) -> tuple[dict[str, object], str]:
+    snapshot = _compiler_replay_snapshot()
+    symbolic_rules = []
+    for record in pass_pipeline.records:
+        symbolic_rules.append(
+            {
+                "name": record.name,
+                "kind": record.kind,
+                "rule": record.rule,
+                "preconditions": list(record.preconditions),
+                "postconditions": list(record.postconditions),
+                "input_sha256": hashlib.sha256(_canonical_json_bytes(record.input)).hexdigest(),
+                "output_sha256": hashlib.sha256(_canonical_json_bytes(record.output)).hexdigest(),
+            }
+        )
+
+    replay_bundle: dict[str, object] = {
+        "contract_version": "1.0.0",
+        "replay_mode": _REPLAY_MODE_DETERMINISTIC,
+        "request": {
+            "request_id": request_context.request_id,
+            "trace_id": request_context.trace_id,
+            "traceparent": request_context.traceparent,
+            "deadline": request_context.deadline,
+            "retry_policy": request_context.retry_policy,
+            "sandbox_profile": request_context.sandbox_profile,
+            "tenant_id": request_context.tenant_id,
+            "project_id": request_context.project_id,
+        },
+        "source": {
+            "sha256": source_digest,
+            "precedence": source_precedence,
+        },
+        "request_digest": request_digest,
+        "aqo_digest": aqo_digest,
+        "workload_profile": workload_profile,
+        "compiler_stage_order": compiler_stage_order,
+        "handoff_stage_order": handoff_stage_order,
+        "symbolic_rules": symbolic_rules,
+        "model_snapshot": snapshot,
+        "model_recommendations": [],
+    }
+    replay_bundle_json = _canonical_json_text(replay_bundle)
+    replay_bundle_sha256 = hashlib.sha256(replay_bundle_json.encode("utf-8")).hexdigest()
+    return replay_bundle, replay_bundle_sha256
 
 
 def _relabel_violations(
@@ -894,6 +964,7 @@ def _build_compiler_pass_pipeline(
         CompilerPassRecord(
             name="lower_to_ir",
             kind="lowering",
+            rule="compiler.source.lower_to_ir",
             preconditions=("ast_validated", "single_entrypoint_validated"),
             postconditions=("ir_extracted",),
             input={"source_sha256": source_digest, "source_precedence": source_precedence},
@@ -902,6 +973,7 @@ def _build_compiler_pass_pipeline(
         CompilerPassRecord(
             name="rewrite_ir",
             kind="rewrite",
+            rule="compiler.rewrite.terminal_measurement",
             preconditions=("ir_extracted",),
             postconditions=("terminal_measurement_normalized",),
             input=lowered_ir,
@@ -910,6 +982,7 @@ def _build_compiler_pass_pipeline(
         CompilerPassRecord(
             name="validate_lowering",
             kind="validation",
+            rule="compiler.aqo.validate",
             preconditions=("ir_rewritten",),
             postconditions=("aqo_contract_valid",),
             input=rewritten_ir,
@@ -918,6 +991,7 @@ def _build_compiler_pass_pipeline(
         CompilerPassRecord(
             name="canonicalize_aqo",
             kind="lowering",
+            rule="compiler.aqo.canonicalize",
             preconditions=("aqo_contract_valid",),
             postconditions=("canonical_json_ready",),
             input=validated_aqo,
@@ -1132,6 +1206,7 @@ def compile_eigen_lang(
         "options": normalized_options,
         "request_context": asdict(normalized_request_context),
         "source_sha256": source_digest,
+        "advisory_snapshot": _compiler_replay_snapshot(),
     }
     aqo_request_digest = hashlib.sha256(_canonical_json_bytes(request_digest_payload)).hexdigest()
 
@@ -1143,6 +1218,7 @@ def compile_eigen_lang(
         "workload_profile_json": workload_profile_json,
         "source_ref": source_ref or "",
         "source_sha256": source_digest,
+        "advisory_snapshot": _compiler_replay_snapshot(),
     }
     request_digest = hashlib.sha256(_canonical_json_bytes(request_payload)).hexdigest()
     options_json = _canonical_json_bytes(normalized_options).decode("utf-8")
@@ -1212,6 +1288,18 @@ def compile_eigen_lang(
         "emit",
     ]
 
+    replay_bundle, replay_bundle_sha256 = _compiler_replay_bundle(
+        request_context=normalized_request_context,
+        workload_profile=workload_profile.kind,
+        source_precedence=source_precedence,
+        source_digest=source_digest,
+        request_digest=request_digest,
+        aqo_digest=aqo_digest,
+        compiler_stage_order=compiler_stage_order,
+        handoff_stage_order=handoff_stage_order,
+        pass_pipeline=pass_pipeline,
+    )
+
     decision_lineage = {
         "contract_version": "1.0.0",
         "compiler_contract_version": "1.0.0",
@@ -1224,7 +1312,9 @@ def compile_eigen_lang(
         "workload_profile": workload_profile.kind,
         "source_sha256": source_digest,
         "aqo_sha256": aqo_digest,
-        "request_sha256": request_digest,
+        "request_sha256": request_digest,"replay_mode": _REPLAY_MODE_DETERMINISTIC,
+        "replay_bundle_sha256": replay_bundle_sha256,
+        "model_snapshot": replay_bundle["model_snapshot"],
     }
     observability = {
         "contract_version": "1.0.0",
@@ -1251,6 +1341,7 @@ def compile_eigen_lang(
             "source_sha256",
             "aqo_sha256",
             "request_sha256",
+            "replay_bundle_sha256",
         ],
     }
     compiler_diagnostics = {
@@ -1262,6 +1353,7 @@ def compile_eigen_lang(
             **decision_lineage,
             "stage_order": compiler_stage_order,
         },
+        "replay": replay_bundle,
         "observability": observability,
         "explainability": {
             **explainability,
@@ -1302,6 +1394,7 @@ def compile_eigen_lang(
                     {
                         "name": record.name,
                         "kind": record.kind,
+                        "rule": record.rule,
                         "preconditions": list(record.preconditions),
                         "postconditions": list(record.postconditions),
                         "input": record.input,
@@ -1311,6 +1404,8 @@ def compile_eigen_lang(
                 ],
             }
         ),
+        "compiler_replay_json": _canonical_json_text(replay_bundle),
+        "compiler_replay_sha256": replay_bundle_sha256,
         "workload_profile": workload_profile.kind,
         "workload_profile_json": workload_profile_json,
         "backend_contract_version": "1.0.0",
