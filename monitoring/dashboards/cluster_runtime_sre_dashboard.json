@@ -14,7 +14,7 @@
       "type": "timeseries",
       "title": "Control-plane Assignment Latency p95 (ms)",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
       "targets": [
         {
           "expr": "histogram_quantile(0.95, sum by (le) (rate(eigen_cluster_assignment_latency_ms_bucket[5m])))",
@@ -40,7 +40,7 @@
       "type": "stat",
       "title": "Observability Contract Version",
       "gridPos": { "h": 5, "w": 6, "x": 18, "y": 24 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
       "targets": [
         { "expr": "eigen_cluster_runtime_contract_info", "legendFormat": "contract" }
       ],
@@ -50,7 +50,7 @@
       "type": "timeseries",
       "title": "Queue Backlog Depth",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
       "targets": [
         { "expr": "eigen_cluster_queue_backlog_depth", "legendFormat": "backlog" },
         { "expr": "eigen_cluster_queue_oldest_age_seconds", "legendFormat": "oldest age sec" }
@@ -74,7 +74,7 @@
       "type": "timeseries",
       "title": "Worker Availability and Heartbeats",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
       "targets": [
         { "expr": "eigen_cluster_workers_ready", "legendFormat": "ready workers" },
         { "expr": "increase(eigen_cluster_worker_heartbeats_total[5m])", "legendFormat": "heartbeats/5m" },
@@ -99,7 +99,7 @@
       "type": "timeseries",
       "title": "Lease Churn and Redelivery Rate",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
       "targets": [
         { "expr": "increase(eigen_cluster_queue_lease_churn_total[15m])", "legendFormat": "lease churn / 15m" },
         { "expr": "100 * increase(eigen_cluster_queue_redeliveries_total[15m]) / clamp_min(increase(eigen_cluster_queue_deliveries_total[15m]), 1)", "legendFormat": "redelivery rate %" }
@@ -123,7 +123,7 @@
       "type": "timeseries",
       "title": "Dead-letter Volume and Delivery Throughput",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
       "targets": [
         { "expr": "increase(eigen_cluster_dead_letter_total[15m])", "legendFormat": "dead-letter / 15m" },
         { "expr": "increase(eigen_cluster_queue_deliveries_total[15m])", "legendFormat": "deliveries / 15m" }
@@ -147,7 +147,7 @@
       "type": "timeseries",
       "title": "Trace Continuity Breakage (10m)",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
       "targets": [
         { "expr": "increase(eigen_cluster_trace_breakage_total[10m])", "legendFormat": "trace breakage / 10m" }
       ],

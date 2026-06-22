@@ -14,7 +14,7 @@
       "type": "stat",
       "title": "Plugin Inventory (Installed by Type)",
       "gridPos": { "h": 8, "w": 8, "x": 0, "y": 0 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
       "targets": [
         { "expr": "sum by (plugin_type) (eigen_plugin_inventory_total)", "legendFormat": "{{plugin_type}}" }
       ]
@@ -23,7 +23,7 @@
       "type": "timeseries",
       "title": "Plugin Activation Latency p95 (ms)",
       "gridPos": { "h": 8, "w": 8, "x": 8, "y": 0 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
       "targets": [
         {
           "expr": "histogram_quantile(0.95, sum by (le) (rate(eigen_plugin_activation_latency_ms_bucket[5m])))",
@@ -49,7 +49,7 @@
       "type": "timeseries",
       "title": "Plugin Startup Critical Path Duration p95 (ms)",
       "gridPos": { "h": 8, "w": 8, "x": 16, "y": 0 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
       "targets": [
         {
           "expr": "histogram_quantile(0.95, sum by (le) (rate(eigen_plugin_startup_critical_path_ms_bucket[5m])))",
@@ -75,7 +75,7 @@
       "type": "timeseries",
       "title": "Discovery and Activation Failures (15m)",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
       "targets": [
         { "expr": "increase(eigen_plugin_discovery_failures_total[15m])", "legendFormat": "discovery / 15m" },
         { "expr": "increase(eigen_plugin_activation_failures_total[15m])", "legendFormat": "activation / 15m" }
@@ -85,7 +85,7 @@
       "type": "timeseries",
       "title": "Compatibility / Signature / Sandbox Rejects (15m)",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
       "targets": [
         { "expr": "increase(eigen_plugin_compatibility_rejects_total[15m])", "legendFormat": "compatibility rejects / 15m" },
         { "expr": "increase(eigen_plugin_signature_rejects_total[15m])", "legendFormat": "signature rejects / 15m" },
@@ -96,7 +96,7 @@
       "type": "timeseries",
       "title": "Top Rejection Reasons (15m)",
       "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
       "targets": [
         {
           "expr": "topk(10, sum by (reason_code) (increase(eigen_plugin_rejections_total[15m])))",
@@ -108,7 +108,7 @@
       "type": "timeseries",
       "title": "Plugin Failure Rate (%)",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
       "targets": [
         {
           "expr": "100 * increase(eigen_plugin_failures_total[15m]) / clamp_min(increase(eigen_plugin_attempts_total[15m]), 1)",
@@ -134,7 +134,7 @@
       "type": "timeseries",
       "title": "Startup SLO Breach Events (10m)",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
       "targets": [
         {
           "expr": "increase(eigen_plugin_startup_slo_breaches_total[10m])",
