@@ -75,6 +75,14 @@ def test_compile_circuit_happy_path(grpc_addr: str) -> None:
     assert resp.metadata["distributed.enabled"] == "false"
     assert resp.metadata["compiler_replay_json"]
     assert len(resp.metadata["compiler_replay_sha256"]) == 64
+    assert len(resp.metadata["symbolic_candidate_set_sha256"]) == 64
+
+    candidate_set = json.loads(resp.metadata["symbolic_candidate_set_json"])
+    assert candidate_set["version"] == "1.0.0"
+    assert candidate_set["candidate_budget"] == 8
+    assert candidate_set["candidate_count"] == len(candidate_set["candidates"])
+    assert candidate_set["candidate_count"] <= candidate_set["candidate_budget"]
+    assert all({"candidate_id", "features", "legal", "legality_reason"} <= set(candidate) for candidate in candidate_set["candidates"])
 
 
 def test_compile_job_uses_request_metadata_workload_profile(grpc_addr: str) -> None:
@@ -111,9 +119,12 @@ def test_compile_job_uses_request_metadata_workload_profile(grpc_addr: str) -> N
 
     diagnostics = json.loads(resp.metadata["compiler_diagnostics_json"])
     replay = json.loads(resp.metadata["compiler_replay_json"])
+    candidate_set = json.loads(resp.metadata["symbolic_candidate_set_json"])
     assert resp.metadata["workload_profile"] == "HybridWorkflow"
     assert diagnostics["workload_profile"] == "HybridWorkflow"
     assert replay["replay_mode"] == "deterministic"
+    assert diagnostics["symbolic_candidate_set"] == candidate_set
+    assert replay["symbolic_candidate_set"]["candidate_count"] == candidate_set["candidate_count"]
     assert [rule["rule"] for rule in replay["symbolic_rules"]] == [
         "compiler.source.lower_to_ir",
         "compiler.rewrite.terminal_measurement",
