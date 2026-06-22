@@ -547,6 +547,7 @@ Supports:
 
 - vector similarity
 - metadata filtering
+- trace indexing filters for compiler records (`trace_id`, `trace_digest_sha256`, `pattern_signature`)
 - pagination
 - ordering
 - replay-safe cursor semantics for deterministic retrieval
@@ -571,7 +572,7 @@ Retention MUST follow audit policy.
 
 ### 7.6 QueryDecisionLogs
 
-Returns paginated immutable decision logs filtered by trace ID and/or model version. Query results MUST be tenant-scoped, MUST preserve append order for entries with the same trace ID, and MUST remain deterministic for replay-safe retrieval.
+Returns paginated immutable decision logs filtered by trace ID and/or model version. Compiler trace indexing MAY also filter decision logs by `trace_digest_sha256` and `pattern_signature` so successful and rejected rewrite paths can be queried deterministically. Query results MUST be tenant-scoped, MUST preserve append order for entries with the same trace ID, and MUST remain deterministic for replay-safe retrieval.
 
 ---
 
