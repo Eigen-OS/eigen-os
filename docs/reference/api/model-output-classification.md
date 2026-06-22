@@ -41,9 +41,13 @@ There is no direct path from model output to execution.
 ## Validation
 
 - Unknown or empty values MUST be rejected.
+- Missing, malformed, or low-confidence advisory payloads MUST be treated as invalid at the caller boundary.
 - Rejection MUST be fail-closed and use `INVALID_ARGUMENT` at the service boundary.
+- When validation fails, the caller MUST fall back to the deterministic symbolic baseline and ignore the model output for decision-making.
 - Classification labels MUST remain stable within the same contract major version.
 
 ## Notes
 
 The label is a response classification, not a free-form confidence string. Consumers MUST NOT infer additional labels beyond the four approved values.
+
+A low-confidence label is not a separate approval state; if the advisory payload cannot be validated deterministically, the symbolic baseline wins.
