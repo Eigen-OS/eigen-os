@@ -10,6 +10,8 @@ The normative source of truth for the full symbolic-core / KB / ML-advisor bound
 
 The compiler must treat neuro-symbolic output as advisory only. Deterministic validation, normalization, lowering, AQO contract checks, and workload-profile resolution remain authoritative.
 
+If model output is missing, malformed, low-confidence, or invalid, the compiler must ignore it and continue with the symbolic baseline.
+
 Neuro-symbolic suggestions must not be able to produce invalid IR, bypass semantic validation, infer compiler legality, or relax lowering constraints.
 
 ## Allowed advisor behavior
@@ -45,6 +47,8 @@ Telemetry for these outcomes is exported from the neuro-symbolic service as:
 - `eigen_neuro_suggestion_outcomes_total{outcome="transformed"}`
 
 Structured logs should include the same `suggestion_outcome` field when available.
+
+A missing or invalid advisory payload is treated as ignored input to the symbolic baseline; it does not authorize a compiler action.
 
 ## Compatibility
 
