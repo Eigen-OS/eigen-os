@@ -8,7 +8,11 @@
 
 This document defines the compiler boundary for Eigen OS. The compiler turns Eigen-Lang source into canonical AQO, validates that AQO against the contract, and emits stable diagnostics and metadata.
 
-The deterministic semantic rule engine is authoritative for legality, lowering preconditions, and rewrite acceptance. The neuro-symbolic layer is advisory only: it may propose, rank, or explain, but it must never override the rule engine.
+The deterministic semantic rule engine is authoritative for legality, lowering preconditions, rewrite acceptance, and workload-profile resolution. The neuro-symbolic layer is advisory only: it may propose, rank, or explain, but it must never override the rule engine.
+
+The boundary between the compiler, knowledge base, optimizer, driver-manager, and ML advisor is defined in:
+
+- `docs/architecture/components/neuro-symbolic-core.md`
 
 Companion docs:
 
@@ -136,6 +140,7 @@ Each profile owns required semantic checks, allowed rewrites, forbidden transfor
 ### 5.2 Semantic rule engine
 
 The semantic rule engine is the source of truth for compiler legality.
+The authoritative neuro-DPDA / ML-advisor boundary for compiler integrations lives in `docs/architecture/components/neuro-symbolic-core.md`.
 
 It owns:
 

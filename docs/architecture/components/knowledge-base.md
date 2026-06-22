@@ -14,6 +14,7 @@ The Knowledge Base exposes two distinct behaviors:
 Runtime decision logs are append-only and MUST preserve the audit trail fields required by the neuro-symbolic compliance contract: caller identity, tenant, policy snapshot version, model version, retrieval sources, and final decision.
 
 This document defines the retrieval semantics for both candidate similarity search and canonical pattern lookup.
+The boundary between KB retrieval, deterministic replay, and ML-advisor consumption is defined in `docs/architecture/components/neuro-symbolic-core.md`.
 
 ## 2. Retrieval primitives
 
@@ -49,7 +50,7 @@ The retrieval backend MUST NOT mix candidates across tenant, project, or capabil
 
 ## 4. Candidate pool
 
-The candidate pool is bounded and deterministic.
+The candidate pool is bounded and deterministic. The KB may rank or return evidence, but it may not infer canonical truth for the caller.
 
 The backend MAY derive candidates from:
 

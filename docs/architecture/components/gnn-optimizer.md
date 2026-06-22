@@ -22,6 +22,8 @@ The optimizer operates between:
 - kernel scheduling / dispatch,
 - driver-manager backend execution.
 
+The authoritative boundary between the symbolic core, KB, optimizer, and ML advisor is defined in `docs/architecture/components/neuro-symbolic-core.md`.
+
 Primary objectives:
 
 - maximize predicted fidelity on noisy hardware,
@@ -68,6 +70,7 @@ Hardware / Simulator / Vendor Cloud
 - not allowed to weaken compiler safety invariants,
 - not allowed to introduce nondeterministic behavior in deterministic mode,
 - not allowed to bypass policy constraints or security validation,
+- not allowed to infer topology, noise, or availability from unvalidated model output,
 - not allowed to leak provider secrets or raw provider payloads.
 
 ---
