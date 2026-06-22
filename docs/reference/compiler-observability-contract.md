@@ -43,14 +43,18 @@ The compiler observability surface MUST include:
 - `eigen_compiler_validation_failures_total{stage,reason}`
 - `eigen_compiler_aqo_digest_emitted_total{kind}`
 - `eigen_compiler_replay_compiles_total{kind}`
+- `eigen_compiler_symbolic_rewrite_stage_duration_seconds_count{stage,outcome}`
+- `eigen_compiler_symbolic_rewrite_stage_duration_seconds_sum{stage,outcome}`
 
 ### Allowed label values
 
 **rpc**
+
 - `CompileCircuit`
 - `CompileJob`
 
 **stage**
+
 - `request_validation`
 - `parse`
 - `validate_ast`
@@ -60,11 +64,22 @@ The compiler observability surface MUST include:
 - `canonicalize_aqo`
 - `emit`
 
+**symbolic_rewrite_stage**
+
+- `parse`
+- `normalize`
+- `candidate_generation`
+- `legality_check`
+- `rewrite`
+- `emit_aqo`
+
 **outcome**
+
 - `success`
 - `failure`
 
 **reason**
+
 - `invalid_argument`
 - `not_found`
 - `resource_exhausted`
@@ -72,6 +87,7 @@ The compiler observability surface MUST include:
 - `internal`
 
 **kind**
+
 - `aqo`
 - `duplicate`
 
@@ -93,6 +109,8 @@ Compiler logs MUST include stable correlation fields:
 - `elapsed_ms`
 - `aqo_sha256`
 - `source_sha256`
+
+When the symbolic rewrite pipeline is executed, logs MUST additionally include `rewrite_stage`, `rewrite_stage_index`, `rewrite_stage_outcome`, and `rewrite_stage_digest`.
 
 ---
 

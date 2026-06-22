@@ -43,7 +43,7 @@ This API layer directly implements the architecture defined in Eigen OS Target S
 | QRTX                        | Central orchestration |
 | Compilation Service         | Neuro-DPDA compiler |
 | Optimizer Service           | GNN routing & placement |
-| Neuro-Symbolic Service      | Internal-only Neuro-DPDA + ML advisor; source-of-truth boundary in `docs/architecture/components/neuro-symbolic-core.md` |
+| Neuro-Symbolic Service      | Internal-only Neuro-DPDA rewrite stages + ML advisor; source-of-truth boundary in `docs/architecture/components/neuro-symbolic-core.md` |
 | Driver Manager              | Hardware abstraction |
 | QFS                         | Artifact and state persistence |
 | Knowledge Base              | Long-term learning memory |
@@ -407,7 +407,7 @@ Operational flow:
 
 #### Purpose
 
-Internal-only DPDA model service used for advisory scoring of compilation plans. The deployable service boundary lives under `src/services/neuro-symbolic-service/`.
+Internal-only DPDA service used for explicit symbolic rewrite stages and advisory scoring of compilation plans. The deployable service boundary lives under `src/services/neuro-symbolic-service/`.
 
 This service is callable only by authenticated internal service identities. Public ingress paths MUST NOT expose a direct route to this service. Kernel/QRTX is the primary runtime caller; eigen-compiler may call this service only through the bounded advisory scoring path. `System API` MUST NOT call this service directly. Internal model registry activation and rollback are constrained by signed artifact verification, frozen policy snapshot binding, and internal service identity.
 
@@ -420,10 +420,48 @@ This service is callable only by authenticated internal service identities. Publ
 - Unsupported contract versions MUST be rejected before model scoring.
 - The request path MUST remain kernel-owned for runtime decisions and compiler-advisory only for compile-time scoring.
 
+#### Symbolic rewrite stage contract
+
+`RunSymbolicRewriteStage` exposes the symbolic rewrite pipeline as explicit stages. Exactly one stage is executed per request, and the stage outcome MUST be logged independently.
+
+Canonical stage order:
+
+1. parse
+2. normalize
+3. candidate_generation
+4. legality_check
+5. rewrite
+6. emit_aqo
+
+Required request semantics:
+
+- `contract_version` is required.
+- `stage` is required and MUST be one of the canonical stage names listed above.
+- `stage_index` is required and MUST match the canonical order when `deterministic=true`.
+- `tenant_id` and `project_id` are required.
+- `policy_snapshot_version` is required and MUST match the frozen immutable policy snapshot.
+- `model_snapshot_id` and `model_snapshot_digest` are required whenever the stage consults the ML advisor.
+- `kb_snapshot_id` and `kb_snapshot_digest` are required whenever the stage consults the KB.
+- `request_digest_sha256` is required.
+
+Returned responses MUST expose:
+
+- `contract_version`
+- `stage`
+- `stage_index`
+- `stage_outcome`
+- `replay_digest`
+- `diagnostics`
+
+`ScoreCompilationPlan` remains a compatibility wrapper that runs the full canonical stage sequence and returns the final `emit_aqo` result.
+
 #### Service definition
 
 ```text
 service NeuroSymbolicService {
+    rpc RunSymbolicRewriteStage(RunSymbolicRewriteStageRequest)
+        returns (RunSymbolicRewriteStageResponse);
+
     rpc ScoreCompilationPlan(ScoreCompilationPlanRequest)
         returns (ScoreCompilationPlanResponse);
 }
@@ -431,7 +469,7 @@ service NeuroSymbolicService {
 
 #### Request/response envelope contract
 
-- `ScoreCompilationPlanRequest.envelope.contract_version` is required.
+- `ScoreCompilationPlanRequest.envelope.contract_version` is required for the compatibility wrapper; `RunSymbolicRewriteStageRequest.contract_version` is required for the stage API.
 - `ScoreCompilationPlanRequest.context.feature_schema_version` is required.
 - `ScoreCompilationPlanRequest.context.policy_snapshot_version` is required.
 - The active policy snapshot MUST be frozen at service start and treated as immutable for the lifetime of the service process.
@@ -461,6 +499,8 @@ service NeuroSymbolicService {
   - `feature_set`,
   - `confidence`,
   - `retrieval_references`.
+- `RunSymbolicRewriteStageResponse` MUST include the executed `stage`, the `stage_index`, the stage-specific `stage_outcome`, and the `replay_digest` for that stage.
+- Stage log entries MUST be emitted with the same `stage` and `stage_index` values so each DPDA step can be replayed and audited independently.
 - Every scoring request MUST also emit an immutable audit record containing caller identity, tenant, active policy snapshot version, model version, retrieval sources, and final decision.
 - The explainability envelope MUST be derived from the minimized/redacted feature vector and the immutable policy snapshot, not from raw payloads.
 - Responses MUST remain bounded and MUST NOT return raw secrets, bearer tokens, or unredacted payload fragments.
@@ -469,7 +509,8 @@ service NeuroSymbolicService {
 
 #### Determinism requirements
 
-- The service MUST be deterministic for the same feature vector, contract version, active policy snapshot version, and deterministic seed.
+- The service MUST be deterministic for the same feature vector, contract version, active policy snapshot version, model snapshot version, stage, and deterministic seed.
+- The stage API MUST reproduce the same response for the same canonical input, stage index, and frozen snapshots.
 - The response MUST include a replay digest and a bounded confidence value.
 - The service output is advisory only and MUST NOT directly change security-relevant decisions.
 - Any recommendation intended for security-sensitive use MUST pass through validation before the policy engine sees it.

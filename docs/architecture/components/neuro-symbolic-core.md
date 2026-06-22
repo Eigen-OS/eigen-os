@@ -49,6 +49,17 @@ The symbolic core is the deterministic execution path that performs:
 
 The symbolic core is implemented as a deterministic pushdown automaton (DPDA) plus the compiler rule engine and the fixed policy evaluation path.
 
+Its symbolic rewrite pipeline is a fixed sequence of explicit, independently invocable stages:
+
+1. parse
+2. normalize
+3. candidate_generation
+4. legality_check
+5. rewrite
+6. emit_aqo
+
+Each stage MUST be deterministic, MUST log its own start and completion outcome, and MUST preserve the same replay identity when executed under the same frozen snapshots and normalized inputs.
+
 The symbolic baseline is the same deterministic path with advisory inputs removed. When model output is absent, malformed, low-confidence, or rejected by validation, the symbolic baseline MUST run without consuming that output.
 
 ### 1.2 Knowledge base
@@ -171,6 +182,7 @@ The compiler is authoritative for:
 - rule-engine approval,
 - lowering,
 - AQO emission,
+- stage-by-stage symbolic rewrite pipeline invocation,
 - compiler diagnostics,
 - replay evidence for accepted and rejected rules.
 

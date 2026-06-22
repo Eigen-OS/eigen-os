@@ -22,6 +22,8 @@ Deterministic validation, normalization, lowering, AQO contract checks, and work
 
 Neuro-symbolic suggestions must not be able to produce invalid IR, bypass semantic validation, or relax lowering constraints.
 
+The compiler may invoke the symbolic rewrite pipeline one stage at a time, but stage order and stage advancement remain deterministic and under compiler control.
+
 ---
 
 ## 2. Allowed advisor behavior
@@ -61,6 +63,8 @@ Telemetry for these outcomes is exported from the neuro-symbolic service as:
 - `eigen_neuro_suggestion_outcomes_total{outcome="transformed"}`
 
 Structured logs should include the same `suggestion_outcome` field when available.
+
+For the symbolic rewrite pipeline, each stage invocation MUST be logged independently with the stage name, stage index, and stage outcome attached to the same bounded replay evidence.
 
 ---
 
