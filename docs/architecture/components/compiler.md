@@ -57,6 +57,8 @@ The compiler metadata contract is also stable and deterministic. The canonical n
 - `compiler_replay_json`
 - `compiler_replay_sha256`
 - `backend_contract_json`
+- `logical_graph_schema_json`
+- `logical_graph_schema_sha256`
 
 These are compiler metadata fields, not AQO top-level fields.
 
@@ -186,6 +188,8 @@ The semantic rule engine gates `validate_ast`, `rewrite_ir`, and `validate_lower
 The compiler also emits a bounded symbolic candidate set for model ranking. Each candidate is produced by the symbolic core, has a stable `candidate_id`, a compact feature map, and a legality flag. The emitted candidate set is serialized in compiler metadata as `symbolic_candidate_set_json`.
 
 Ranking layers may only score candidates whose `legal` flag is `true`. They must not invent additional candidates, rename emitted IDs, or treat illegal candidates as admissible.
+
+The compiler also emits one canonical logical graph schema for AST, IR, and DPDA-state structures. The schema is serialized in compiler metadata as `logical_graph_schema_json` and hashed as `logical_graph_schema_sha256`. It is the same schema used for training and inference, and it defines bounded node and edge fields, canonical labels, and deterministic ordering rules for all logical compiler graph representations.
 
 Optional deterministic rewrite or hardware-adaptation work may be added as long as it remains replay-safe and does not change the meaning of canonical AQO. Workload-family specific validation happens before lowering and may reject a valid-looking source when the selected profile forbids it.
 

@@ -210,6 +210,7 @@ def _compiler_replay_bundle(
     handoff_stage_order: list[str],
     pass_pipeline: CompilerPassPipeline,
     symbolic_candidate_set: SymbolicCandidateSet,
+    logical_graph_schema: dict[str, object],
 ) -> tuple[dict[str, object], str]:
     snapshot = _compiler_replay_snapshot()
     symbolic_rules = []
@@ -253,6 +254,7 @@ def _compiler_replay_bundle(
         "symbolic_rules": symbolic_rules,
         "model_snapshot": snapshot,
         "symbolic_candidate_set": symbolic_candidates,
+        "logical_graph_schema": logical_graph_schema,
         "model_recommendations": [],
     }
     replay_bundle_json = _canonical_json_text(replay_bundle)
@@ -505,6 +507,93 @@ def _symbolic_candidate_set_payload(candidate_set: SymbolicCandidateSet) -> dict
         "candidate_count": len(candidates),
         "legal_candidate_count": sum(1 for candidate in candidate_set.candidates if candidate.legal),
         "candidates": candidates,
+    }
+
+
+def _logical_graph_schema_payload() -> dict[str, object]:
+    """Return the canonical logical graph schema shared by training and inference.
+
+    The schema intentionally stays bounded and declarative: it specifies the
+    required node/edge fields, the allowed label taxonomies, and the
+    deterministic ordering rules used when logical compiler structures are
+    serialized for downstream consumers.
+    """
+
+    return {
+        "contract_version": "1.0.0",
+        "schema_version": "logical-compiler-graph-v1",
+        "canonical_format": "eigen.logical-graph-json",
+        "shared_between_training_and_inference": True,
+        "graph_kinds": ["ast", "ir", "dpda_state"],
+        "nodes": {
+            "required_fields": ["id", "kind", "label", "attributes"],
+            "optional_fields": ["metadata"],
+            "attribute_contract": {
+                "type": "bounded_json_object",
+                "value_types": ["string", "integer", "number", "boolean", "array", "object"],
+                "ordering": "deterministic",
+                "unknown_fields": "allowed_but_bounded",
+            },
+        },
+        "edges": {
+            "required_fields": ["id", "source", "target", "kind", "label", "attributes"],
+            "optional_fields": ["metadata"],
+            "attribute_contract": {
+                "type": "bounded_json_object",
+                "value_types": ["string", "integer", "number", "boolean", "array", "object"],
+                "ordering": "deterministic",
+                "unknown_fields": "allowed_but_bounded",
+            },
+        },
+        "labels": {
+            "ast": [
+                "module",
+                "function",
+                "async_function",
+                "decorator",
+                "call",
+                "name",
+                "constant",
+                "assign",
+                "argument",
+                "keyword",
+            ],
+            "ir": [
+                "program",
+                "operation",
+                "parameter",
+                "observable",
+                "measurement",
+                "rewrite_candidate",
+                "validation_gate",
+            ],
+            "dpda_state": [
+                "parse",
+                "normalize",
+                "candidate_generation",
+                "legality_check",
+                "rewrite",
+                "emit_aqo",
+                "accept",
+                "reject",
+            ],
+        },
+        "edge_kinds": {
+            "ast": ["child", "decorator_of", "argument_of", "keyword_of", "binding"],
+            "ir": ["sequence", "dataflow", "control", "rewrite", "validation"],
+            "dpda_state": ["transition", "accept", "reject", "fallback"],
+        },
+        "ordering": {
+            "nodes": ["id"],
+            "edges": ["id"],
+            "labels": ["graph_kind", "kind", "label"],
+        },
+        "provenance": {
+            "source": "eigen-compiler",
+            "replay_safe": True,
+            "training_safe": True,
+            "inference_safe": True,
+        },
     }
 
 
@@ -1374,7 +1463,10 @@ def compile_eigen_lang(
     symbolic_candidate_set_payload = _symbolic_candidate_set_payload(symbolic_candidate_set)
     symbolic_candidate_set_json = _canonical_json_text(symbolic_candidate_set_payload)
     symbolic_candidate_set_sha256 = hashlib.sha256(symbolic_candidate_set_json.encode("utf-8")).hexdigest()
-
+    logical_graph_schema_payload = _logical_graph_schema_payload()
+    logical_graph_schema_json = _canonical_json_text(logical_graph_schema_payload)
+    logical_graph_schema_sha256 = hashlib.sha256(logical_graph_schema_json.encode("utf-8")).hexdigest()
+    
     def _build_pass_pipeline() -> CompilerPassPipeline:
         try:
             return _build_compiler_pass_pipeline(
@@ -1450,6 +1542,7 @@ def compile_eigen_lang(
         handoff_stage_order=handoff_stage_order,
         pass_pipeline=pass_pipeline,
         symbolic_candidate_set=symbolic_candidate_set,
+        logical_graph_schema=logical_graph_schema_payload,
     )
 
     decision_lineage = {
@@ -1515,6 +1608,7 @@ def compile_eigen_lang(
             },
         },
         "symbolic_candidate_set": symbolic_candidate_set_payload,
+        "logical_graph_schema": logical_graph_schema_payload,
     }
 
     metadata = {
@@ -1566,6 +1660,8 @@ def compile_eigen_lang(
         "compiler_diagnostics_json": _canonical_json_text(compiler_diagnostics),
         "symbolic_candidate_set_json": symbolic_candidate_set_json,
         "symbolic_candidate_set_sha256": symbolic_candidate_set_sha256,
+        "logical_graph_schema_json": logical_graph_schema_json,
+        "logical_graph_schema_sha256": logical_graph_schema_sha256,
     }
     if has_minimize:
         metadata["hybrid_plan_marker"] = "minimize"
