@@ -357,6 +357,71 @@ def test_runtime_decision_ingest_persists_explainability_envelope(monkeypatch: p
     assert audit["immutable"] is True
 
 
+def test_kb_queries_support_trace_digest_and_pattern_signature_filters(grpc_addr: str) -> None:
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = kb_pb_grpc.KnowledgeBaseServiceStub(channel)
+
+    envelope = _envelope(request_id="kb-trace-filter")
+    record = _record(
+        "kb-trace-filter-record",
+        created_at="2026-06-11T12:00:00+00:00",
+        trace_id="trace-filter",
+        user_id="alice",
+    )
+    record.attributes["trace_digest_sha256"] = "sha256:trace-digest"
+    record.attributes["pattern_signature"] = "symbolic.rewrite_terminal_measurement"
+    stub.UpsertRecord(kb_pb.UpsertRecordRequest(envelope=envelope, record=record))
+    stub.AppendDecisionLog(
+        kb_pb.AppendDecisionLogRequest(
+            envelope=envelope,
+            decision_log=kb_pb.DecisionLog(
+                decision_id="decision-trace-filter",
+                trace_id="trace-filter",
+                model_version="m1",
+                component="compiler",
+                policy_branch="symbolic_rewrite",
+                selected_action="symbolic.rewrite_terminal_measurement",
+                fallback_used=False,
+                feature_snapshot={
+                    "trace_digest_sha256": "sha256:trace-digest",
+                    "pattern_signature": "symbolic.rewrite_terminal_measurement",
+                    "rewrite_outcome": "accepted",
+                },
+                decided_at=_ts("2026-06-11T12:01:00+00:00"),
+            ),
+        )
+    )
+
+    records = stub.QueryRecords(
+        kb_pb.QueryRecordsRequest(
+            envelope=envelope,
+            filter=kb_pb.QueryFilter(
+                trace_id="trace-filter",
+                trace_digest_sha256="sha256:trace-digest",
+                pattern_signature="symbolic.rewrite_terminal_measurement",
+            ),
+            page_size=10,
+        )
+    )
+    assert [item.record_id for item in records.records] == ["kb-trace-filter-record"]
+    assert records.records[0].attributes["trace_digest_sha256"] == "sha256:trace-digest"
+    assert records.records[0].attributes["pattern_signature"] == "symbolic.rewrite_terminal_measurement"
+
+    decisions = stub.QueryDecisionLogs(
+        kb_pb.QueryDecisionLogsRequest(
+            envelope=envelope,
+            trace_id="trace-filter",
+            trace_digest_sha256="sha256:trace-digest",
+            pattern_signature="symbolic.rewrite_terminal_measurement",
+            model_version="m1",
+            page_size=10,
+        )
+    )
+    assert [item.decision_id for item in decisions.decision_logs] == ["decision-trace-filter"]
+    assert decisions.decision_logs[0].selected_action == "symbolic.rewrite_terminal_measurement"
+    assert decisions.decision_logs[0].feature_snapshot["rewrite_outcome"] == "accepted"
+
+
 def test_kb_records_and_decision_logs_are_project_scoped(grpc_addr: str) -> None:
     channel = grpc.insecure_channel(grpc_addr)
     stub = kb_pb_grpc.KnowledgeBaseServiceStub(channel)

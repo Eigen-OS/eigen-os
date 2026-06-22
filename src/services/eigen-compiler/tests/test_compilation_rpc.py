@@ -3,13 +3,35 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import socket
+import sys
+import time
+import types
+from pathlib import Path
 import grpc
+
+PACKAGE_ROOT = Path(__file__).resolve().parents[1] / "src"
+if str(PACKAGE_ROOT) not in sys.path:
+    sys.path.insert(0, str(PACKAGE_ROOT))
+EIGEN_ROOT = PACKAGE_ROOT / "eigen"
+if "eigen" not in sys.modules:
+    eigen_module = types.ModuleType("eigen")
+    eigen_module.__path__ = [str(EIGEN_ROOT)]  # type: ignore[attr-defined]
+    sys.modules["eigen"] = eigen_module
+else:
+    eigen_module = sys.modules["eigen"]
+    package_path = list(getattr(eigen_module, "__path__", []))
+    if str(EIGEN_ROOT) not in package_path:
+        package_path.insert(0, str(EIGEN_ROOT))
+        try:
+            eigen_module.__path__ = package_path  # type: ignore[attr-defined]
+        except Exception:
+            pass
 import pytest
 from google.rpc import error_details_pb2
 from grpc_status import rpc_status
 
 from eigen_compiler.compiler import compile_eigen_lang
-from eigen_compiler.grpc_impl import _redact_feature_vector
 from eigen_compiler.proto_gen import ensure_generated
 
 ensure_generated()
@@ -39,6 +61,12 @@ def _extract_bad_request(err: grpc.RpcError) -> error_details_pb2.BadRequest:
     return bad
 
 
+def _redact_feature_vector(raw_feature_vector):
+    from eigen_compiler.grpc_impl import _redact_feature_vector as _impl_redact_feature_vector
+
+    return _impl_redact_feature_vector(raw_feature_vector)
+
+
 def _extract_error_info(err: grpc.RpcError) -> error_details_pb2.ErrorInfo:
     st = rpc_status.from_call(err)
     assert st is not None
@@ -49,6 +77,70 @@ def _extract_error_info(err: grpc.RpcError) -> error_details_pb2.ErrorInfo:
             assert detail.Unpack(info)
             return info
     raise AssertionError("expected ErrorInfo in grpc status details")
+
+
+def _free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def _stable_json(payload: object) -> str:
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def _trace_digest_payload(
+    *,
+    rpc: str,
+    request_id: str,
+    trace_id: str,
+    source_sha256: str,
+    request_sha256: str,
+    aqo_sha256: str,
+    pattern_signature: str,
+    compiler_status: str,
+    failure_stage: str = "",
+    failure_reason: str = "",
+    compiler_replay_sha256: str = "",
+    compiler_diagnostics_sha256: str = "",
+) -> dict[str, str]:
+    return {
+        "rpc": rpc,
+        "request_id": request_id,
+        "trace_id": trace_id,
+        "source_sha256": source_sha256,
+        "request_sha256": request_sha256,
+        "aqo_sha256": aqo_sha256,
+        "pattern_signature": pattern_signature,
+        "compiler_status": compiler_status,
+        "failure_stage": failure_stage,
+        "failure_reason": failure_reason,
+        "compiler_replay_sha256": compiler_replay_sha256,
+        "compiler_diagnostics_sha256": compiler_diagnostics_sha256,
+    }
+
+
+@pytest.fixture(scope="module")
+def kb_server() -> Iterator[str]:
+    neuro_package_root = Path(__file__).resolve().parents[2] / "neuro-symbolic-service" / "src"
+    if str(neuro_package_root) not in sys.path:
+        sys.path.insert(0, str(neuro_package_root))
+    import eigen
+
+    neuro_eigen_root = neuro_package_root / "eigen"
+    if str(neuro_eigen_root) not in list(getattr(eigen, "__path__", [])):
+        try:
+            eigen.__path__.append(str(neuro_eigen_root))
+        except Exception:
+            pass
+
+    from neuro_symbolic_service.grpc_server import serve
+
+    addr = f"127.0.0.1:{_free_port()}"
+    server = serve(bind=addr)
+    time.sleep(0.05)
+    yield addr
+    server.stop(grace=None)
 
 
 def test_compile_circuit_happy_path(grpc_addr: str) -> None:
@@ -83,6 +175,141 @@ def test_compile_circuit_happy_path(grpc_addr: str) -> None:
     assert candidate_set["candidate_count"] == len(candidate_set["candidates"])
     assert candidate_set["candidate_count"] <= candidate_set["candidate_budget"]
     assert all({"candidate_id", "features", "legal", "legality_reason"} <= set(candidate) for candidate in candidate_set["candidates"])
+
+
+def test_compile_job_indexes_trace_and_rewrite_paths_in_kb(
+    grpc_addr: str,
+    kb_server: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("EIGEN_KB_GRPC_ENDPOINT", kb_server)
+    monkeypatch.setenv("EIGEN_KB_AUTH_TOKEN", "kb-test-token")
+    monkeypatch.setenv("EIGEN_KB_SERVICE_IDENTITY", "eigen-compiler")
+    monkeypatch.setenv("EIGEN_KB_SERVICE_ROLE", "compiler")
+    monkeypatch.setenv("EIGEN_KB_ROLES", "kb:read,kb:write")
+    monkeypatch.setenv("EIGEN_KB_TIMEOUT_SECONDS", "5")
+    monkeypatch.setenv("EIGEN_NEURO_SYMBOLIC_MODEL_VERSION", "model-2026-06-23")
+    monkeypatch.setenv("EIGEN_NEURO_SYMBOLIC_POLICY_SNAPSHOT_VERSION", "policy-2026-06-15")
+
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = comp_pb_grpc.CompilationServiceStub(channel)
+
+    request_metadata = kernel_pb.RequestMetadata()
+    request_metadata.contract_version = "1.0.0"
+    request_metadata.request_id = "req-kb-001"
+    request_metadata.trace_id = "trace-kb-001"
+    request_metadata.traceparent = "00-11111111111111111111111111111111-2222222222222222-01"
+    request_metadata.deadline.seconds = 60
+    request_metadata.retry_policy = "retry-none"
+    request_metadata.security_context = "compiler-test"
+    request_metadata.tenant_id = "tenant-a"
+    request_metadata.project_id = "project-a"
+    request_metadata.workload.kind = kernel_pb.WORKLOAD_FAMILY_KIND_HYBRID_WORKFLOW
+    request_metadata.workload.execution_profile = "hybrid"
+    request_metadata.workload.backend_target = "sim:local"
+
+    resp = stub.CompileJob(
+        comp_pb.CompileJobRequest(
+            job_id="job-kb-001",
+            language="eigen-lang",
+            source=(
+                b"from eigen_lang import hybrid_program, ry\n\n"
+                b"@hybrid_program(target=\"sim\", shots=1000)\n"
+                b"def main():\n"
+                b"    ry(0, theta=1.0)\n"
+            ),
+            request_metadata=request_metadata,
+        )
+    )
+
+    candidate_set = json.loads(resp.metadata["symbolic_candidate_set_json"])
+    assert candidate_set["candidate_count"] >= 2
+    selected = next(
+        candidate["candidate_id"]
+        for candidate in candidate_set["candidates"]
+        if candidate["legal"] and candidate.get("features", {}).get("candidate_kind") == "terminal_measurement_normalized"
+    )
+    rejected = next(candidate["candidate_id"] for candidate in candidate_set["candidates"] if candidate["candidate_id"] != selected)
+
+    trace_payload = _trace_digest_payload(
+        rpc="CompileJob",
+        request_id=request_metadata.request_id,
+        trace_id=request_metadata.trace_id,
+        source_sha256=resp.metadata["source_sha256"],
+        request_sha256=resp.metadata["request_sha256"],
+        aqo_sha256=resp.metadata["aqo_sha256"],
+        pattern_signature=selected,
+        compiler_status="success",
+        compiler_replay_sha256=resp.metadata["compiler_replay_sha256"],
+        compiler_diagnostics_sha256=hashlib.sha256(resp.metadata["compiler_diagnostics_json"].encode("utf-8")).hexdigest(),
+    )
+    trace_digest = hashlib.sha256(_stable_json(trace_payload).encode("utf-8")).hexdigest()
+
+    from eigen.api.v1 import knowledge_base_service_pb2 as kb_pb
+    from eigen.api.v1 import knowledge_base_service_pb2_grpc as kb_pb_grpc
+    from eigen.api.v1 import types_pb2 as api_types_pb2
+
+    kb_channel = grpc.insecure_channel(kb_server)
+    kb_stub = kb_pb_grpc.KnowledgeBaseServiceStub(kb_channel)
+    envelope = kb_pb.ApiContractEnvelope(
+        contract_version="1.0.0",
+        request=api_types_pb2.ApiRequestEnvelope(
+            contract_version="1.0.0",
+            request_id=request_metadata.request_id,
+            tenant_id="tenant-a",
+            project_id="project-a",
+            client_version="eigen-compiler/1.0.0",
+            traceparent=request_metadata.traceparent,
+        ),
+    )
+
+    records = kb_stub.QueryRecords(
+        kb_pb.QueryRecordsRequest(
+            envelope=envelope,
+            filter=kb_pb.QueryFilter(
+                trace_id=request_metadata.trace_id,
+                trace_digest_sha256=trace_digest,
+                pattern_signature=selected,
+            ),
+            page_size=10,
+        )
+    )
+    assert [record.record_id for record in records.records] == [records.records[0].record_id]
+    assert records.records[0].attributes["trace_digest_sha256"] == trace_digest
+    assert records.records[0].attributes["pattern_signature"] == selected
+    assert records.records[0].attributes["compiler_status"] == "success"
+    assert json.loads(records.records[0].attributes["accepted_rewrite_ids"]) == [selected]
+    assert rejected in json.loads(records.records[0].attributes["rejected_rewrite_ids"])
+
+    accepted_logs = kb_stub.QueryDecisionLogs(
+        kb_pb.QueryDecisionLogsRequest(
+            envelope=envelope,
+            trace_id=request_metadata.trace_id,
+            trace_digest_sha256=trace_digest,
+            pattern_signature=selected,
+            model_version="model-2026-06-23",
+            page_size=10,
+        )
+    )
+    assert len(accepted_logs.decision_logs) == 1
+    assert accepted_logs.decision_logs[0].selected_action == selected
+    assert accepted_logs.decision_logs[0].feature_snapshot["rewrite_outcome"] == "accepted"
+    assert accepted_logs.decision_logs[0].feature_snapshot["trace_digest_sha256"] == trace_digest
+
+    rejected_logs = kb_stub.QueryDecisionLogs(
+        kb_pb.QueryDecisionLogsRequest(
+            envelope=envelope,
+            trace_id=request_metadata.trace_id,
+            trace_digest_sha256=trace_digest,
+            pattern_signature=rejected,
+            model_version="model-2026-06-23",
+            page_size=10,
+        )
+    )
+    assert len(rejected_logs.decision_logs) == 1
+    assert rejected_logs.decision_logs[0].selected_action == rejected
+    assert rejected_logs.decision_logs[0].feature_snapshot["rewrite_outcome"] == "rejected"
+    assert rejected_logs.decision_logs[0].feature_snapshot["trace_digest_sha256"] == trace_digest
 
 
 def test_compile_job_uses_request_metadata_workload_profile(grpc_addr: str) -> None:

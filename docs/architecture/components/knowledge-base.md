@@ -13,6 +13,8 @@ The Knowledge Base exposes two distinct behaviors:
 
 Runtime decision logs are append-only and MUST preserve the audit trail fields required by the neuro-symbolic compliance contract: caller identity, tenant, policy snapshot version, model version, retrieval sources, and final decision.
 
+Compiler traces are indexed into the KB as replay-safe records and decision logs so later queries can bind to trace ID, trace digest, and pattern signature. Both accepted and rejected rewrite paths MUST be retained.
+
 This document defines the retrieval semantics for both candidate similarity search and canonical pattern lookup.
 The boundary between KB retrieval, deterministic replay, and ML-advisor consumption is defined in `docs/architecture/components/neuro-symbolic-core.md`.
 
@@ -79,6 +81,8 @@ Normative rules:
 - The ML layer MUST NOT infer `tenant_id`, `project_id`, `snapshot_id`, `policy_digest`, `request_digest_sha256`, or any compatibility field.
 - Requests that omit required boundary fields MUST fail closed.
 - The same normalized `knowledge_context` MUST produce the same replay identity, candidate ordering, and provenance fields.
+
+Compiler trace index lookups use the same replay-safe discipline: `QueryRecords` and `QueryDecisionLogs` MAY filter by `trace_id`, `trace_digest_sha256`, and `pattern_signature`, and these fields MUST remain bounded, deterministic, and queryable without introducing model-authored truth.
 
 ### 2.4.2 `PatternRecord`
 

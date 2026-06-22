@@ -100,6 +100,8 @@ message BatchUpsertRecordsResponse {
 message QueryFilter {
   string trace_id = 10;
   string model_version = 11;
+  string trace_digest_sha256 = 12;
+  string pattern_signature = 13;
   int32 min_qubit_count = 1;
   int32 max_qubit_count = 2;
   double min_entanglement_score = 3;
@@ -146,8 +148,10 @@ message QueryDecisionLogsRequest {
   ApiContractEnvelope envelope = 1;
   string trace_id = 2;
   string model_version = 3;
-  uint32 page_size = 4;
-  string page_token = 5;
+  string trace_digest_sha256 = 4;
+  string pattern_signature = 5;
+  uint32 page_size = 6;
+  string page_token = 7;
 }
 
 message QueryDecisionLogsResponse {

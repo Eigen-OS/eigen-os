@@ -29,9 +29,6 @@ except ModuleNotFoundError:
 
 import pytest
 
-from eigen_compiler.grpc_server import serve
-from eigen_compiler.grpc_impl import reset_metrics
-
 
 def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -41,6 +38,9 @@ def _free_port() -> int:
 
 @pytest.fixture(scope="module")
 def compiler_server() -> Iterator[tuple[str, str, object]]:
+    from eigen_compiler.grpc_impl import reset_metrics
+    from eigen_compiler.grpc_server import serve
+
     reset_metrics()
     grpc = f"127.0.0.1:{_free_port()}"
     metrics = f"127.0.0.1:{_free_port()}"
@@ -55,6 +55,8 @@ def compiler_server() -> Iterator[tuple[str, str, object]]:
 
 @pytest.fixture(autouse=True)
 def _reset_compiler_metrics_between_tests() -> Iterator[None]:
+    from eigen_compiler.grpc_impl import reset_metrics
+
     reset_metrics()
     yield
     reset_metrics()
