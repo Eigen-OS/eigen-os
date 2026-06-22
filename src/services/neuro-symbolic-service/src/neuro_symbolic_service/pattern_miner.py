@@ -50,6 +50,121 @@ def _sha256_hex(payload: Any) -> str:
     return sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
 
 
+def _pattern_source_provenance(
+    *,
+    snapshot_id: str,
+    config_digest: str,
+    source_record_ids: list[str],
+) -> dict[str, Any]:
+    return {
+        "kind": "knowledge_base_snapshot",
+        "snapshot_id": snapshot_id,
+        "config_digest": config_digest,
+        "source_record_ids": source_record_ids,
+        "source_record_count": len(source_record_ids),
+    }
+
+
+def _pattern_version_provenance(
+    *,
+    compatibility_signature: str,
+) -> dict[str, Any]:
+    return {
+        "contract_version": PATTERN_CONTRACT_VERSION,
+        "pattern_miner_version": PATTERN_CONTRACT_VERSION,
+        "compatibility_signature": compatibility_signature,
+    }
+
+
+def _pattern_compilation_context(
+    *,
+    snapshot_id: str,
+    circuit_id: str,
+    backend_class: str,
+    compatibility_window: dict[str, str],
+    query_signature: str = "",
+    query: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    query_payload = query or {}
+    return {
+        "snapshot_id": snapshot_id,
+        "circuit_id": circuit_id,
+        "backend_class": backend_class,
+        "compatibility_window": compatibility_window,
+        "query_signature": query_signature,
+        "query_mode": _normalized_text(query_payload.get("query_mode", "")) or "structural",
+       "candidate_budget": int(query_payload.get("candidate_budget", PATTERN_MINER_MAX_CANDIDATES) or PATTERN_MINER_MAX_CANDIDATES),
+        "deterministic": bool(query_payload.get("deterministic", True)),
+        "semantic_hash": _normalized_text(query_payload.get("semantic_hash", "")),
+        "aqo_hash": _normalized_text(query_payload.get("aqo_hash", "")),
+        "schema_version": _normalized_text(query_payload.get("schema_version", "")),
+        "compiler_version": _normalized_text(query_payload.get("compiler_version", "")),
+        "aqo_version": _normalized_text(query_payload.get("aqo_version", "")),
+        "optimizer_version": _normalized_text(query_payload.get("optimizer_version", "")),
+        "policy_mode": _normalized_text(query_payload.get("policy_mode", "")) or "deterministic",
+        "policy_digest": _normalized_text(query_payload.get("policy_digest", "")),
+    }
+
+
+def _pattern_validation_status(
+    *,
+    state: str,
+    compatible: bool,
+    canonical_eligible: bool,
+    selected: bool,
+    rank: int,
+    incompatibility_reasons: Sequence[str],
+) -> dict[str, Any]:
+    return {
+        "state": state,
+        "compatible": compatible,
+        "canonical_eligible": canonical_eligible,
+        "selected": selected,
+        "rank": rank,
+        "incompatibility_reasons": list(incompatibility_reasons),
+    }
+
+
+def _pattern_provenance(
+    *,
+    snapshot_id: str,
+    config_digest: str,
+    source_record_ids: list[str],
+    compatibility_signature: str,
+    snapshot_state: str,
+    circuit_id: str,
+    backend_class: str,
+    compatibility_window: dict[str, str],
+    query_signature: str = "",
+    query: dict[str, Any] | None = None,
+    validation_status: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "source": _pattern_source_provenance(
+            snapshot_id=snapshot_id,
+            config_digest=config_digest,
+            source_record_ids=source_record_ids,
+        ),
+        "version": _pattern_version_provenance(compatibility_signature=compatibility_signature),
+        "compilation_context": _pattern_compilation_context(
+            snapshot_id=snapshot_id,
+            circuit_id=circuit_id,
+            backend_class=backend_class,
+            compatibility_window=compatibility_window,
+            query_signature=query_signature,
+            query=query,
+        ),
+        "validation_status": _pattern_validation_status(
+            state=snapshot_state,
+            compatible=True if validation_status is None else bool(validation_status.get("compatible", True)),
+            canonical_eligible=True if validation_status is None else bool(validation_status.get("canonical_eligible", True)),
+            selected=False if validation_status is None else bool(validation_status.get("selected", False)),
+            rank=0 if validation_status is None else int(validation_status.get("rank", 0) or 0),
+            incompatibility_reasons=() if validation_status is None else tuple(validation_status.get("incompatibility_reasons", []) or []),
+        ),
+    }
+
+
 def _digest_to_unit_interval(digest: str, *, start: int = 0, end: int = 16) -> float:
     raw = int(digest[start:end], 16)
     return raw / float(0xFFFFFFFFFFFFFFFF)
@@ -195,6 +310,11 @@ class PatternMinerService:
         for rank, candidate in enumerate(selected_candidates, start=1):
             candidate["rank"] = rank
             candidate["selected"] = candidate["pattern_id"] == canonical_pattern_id if canonical_candidate else False
+            validation_status = dict(candidate["provenance"]["validation_status"])
+            validation_status["selected"] = candidate["selected"]
+            validation_status["rank"] = rank
+            validation_status["state"] = "selected" if candidate["selected"] else validation_status["state"]
+            candidate["provenance"] = {**candidate["provenance"], "validation_status": validation_status}
 
         canonical_pattern = None
         if canonical_candidate is not None:
@@ -204,6 +324,11 @@ class PatternMinerService:
             canonical_pattern["canonical_template_ref"] = f"kb://patterns/{canonical_pattern['pattern_id']}"
             canonical_pattern["explanation_ref"] = f"kb://patterns/{canonical_pattern['pattern_id']}/explanation"
             canonical_pattern["rank"] = 1
+            canonical_validation_status = dict(canonical_pattern["provenance"]["validation_status"])
+            canonical_validation_status["state"] = "canonical"
+            canonical_validation_status["selected"] = True
+            canonical_validation_status["rank"] = 1
+            canonical_pattern["provenance"] = {**canonical_pattern["provenance"], "validation_status": canonical_validation_status}
 
         incompatible_reasons = self._collect_incompatibility_reasons(scored_candidates)
         fallback_used = canonical_pattern is None
@@ -242,6 +367,25 @@ class PatternMinerService:
                 "Exact compatibility window matched a canonical template."
                 if canonical_candidate is not None
                 else "No canonical template matched the requested compatibility window."
+            ),
+            "provenance": _pattern_provenance(
+                snapshot_id=snapshot_id,
+                config_digest=snapshot["config_digest"],
+                source_record_ids=sorted({rid for candidate in selected_candidates for rid in candidate["source_record_ids"]}),
+                compatibility_signature=query_signature,
+                snapshot_state="explanation",
+                circuit_id=circuit_id,
+                backend_class=backend_class,
+                compatibility_window=query_window,
+                query_signature=query_signature,
+                query=query,
+                validation_status={
+                    "compatible": canonical_candidate is not None,
+                    "canonical_eligible": canonical_candidate is not None,
+                    "selected": False,
+                    "rank": 0,
+                    "incompatibility_reasons": incompatible_reasons,
+                },
             ),
         }
 
@@ -434,6 +578,16 @@ class PatternMinerService:
                         "config_digest": snapshot["config_digest"],
                         "source_record_count": len(source_record_ids),
                     },
+                    "provenance": _pattern_provenance(
+                        snapshot_id=snapshot_id,
+                        config_digest=snapshot["config_digest"],
+                        source_record_ids=source_record_ids,
+                        compatibility_signature=compatibility_signature,
+                        snapshot_state="catalogued",
+                        circuit_id=circuit_id,
+                        backend_class=backend_class,
+                        compatibility_window=compatibility_window,
+                    ),
                 }
             )
 
@@ -543,6 +697,25 @@ class PatternMinerService:
                     "compatibility_ratio": compatibility_ratio,
                     "support_ratio": round(support_ratio, 6),
                 },
+                "provenance": _pattern_provenance(
+                    snapshot_id=pattern["provenance"]["source"]["snapshot_id"],
+                    config_digest=pattern["provenance"]["source"]["config_digest"],
+                    source_record_ids=list(pattern["source_record_ids"]),
+                    compatibility_signature=pattern["compatibility_signature"],
+                    snapshot_state="compatible" if compatible else "incompatible",
+                    circuit_id=pattern["circuit_id"],
+                    backend_class=pattern["backend_class"],
+                    compatibility_window=pattern["compatibility_window"],
+                    query_signature=query_signature,
+                    query=query,
+                    validation_status={
+                        "compatible": compatible,
+                        "canonical_eligible": compatible,
+                        "selected": False,
+                        "rank": 0,
+                        "incompatibility_reasons": compatibility_checks["incompatibility_reasons"],
+                    },
+                ),
             }
         )
         return candidate

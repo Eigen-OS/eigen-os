@@ -268,6 +268,15 @@ message PatternRecord {
   ResponseProvenance provenance = 20;
 }
 
+`provenance` MUST be a bounded object with these subfields:
+
+- `source` — snapshot and source-record lineage, including `snapshot_id`, `config_digest`, `source_record_ids`, and `source_record_count`
+- `version` — pattern versioning data, including `contract_version`, `pattern_miner_version`, and `compatibility_signature`
+- `compilation_context` — normalized circuit/backend/query context, including `compatibility_window`, `query_signature`, `query_mode`, `candidate_budget`, and `deterministic`
+- `validation_status` — deterministic validation state, including `state`, `compatible`, `canonical_eligible`, `selected`, `rank`, and `incompatibility_reasons`
+
+Allowed validation states include `catalogued`, `compatible`, `incompatible`, `selected`, `canonical`, and `explanation`.
+
 message SearchSimilarRequest {
   string contract_version = 1;
   KnowledgeContext knowledge_context = 2;
