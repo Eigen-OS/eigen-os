@@ -499,14 +499,158 @@ def _symbolic_candidate_payload(candidate: SymbolicCandidate) -> dict[str, objec
     }
 
 
+def _symbolic_candidate_graph_encoding(candidate: SymbolicCandidate) -> dict[str, object]:
+    features = candidate.features
+    node_attributes = {
+        "candidate_kind": str(features.get("candidate_kind", "")).strip(),
+        "legal": bool(candidate.legal),
+        "operation_count": int(features.get("operation_count", 0) or 0),
+        "measurement_count": int(features.get("measurement_count", 0) or 0),
+        "terminal_measurement_present": bool(features.get("terminal_measurement_present", False)),
+        "has_expectation": bool(features.get("has_expectation", False)),
+        "has_minimize": bool(features.get("has_minimize", False)),
+        "distributed_enabled": bool(features.get("distributed_enabled", False)),
+        "distributed_target": str(features.get("distributed_target", "")).strip(),
+        "distributed_partition_count": int(features.get("distributed_partition_count", 0) or 0),
+    }
+    useful_signal = {
+        "rewrite_ready": bool(node_attributes["legal"]) and node_attributes["operation_count"] > 0,
+        "canonicalizable": node_attributes["terminal_measurement_present"]
+        or node_attributes["candidate_kind"] == "terminal_measurement_normalized",
+        "measurement_density": round(
+            node_attributes["measurement_count"] / max(node_attributes["operation_count"], 1),
+            6,
+        ),
+    }
+    nodes = [
+        {
+            "id": "candidate",
+            "kind": "rewrite_candidate",
+            "label": candidate.candidate_id,
+            "attributes": node_attributes,
+        },
+        {
+            "id": "graph_features",
+            "kind": "feature_bundle",
+            "label": "graph_features",
+            "attributes": useful_signal,
+        },
+        {
+            "id": "rank_projection",
+            "kind": "rank_projection",
+            "label": "expected_usefulness",
+            "attributes": {
+                "model_family": "gnn",
+                "objective": "expected_usefulness",
+            },
+        },
+    ]
+    edges = [
+        {
+            "id": "candidate->graph_features",
+            "source": "candidate",
+            "target": "graph_features",
+            "kind": "describes",
+            "label": "describes",
+            "attributes": {"role": "input_graph"},
+        },
+        {
+            "id": "graph_features->rank_projection",
+            "source": "graph_features",
+            "target": "rank_projection",
+            "kind": "feeds",
+            "label": "feeds",
+            "attributes": {"role": "rank_input"},
+        },
+    ]
+    return {
+        "schema_version": "logical-compiler-graph-v1",
+        "canonical_format": "eigen.logical-graph-json",
+        "graph_kind": "rewrite_candidate",
+        "nodes": nodes,
+        "edges": edges,
+    }
+
+
+def _symbolic_candidate_usefulness_score(candidate: SymbolicCandidate) -> float:
+    features = candidate.features
+    candidate_kind = str(features.get("candidate_kind", "")).strip()
+    operation_count = int(features.get("operation_count", 0) or 0)
+    measurement_count = int(features.get("measurement_count", 0) or 0)
+    terminal_measurement_present = bool(features.get("terminal_measurement_present", False))
+    has_expectation = bool(features.get("has_expectation", False))
+    has_minimize = bool(features.get("has_minimize", False))
+    distributed_enabled = bool(features.get("distributed_enabled", False))
+
+    score = 0.0
+    if candidate_kind == "terminal_measurement_normalized":
+        score += 0.40
+        if not terminal_measurement_present:
+            score += 0.22
+    else:
+        score += 0.30
+        if terminal_measurement_present:
+            score += 0.12
+
+    score += min(measurement_count * 0.03, 0.15)
+    score += min(operation_count * 0.01, 0.08)
+    if has_expectation:
+        score += 0.04
+    if has_minimize:
+        score += 0.04
+    if distributed_enabled:
+        score += 0.03
+
+    return round(min(score, 1.0), 6)
+
+
+def _symbolic_candidate_confidence(candidate: SymbolicCandidate, usefulness_score: float) -> float:
+    graph = _symbolic_candidate_graph_encoding(candidate)
+    graph_size_bonus = min((len(graph["nodes"]) + len(graph["edges"])) * 0.01, 0.08)
+    confidence = 0.52 + (usefulness_score * 0.34) + graph_size_bonus
+    if candidate.legal:
+        confidence += 0.08
+    if bool(candidate.features.get("terminal_measurement_present", False)):
+        confidence += 0.03
+    return round(min(confidence, 0.99), 6)
+
+
 def _symbolic_candidate_set_payload(candidate_set: SymbolicCandidateSet) -> dict[str, object]:
     candidates = [_symbolic_candidate_payload(candidate) for candidate in candidate_set.candidates]
+    legal_candidates = [candidate for candidate in candidate_set.candidates if candidate.legal]
+    ranked_candidates = []
+    for candidate in legal_candidates:
+        usefulness_score = _symbolic_candidate_usefulness_score(candidate)
+        confidence = _symbolic_candidate_confidence(candidate, usefulness_score)
+        ranked_candidates.append(
+            {
+                **_symbolic_candidate_payload(candidate),
+                "expected_usefulness_score": usefulness_score,
+                "confidence": confidence,
+                "graph_encoding": _symbolic_candidate_graph_encoding(candidate),
+            }
+        )
+    ranked_candidates.sort(
+        key=lambda item: (-float(item["expected_usefulness_score"]), -float(item["confidence"]), item["candidate_id"])
+    )
+    for index, item in enumerate(ranked_candidates, start=1):
+        item["rank"] = index
+    
     return {
         "version": candidate_set.version,
         "candidate_budget": candidate_set.candidate_budget,
         "candidate_count": len(candidates),
-        "legal_candidate_count": sum(1 for candidate in candidate_set.candidates if candidate.legal),
+        "legal_candidate_count": len(legal_candidates),
+        "ranker": {
+            "model_family": "gnn",
+            "model_version": "logical-rewrite-ranker-v1",
+            "graph_schema_version": "logical-compiler-graph-v1",
+            "objective": "expected_usefulness",
+        },
+        "selected_candidate_id": ranked_candidates[0]["candidate_id"] if ranked_candidates else "",
+        "candidate_ids": [candidate["candidate_id"] for candidate in candidates],
         "candidates": candidates,
+        "ranked_candidates": ranked_candidates,
     }
 
 

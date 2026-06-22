@@ -139,7 +139,7 @@ Those payloads MUST remain deterministic for identical inputs and MUST include o
 
 `compiler_diagnostics_json` MUST summarize the compiler stage order, the resolved workload profile, and the backend contract in a machine-readable payload that remains stable for identical inputs.
 
-`symbolic_candidate_set_json` MUST summarize the bounded candidate set emitted by the symbolic core. Each candidate entry MUST expose a stable `candidate_id`, a compact feature map, and a boolean legality flag. Model ranking layers MUST only score candidates where `legal` is true.
+`symbolic_candidate_set_json` MUST summarize the bounded candidate set emitted by the symbolic core. Each candidate entry MUST expose a stable `candidate_id`, a compact feature map, and a boolean legality flag. The payload MUST also expose `ranked_candidates`, a legal-candidate-only list ordered by deterministic GNN usefulness scoring, and each ranked entry MUST expose `rank`, `confidence`, and the `graph_encoding` consumed by the ranker. Model ranking layers MUST only score candidates where `legal` is true.
 
 `logical_graph_schema_json` MUST describe the canonical graph schema used by the compiler for AST, IR, and DPDA state graphs. The schema MUST be shared by training and inference consumers, MUST define bounded node and edge fields, MUST define stable labels for each graph kind, and MUST preserve deterministic ordering semantics. `logical_graph_schema_sha256` MUST be the SHA-256 digest of that canonical JSON payload.
 
