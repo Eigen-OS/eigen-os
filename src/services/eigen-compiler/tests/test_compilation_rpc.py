@@ -179,16 +179,27 @@ def test_compile_circuit_happy_path(grpc_addr: str) -> None:
         "model_version": "logical-rewrite-ranker-v1",
         "graph_schema_version": "logical-compiler-graph-v1",
         "objective": "expected_usefulness",
+        "explanation_hook": "feature_attribution",
     }
     assert candidate_set["selected_candidate_id"] == candidate_set["ranked_candidates"][0]["candidate_id"]
+    assert candidate_set["selected_candidate_explanation"].startswith("Preferred because ")
     assert candidate_set["legal_candidate_count"] == len(candidate_set["ranked_candidates"])
     assert [candidate["rank"] for candidate in candidate_set["ranked_candidates"]] == list(
         range(1, len(candidate_set["ranked_candidates"]) + 1)
     )
     assert all({"candidate_id", "features", "legal", "legality_reason"} <= set(candidate) for candidate in candidate_set["candidates"])
-    assert all({"candidate_id", "rank", "confidence", "graph_encoding", "expected_usefulness_score"} <= set(candidate) for candidate in candidate_set["ranked_candidates"])
+    assert all({"candidate_id", "rank", "confidence", "graph_encoding", "expected_usefulness_score", "why_preferred", "explanation"} <= set(candidate) for candidate in candidate_set["ranked_candidates"])
     assert all(candidate["graph_encoding"]["schema_version"] == "logical-compiler-graph-v1" for candidate in candidate_set["ranked_candidates"])
     assert all(candidate["graph_encoding"]["graph_kind"] == "rewrite_candidate" for candidate in candidate_set["ranked_candidates"])
+    assert candidate_set["ranked_candidates"][0]["why_preferred"] == candidate_set["selected_candidate_explanation"]
+    assert candidate_set["ranked_candidates"][0]["explanation"]["why_preferred"] == candidate_set["selected_candidate_explanation"]
+    assert candidate_set["ranked_candidates"][0]["explanation"]["influential_features"]
+    assert candidate_set["ranked_candidates"][0]["explanation"]["influential_subgraph"]["graph_kind"] == "rewrite_candidate"
+    assert candidate_set["ranked_candidates"][0]["explanation"]["influential_subgraph"]["node_ids"] == [
+        "candidate",
+        "graph_features",
+        "rank_projection",
+    ]
 
 
 def test_compile_job_indexes_trace_and_rewrite_paths_in_kb(

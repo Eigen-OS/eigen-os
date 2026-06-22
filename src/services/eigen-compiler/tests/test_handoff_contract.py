@@ -151,8 +151,15 @@ def test_handoff_schema_is_versioned_and_bounded() -> None:
     assert replay_bundle["logical_graph_schema"]["shared_between_training_and_inference"] is True
     assert replay_bundle["symbolic_candidate_set"]["ranker"]["model_family"] == "gnn"
     assert replay_bundle["symbolic_candidate_set"]["selected_candidate_id"] == replay_bundle["symbolic_candidate_set"]["ranked_candidates"][0]["candidate_id"]
+    assert replay_bundle["symbolic_candidate_set"]["selected_candidate_explanation"].startswith("Preferred because ")
     assert replay_bundle["symbolic_candidate_set"]["ranked_candidates"][0]["rank"] == 1
     assert replay_bundle["symbolic_candidate_set"]["ranked_candidates"][0]["confidence"] >= replay_bundle["symbolic_candidate_set"]["ranked_candidates"][-1]["confidence"]
+    assert replay_bundle["symbolic_candidate_set"]["ranked_candidates"][0]["why_preferred"] == replay_bundle["symbolic_candidate_set"]["selected_candidate_explanation"]
+    assert replay_bundle["symbolic_candidate_set"]["ranked_candidates"][0]["explanation"]["influential_features"]
+    assert replay_bundle["symbolic_candidate_set"]["ranked_candidates"][0]["explanation"]["influential_subgraph"]["edge_ids"] == [
+        "candidate->graph_features",
+        "graph_features->rank_projection",
+    ]
     assert pass_pipeline["version"] == "1.0.0"
     assert [item["name"] for item in pass_pipeline["passes"]] == [
         "lower_to_ir",

@@ -187,7 +187,7 @@ The semantic rule engine gates `validate_ast`, `rewrite_ir`, and `validate_lower
 
 The compiler also emits a bounded symbolic candidate set for model ranking. Each candidate is produced by the symbolic core, has a stable `candidate_id`, a compact feature map, and a legality flag. The emitted candidate set is serialized in compiler metadata as `symbolic_candidate_set_json`.
 
-The payload also contains `ranked_candidates`, a legal-candidate-only list ordered by a deterministic GNN usefulness ranker. Each ranked candidate MUST carry a `rank`, a `confidence` score, and the bounded logical graph encoding that the ranker consumed. `selected_candidate_id` MUST point at the first ranked legal candidate when one exists.
+The payload also contains `ranked_candidates`, a legal-candidate-only list ordered by a deterministic GNN usefulness ranker. Each ranked candidate MUST carry a `rank`, a `confidence` score, the bounded logical graph encoding that the ranker consumed, and an `explanation` object with a human-readable `why_preferred` summary plus bounded `influential_features` and `influential_subgraph` hooks. The ranker advertises its explanation mode as `feature_attribution`. `selected_candidate_explanation` MUST mirror the first ranked candidate summary.
 
 Ranking layers may only score candidates whose `legal` flag is `true`. They must not invent additional candidates, rename emitted IDs, or treat illegal candidates as admissible.
 

@@ -615,6 +615,152 @@ def _symbolic_candidate_confidence(candidate: SymbolicCandidate, usefulness_scor
     return round(min(confidence, 0.99), 6)
 
 
+def _symbolic_candidate_explanation(
+    candidate: SymbolicCandidate,
+    usefulness_score: float,
+    confidence: float,
+) -> dict[str, object]:
+    graph = _symbolic_candidate_graph_encoding(candidate)
+    features = candidate.features
+    candidate_kind = str(features.get("candidate_kind", "")).strip()
+    operation_count = int(features.get("operation_count", 0) or 0)
+    measurement_count = int(features.get("measurement_count", 0) or 0)
+    terminal_measurement_present = bool(features.get("terminal_measurement_present", False))
+    has_expectation = bool(features.get("has_expectation", False))
+    has_minimize = bool(features.get("has_minimize", False))
+    distributed_enabled = bool(features.get("distributed_enabled", False))
+    graph_size_bonus = round(min((len(graph["nodes"]) + len(graph["edges"])) * 0.01, 0.08), 6)
+
+    influential_features: list[dict[str, object]] = []
+    if candidate_kind == "terminal_measurement_normalized":
+        influential_features.append(
+            {
+                "name": "candidate_kind",
+                "value": candidate_kind,
+                "contribution": 0.40,
+                "reason": "the rewrite normalizes terminal measurement structure",
+            }
+        )
+        if not terminal_measurement_present:
+            influential_features.append(
+                {
+                    "name": "terminal_measurement_present",
+                    "value": terminal_measurement_present,
+                    "contribution": 0.22,
+                    "reason": "the candidate repairs a missing terminal measurement anchor",
+                }
+            )
+    else:
+        influential_features.append(
+            {
+                "name": "candidate_kind",
+                "value": candidate_kind,
+                "contribution": 0.30,
+                "reason": "the candidate remains a legal rewrite option without changing rewrite class",
+            }
+        )
+        if terminal_measurement_present:
+            influential_features.append(
+                {
+                    "name": "terminal_measurement_present",
+                    "value": terminal_measurement_present,
+                    "contribution": 0.12,
+                    "reason": "the candidate preserves an existing terminal measurement anchor",
+                }
+            )
+
+    influential_features.append(
+        {
+            "name": "measurement_count",
+            "value": measurement_count,
+            "contribution": round(min(measurement_count * 0.03, 0.15), 6),
+            "reason": "more measurement activity increases the rewrite signal density",
+        }
+    )
+    influential_features.append(
+        {
+            "name": "operation_count",
+            "value": operation_count,
+            "contribution": round(min(operation_count * 0.01, 0.08), 6),
+            "reason": "larger candidates receive a bounded size-based usefulness boost",
+        }
+    )
+    if has_expectation:
+        influential_features.append(
+            {
+                "name": "has_expectation",
+                "value": has_expectation,
+                "contribution": 0.04,
+                "reason": "expectation-aware rewrites are prioritized",
+            }
+        )
+    if has_minimize:
+        influential_features.append(
+            {
+                "name": "has_minimize",
+                "value": has_minimize,
+                "contribution": 0.04,
+                "reason": "minimize-aware rewrites are prioritized",
+            }
+        )
+    if distributed_enabled:
+        influential_features.append(
+            {
+                "name": "distributed_enabled",
+                "value": distributed_enabled,
+                "contribution": 0.03,
+                "reason": "distributed routing support contributes a bounded priority boost",
+            }
+        )
+
+    focus_subgraph = {
+        "schema_version": graph["schema_version"],
+        "canonical_format": graph["canonical_format"],
+        "graph_kind": graph["graph_kind"],
+        "node_ids": [node["id"] for node in graph["nodes"]],
+        "node_labels": [node["label"] for node in graph["nodes"]],
+        "edge_ids": [edge["id"] for edge in graph["edges"]],
+    }
+
+    summary_clauses = []
+    if candidate_kind == "terminal_measurement_normalized":
+        summary_clauses.append("it normalizes the terminal measurement shape")
+    elif terminal_measurement_present:
+        summary_clauses.append("it preserves an existing terminal measurement anchor")
+    else:
+        summary_clauses.append("it remains a legal rewrite candidate with a compact graph signature")
+    summary_clauses.append(
+        f"it is legal and scored expected usefulness {usefulness_score:.6f} with confidence {confidence:.6f}"
+    )
+    if measurement_count:
+        summary_clauses.append(
+            f"it carries {measurement_count} measurement operation(s) across {operation_count} total operation(s)"
+        )
+    if has_expectation:
+        summary_clauses.append("expectation support contributed to the preferred ranking")
+    if has_minimize:
+        summary_clauses.append("minimize support contributed to the preferred ranking")
+    if distributed_enabled:
+        summary_clauses.append("distributed routing support contributed to the preferred ranking")
+    summary_clauses.append(
+        f"the focus subgraph covers nodes {', '.join(focus_subgraph['node_ids'])}"
+    )
+
+    summary = "Preferred because " + "; ".join(summary_clauses) + "."
+
+    return {
+        "summary": summary,
+        "why_preferred": summary,
+        "influential_features": influential_features,
+        "influential_subgraph": focus_subgraph,
+        "score_breakdown": {
+            "expected_usefulness_score": usefulness_score,
+            "confidence": confidence,
+            "graph_size_bonus": graph_size_bonus,
+        },
+    }
+
+
 def _symbolic_candidate_set_payload(candidate_set: SymbolicCandidateSet) -> dict[str, object]:
     candidates = [_symbolic_candidate_payload(candidate) for candidate in candidate_set.candidates]
     legal_candidates = [candidate for candidate in candidate_set.candidates if candidate.legal]
@@ -622,12 +768,15 @@ def _symbolic_candidate_set_payload(candidate_set: SymbolicCandidateSet) -> dict
     for candidate in legal_candidates:
         usefulness_score = _symbolic_candidate_usefulness_score(candidate)
         confidence = _symbolic_candidate_confidence(candidate, usefulness_score)
+        explanation = _symbolic_candidate_explanation(candidate, usefulness_score, confidence)
         ranked_candidates.append(
             {
                 **_symbolic_candidate_payload(candidate),
                 "expected_usefulness_score": usefulness_score,
                 "confidence": confidence,
                 "graph_encoding": _symbolic_candidate_graph_encoding(candidate),
+                "explanation": explanation,
+                "why_preferred": explanation["why_preferred"],
             }
         )
     ranked_candidates.sort(
@@ -646,8 +795,10 @@ def _symbolic_candidate_set_payload(candidate_set: SymbolicCandidateSet) -> dict
             "model_version": "logical-rewrite-ranker-v1",
             "graph_schema_version": "logical-compiler-graph-v1",
             "objective": "expected_usefulness",
+            "explanation_hook": "feature_attribution",
         },
         "selected_candidate_id": ranked_candidates[0]["candidate_id"] if ranked_candidates else "",
+        "selected_candidate_explanation": ranked_candidates[0]["why_preferred"] if ranked_candidates else "",
         "candidate_ids": [candidate["candidate_id"] for candidate in candidates],
         "candidates": candidates,
         "ranked_candidates": ranked_candidates,
