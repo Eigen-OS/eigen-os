@@ -585,6 +585,10 @@ def test_okb_query_backend_is_deterministic_and_bounded(monkeypatch: pytest.Monk
     assert all(0.0 <= item["score_total"] <= 1.0 for item in first["candidates"])
     assert first["candidates"][0]["deterministic_digest"].startswith("sha256:")
     assert first["okb_selection_digest"].startswith("sha256:")
+    assert first["candidates"][0]["relevance_score"] == first["candidates"][0]["score_total"]
+    assert first["candidates"][0]["provenance"]["candidate_source"] == "record"
+    assert first["candidates"][0]["provenance"]["query_mode"] == "structural"
+    assert first["candidates"][0]["provenance"]["source_ref"].startswith("compiler://")
     assert first["explanation_ref"] == "qfs://jobs/job-1/kb/explain.json"
     assert first["index_status"]["overall_status"] == "ready"
     assert first["index_status"]["indices"]["structural"]["status"] == "ready"

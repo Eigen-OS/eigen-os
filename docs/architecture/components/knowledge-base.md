@@ -195,6 +195,7 @@ Semantics:
 - `selected_candidate` MUST be the first ranked candidate when one exists.
 - `explanation_pattern` MAY be empty, but its provenance MUST still be present.
 - When there are no candidates, `candidate_patterns` MUST be empty and `selected_candidate` MUST be unset.
+- Compiler-facing similarity results MUST expose `score_total` as the relevance score for each returned case, and each case MUST carry bounded provenance that identifies the source record or decision log, the transformation reference, the compatibility window, and the deterministic digest used for ranking.
 
 ### 2.4.5 Canonical pattern lookup
 
