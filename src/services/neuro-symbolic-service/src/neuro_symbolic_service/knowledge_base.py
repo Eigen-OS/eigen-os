@@ -630,6 +630,7 @@ class KnowledgeBaseService:
         envelope = self._normalize_envelope(request.envelope, context)
         sec_ctx, policy_version = self._retrieval_security_context(context, operation="query_records")
         page_size = self._page_size(request.page_size)
+        filter_payload = self._filter_signature(request.filter)
         with self._lock:
             self._gc_locked()
             filtered = [entry.record for entry in self._records.values() if self._record_visible_to_tenant(entry, envelope["tenant_id"], envelope["project_id"], context) and self._record_matches_filter(entry.record, request.filter)]
@@ -738,14 +739,31 @@ class KnowledgeBaseService:
         envelope = self._normalize_envelope(request.envelope, context)
         sec_ctx, policy_version = self._retrieval_security_context(context, operation="query_decision_logs")
         page_size = self._page_size(request.page_size)
+        filter_payload = {
+            "trace_id": getattr(request, "trace_id", ""),
+            "model_version": getattr(request, "model_version", ""),
+            "trace_digest_sha256": getattr(request, "trace_digest_sha256", ""),
+            "pattern_signature": getattr(request, "pattern_signature", ""),
+        }
         with self._lock:
             self._gc_locked()
-            filtered = [entry.decision_log for entry in self._decision_logs if self._decision_visible_to_tenant(entry, envelope["tenant_id"], envelope["project_id"], context) and self._decision_matches_filter(entry.decision_log, trace_id=request.trace_id, model_version=request.model_version)]
+            filtered = [
+                entry.decision_log
+                for entry in self._decision_logs
+                if self._decision_visible_to_tenant(entry, envelope["tenant_id"], envelope["project_id"], context)
+                and self._decision_matches_filter(
+                    entry.decision_log,
+                    trace_id=request.trace_id,
+                    model_version=request.model_version,
+                    trace_digest_sha256=getattr(request, "trace_digest_sha256", ""),
+                    pattern_signature=getattr(request, "pattern_signature", ""),
+                )
+            ]
             filtered.sort(key=lambda item: (self._ts_signature(item.decided_at), item.decision_id))
-            offset, query_sig = self._decode_cursor(request.page_token, envelope, {"trace_id": request.trace_id, "model_version": request.model_version}, kind="decision_logs", context=context)
+            offset, query_sig = self._decode_cursor(request.page_token, envelope, filter_payload, kind="decision_logs", context=context)
             next_offset = offset + page_size
             window = filtered[offset:next_offset]
-            next_token = self._encode_cursor(envelope=envelope, filter_payload={"trace_id": request.trace_id, "model_version": request.model_version}, kind="decision_logs", offset=next_offset, query_sig=query_sig, more=next_offset < len(filtered))
+            next_token = self._encode_cursor(envelope=envelope, filter_payload=filter_payload, kind="decision_logs", offset=next_offset, query_sig=query_sig, more=next_offset < len(filtered))
         self._audit_retrieval_decision(
             context=context,
             sec_ctx=sec_ctx,
@@ -2814,6 +2832,12 @@ class KnowledgeBaseService:
         trace_id = str(getattr(query_filter, "trace_id", "")).strip()
         if trace_id and record.attributes.get("trace_id", "") != trace_id:
             return False
+        trace_digest_sha256 = str(getattr(query_filter, "trace_digest_sha256", "")).strip()
+        if trace_digest_sha256 and record.attributes.get("trace_digest_sha256", "") != trace_digest_sha256:
+            return False
+        pattern_signature = str(getattr(query_filter, "pattern_signature", "")).strip()
+        if pattern_signature and record.attributes.get("pattern_signature", "") != pattern_signature:
+            return False
         model_version = str(getattr(query_filter, "model_version", "")).strip()
         if model_version and record.lineage.model_version != model_version:
             return False
@@ -2848,10 +2872,23 @@ class KnowledgeBaseService:
                 return False
         return True
 
-    def _decision_matches_filter(self, decision_log: Any, *, trace_id: str, model_version: str) -> bool:
+    def _decision_matches_filter(
+        self,
+        decision_log: Any,
+        *,
+        trace_id: str,
+        model_version: str,
+        trace_digest_sha256: str = "",
+        pattern_signature: str = "",
+    ) -> bool:
         if trace_id and decision_log.trace_id != trace_id:
             return False
         if model_version and decision_log.model_version != model_version:
+            return False
+        feature_snapshot = dict(getattr(decision_log, "feature_snapshot", {}) or {})
+        if trace_digest_sha256 and feature_snapshot.get("trace_digest_sha256", "") != trace_digest_sha256:
+            return False
+        if pattern_signature and feature_snapshot.get("pattern_signature", "") != pattern_signature:
             return False
         return True
 
@@ -2891,6 +2928,8 @@ class KnowledgeBaseService:
         return {
             "trace_id": getattr(query_filter, "trace_id", ""),
             "model_version": getattr(query_filter, "model_version", ""),
+            "trace_digest_sha256": getattr(query_filter, "trace_digest_sha256", ""),
+            "pattern_signature": getattr(query_filter, "pattern_signature", ""),
             "min_qubit_count": int(getattr(query_filter, "min_qubit_count", 0) or 0),
             "max_qubit_count": int(getattr(query_filter, "max_qubit_count", 0) or 0),
             "min_entanglement_score": float(getattr(query_filter, "min_entanglement_score", 0.0) or 0.0),

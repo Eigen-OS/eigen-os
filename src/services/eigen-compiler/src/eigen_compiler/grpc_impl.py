@@ -4,19 +4,80 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
 import json
 import logging
+import importlib.util
 import os
+from pathlib import Path
 import re
+import sys
 import threading
+import types
 from typing import Callable
 
 import grpc
 
-from .compiler import CompilerValidationError, compile_eigen_lang
+from google.protobuf.timestamp_pb2 import Timestamp
+
+
+def _find_repo_root(start: Path) -> Path:
+    for candidate in [start, *start.parents]:
+        if (candidate / "proto").is_dir() and (candidate / "src" / "services").is_dir():
+            return candidate
+    raise RuntimeError("Could not locate repo root (expected proto/ and src/services/)")
+
+
+_REPO_ROOT = _find_repo_root(Path(__file__).resolve())
+_NEURO_API_ROOT = _REPO_ROOT / "src" / "services" / "neuro-symbolic-service" / "src" / "eigen" / "api" / "v1"
+
+
+def _ensure_package(name: str) -> types.ModuleType:
+    module = sys.modules.get(name)
+    if module is not None:
+        return module  # type: ignore[return-value]
+    module = types.ModuleType(name)
+    module.__path__ = []  # type: ignore[attr-defined]
+    sys.modules[name] = module
+    parent_name, _, child_name = name.rpartition(".")
+    if parent_name:
+        parent = _ensure_package(parent_name)
+        setattr(parent, child_name, module)
+    return module
+
+
+def _load_module(module_name: str, file_path: Path) -> types.ModuleType:
+    module = sys.modules.get(module_name)
+    if module is not None:
+        return module  # type: ignore[return-value]
+    spec = importlib.util.spec_from_file_location(module_name, file_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Unable to load {module_name} from {file_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    parent_name, _, child_name = module_name.rpartition(".")
+    if parent_name:
+        parent = _ensure_package(parent_name)
+        setattr(parent, child_name, module)
+    return module  # type: ignore[return-value]
+
+
+_ensure_package("eigen.api")
+_ensure_package("eigen.api.v1")
+api_types_pb2 = _load_module("eigen.api.v1.types_pb2", _NEURO_API_ROOT / "types_pb2.py")
+kb_pb = _load_module("eigen.api.v1.knowledge_base_service_pb2", _NEURO_API_ROOT / "knowledge_base_service_pb2.py")
+kb_pb_grpc = _load_module("eigen.api.v1.knowledge_base_service_pb2_grpc", _NEURO_API_ROOT / "knowledge_base_service_pb2_grpc.py")
+
+from .compiler import (
+    CompilerValidationError,
+    compile_eigen_lang,
+    _normalize_options,
+    _normalize_request_context,
+    _resolve_source_bytes,
+)
 from .errors import abort_invalid_argument, annotate_violations
 from .validation import validate_compile_circuit, validate_compile_job
 
@@ -257,6 +318,292 @@ def render_metrics_text() -> str:
         return "\n".join(lines) + "\n"
 
 
+_KB_GRPC_ENDPOINT_ENV = "EIGEN_KB_GRPC_ENDPOINT"
+_KB_AUTH_TOKEN_ENV = "EIGEN_KB_AUTH_TOKEN"
+_KB_SERVICE_IDENTITY_ENV = "EIGEN_KB_SERVICE_IDENTITY"
+_KB_SERVICE_ROLE_ENV = "EIGEN_KB_SERVICE_ROLE"
+_KB_ROLES_ENV = "EIGEN_KB_ROLES"
+_KB_TIMEOUT_SECONDS_ENV = "EIGEN_KB_TIMEOUT_SECONDS"
+_DEFAULT_KB_TIMEOUT_SECONDS = 2.0
+
+
+def _kb_timeout_seconds() -> float:
+    raw = os.getenv(_KB_TIMEOUT_SECONDS_ENV, str(_DEFAULT_KB_TIMEOUT_SECONDS)).strip()
+    try:
+        value = float(raw)
+    except ValueError:
+        return _DEFAULT_KB_TIMEOUT_SECONDS
+    return max(0.1, value)
+
+
+def _kb_call_metadata(request_context: dict[str, str]) -> tuple[tuple[str, str], ...]:
+    token = os.getenv(_KB_AUTH_TOKEN_ENV, os.getenv("SYSTEM_API_AUTH_TOKEN", "")).strip()
+    roles = os.getenv(_KB_ROLES_ENV, "kb:read,kb:write").strip() or "kb:read,kb:write"
+    service_identity = os.getenv(_KB_SERVICE_IDENTITY_ENV, "eigen-compiler").strip() or "eigen-compiler"
+    service_role = os.getenv(_KB_SERVICE_ROLE_ENV, "internal-ingest").strip() or "internal-ingest"
+    metadata: list[tuple[str, str]] = []
+    if token:
+        metadata.append(("authorization", f"Bearer {token}"))
+    tenant_id = request_context.get("tenant_id", "").strip()
+    if tenant_id:
+        metadata.append(("x-eigen-tenant", tenant_id))
+    if roles:
+        metadata.append(("x-eigen-roles", roles))
+    metadata.append(("x-eigen-service", service_identity))
+    metadata.append(("x-eigen-service-role", service_role))
+    sandbox_profile = request_context.get("sandbox_profile", "").strip()
+    if sandbox_profile:
+        metadata.append(("x-eigen-sandbox-profile", sandbox_profile))
+    return tuple(metadata)
+
+
+def _kb_request_envelope(request_context: dict[str, str]) -> kb_pb.ApiContractEnvelope:
+    return kb_pb.ApiContractEnvelope(
+        contract_version="1.0.0",
+        request=api_types_pb2.ApiRequestEnvelope(
+            contract_version="1.0.0",
+            request_id=request_context.get("request_id", "").strip(),
+            traceparent=request_context.get("traceparent", "").strip(),
+            tenant_id=request_context.get("tenant_id", "").strip(),
+            project_id=request_context.get("project_id", "").strip(),
+            client_version="eigen-compiler/1.0.0",
+        ),
+    )
+
+
+def _timestamp_now() -> Timestamp:
+    ts = Timestamp()
+    ts.FromDatetime(datetime.now(timezone.utc))
+    return ts
+
+
+def _selected_candidate_signature(candidate_set: dict[str, object]) -> str:
+    candidates = candidate_set.get("candidates", []) if isinstance(candidate_set, dict) else []
+    legal_candidates = [candidate for candidate in candidates if isinstance(candidate, dict) and candidate.get("legal")]
+    for candidate in legal_candidates:
+        candidate_kind = candidate.get("features", {}).get("candidate_kind") if isinstance(candidate.get("features"), dict) else ""
+        if candidate_kind == "terminal_measurement_normalized":
+            return str(candidate.get("candidate_id", "")).strip()
+    if legal_candidates:
+        return str(legal_candidates[0].get("candidate_id", "")).strip()
+    if candidates:
+        first = candidates[0]
+        if isinstance(first, dict):
+            return str(first.get("candidate_id", "")).strip()
+    return ""
+
+
+def _trace_digest_payload(
+    *,
+    rpc: str,
+    request_context: dict[str, str],
+    source_sha256: str,
+    request_sha256: str,
+    aqo_sha256: str,
+    pattern_signature: str,
+    compiler_status: str,
+    failure_stage: str = "",
+    failure_reason: str = "",
+    compiler_replay_sha256: str = "",
+    compiler_diagnostics_sha256: str = "",
+) -> dict[str, str]:
+    return {
+        "rpc": rpc,
+        "request_id": request_context.get("request_id", "").strip(),
+        "trace_id": request_context.get("trace_id", "").strip(),
+        "source_sha256": source_sha256,
+        "request_sha256": request_sha256,
+        "aqo_sha256": aqo_sha256,
+        "pattern_signature": pattern_signature,
+        "compiler_status": compiler_status,
+        "failure_stage": failure_stage,
+        "failure_reason": failure_reason,
+        "compiler_replay_sha256": compiler_replay_sha256,
+        "compiler_diagnostics_sha256": compiler_diagnostics_sha256,
+    }
+
+
+def _canonical_compiler_trace_digest(payload: dict[str, str]) -> str:
+    return hashlib.sha256(_stable_json(payload).encode("utf-8")).hexdigest()
+
+
+def _kb_index_compiler_trace(
+    *,
+    rpc: str,
+    request_context: dict[str, str],
+    source_digest: str,
+    result: CompilationResult | None,
+    failure_stage: str = "",
+    failure_reason: str = "",
+) -> None:
+    endpoint = os.getenv(_KB_GRPC_ENDPOINT_ENV, "").strip()
+    if not endpoint:
+        return
+
+    try:
+        channel = grpc.insecure_channel(endpoint)
+        grpc.channel_ready_future(channel).result(timeout=_kb_timeout_seconds())
+        stub = kb_pb_grpc.KnowledgeBaseServiceStub(channel)
+    except Exception as exc:  # pragma: no cover - best-effort indexing
+        _LOG.debug("compiler KB channel unavailable: %s", exc)
+        return
+
+    try:
+        metadata = result.metadata if result is not None else {}
+        request_sha256 = str(metadata.get("request_sha256", "") if metadata else "").strip()
+        aqo_sha256 = str(metadata.get("aqo_sha256", "") if metadata else "").strip()
+        compiler_replay_sha256 = str(metadata.get("compiler_replay_sha256", "") if metadata else "").strip()
+        compiler_diagnostics_json = str(metadata.get("compiler_diagnostics_json", "") if metadata else "").strip()
+        compiler_diagnostics_sha256 = hashlib.sha256(compiler_diagnostics_json.encode("utf-8")).hexdigest() if compiler_diagnostics_json else ""
+        candidate_set_json = str(metadata.get("symbolic_candidate_set_json", "") if metadata else "").strip()
+        candidate_set = json.loads(candidate_set_json) if candidate_set_json else {"candidate_count": 0, "candidates": []}
+        pattern_signature = _selected_candidate_signature(candidate_set) if result is not None else f"failure:{failure_stage or 'compile'}"
+        trace_payload = _trace_digest_payload(
+            rpc=rpc,
+            request_context=request_context,
+            source_sha256=source_digest,
+            request_sha256=request_sha256,
+            aqo_sha256=aqo_sha256,
+            pattern_signature=pattern_signature,
+            compiler_status="success" if result is not None else "failure",
+            failure_stage=failure_stage,
+            failure_reason=failure_reason,
+            compiler_replay_sha256=compiler_replay_sha256,
+            compiler_diagnostics_sha256=compiler_diagnostics_sha256,
+        )
+        trace_digest = _canonical_compiler_trace_digest(trace_payload)
+
+        candidates = candidate_set.get("candidates", []) if isinstance(candidate_set, dict) else []
+        accepted = []
+        rejected = []
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                continue
+            candidate_id = str(candidate.get("candidate_id", "")).strip()
+            if not candidate_id:
+                continue
+            if candidate_id == pattern_signature and candidate.get("legal", False):
+                accepted.append(candidate_id)
+            else:
+                rejected.append(candidate_id)
+
+        record_id = f"compiler-trace:{request_context.get('trace_id', '') or request_context.get('request_id', '')}:{trace_digest[:16]}"
+        record = kb_pb.KnowledgeRecord(
+            record_id=record_id,
+            job_id=str(request_context.get("request_id", "").strip()),
+            circuit_id=str(request_context.get("source_ref", "").strip()),
+            artifact_ref=f"compiler-trace://{trace_digest}",
+            dataset_ref="compiler-traces",
+            backend_profile=str(metadata.get("workload_profile", "compiler")) if metadata else "compiler",
+            optimizer_version=os.getenv("EIGEN_NEURO_SYMBOLIC_MODEL_VERSION", "").strip(),
+            qubit_count=int(candidate_set.get("candidates", [{}])[0].get("features", {}).get("qubits", 0) or 0) if candidates else 0,
+            entanglement_score=0.0,
+            noise_profile_id="",
+            backend_class=str(metadata.get("workload_profile", "compiler")) if metadata else "compiler",
+            created_at=_timestamp_now(),
+            provenance=kb_pb.RecordProvenance(
+                compiler_ref=f"compiler://{request_context.get('trace_id', '') or request_context.get('request_id', '')}",
+                optimizer_ref=f"pattern://{pattern_signature}" if pattern_signature else "",
+                runtime_ref="",
+                checkpoint_ref=f"trace-digest://{trace_digest}",
+            ),
+            attributes={
+                "trace_id": request_context.get("trace_id", "").strip(),
+                "request_id": request_context.get("request_id", "").strip(),
+                "trace_digest_sha256": trace_digest,
+                "pattern_signature": pattern_signature,
+                "compiler_status": "success" if result is not None else "failure",
+                "failure_stage": failure_stage,
+                "failure_reason": failure_reason,
+                "source_sha256": source_digest,
+                "request_sha256": request_sha256,
+                "aqo_sha256": aqo_sha256,
+                "compiler_replay_sha256": compiler_replay_sha256,
+                "compiler_diagnostics_sha256": compiler_diagnostics_sha256,
+                "symbolic_candidate_set_sha256": str(metadata.get("symbolic_candidate_set_sha256", "")).strip() if metadata else "",
+                "accepted_rewrite_ids": _stable_json(accepted),
+                "rejected_rewrite_ids": _stable_json(rejected),
+                "selected_candidate_id": pattern_signature,
+                "compiler_pass_pipeline_version": str(metadata.get("compiler_pass_pipeline_version", "1.0.0")).strip() if metadata else "1.0.0",
+                "workload_profile": str(metadata.get("workload_profile", "")).strip() if metadata else "",
+                "source_precedence": str(metadata.get("source_precedence", "")).strip() if metadata else "",
+            },
+            lineage=kb_pb.ModelLineage(
+                model_version=os.getenv("EIGEN_NEURO_SYMBOLIC_MODEL_VERSION", "").strip(),
+                training_set_hash=request_sha256 or trace_digest,
+                evaluation_bundle_hash=compiler_replay_sha256 or compiler_diagnostics_sha256,
+                promotion_policy_version=os.getenv("EIGEN_NEURO_SYMBOLIC_POLICY_SNAPSHOT_VERSION", "").strip(),
+                promotion_outcome="PROMOTED" if result is not None else "REJECTED",
+            ),
+        )
+
+        request_envelope = _kb_request_envelope(request_context)
+
+        stub.UpsertRecord(
+            kb_pb.UpsertRecordRequest(
+                envelope=request_envelope,
+                record=record,
+                allow_overwrite=True,
+            ),
+            metadata=_kb_call_metadata(request_context),
+        )
+
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                continue
+            candidate_id = str(candidate.get("candidate_id", "")).strip()
+            if not candidate_id:
+                continue
+            candidate_legal = bool(candidate.get("legal", False))
+            rewrite_outcome = "accepted" if candidate_id == pattern_signature and candidate_legal and result is not None else "rejected"
+            feature_snapshot = {
+                "trace_id": request_context.get("trace_id", "").strip(),
+                "request_id": request_context.get("request_id", "").strip(),
+                "trace_digest_sha256": trace_digest,
+                "pattern_signature": candidate_id,
+                "rewrite_outcome": rewrite_outcome,
+                "selected": "true" if candidate_id == pattern_signature and rewrite_outcome == "accepted" else "false",
+                "candidate_legal": "true" if candidate_legal else "false",
+                "candidate_features": _stable_json(candidate.get("features", {})),
+                "source_sha256": source_digest,
+                "request_sha256": request_sha256,
+                "aqo_sha256": aqo_sha256,
+                "compiler_replay_sha256": compiler_replay_sha256,
+                "compiler_diagnostics_sha256": compiler_diagnostics_sha256,
+                "symbolic_candidate_set_sha256": str(metadata.get("symbolic_candidate_set_sha256", "")).strip() if metadata else "",
+                "compiler_status": "success" if result is not None else "failure",
+                "accepted_rewrite_ids": _stable_json(accepted),
+                "rejected_rewrite_ids": _stable_json(rejected),
+                "failure_stage": failure_stage,
+                "failure_reason": failure_reason,
+            }
+            decision_log = kb_pb.DecisionLog(
+                decision_id=f"compiler-rewrite:{request_context.get('trace_id', '') or request_context.get('request_id', '')}:{candidate_id}",
+                trace_id=request_context.get("trace_id", "").strip(),
+                model_version=os.getenv("EIGEN_NEURO_SYMBOLIC_MODEL_VERSION", "").strip(),
+                component="compiler",
+                policy_branch="symbolic_rewrite",
+                selected_action=candidate_id,
+                fallback_used=not candidate_legal or candidate_id != pattern_signature or result is None,
+                feature_snapshot=feature_snapshot,
+                decided_at=_timestamp_now(),
+            )
+            stub.AppendDecisionLog(
+                kb_pb.AppendDecisionLogRequest(
+                    envelope=request_envelope,
+                    decision_log=decision_log,
+                ),
+                metadata=_kb_call_metadata(request_context),
+            )
+    except Exception as exc:  # pragma: no cover - best-effort indexing
+        _LOG.debug("compiler KB indexing failed: %s", exc)
+    finally:
+        try:
+            channel.close()
+        except Exception:
+            pass
+
+
 def _rpc_metadata_map(context: grpc.ServicerContext) -> dict[str, str]:
     return {k.lower(): v for k, v in (context.invocation_metadata() or [])}
 
@@ -374,16 +721,79 @@ class CompilationService:
         options: dict[str, str] | None = None,
         request_context: dict[str, str] | None = None,
     ):
-        result = compile_eigen_lang(
-            source,
-            source_ref=source_ref,
-            options=options,
-            request_context=request_context,
-            observer=self._stage_observer(
+        normalized_options = _normalize_options(options)
+        raw_request_context = request_context or {}
+        request_context_payload = {
+            "request_id": str(raw_request_context.get("request_id", "")).strip(),
+            "trace_id": str(raw_request_context.get("trace_id", "")).strip(),
+            "traceparent": str(raw_request_context.get("traceparent", "")).strip(),
+            "deadline": str(raw_request_context.get("deadline", "")).strip(),
+            "retry_policy": str(raw_request_context.get("retry_policy", "")).strip(),
+            "security_context": str(raw_request_context.get("security_context", "")).strip(),
+            "sandbox_profile": str(raw_request_context.get("sandbox_profile", "strict")).strip() or "strict",
+            "tenant_id": str(raw_request_context.get("tenant_id", "")).strip(),
+            "project_id": str(raw_request_context.get("project_id", "")).strip(),
+        }
+
+        source_digest = hashlib.sha256(
+            source if source else (str(source_ref or "").encode("utf-8") if source_ref else b"")
+        ).hexdigest()
+
+        try:
+            normalized_request_context = _normalize_request_context(request_context)
+            request_context_payload.update(
+                {
+                    "request_id": normalized_request_context.request_id,
+                    "trace_id": normalized_request_context.trace_id,
+                    "traceparent": normalized_request_context.traceparent,
+                    "deadline": normalized_request_context.deadline,
+                    "retry_policy": normalized_request_context.retry_policy,
+                    "security_context": normalized_request_context.security_context,
+                    "sandbox_profile": normalized_request_context.sandbox_profile,
+                    "tenant_id": normalized_request_context.tenant_id,
+                    "project_id": normalized_request_context.project_id,
+                }
+            )
+            resolved_source, _source_precedence = _resolve_source_bytes(source, source_ref)
+            source_digest = hashlib.sha256(resolved_source).hexdigest()
+
+            result = compile_eigen_lang(
+                source,
+                source_ref=source_ref,
+                options=normalized_options,
+                request_context=request_context_payload,
+                observer=self._stage_observer(
+                    rpc=rpc,
+                    request_context=request_context_payload,
+                ),
+            )
+        except CompilerValidationError as exc:
+            _kb_index_compiler_trace(
                 rpc=rpc,
-                request_context=request_context or {},
-            ),
-        )
+                request_context=request_context_payload,
+                source_digest=source_digest,
+                result=None,
+                failure_stage=_diagnostic_stage(exc.violations),
+                failure_reason=_validation_reason(exc.violations),
+            )
+            raise
+        except Exception as exc:  # pragma: no cover - best-effort indexing
+            _kb_index_compiler_trace(
+                rpc=rpc,
+                request_context=request_context_payload,
+                source_digest=source_digest,
+                result=None,
+                failure_stage="internal",
+                failure_reason=type(exc).__name__,
+            )
+            raise
+
+        _kb_index_compiler_trace(
+            rpc=rpc,
+            request_context=request_context_payload,
+            source_digest=source_digest,
+            result=result,
+            )
 
         return self._comp_pb.CompileCircuitResponse(
             circuit=self._types_pb.CircuitPayload(
@@ -398,29 +808,29 @@ class CompilationService:
         )
 
     def _stage_observer(
-        self,
-        *,
-        rpc: str,
-        request_context: dict[str, str],
-    ) -> Callable[[str, float, str], None]:
+            self,
+            *,
+            rpc: str,
+            request_context: dict[str, str],
+        ) -> Callable[[str, float, str], None]:
 
-        def _observe(stage: str, elapsed_seconds: float, outcome: str) -> None:
-            _bump_stage(stage, elapsed_seconds, outcome)
+            def _observe(stage: str, elapsed_seconds: float, outcome: str) -> None:
+                _bump_stage(stage, elapsed_seconds, outcome)
 
-            _LOG.info(
-                "compiler_stage",
-                extra={
-                    "rpc": rpc,
-                    "stage": stage,
-                    "outcome": outcome,
-                    "elapsed_ms": round(elapsed_seconds * 1000.0, 3),
-                    "request_id": request_context.get("request_id", ""),
-                    "trace_id": request_context.get("trace_id", ""),
-                    "traceparent": request_context.get("traceparent", ""),
-                },
-            )
+                _LOG.info(
+                    "compiler_stage",
+                    extra={
+                        "rpc": rpc,
+                        "stage": stage,
+                        "outcome": outcome,
+                        "elapsed_ms": round(elapsed_seconds * 1000.0, 3),
+                        "request_id": request_context.get("request_id", ""),
+                        "trace_id": request_context.get("trace_id", ""),
+                        "traceparent": request_context.get("traceparent", ""),
+                    },
+                )
 
-        return _observe
+            return _observe
 
     def CompileCircuit(self, request, context: grpc.ServicerContext):
         request_context = _request_context_from_rpc(request, context)
