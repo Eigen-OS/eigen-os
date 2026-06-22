@@ -27,6 +27,7 @@ The compiler also records the resolved workload-family profile and the determini
 ## Related docs
 
 - `docs/architecture/components/compiler.md`
+- `docs/architecture/components/neuro-symbolic-core.md`
 - `docs/architecture/adr/compiler-rule-engine-and-advisory-boundary.md`
 - `docs/reference/formats/aqo.md`
 - `docs/reference/eigen-lang.md`

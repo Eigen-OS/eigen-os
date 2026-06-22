@@ -14,6 +14,7 @@
 The Driver Manager provides:
 
 - a stable execution boundary between `eigen-kernel` and backend providers,
+- the authoritative source of device identity, health, capability, topology, and queue truth for optimizer and compiler integrations,
 - normalized device discovery, health, topology, and capability semantics,
 - unified driver lifecycle and session management,
 - execution dispatch and result normalization,
@@ -51,6 +52,7 @@ DM acts as:
 - fault isolation boundary
 - credential boundary
 - device topology source (for hardware-aware compilation/optimization)
+- truth source that ML advisors may consume but never override or infer
 
 ---
 

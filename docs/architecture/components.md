@@ -429,10 +429,18 @@ Document: `components/neuro-symbolic-core.md`
 Responsibilities:
 
 - symbolic reasoning integration,
-- policy inference,
-- explainability augmentation,
-- adaptive orchestration reasoning,
+- deterministic policy enforcement,
+- bounded ML-advisor scoring and explanation,
+- replay-safe evidence capture,
 - internal deployable service boundary (`src/services/neuro-symbolic-service/`).
+
+Normative references:
+
+```text
+docs/reference/api/grpc-internal.md
+docs/reference/compiler-observability-contract.md
+docs/architecture/components/neuro-symbolic-core.md
+```
 
 ---
 

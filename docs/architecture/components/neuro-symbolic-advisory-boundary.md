@@ -2,11 +2,15 @@
 
 This addendum records the compiler-facing boundary for the neuro-symbolic layer.
 
+The normative source of truth for the full symbolic-core / KB / ML-advisor boundary is:
+
+- `docs/architecture/components/neuro-symbolic-core.md`
+
 ## Compiler rule
 
-The compiler must treat neuro-symbolic output as advisory only.
-Deterministic validation, normalization, lowering, and AQO contract checks remain authoritative.
-Neuro-symbolic suggestions must not be able to produce invalid IR, bypass semantic validation, or relax lowering constraints.
+The compiler must treat neuro-symbolic output as advisory only. Deterministic validation, normalization, lowering, AQO contract checks, and workload-profile resolution remain authoritative.
+
+Neuro-symbolic suggestions must not be able to produce invalid IR, bypass semantic validation, infer compiler legality, or relax lowering constraints.
 
 ## Allowed advisor behavior
 

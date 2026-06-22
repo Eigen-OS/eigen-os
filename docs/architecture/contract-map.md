@@ -110,6 +110,8 @@ It serves as:
 - **Eigen-DPDA** (neuro-symbolic compiler): Eigen-Lang → AQO
 - **GNN Optimizer** (placement/routing): AQO + topology → QASM (or backend-native)
 
+The source-of-truth boundary for the symbolic core, KB, optimizer, and driver-manager integrations is `docs/architecture/components/neuro-symbolic-core.md`.
+
 #### Responsibilities
 
 - deterministic compilation,
@@ -139,7 +141,8 @@ It serves as:
 - normalize results and errors,
 - enforce driver isolation (container/process sandbox),
 - secrets access via Security Module only,
-- emit device/runtime telemetry.
+- emit device/runtime telemetry,
+- provide authoritative device truth to compiler/optimizer integrations.
 
 #### Normative driver interface
 
