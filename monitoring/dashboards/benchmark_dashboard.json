@@ -11,7 +11,7 @@
       "type": "timeseries",
       "title": "Benchmark Queue Depth",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
       "targets": [
         { "expr": "eigen_bench_queue_depth", "legendFormat": "depth" }
       ],
@@ -27,7 +27,7 @@
       "type": "timeseries",
       "title": "Run Duration (p95 approximation)",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
       "targets": [
         { "expr": "eigen_bench_run_duration_seconds", "legendFormat": "duration" }
       ],
@@ -43,7 +43,7 @@
       "type": "timeseries",
       "title": "Runs Succeeded vs Failed (15m)",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
       "targets": [
         { "expr": "increase(eigen_bench_runs_succeeded_total[15m])", "legendFormat": "succeeded / 15m" },
         { "expr": "increase(eigen_bench_runs_failed_total[15m])", "legendFormat": "failed / 15m" }
@@ -54,7 +54,7 @@
       "type": "timeseries",
       "title": "Ingestion Failures (10m)",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
       "targets": [
         { "expr": "increase(eigen_bench_ingestion_failures_total[10m])", "legendFormat": "failures / 10m" }
       ],
@@ -71,7 +71,7 @@
       "type": "stat",
       "title": "Stalled Runs",
       "gridPos": { "h": 5, "w": 6, "x": 0, "y": 16 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
       "targets": [
         { "expr": "eigen_bench_stalled_runs", "legendFormat": "stalled" }
       ],
@@ -87,7 +87,7 @@
       "type": "stat",
       "title": "Observability Contract Version",
       "gridPos": { "h": 5, "w": 6, "x": 6, "y": 16 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
       "targets": [
         { "expr": "eigen_bench_contract_info", "legendFormat": "contract" }
       ],

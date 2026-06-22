@@ -11,7 +11,7 @@
       "type": "timeseries",
       "title": "Queue Depth",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
       "targets": [
         { "expr": "eigen_orch_queue_depth", "legendFormat": "depth" }
       ],
@@ -27,7 +27,7 @@
       "type": "timeseries",
       "title": "Queue Age (oldest / avg)",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
       "targets": [
         { "expr": "eigen_orch_queue_oldest_age_seconds", "legendFormat": "oldest" },
         { "expr": "eigen_orch_queue_avg_age_seconds", "legendFormat": "avg" }
@@ -44,7 +44,7 @@
       "type": "timeseries",
       "title": "Fairness Lag",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
       "targets": [
         { "expr": "eigen_orch_fairness_lag_millis_max", "legendFormat": "max lag" },
         { "expr": "increase(eigen_orch_fairness_lag_millis_total[5m])", "legendFormat": "lag increase / 5m" }
@@ -61,7 +61,7 @@
       "type": "timeseries",
       "title": "Quota Denials (tenant/project)",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
       "targets": [
         { "expr": "increase(eigen_orch_quota_denied_tenant_total[5m])", "legendFormat": "tenant / 5m" },
         { "expr": "increase(eigen_orch_quota_denied_project_total[5m])", "legendFormat": "project / 5m" }
@@ -72,7 +72,7 @@
       "type": "timeseries",
       "title": "Rebalance & Starvation Counters",
       "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
       "targets": [
         { "expr": "increase(eigen_orch_rebalance_trigger_total[15m])", "legendFormat": "rebalance / 15m" },
         { "expr": "increase(eigen_orch_starvation_prevention_total[15m])", "legendFormat": "starvation prevent / 15m" }
@@ -83,7 +83,7 @@
       "type": "stat",
       "title": "Observability Contract Version",
       "gridPos": { "h": 5, "w": 6, "x": 18, "y": 24 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "datasource": { "type": "prometheus", "uid": "DS_PROMETHEUS" },
       "targets": [
         { "expr": "eigen_orch_contract_info", "legendFormat": "contract" }
       ],
