@@ -92,6 +92,8 @@ def _build_handoff_bundle(result, *, optimizer_contract_version: str = "1.0.0") 
         "decision_lineage_json": result.metadata["decision_lineage_json"],
         "observability_json": result.metadata["observability_json"],
         "explainability_json": result.metadata["explainability_json"],
+        "logical_graph_schema_json": result.metadata["logical_graph_schema_json"],
+        "logical_graph_schema_sha256": result.metadata["logical_graph_schema_sha256"],
     }
     return {"envelope": envelope, "input_aqo": aqo_json, "compiler_metadata": compiler_metadata}
 
@@ -141,10 +143,12 @@ def test_handoff_schema_is_versioned_and_bounded() -> None:
     decision_lineage = json.loads(handoff["compiler_metadata"]["decision_lineage_json"])
     observability = json.loads(handoff["compiler_metadata"]["observability_json"])
     explainability = json.loads(handoff["compiler_metadata"]["explainability_json"])
-    
+    logical_graph_schema = json.loads(handoff["compiler_metadata"]["logical_graph_schema_json"])
+
     assert replay_bundle["replay_mode"] == "deterministic"
     assert replay_bundle["model_snapshot"] == {"model_version": "", "policy_snapshot_version": ""}
     assert replay_bundle["symbolic_rules"][0]["rule"] == "compiler.source.lower_to_ir"
+    assert replay_bundle["logical_graph_schema"]["shared_between_training_and_inference"] is True
     assert pass_pipeline["version"] == "1.0.0"
     assert [item["name"] for item in pass_pipeline["passes"]] == [
         "lower_to_ir",
@@ -187,6 +191,11 @@ def test_handoff_schema_is_versioned_and_bounded() -> None:
         "request_sha256",
         "replay_bundle_sha256",
     ]
+    assert logical_graph_schema["schema_version"] == "logical-compiler-graph-v1"
+    assert logical_graph_schema["graph_kinds"] == ["ast", "ir", "dpda_state"]
+    assert logical_graph_schema["nodes"]["required_fields"] == ["id", "kind", "label", "attributes"]
+    assert logical_graph_schema["edges"]["required_fields"] == ["id", "source", "target", "kind", "label", "attributes"]
+    assert logical_graph_schema["labels"]["ast"][0] == "module"
 
 
 def test_stable_identifier_propagation_across_boundary_is_deterministic() -> None:
@@ -203,6 +212,8 @@ def test_stable_identifier_propagation_across_boundary_is_deterministic() -> Non
     for key in ("compiler_passes_json", "compiler_replay_json", "compiler_replay_sha256", "decision_lineage_json", "observability_json", "explainability_json"):
         assert first.metadata[key] == second.metadata[key]
         assert first_handoff["compiler_metadata"][key] == second_handoff["compiler_metadata"][key]
+    assert first.metadata["logical_graph_schema_json"] == second.metadata["logical_graph_schema_json"]
+    assert first.metadata["logical_graph_schema_sha256"] == second.metadata["logical_graph_schema_sha256"]
 
     assert first_handoff == second_handoff
     assert _canonical_handoff_digest(first_handoff) == _canonical_handoff_digest(second_handoff)
