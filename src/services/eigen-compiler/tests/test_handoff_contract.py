@@ -94,6 +94,8 @@ def _build_handoff_bundle(result, *, optimizer_contract_version: str = "1.0.0") 
         "explainability_json": result.metadata["explainability_json"],
         "logical_graph_schema_json": result.metadata["logical_graph_schema_json"],
         "logical_graph_schema_sha256": result.metadata["logical_graph_schema_sha256"],
+        "telemetry_feature_set_json": result.metadata["telemetry_feature_set_json"],
+        "telemetry_feature_set_sha256": result.metadata["telemetry_feature_set_sha256"],
     }
     return {"envelope": envelope, "input_aqo": aqo_json, "compiler_metadata": compiler_metadata}
 
@@ -149,6 +151,8 @@ def test_handoff_schema_is_versioned_and_bounded() -> None:
     assert replay_bundle["model_snapshot"] == {"model_version": "", "policy_snapshot_version": ""}
     assert replay_bundle["symbolic_rules"][0]["rule"] == "compiler.source.lower_to_ir"
     assert replay_bundle["logical_graph_schema"]["shared_between_training_and_inference"] is True
+    assert replay_bundle["telemetry_feature_set"]["schema_version"] == "telemetry-tabular-v1"
+    assert replay_bundle["telemetry_feature_set"]["offline_online_parity"] is True
     assert replay_bundle["symbolic_candidate_set"]["ranker"]["model_family"] == "gnn"
     assert replay_bundle["symbolic_candidate_set"]["selected_candidate_id"] == replay_bundle["symbolic_candidate_set"]["ranked_candidates"][0]["candidate_id"]
     assert replay_bundle["symbolic_candidate_set"]["selected_candidate_explanation"].startswith("Preferred because ")
@@ -207,6 +211,8 @@ def test_handoff_schema_is_versioned_and_bounded() -> None:
     assert logical_graph_schema["nodes"]["required_fields"] == ["id", "kind", "label", "attributes"]
     assert logical_graph_schema["edges"]["required_fields"] == ["id", "source", "target", "kind", "label", "attributes"]
     assert logical_graph_schema["labels"]["ast"][0] == "module"
+    assert json.loads(handoff["compiler_metadata"]["telemetry_feature_set_json"])["schema_version"] == "telemetry-tabular-v1"
+    assert len(handoff["compiler_metadata"]["telemetry_feature_set_sha256"]) == 64
 
 
 def test_stable_identifier_propagation_across_boundary_is_deterministic() -> None:
@@ -220,11 +226,13 @@ def test_stable_identifier_propagation_across_boundary_is_deterministic() -> Non
         assert first.metadata[key] == second.metadata[key]
         assert first_handoff["envelope"][key] == second_handoff["envelope"][key]
 
-    for key in ("compiler_passes_json", "compiler_replay_json", "compiler_replay_sha256", "decision_lineage_json", "observability_json", "explainability_json"):
+    for key in ("compiler_passes_json", "compiler_replay_json", "compiler_replay_sha256", "decision_lineage_json", "observability_json", "explainability_json", "telemetry_feature_set_json", "telemetry_feature_set_sha256"):
         assert first.metadata[key] == second.metadata[key]
         assert first_handoff["compiler_metadata"][key] == second_handoff["compiler_metadata"][key]
     assert first.metadata["logical_graph_schema_json"] == second.metadata["logical_graph_schema_json"]
     assert first.metadata["logical_graph_schema_sha256"] == second.metadata["logical_graph_schema_sha256"]
+    assert first.metadata["telemetry_feature_set_json"] == second.metadata["telemetry_feature_set_json"]
+    assert first.metadata["telemetry_feature_set_sha256"] == second.metadata["telemetry_feature_set_sha256"]
 
     assert first_handoff == second_handoff
     assert _canonical_handoff_digest(first_handoff) == _canonical_handoff_digest(second_handoff)

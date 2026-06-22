@@ -682,11 +682,14 @@ class NeuroSymbolicService(nsc_pb_grpc.NeuroSymbolicServiceServicer):
             record_denial("invalid_feature_digest")
             context.abort(grpc.StatusCode.INVALID_ARGUMENT, "feature_digest_sha256 must be a SHA-256 hex digest")
         feature_digest_sha256 = request.feature_digest_sha256.strip().lower()
-        if _hex_digest(request.feature_vector) != feature_digest_sha256:
+        
+        raw_feature_digest_sha256 = _hex_digest(request.feature_vector)
+        
+        redaction = _redact_feature_vector(request.feature_vector)
+        if _hex_digest(redaction.feature_vector) != feature_digest_sha256:
             record_denial("feature_digest_mismatch")
             context.abort(grpc.StatusCode.INVALID_ARGUMENT, "feature_digest_sha256 does not match feature_vector")
 
-        redaction = _redact_feature_vector(request.feature_vector)
         canonical = _stable_json(
             {
                 "contract_version": contract_version,
@@ -720,7 +723,7 @@ class NeuroSymbolicService(nsc_pb_grpc.NeuroSymbolicServiceServicer):
             policy_snapshot_version=self._policy_snapshot_version,
             model_version=self._model_version,
             confidence=confidence,
-            feature_digest_sha256=feature_digest_sha256,
+            feature_digest_sha256=raw_feature_digest_sha256,
             replay_digest=replay_digest,
             redacted_fields=redaction.redacted_fields,
             feature_schema_version=feature_schema_version,

@@ -193,6 +193,8 @@ Ranking layers may only score candidates whose `legal` flag is `true`. They must
 
 The compiler also emits one canonical logical graph schema for AST, IR, and DPDA-state structures. The schema is serialized in compiler metadata as `logical_graph_schema_json` and hashed as `logical_graph_schema_sha256`. It is the same schema used for training and inference, and it defines bounded node and edge fields, canonical labels, and deterministic ordering rules for all logical compiler graph representations.
 
+The compiler also emits a stable tabular telemetry feature set for model training and online scoring parity. It is serialized in compiler metadata as `telemetry_feature_set_json` and hashed as `telemetry_feature_set_sha256`. The tabular schema version is `telemetry-tabular-v1` and it captures graph size, fanout, stage counts, historical success rate, latency, backend, and policy-state telemetry in a deterministic field order.
+
 Optional deterministic rewrite or hardware-adaptation work may be added as long as it remains replay-safe and does not change the meaning of canonical AQO. Workload-family specific validation happens before lowering and may reject a valid-looking source when the selected profile forbids it.
 
 Pass ordering and pass outputs must remain stable for identical normalized inputs.
