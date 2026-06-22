@@ -49,6 +49,8 @@ The symbolic core is the deterministic execution path that performs:
 
 The symbolic core is implemented as a deterministic pushdown automaton (DPDA) plus the compiler rule engine and the fixed policy evaluation path.
 
+The symbolic baseline is the same deterministic path with advisory inputs removed. When model output is absent, malformed, low-confidence, or rejected by validation, the symbolic baseline MUST run without consuming that output.
+
 ### 1.2 Knowledge base
 
 The knowledge base stores and serves replay-safe facts, historical decisions, candidate patterns, canonical patterns, snapshots, and decision logs.
@@ -271,7 +273,9 @@ Live lookup of policy or model versions during request handling is forbidden.
 
 ### 6.3 Fail-closed rule
 
-Missing snapshots, digest mismatches, integrity failures, policy mismatches, and tenant/project boundary violations MUST fail closed.
+Missing snapshots, digest mismatches, integrity failures, policy mismatches, tenant/project boundary violations, missing model output, malformed model output, and low-confidence model output MUST fail closed.
+
+When advisory output is absent, invalid, or below the policy-defined confidence threshold, the deterministic symbolic baseline MUST be used and the advisory result MUST be ignored for decision-making.
 
 ---
 

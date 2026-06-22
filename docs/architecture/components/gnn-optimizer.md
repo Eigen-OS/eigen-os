@@ -22,6 +22,8 @@ The optimizer operates between:
 - kernel scheduling / dispatch,
 - driver-manager backend execution.
 
+The optimizer MUST execute a deterministic symbolic baseline first; ML recommendations may only refine that baseline.
+
 The authoritative boundary between the symbolic core, KB, optimizer, and ML advisor is defined in `docs/architecture/components/neuro-symbolic-core.md`.
 
 Primary objectives:
@@ -71,6 +73,7 @@ Hardware / Simulator / Vendor Cloud
 - not allowed to introduce nondeterministic behavior in deterministic mode,
 - not allowed to bypass policy constraints or security validation,
 - not allowed to infer topology, noise, or availability from unvalidated model output,
+- not allowed to treat missing, malformed, low-confidence, or invalid model output as authoritative,
 - not allowed to leak provider secrets or raw provider payloads.
 
 ---
@@ -214,6 +217,7 @@ Allowed transformations include (policy- and backend-dependent):
 The optimizer is subordinate to symbolic validation:
 
 - ML inference is advisory, not authoritative.
+- If model output is missing, malformed, low-confidence, or invalid, the optimizer MUST ignore it and run the symbolic baseline.
 - Symbolic checks MUST reject invalid transformations deterministically.
 - In deterministic mode, the optimizer MUST behave replayably given identical inputs.
 
@@ -236,7 +240,7 @@ When `deterministic=true`, the optimizer output MUST be a pure function of:
 
 - AQO content hash (canonical AQO bytes)
 - `contract_version`
-- `optimizer_model_id` (or explicit `fallback_used=true`)
+- `optimizer_model_id` (or explicit `fallback_used=true` when the symbolic baseline is used)
 - backend identity + topology snapshot hash
 - calibration snapshot hash (or explicit “no calibration” sentinel)
 - policy envelope (mode + constraints)
