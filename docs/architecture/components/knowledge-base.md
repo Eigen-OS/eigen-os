@@ -113,6 +113,17 @@ Required fields:
 | `metadata` | object | yes | Additional bounded metadata, never authoritative truth. |
 | `provenance` | object | yes | Attached provenance for this record. |
 
+`provenance` MUST be a bounded object with these subfields:
+
+| Field | Type | Required | Semantics |
+|---|---|---:|---|
+| `source` | object | yes | Snapshot and source-record lineage, including `snapshot_id`, `config_digest`, `source_record_ids`, and `source_record_count`. |
+| `version` | object | yes | Pattern versioning data, including `contract_version`, `pattern_miner_version`, and `compatibility_signature`. |
+| `compilation_context` | object | yes | Normalized context used to produce and rank the pattern, including the compatibility window, circuit/backend scope, query signature, query mode, candidate budget, and deterministic flag. |
+| `validation_status` | object | yes | Deterministic validation outcome for the record, including `state`, `compatible`, `canonical_eligible`, `selected`, `rank`, and `incompatibility_reasons`. |
+
+Allowed validation states include `catalogued`, `compatible`, `incompatible`, `selected`, `canonical`, and `explanation`.
+
 `compatibility_window` MUST contain the exact fields used by canonical selection:
 
 - `schema_version`
