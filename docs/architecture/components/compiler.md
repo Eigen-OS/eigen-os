@@ -183,6 +183,10 @@ Within the lowering boundary, the compiler also exposes a deterministic pass pip
 
 The semantic rule engine gates `validate_ast`, `rewrite_ir`, and `validate_lowering`. Advisory hints may influence ranking of rewrite candidates, but they do not change pass ordering, pass membership, or validation authority.
 
+The compiler also emits a bounded symbolic candidate set for model ranking. Each candidate is produced by the symbolic core, has a stable `candidate_id`, a compact feature map, and a legality flag. The emitted candidate set is serialized in compiler metadata as `symbolic_candidate_set_json`.
+
+Ranking layers may only score candidates whose `legal` flag is `true`. They must not invent additional candidates, rename emitted IDs, or treat illegal candidates as admissible.
+
 Optional deterministic rewrite or hardware-adaptation work may be added as long as it remains replay-safe and does not change the meaning of canonical AQO. Workload-family specific validation happens before lowering and may reject a valid-looking source when the selected profile forbids it.
 
 Pass ordering and pass outputs must remain stable for identical normalized inputs.
@@ -245,6 +249,8 @@ The compiler may use a neuro-symbolic advisor, but it must remain advisory only.
 - The final AQO payload must be valid without any neural-only field.
 - Advisor outcomes are recorded when they are accepted, rejected, or transformed into a deterministic compiler action.
 - Advisors can be swapped or disabled without breaking the compiler.
+
+When the symbolic core enumerates candidates for ranking, the compiler must expose only the bounded candidate set that it produced. The model may rank those candidates, but it must not invent or relabel candidates and it must not use illegal candidates as ranking inputs.
 
 The compiler must preserve determinism even when the advisor is enabled.
 

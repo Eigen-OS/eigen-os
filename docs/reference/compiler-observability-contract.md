@@ -126,6 +126,8 @@ Required payload fields:
 - `compiler_replay_json`
 - `compiler_replay_sha256`
 - `compiler_diagnostics_json`
+- `symbolic_candidate_set_json`
+- `symbolic_candidate_set_sha256`
 
 Those payloads MUST remain deterministic for identical inputs and MUST include only bounded trace and metric fields:
 
@@ -134,6 +136,8 @@ Those payloads MUST remain deterministic for identical inputs and MUST include o
 - label-family bounds: no request, trace, tenant, or project identifiers in metric labels
 
 `compiler_diagnostics_json` MUST summarize the compiler stage order, the resolved workload profile, and the backend contract in a machine-readable payload that remains stable for identical inputs.
+
+`symbolic_candidate_set_json` MUST summarize the bounded candidate set emitted by the symbolic core. Each candidate entry MUST expose a stable `candidate_id`, a compact feature map, and a boolean legality flag. Model ranking layers MUST only score candidates where `legal` is true.
 
 Validation failures MUST also carry structured gRPC details with:
 

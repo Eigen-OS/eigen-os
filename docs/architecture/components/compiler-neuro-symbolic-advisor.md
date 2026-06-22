@@ -36,6 +36,8 @@ The advisor may:
 - explain why a deterministic compiler action was suggested,
 - contribute bounded replay evidence that can be validated by the compiler.
 
+The compiler must enumerate the candidate set first. That set is bounded, deterministic, and produced by the symbolic core. The advisor may rank only candidates whose legality flag is `true`; it must not invent new candidates, rename IDs, or promote an illegal candidate into the admissible set.
+
 The advisor may not:
 
 - override rule-engine approval,
@@ -53,6 +55,8 @@ When a suggestion is observed by the compiler boundary, the outcome must be reco
 - `accepted`
 - `rejected`
 - `transformed`
+
+When the compiler emits a bounded symbolic candidate set, each candidate entry must carry a stable `candidate_id`, a compact `features` object, and a `legal` flag. Downstream ranking logic must ignore any candidate whose `legal` flag is false.
 
 `transformed` is used when a suggestion is converted into a deterministic compiler action after rule-engine approval.
 

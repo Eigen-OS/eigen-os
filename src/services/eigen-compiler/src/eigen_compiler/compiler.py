@@ -25,6 +25,9 @@ from .validation import (
 
 AQO_VERSION = "1.0.0"
 
+_SYMBOLIC_CANDIDATE_ENUMERATION_VERSION = "1.0.0"
+_SYMBOLIC_CANDIDATE_BUDGET = 8
+
 _REPLAY_MODE_DETERMINISTIC = "deterministic"
 _NEURO_MODEL_VERSION_ENV = "EIGEN_NEURO_SYMBOLIC_MODEL_VERSION"
 _NEURO_POLICY_SNAPSHOT_VERSION_ENV = "EIGEN_NEURO_SYMBOLIC_POLICY_SNAPSHOT_VERSION"
@@ -147,6 +150,21 @@ class CompilerPassPipeline:
     aqo: dict[str, object]
 
 
+@dataclass(frozen=True)
+class SymbolicCandidate:
+    candidate_id: str
+    features: dict[str, object]
+    legal: bool
+    legality_reason: str
+
+
+@dataclass(frozen=True)
+class SymbolicCandidateSet:
+    version: str
+    candidate_budget: int
+    candidates: tuple[SymbolicCandidate, ...]
+
+
 @dataclass
 class CompilerValidationError(Exception):
     violations: tuple[FieldViolation, ...]
@@ -191,6 +209,7 @@ def _compiler_replay_bundle(
     compiler_stage_order: list[str],
     handoff_stage_order: list[str],
     pass_pipeline: CompilerPassPipeline,
+    symbolic_candidate_set: SymbolicCandidateSet,
 ) -> tuple[dict[str, object], str]:
     snapshot = _compiler_replay_snapshot()
     symbolic_rules = []
@@ -206,6 +225,8 @@ def _compiler_replay_bundle(
                 "output_sha256": hashlib.sha256(_canonical_json_bytes(record.output)).hexdigest(),
             }
         )
+    symbolic_candidates = _symbolic_candidate_set_payload(symbolic_candidate_set)
+    symbolic_candidates["candidate_ids"] = [candidate["candidate_id"] for candidate in symbolic_candidates["candidates"]]
 
     replay_bundle: dict[str, object] = {
         "contract_version": "1.0.0",
@@ -231,6 +252,7 @@ def _compiler_replay_bundle(
         "handoff_stage_order": handoff_stage_order,
         "symbolic_rules": symbolic_rules,
         "model_snapshot": snapshot,
+        "symbolic_candidate_set": symbolic_candidates,
         "model_recommendations": [],
     }
     replay_bundle_json = _canonical_json_text(replay_bundle)
@@ -437,6 +459,119 @@ def _validate_aqo_payload(aqo: dict[str, object]) -> tuple[FieldViolation, ...]:
             violations.append(FieldViolation(field=f"operations[{idx}].c", description=f"{op_name} must not include c"))
 
     return tuple(violations)
+
+
+def _count_measurements(operations: list[dict]) -> int:
+    return sum(1 for operation in operations if operation.get("op") == "MEASURE")
+
+
+def _symbolic_candidate_features(
+    *,
+    candidate_kind: str,
+    qubits: int,
+    operations: list[dict],
+    has_expectation: bool,
+    has_minimize: bool,
+    distributed: DistributedCompileConfig,
+) -> dict[str, object]:
+    return {
+        "candidate_kind": candidate_kind,
+        "qubits": qubits,
+        "operation_count": len(operations),
+        "measurement_count": _count_measurements(operations),
+        "terminal_measurement_present": bool(operations and operations[-1].get("op") == "MEASURE"),
+        "has_expectation": has_expectation,
+        "has_minimize": has_minimize,
+        "distributed_enabled": distributed.enabled,
+        "distributed_target": distributed.target or "",
+        "distributed_partition_count": distributed.partition_count or 0,
+    }
+
+
+def _symbolic_candidate_payload(candidate: SymbolicCandidate) -> dict[str, object]:
+    return {
+        "candidate_id": candidate.candidate_id,
+        "features": candidate.features,
+        "legal": candidate.legal,
+        "legality_reason": candidate.legality_reason,
+    }
+
+
+def _symbolic_candidate_set_payload(candidate_set: SymbolicCandidateSet) -> dict[str, object]:
+    candidates = [_symbolic_candidate_payload(candidate) for candidate in candidate_set.candidates]
+    return {
+        "version": candidate_set.version,
+        "candidate_budget": candidate_set.candidate_budget,
+        "candidate_count": len(candidates),
+        "legal_candidate_count": sum(1 for candidate in candidate_set.candidates if candidate.legal),
+        "candidates": candidates,
+    }
+
+
+def enumerate_symbolic_candidates(
+    *,
+    qubits: int,
+    operations: list[dict],
+    params: dict[str, dict[str, object]],
+    source_digest: str,
+    request_digest: str,
+    has_expectation: bool,
+    has_minimize: bool,
+    observable_bindings: dict[str, dict[str, object]],
+    expectation_annotation: dict[str, object] | None,
+    distributed: DistributedCompileConfig,
+) -> SymbolicCandidateSet:
+    """Enumerate the bounded symbolic candidate set used for ranking."""
+
+    lowered_ir = json.loads(json.dumps(operations, sort_keys=True, separators=(",", ":"), allow_nan=False))
+    rewritten_operations = _rewrite_terminal_measurement(lowered_ir, qubits)
+    candidate_variants = (
+        ("symbolic.keep_lowered_ir", "keep_lowered_ir", lowered_ir),
+        ("symbolic.rewrite_terminal_measurement", "terminal_measurement_normalized", rewritten_operations),
+    )
+    candidates: list[SymbolicCandidate] = []
+    for candidate_id, candidate_kind, candidate_operations in candidate_variants:
+        aqo_payload = _build_aqo_payload(
+            qubits=qubits,
+            operations=candidate_operations,
+            params=params,
+            source_digest=source_digest,
+            source_ref=None,
+            request_digest=request_digest,
+            has_expectation=has_expectation,
+            has_minimize=has_minimize,
+            observable_bindings=observable_bindings,
+            expectation_annotation=expectation_annotation,
+            distributed=distributed,
+        )
+        try:
+            _validate_lowering_payload(aqo_payload)
+            legal = True
+            legality_reason = "aqo_contract_valid"
+        except CompilerValidationError as exc:
+            legal = False
+            legality_reason = ",".join(sorted({violation.field for violation in exc.violations})) or "aqo_contract_invalid"
+        candidates.append(
+            SymbolicCandidate(
+                candidate_id=candidate_id,
+                features=_symbolic_candidate_features(
+                    candidate_kind=candidate_kind,
+                    qubits=qubits,
+                    operations=candidate_operations,
+                    has_expectation=has_expectation,
+                    has_minimize=has_minimize,
+                    distributed=distributed,
+                ),
+                legal=legal,
+                legality_reason=legality_reason,
+            )
+        )
+
+    return SymbolicCandidateSet(
+        version=_SYMBOLIC_CANDIDATE_ENUMERATION_VERSION,
+        candidate_budget=_SYMBOLIC_CANDIDATE_BUDGET,
+        candidates=tuple(candidates[:_SYMBOLIC_CANDIDATE_BUDGET]),
+    )
 
 
 def _encode_aqo_payload(aqo: dict[str, object]) -> bytes:
@@ -1224,6 +1359,22 @@ def compile_eigen_lang(
     options_json = _canonical_json_bytes(normalized_options).decode("utf-8")
     request_context_json = _canonical_json_bytes(asdict(normalized_request_context)).decode("utf-8")
 
+    symbolic_candidate_set = enumerate_symbolic_candidates(
+        qubits=qubits,
+        operations=operations,
+        params=params,
+        source_digest=source_digest,
+        request_digest=aqo_request_digest,
+        has_expectation=has_expectation,
+        has_minimize=has_minimize,
+        observable_bindings=observable_bindings,
+        expectation_annotation=expectation_annotation,
+        distributed=distributed,
+    )
+    symbolic_candidate_set_payload = _symbolic_candidate_set_payload(symbolic_candidate_set)
+    symbolic_candidate_set_json = _canonical_json_text(symbolic_candidate_set_payload)
+    symbolic_candidate_set_sha256 = hashlib.sha256(symbolic_candidate_set_json.encode("utf-8")).hexdigest()
+
     def _build_pass_pipeline() -> CompilerPassPipeline:
         try:
             return _build_compiler_pass_pipeline(
@@ -1298,6 +1449,7 @@ def compile_eigen_lang(
         compiler_stage_order=compiler_stage_order,
         handoff_stage_order=handoff_stage_order,
         pass_pipeline=pass_pipeline,
+        symbolic_candidate_set=symbolic_candidate_set,
     )
 
     decision_lineage = {
@@ -1362,6 +1514,7 @@ def compile_eigen_lang(
                 "stage_order": compiler_stage_order,
             },
         },
+        "symbolic_candidate_set": symbolic_candidate_set_payload,
     }
 
     metadata = {
@@ -1411,6 +1564,8 @@ def compile_eigen_lang(
         "backend_contract_version": "1.0.0",
         "backend_contract_json": backend_contract_json,
         "compiler_diagnostics_json": _canonical_json_text(compiler_diagnostics),
+        "symbolic_candidate_set_json": symbolic_candidate_set_json,
+        "symbolic_candidate_set_sha256": symbolic_candidate_set_sha256,
     }
     if has_minimize:
         metadata["hybrid_plan_marker"] = "minimize"
