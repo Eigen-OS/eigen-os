@@ -105,6 +105,8 @@ Required payload fields:
 - `decision_lineage_json`
 - `observability_json`
 - `explainability_json`
+- `compiler_replay_json`
+- `compiler_replay_sha256`
 - `compiler_diagnostics_json`
 
 Those payloads MUST remain deterministic for identical inputs and MUST include only bounded trace and metric fields:
@@ -127,7 +129,9 @@ The lineage payload MUST preserve the compiler-to-optimizer boundary contract:
 - source precedence,
 - source and AQO digests,
 - request digest,
-- stable stage order.
+- stable stage order,
+- deterministic replay bundle digest,
+- symbolic rule provenance for the lowering pipeline.
 
 ---
 
@@ -137,6 +141,7 @@ Repeated compilation of identical inputs MUST be observable as:
 
 - identical AQO bytes,
 - identical AQO hash,
+- identical `compiler_replay_json` and `compiler_replay_sha256`,
 - incremented duplicate/replay counter,
 - stable request-correlation logs.
 

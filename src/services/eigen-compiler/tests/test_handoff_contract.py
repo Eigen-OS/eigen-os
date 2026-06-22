@@ -87,6 +87,8 @@ def _build_handoff_bundle(result, *, optimizer_contract_version: str = "1.0.0") 
         "aqo_sha256": result.metadata["aqo_sha256"],
         "request_sha256": result.metadata["request_sha256"],
         "compiler_passes_json": result.metadata["compiler_passes_json"],
+        "compiler_replay_json": result.metadata["compiler_replay_json"],
+        "compiler_replay_sha256": result.metadata["compiler_replay_sha256"],
         "decision_lineage_json": result.metadata["decision_lineage_json"],
         "observability_json": result.metadata["observability_json"],
         "explainability_json": result.metadata["explainability_json"],
@@ -135,10 +137,14 @@ def test_handoff_schema_is_versioned_and_bounded() -> None:
     assert result.metadata["workload_profile"] == "QuantumJob"
 
     pass_pipeline = json.loads(handoff["compiler_metadata"]["compiler_passes_json"])    
+    replay_bundle = json.loads(handoff["compiler_metadata"]["compiler_replay_json"])
     decision_lineage = json.loads(handoff["compiler_metadata"]["decision_lineage_json"])
     observability = json.loads(handoff["compiler_metadata"]["observability_json"])
     explainability = json.loads(handoff["compiler_metadata"]["explainability_json"])
     
+    assert replay_bundle["replay_mode"] == "deterministic"
+    assert replay_bundle["model_snapshot"] == {"model_version": "", "policy_snapshot_version": ""}
+    assert replay_bundle["symbolic_rules"][0]["rule"] == "compiler.source.lower_to_ir"
     assert pass_pipeline["version"] == "1.0.0"
     assert [item["name"] for item in pass_pipeline["passes"]] == [
         "lower_to_ir",
@@ -170,6 +176,8 @@ def test_handoff_schema_is_versioned_and_bounded() -> None:
     assert observability["metric_bounds"]["labels_bounded"] is True
     assert observability["metric_bounds"]["request_ids_in_metrics"] is False
     assert explainability["decision"] == "compiler_to_optimizer_handoff"
+    assert decision_lineage["replay_mode"] == "deterministic"
+    assert decision_lineage["model_snapshot"] == {"model_version": "", "policy_snapshot_version": ""}
     assert explainability["bounded_fields"] == [
         "request_id",
         "trace_id",
@@ -177,6 +185,7 @@ def test_handoff_schema_is_versioned_and_bounded() -> None:
         "source_sha256",
         "aqo_sha256",
         "request_sha256",
+        "replay_bundle_sha256",
     ]
 
 
@@ -191,7 +200,7 @@ def test_stable_identifier_propagation_across_boundary_is_deterministic() -> Non
         assert first.metadata[key] == second.metadata[key]
         assert first_handoff["envelope"][key] == second_handoff["envelope"][key]
 
-    for key in ("compiler_passes_json", "decision_lineage_json", "observability_json", "explainability_json"):
+    for key in ("compiler_passes_json", "compiler_replay_json", "compiler_replay_sha256", "decision_lineage_json", "observability_json", "explainability_json"):
         assert first.metadata[key] == second.metadata[key]
         assert first_handoff["compiler_metadata"][key] == second_handoff["compiler_metadata"][key]
 
