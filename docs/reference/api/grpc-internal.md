@@ -508,6 +508,8 @@ service NeuroSymbolicService {
   - `feature_set`,
   - `confidence`,
   - `retrieval_references`.
+- `feature_set.telemetry_feature_set` MUST expose the stable tabular telemetry schema shared by compiler and KB telemetry. Its `schema_version` MUST be `telemetry-tabular-v1`, and the schema MUST carry graph size, fanout, stage counts, historical success rate, latency, backend, and policy-state features in a deterministic order.
+- The same tabular schema MUST be serialized in compiler metadata as `telemetry_feature_set_json` and `telemetry_feature_set_sha256` so offline KB ingestion and online scoring use the same columns.
 - `RunSymbolicRewriteStageResponse` MUST include the executed `stage`, the `stage_index`, the stage-specific `stage_outcome`, and the `replay_digest` for that stage.
 - Stage log entries MUST be emitted with the same `stage` and `stage_index` values so each DPDA step can be replayed and audited independently.
 - Every scoring request MUST also emit an immutable audit record containing caller identity, tenant, active policy snapshot version, model version, retrieval sources, and final decision.

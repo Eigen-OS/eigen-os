@@ -749,6 +749,7 @@ def _nsc_request(
     deterministic_seed: int = 7,
     model_hint: str = "dpda",
 ) -> nsc_pb.ScoreCompilationPlanRequest:
+    redacted_feature_vector = _redact_feature_vector(feature_vector).feature_vector
     return nsc_pb.ScoreCompilationPlanRequest(
         envelope=nsc_pb.NeuroSymbolicContractEnvelope(contract_version=contract_version),
         context=nsc_pb.NeuroSymbolicRequestContext(
@@ -764,7 +765,7 @@ def _nsc_request(
             authz_decision_id=authz_decision_id,
         ),
         feature_vector=feature_vector,
-        feature_digest_sha256=feature_digest_sha256 or hashlib.sha256(feature_vector).hexdigest(),
+        feature_digest_sha256=feature_digest_sha256 or hashlib.sha256(redacted_feature_vector).hexdigest(),
         deterministic_seed=deterministic_seed,
         model_hint=model_hint,
     )
@@ -826,8 +827,37 @@ def test_neuro_symbolic_service_scores_internal_requests(grpc_addr: str, monkeyp
     channel = grpc.insecure_channel(grpc_addr)
     stub = nsc_pb_grpc.NeuroSymbolicServiceStub(channel)
 
+    telemetry_payload = {
+        "graph": {
+            "graph_kind": "rewrite_candidate",
+            "nodes": [
+                {"id": "candidate", "type": "rewrite_candidate"},
+                {"id": "graph_features", "type": "feature_bundle"},
+                {"id": "rank_projection", "type": "rank_projection"},
+            ],
+            "edges": [
+                {"id": "candidate->graph_features", "source": "candidate", "target": "graph_features"},
+                {"id": "graph_features->rank_projection", "source": "graph_features", "target": "rank_projection"},
+            ],
+        },
+        "compiler": {
+            "stage_count": 7,
+            "stage_success_count": 7,
+            "stage_failure_count": 0,
+            "latency_ms": 13.5,
+            "backend": "provider",
+            "policy_state": "QuantumJob",
+        },
+        "kb": {
+            "past_success_count": 9,
+            "past_failure_count": 3,
+            "past_success_rate": 0.75,
+        },
+    }
+    telemetry_feature_vector = json.dumps(telemetry_payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
     resp = stub.ScoreCompilationPlan(
-         _nsc_request(),
+         _nsc_request(feature_vector=telemetry_feature_vector),
         metadata=_nsc_metadata()
     )
 
@@ -1298,9 +1328,38 @@ def test_neuro_symbolic_service_audits_security_context(
     channel = grpc.insecure_channel(grpc_addr)
     stub = nsc_pb_grpc.NeuroSymbolicServiceStub(channel)
 
+    telemetry_payload = {
+        "graph": {
+            "graph_kind": "rewrite_candidate",
+            "nodes": [
+                {"id": "candidate", "type": "rewrite_candidate"},
+                {"id": "graph_features", "type": "feature_bundle"},
+                {"id": "rank_projection", "type": "rank_projection"},
+            ],
+            "edges": [
+                {"id": "candidate->graph_features", "source": "candidate", "target": "graph_features"},
+                {"id": "graph_features->rank_projection", "source": "graph_features", "target": "rank_projection"},
+            ],
+        },
+        "compiler": {
+            "stage_count": 7,
+            "stage_success_count": 7,
+            "stage_failure_count": 0,
+            "latency_ms": 13.5,
+            "backend": "provider",
+            "policy_state": "QuantumJob",
+        },
+        "kb": {
+            "past_success_count": 9,
+            "past_failure_count": 3,
+            "past_success_rate": 0.75,
+        },
+    }
+    telemetry_feature_vector = json.dumps(telemetry_payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    
     with caplog.at_level("INFO", logger="eigen_compiler"):
         resp = stub.ScoreCompilationPlan(
-            _nsc_request(),
+            _nsc_request(feature_vector=telemetry_feature_vector),
             metadata=_nsc_metadata(),
         )
 
@@ -1317,12 +1376,24 @@ def test_neuro_symbolic_service_audits_security_context(
     envelope = getattr(record, "explainability_envelope")
     assert envelope["model_version"] == "dpda-model-unit-test"
     assert envelope["feature_set"]["schema_version"] == "features.v1"
-    assert envelope["feature_set"]["feature_digest_sha256"] == hashlib.sha256(b'{"redacted":true,"signals":[1,2,3]}').hexdigest()
+    assert envelope["feature_set"]["feature_digest_sha256"] == hashlib.sha256(telemetry_feature_vector).hexdigest()
+    telemetry_feature_set = envelope["feature_set"]["telemetry_feature_set"]
+    assert telemetry_feature_set["schema_version"] == "telemetry-tabular-v1"
+    assert telemetry_feature_set["offline_online_parity"] is True
+    assert telemetry_feature_set["graph"]["graph_size_nodes"] == 3
+    assert telemetry_feature_set["graph"]["graph_size_edges"] == 2
+    assert telemetry_feature_set["graph"]["graph_fanout_max"] == 1
+    assert telemetry_feature_set["compiler"]["stage_count"] == 7
+    assert telemetry_feature_set["compiler"]["stage_success_rate"] == 1.0
+    assert telemetry_feature_set["kb"]["past_success_rate"] == 0.75
+    assert envelope["feature_set"]["telemetry_feature_set_sha256"] == hashlib.sha256(
+        json.dumps(telemetry_feature_set, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
     assert envelope["confidence"] == resp.confidence
     assert envelope["explanation_ref"] == resp.explanation_ref
     assert envelope["retrieval_reference_count"] == 3
     assert envelope["retrieval_references"] == [
-        "nsc://feature-set/tenant-a/project-a/req-nsc-001/" + hashlib.sha256(b'{"redacted":true,"signals":[1,2,3]}').hexdigest(),
+        "nsc://feature-set/tenant-a/project-a/req-nsc-001/" + hashlib.sha256(telemetry_feature_vector).hexdigest(),
         "nsc://policy-snapshot/policy-2026-06-15",
         "nsc://model/dpda-model-unit-test",
     ]

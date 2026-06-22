@@ -456,6 +456,8 @@ def _kb_index_compiler_trace(
         compiler_diagnostics_json = str(metadata.get("compiler_diagnostics_json", "") if metadata else "").strip()
         compiler_diagnostics_sha256 = hashlib.sha256(compiler_diagnostics_json.encode("utf-8")).hexdigest() if compiler_diagnostics_json else ""
         candidate_set_json = str(metadata.get("symbolic_candidate_set_json", "") if metadata else "").strip()
+        telemetry_feature_set_json = str(metadata.get("telemetry_feature_set_json", "") if metadata else "").strip()
+        telemetry_feature_set_sha256 = str(metadata.get("telemetry_feature_set_sha256", "") if metadata else "").strip()
         candidate_set = json.loads(candidate_set_json) if candidate_set_json else {"candidate_count": 0, "candidates": []}
         pattern_signature = _selected_candidate_signature(candidate_set) if result is not None else f"failure:{failure_stage or 'compile'}"
         trace_payload = _trace_digest_payload(
@@ -521,6 +523,8 @@ def _kb_index_compiler_trace(
                 "compiler_replay_sha256": compiler_replay_sha256,
                 "compiler_diagnostics_sha256": compiler_diagnostics_sha256,
                 "symbolic_candidate_set_sha256": str(metadata.get("symbolic_candidate_set_sha256", "")).strip() if metadata else "",
+                "telemetry_feature_set_json": telemetry_feature_set_json,
+                "telemetry_feature_set_sha256": telemetry_feature_set_sha256,
                 "accepted_rewrite_ids": _stable_json(accepted),
                 "rejected_rewrite_ids": _stable_json(rejected),
                 "selected_candidate_id": pattern_signature,
@@ -571,6 +575,8 @@ def _kb_index_compiler_trace(
                 "compiler_replay_sha256": compiler_replay_sha256,
                 "compiler_diagnostics_sha256": compiler_diagnostics_sha256,
                 "symbolic_candidate_set_sha256": str(metadata.get("symbolic_candidate_set_sha256", "")).strip() if metadata else "",
+                "telemetry_feature_set_json": telemetry_feature_set_json,
+                "telemetry_feature_set_sha256": telemetry_feature_set_sha256,
                 "compiler_status": "success" if result is not None else "failure",
                 "accepted_rewrite_ids": _stable_json(accepted),
                 "rejected_rewrite_ids": _stable_json(rejected),
@@ -1380,6 +1386,7 @@ class NeuroSymbolicService:
         )
         if not request.feature_vector:
             context.abort(grpc.StatusCode.INVALID_ARGUMENT, "feature_vector is required")
+        raw_feature_digest = _hex_digest(request.feature_vector)
         redaction = _redact_feature_vector(request.feature_vector)
         feature_vector = redaction.feature_vector
         feature_vector_limit = _feature_vector_byte_limit()
@@ -1435,7 +1442,7 @@ class NeuroSymbolicService:
             policy_snapshot_version=active_policy_snapshot_version,
             model_version=model_version,
             confidence=confidence,
-            feature_digest_sha256=feature_digest,
+            feature_digest_sha256=raw_feature_digest,
             replay_digest=replay_digest,
             minimized_feature_vector=feature_vector,
             redacted_fields=redaction.redacted_fields,

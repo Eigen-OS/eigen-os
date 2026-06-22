@@ -130,6 +130,8 @@ Required payload fields:
 - `symbolic_candidate_set_sha256`
 - `logical_graph_schema_json`
 - `logical_graph_schema_sha256`
+- `telemetry_feature_set_json`
+- `telemetry_feature_set_sha256`
 
 Those payloads MUST remain deterministic for identical inputs and MUST include only bounded trace and metric fields:
 
@@ -142,6 +144,8 @@ Those payloads MUST remain deterministic for identical inputs and MUST include o
 `symbolic_candidate_set_json` MUST summarize the bounded candidate set emitted by the symbolic core. Each candidate entry MUST expose a stable `candidate_id`, a compact feature map, and a boolean legality flag. The payload MUST also expose `ranked_candidates`, a legal-candidate-only list ordered by deterministic GNN usefulness scoring, and each ranked entry MUST expose `rank`, `confidence`, the `graph_encoding` consumed by the ranker, and an `explanation` object with a human-readable `why_preferred` summary plus bounded `influential_features` and `influential_subgraph` hooks. The ranker advertises its explanation mode as `feature_attribution`. `selected_candidate_explanation` MUST mirror the first ranked candidate summary. Model ranking layers MUST only score candidates where `legal` is true.
 
 `logical_graph_schema_json` MUST describe the canonical graph schema used by the compiler for AST, IR, and DPDA state graphs. The schema MUST be shared by training and inference consumers, MUST define bounded node and edge fields, MUST define stable labels for each graph kind, and MUST preserve deterministic ordering semantics. `logical_graph_schema_sha256` MUST be the SHA-256 digest of that canonical JSON payload.
+
+`telemetry_feature_set_json` MUST describe the stable tabular telemetry feature set used for compiler and KB telemetry parity. The schema version MUST be `telemetry-tabular-v1`, and the payload MUST expose graph size, fanout, stage counts, historical success rate, latency, backend, and policy-state features in a deterministic order. `telemetry_feature_set_sha256` MUST be the SHA-256 digest of that canonical JSON payload.
 
 Validation failures MUST also carry structured gRPC details with:
 

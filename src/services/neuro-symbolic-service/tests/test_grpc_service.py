@@ -10,12 +10,13 @@ import pytest
 
 from eigen.internal.v1 import neuro_symbolic_service_pb2 as nsc_pb
 from eigen.internal.v1 import neuro_symbolic_service_pb2_grpc as nsc_pb_grpc
+from neuro_symbolic_service.grpc_impl import _redact_feature_vector
 from neuro_symbolic_service.observability import render_metrics_text
 
 
 def _request(payload: dict[str, object], *, request_id: str = "req-1", tenant_id: str = "tenant-a", project_id: str = "project-a", feature_schema_version: str = "features.v1", policy_snapshot_version: str = "1.0.0", seed: int = 7, model_hint: str = "compile-plan") -> nsc_pb.ScoreCompilationPlanRequest:
     feature_vector = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-    feature_digest = hashlib.sha256(feature_vector).hexdigest()
+    feature_digest = hashlib.sha256(_redact_feature_vector(feature_vector).feature_vector).hexdigest()
     return nsc_pb.ScoreCompilationPlanRequest(
         envelope=nsc_pb.NeuroSymbolicContractEnvelope(contract_version="1.0.0"),
         context=nsc_pb.NeuroSymbolicRequestContext(
