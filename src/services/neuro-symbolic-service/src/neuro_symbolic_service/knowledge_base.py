@@ -1259,6 +1259,8 @@ class KnowledgeBaseService:
         requested_scope = _capability_scope_tokens(payload)
         policy = self._normalize_learning_policy(payload)
         target_model_version = str(payload.get("model_version", "")).strip()
+        compiler_version = str(payload.get("compiler_version", "")).strip()
+        kb_version = _KB_CONTRACT_VERSION
         with self._lock:
             self._gc_locked()
             requested_scope = self._capability_scope_tokens(payload)
@@ -1279,9 +1281,11 @@ class KnowledgeBaseService:
                 and len(benchmark_runs) >= policy["trigger_min_benchmark_runs"]
             )
             sorted_evidence = sorted(learning_evidence, key=lambda item: (item["created_at"], item["evidence_id"]))
+            if not compiler_version:
+                raise ValueError("compiler_version is required")
             dataset_id = str(
                 payload.get("dataset_id")
-                or f"ds_{hashlib.sha256(_stable_json({'tenant_id': envelope['tenant_id'], 'project_id': envelope['project_id'], 'policy': policy, 'model_version': target_model_version, 'evidence_ids': [item['evidence_id'] for item in sorted_evidence]}).encode('utf-8')).hexdigest()[:24]}"
+                or f"ds_{hashlib.sha256(_stable_json({'tenant_id': envelope['tenant_id'], 'project_id': envelope['project_id'], 'policy': policy, 'model_version': target_model_version, 'compiler_version': compiler_version, 'kb_version': kb_version, 'evidence_ids': [item['evidence_id'] for item in sorted_evidence]}).encode('utf-8')).hexdigest()[:24]}"
             )
             summary = {
                 "dataset_id": dataset_id,
@@ -1289,6 +1293,8 @@ class KnowledgeBaseService:
                 "tenant_id": envelope["tenant_id"],
                 "project_id": envelope["project_id"],
                 "policy_version": policy["policy_version"],
+                "compiler_version": compiler_version,
+                "kb_version": kb_version,
                 "model_version": target_model_version,
                 "triggered": triggered,
                 "assembly_state": "assembled" if triggered else "held",
@@ -1344,11 +1350,15 @@ class KnowledgeBaseService:
         tenant_id = str(manifest_payload.get("tenant_id", "")).strip()
         project_id = str(manifest_payload.get("project_id", "")).strip()
         policy_snapshot_version = str(manifest_payload.get("policy_snapshot_version", "")).strip()
+        compiler_version = str(manifest_payload.get("compiler_version", "")).strip()
+        kb_version = str(manifest_payload.get("kb_version", _KB_CONTRACT_VERSION)).strip() or _KB_CONTRACT_VERSION
         manifest_digest_sha256 = str(manifest_payload.get("manifest_digest_sha256", "")).strip().lower()
-        if not all([dataset_id, dataset_version, record_schema_version, tenant_id, project_id, policy_snapshot_version, manifest_digest_sha256]):
-            raise ValueError("dataset_id, dataset_version, record_schema_version, tenant_id, project_id, policy_snapshot_version, and manifest_digest_sha256 are required")
+        if not all([dataset_id, dataset_version, record_schema_version, tenant_id, project_id, policy_snapshot_version, compiler_version, kb_version, manifest_digest_sha256]):
+            raise ValueError("dataset_id, dataset_version, record_schema_version, tenant_id, project_id, policy_snapshot_version, compiler_version, kb_version, and manifest_digest_sha256 are required")
         if policy_snapshot_version != active_policy_version:
             raise KnowledgeBaseUnavailable("policy snapshot mismatch")
+        if kb_version != _KB_CONTRACT_VERSION:
+            raise KnowledgeBaseUnavailable("kb version mismatch")
         if not re.fullmatch(r"[0-9a-f]{64}", manifest_digest_sha256):
             raise ValueError("manifest_digest_sha256 must be a SHA-256 hex digest")
 
@@ -1589,6 +1599,8 @@ class KnowledgeBaseService:
             "tenant_id": tenant_id,
             "project_id": project_id,
             "policy_snapshot_version": policy_snapshot_version,
+            "compiler_version": compiler_version,
+            "kb_version": kb_version,
             "ownership": {
                 "service_identity": owner_identity,
                 "requested_by": requested_by,
@@ -1628,6 +1640,8 @@ class KnowledgeBaseService:
             "tenant_id": tenant_id,
             "project_id": project_id,
             "policy_snapshot_version": policy_snapshot_version,
+            "compiler_version": compiler_version,
+            "kb_version": kb_version,
             "ownership": normalized_manifest["ownership"],
             "provenance": normalized_manifest["provenance"],
             "redaction": normalized_manifest["redaction"],
@@ -1649,6 +1663,8 @@ class KnowledgeBaseService:
             "tenant_id": tenant_id,
             "project_id": project_id,
             "policy_snapshot_version": policy_snapshot_version,
+            "compiler_version": compiler_version,
+            "kb_version": kb_version,
             "record_schema_version": record_schema_version,
             "ownership": normalized_manifest["ownership"],
             "provenance": normalized_manifest["provenance"],
@@ -1691,6 +1707,8 @@ class KnowledgeBaseService:
                 "source_ref": provenance_source_ref,
                 "source_digest_sha256": provenance_source_digest,
                 "record_count": len(normalized_records),
+                "compiler_version": compiler_version,
+                "kb_version": kb_version,
                 "manifest_digest_sha256": manifest_digest_sha256,
                 "redaction_digest_sha256": redaction_digest,
             }
@@ -1741,6 +1759,8 @@ class KnowledgeBaseService:
                 "tenant_id": tenant_id,
                 "project_id": project_id,
                 "policy_snapshot_version": policy_snapshot_version,
+                "compiler_version": compiler_version,
+                "kb_version": kb_version,
                 "caller_identity": owner_identity,
                 "requested_by": requested_by,
                 "service_role": service_role,

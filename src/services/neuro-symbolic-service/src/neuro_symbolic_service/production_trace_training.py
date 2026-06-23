@@ -398,6 +398,7 @@ def prepare_training_dataset_manifest(bundle: dict[str, Any], *, caller_identity
     tenant_id = _require_string(bundle.get("tenant_id"), field_name="tenant_id")
     project_id = _require_string(bundle.get("project_id"), field_name="project_id")
     policy_snapshot_version = _require_string(bundle.get("policy_snapshot_version"), field_name="policy_snapshot_version")
+    compiler_version = _require_string(bundle.get("compiler_version"), field_name="compiler_version")
 
     ownership = _require_mapping(bundle.get("ownership"), field_name="ownership")
     service_identity = _require_string(ownership.get("service_identity"), field_name="ownership.service_identity")
@@ -456,6 +457,8 @@ def prepare_training_dataset_manifest(bundle: dict[str, Any], *, caller_identity
         "tenant_id": tenant_id,
         "project_id": project_id,
         "policy_snapshot_version": policy_snapshot_version,
+        "compiler_version": compiler_version,
+        "kb_version": _CONTRACT_VERSION,
         "source_kind": "production_execution_traces",
         "ownership": {
             "service_identity": service_identity,
@@ -495,6 +498,8 @@ def prepare_training_dataset_manifest(bundle: dict[str, Any], *, caller_identity
         "tenant_id": tenant_id,
         "project_id": project_id,
         "policy_snapshot_version": policy_snapshot_version,
+        "compiler_version": compiler_version,
+        "kb_version": _CONTRACT_VERSION,
         "ownership": normalized_manifest["ownership"],
         "selection": normalized_manifest["selection"],
         "approval": normalized_manifest["approval"],
@@ -619,6 +624,7 @@ def _normalize_historical_compilation_record(
     project_id: str,
     policy_snapshot_version: str,
     record_schema_version: str,
+    compiler_version: str,
 ) -> dict[str, Any]:
     mapping = _require_mapping(record, field_name=f"records[{idx}]")
     record_id = _require_string(mapping.get("record_id"), field_name=f"records[{idx}].record_id")
@@ -671,6 +677,9 @@ def _normalize_historical_compilation_record(
     content_digest_sha256 = _hex_digest(_stable_json(content_payload).encode("utf-8"))
     provenance = _normalize_record_provenance(mapping.get("provenance"), field_name=f"records[{idx}].provenance")
     redaction = _normalize_redaction(mapping.get("redaction"), field_name=f"records[{idx}].redaction")
+    record_compiler_version = str(mapping.get("compiler_version", compiler_version)).strip()
+    if record_compiler_version != compiler_version:
+        raise ProductionTraceTrainingError(f"records[{idx}].compiler_version must match the bundle compiler_version")
     return {
         "record_id": record_id,
         "schema_version": schema_version,
@@ -680,7 +689,6 @@ def _normalize_historical_compilation_record(
         "tenant_id": tenant_id,
         "project_id": project_id,
         "policy_snapshot_version": policy_snapshot_version,
-        "source_kind": "historical_compilation",
         "content_digest_sha256": content_digest_sha256,
         "payload": content_payload,
         "provenance": provenance,
@@ -701,6 +709,22 @@ def prepare_historical_compilation_training_manifest(bundle: dict[str, Any], *, 
     tenant_id = _require_string(bundle.get("tenant_id"), field_name="tenant_id")
     project_id = _require_string(bundle.get("project_id"), field_name="project_id")
     policy_snapshot_version = _require_string(bundle.get("policy_snapshot_version"), field_name="policy_snapshot_version")
+
+    records = bundle.get("records")
+    if not isinstance(records, list) or not records:
+        raise ProductionTraceTrainingError("records must be a non-empty list")
+
+    compiler_version = str(bundle.get("compiler_version", "")).strip()
+    record_versions = sorted({str(record.get("compiler_version", "")).strip() for record in records if isinstance(record, dict) and str(record.get("compiler_version", "")).strip()})
+    if compiler_version:
+        if record_versions and any(version != compiler_version for version in record_versions):
+            raise ProductionTraceTrainingError("records.compiler_version must match the bundle compiler_version")
+    elif record_versions:
+        if len(record_versions) != 1:
+            raise ProductionTraceTrainingError("records.compiler_version must be consistent across the bundle")
+        compiler_version = record_versions[0]
+    else:
+        compiler_version = "compiler-1.0"
 
     ownership = _require_mapping(bundle.get("ownership"), field_name="ownership")
     service_identity = _require_string(ownership.get("service_identity"), field_name="ownership.service_identity")
@@ -726,10 +750,6 @@ def prepare_historical_compilation_training_manifest(bundle: dict[str, Any], *, 
     provenance = _normalize_provenance(bundle.get("provenance"), field_name="provenance")
     redaction = _normalize_redaction(bundle.get("redaction"), field_name="redaction")
 
-    records = bundle.get("records")
-    if not isinstance(records, list) or not records:
-        raise ProductionTraceTrainingError("records must be a non-empty list")
-
     normalized_records = [
         _normalize_historical_compilation_record(
             record,
@@ -738,6 +758,7 @@ def prepare_historical_compilation_training_manifest(bundle: dict[str, Any], *, 
             project_id=project_id,
             policy_snapshot_version=policy_snapshot_version,
             record_schema_version=record_schema_version,
+            compiler_version=compiler_version,
         )
         for idx, record in enumerate(records)
     ]
@@ -763,6 +784,8 @@ def prepare_historical_compilation_training_manifest(bundle: dict[str, Any], *, 
         "tenant_id": tenant_id,
         "project_id": project_id,
         "policy_snapshot_version": policy_snapshot_version,
+        "compiler_version": compiler_version,
+        "kb_version": _CONTRACT_VERSION,
         "source_kind": "historical_compilations",
         "ownership": {
             "service_identity": service_identity,
@@ -803,6 +826,8 @@ def prepare_historical_compilation_training_manifest(bundle: dict[str, Any], *, 
         "tenant_id": tenant_id,
         "project_id": project_id,
         "policy_snapshot_version": policy_snapshot_version,
+        "compiler_version": compiler_version,
+        "kb_version": _CONTRACT_VERSION,
         "ownership": normalized_manifest["ownership"],
         "selection": normalized_manifest["selection"],
         "approval": normalized_manifest["approval"],

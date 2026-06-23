@@ -342,6 +342,8 @@ def _training_dataset_manifest() -> dict[str, object]:
         "tenant_id": "tenant-a",
         "project_id": "project-a",
         "policy_snapshot_version": "1.0.0",
+        "compiler_version": "compiler-1.0",
+        "kb_version": "1.0.0",
         "ownership": {
             "service_identity": "neuro-symbolic-service",
             "requested_by": "neuro-symbolic-service",
@@ -489,6 +491,7 @@ def _production_trace_training_bundle() -> dict[str, object]:
         "tenant_id": "tenant-a",
         "project_id": "project-a",
         "policy_snapshot_version": "1.0.0",
+        "compiler_version": "compiler-1.0",
         "source_kind": "production_execution_traces",
         "ownership": {
             "service_identity": "neuro-symbolic-service",
@@ -527,6 +530,9 @@ def test_training_dataset_ingestion_round_trip_and_replayability(monkeypatch: py
 
     assert summary["dataset_id"] == "training-batch-2026-06-16"
     assert summary["dataset_version"] == "2026.06.16"
+    assert summary["compiler_version"] == "compiler-1.0"
+    assert summary["kb_version"] == "1.0.0"
+    assert summary["policy_snapshot_version"] == "1.0.0"
     assert summary["record_count"] == 4
     assert summary["manifest_digest_sha256"] == manifest["manifest_digest_sha256"]
     assert summary["dataset_digest_sha256"] == replay["dataset_digest_sha256"]
@@ -646,6 +652,8 @@ def test_production_trace_training_requires_redaction_tenant_scope_and_approval(
 
     manifest = prepare_training_dataset_manifest(bundle, caller_identity="neuro-symbolic-service")
     assert manifest["dataset_id"] == "production-trace-batch-2026-06-16"
+    assert manifest["compiler_version"] == "compiler-1.0"
+    assert manifest["kb_version"] == "1.0.0"
     assert manifest["selection"]["trace_ids"] == ["trace-1", "trace-2"]
     assert manifest["approval"]["replay_ids"] == ["replay-1", "replay-2"]
     assert manifest["records"][0]["replay_ref"] == "nsc://replay/trace-1/replay-1"
@@ -703,6 +711,8 @@ def test_production_trace_training_is_replayable_and_cli_ingestable(monkeypatch:
     assert exit_code == 0
     assert summary["dataset_id"] == "production-trace-batch-2026-06-16"
     assert summary["tenant_id"] == "tenant-a"
+    assert summary["compiler_version"] == "compiler-1.0"
+    assert summary["kb_version"] == "1.0.0"
     assert summary["policy_snapshot_version"] == "1.0.0"
     assert summary["trace_ids"] == ["trace-1", "trace-2"]
     assert summary["replay_ids"] == ["replay-1", "replay-2"]
@@ -821,6 +831,7 @@ def _historical_compilation_training_bundle() -> dict[str, object]:
             "tenant_id": "tenant-a",
             "project_id": "project-a",
             "policy_snapshot_version": "1.0.0",
+            "compiler_version": "compiler-1.0",
             "payload": {
                 "compiler_status": "DONE",
                 "rewrite_outcome": "unsafe",
@@ -997,6 +1008,8 @@ def test_historical_compilation_training_dataset_ingests_and_clis(monkeypatch: p
     summary = service.ingest_training_dataset(manifest, caller_identity="neuro-symbolic-service")
     replay_summary = service.ingest_training_dataset(manifest, caller_identity="neuro-symbolic-service")
     assert summary["dataset_id"] == "historical-compilation-batch-2026-06-16"
+    assert summary["compiler_version"] == "compiler-1.0"
+    assert summary["kb_version"] == "1.0.0"
     assert summary["record_count"] == 4
     assert summary["source_kind"] == "historical_compilations"
     assert summary["selection"]["selection_id"] == "selection-hist-2026-06-16"
@@ -1018,6 +1031,8 @@ def test_historical_compilation_training_dataset_ingests_and_clis(monkeypatch: p
 
     assert exit_code == 0
     assert cli_summary["dataset_id"] == "historical-compilation-batch-2026-06-16"
+    assert cli_summary["compiler_version"] == "compiler-1.0"
+    assert cli_summary["kb_version"] == "1.0.0"
     assert cli_summary["record_count"] == 4
     assert cli_summary["source_kind"] == "historical_compilations"
     assert cli_summary["trace_ids"] == ["trace-001", "trace-002", "trace-003", "trace-004"]
