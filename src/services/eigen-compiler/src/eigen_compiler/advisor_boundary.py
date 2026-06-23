@@ -84,6 +84,10 @@ def _first_mapping(payload: dict[str, object], *keys: str) -> dict[str, object]:
 
 def _graph_summary(payload: dict[str, object]) -> dict[str, object]:
     graph = _first_mapping(payload, "telemetry_feature_set", "graph", "graph_encoding", "graph_summary", "logical_graph_schema")
+    if not graph:
+        graph_interface = _first_mapping(payload, "graph_interface", "optimizer_graph_interface")
+        if graph_interface:
+            graph = _first_mapping(graph_interface, "logical_graph", "physical_graph") or graph_interface
     if not graph and isinstance(payload.get("nodes"), list):
         graph = payload
     nodes = graph.get("nodes", [])
