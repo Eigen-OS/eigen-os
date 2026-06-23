@@ -545,6 +545,8 @@ A training dataset manifest MUST include:
 - `tenant_id`
 - `project_id`
 - `policy_snapshot_version`
+- `compiler_version`
+- `kb_version`
 - `ownership`
 - `provenance`
 - `redaction`
@@ -561,17 +563,19 @@ Ingestion MUST fail closed unless:
 - redaction has been applied and validated,
 - every record is already redacted,
 - every record digest matches the canonical payload,
-- the active policy snapshot version matches the manifest.
+- the active policy snapshot version matches the manifest,
+- the compiler version is recorded on the manifest,
+- the KB version is recorded on the manifest and matches the ingest contract.
 
 ### 12.3 Replayability
 
-The corpus MUST preserve the dataset version, record digests, provenance, and redaction metadata so the same manifest can be re-ingested deterministically and later consumed by the training pipeline without live lookups.
+The corpus MUST preserve the dataset version, compiler version, KB version, policy snapshot version, record digests, provenance, and redaction metadata so the same manifest can be re-ingested deterministically and later consumed by the training pipeline without live lookups.
 
 ### 12.4 Historical compilation corpus extraction
 
 Historical compilation corpora MUST be built from replay-safe compiler histories only.
 
-The extraction pipeline MUST collect, for every selected historical compilation record:
+The extraction pipeline MUST collect, for every selected historical compilation record, and carry the bundle-level compiler version into the dataset snapshot:
 
 - `job_id`
 - `trace_id`
