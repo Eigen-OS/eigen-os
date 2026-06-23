@@ -67,6 +67,7 @@ The compiler metadata contract is also stable and deterministic. The canonical n
 - `compiler_passes_json`
 - `compiler_replay_json`
 - `compiler_replay_sha256`
+- `decision_source`
 - `backend_contract_json`
 - `logical_graph_schema_json`
 - `logical_graph_schema_sha256`
@@ -198,7 +199,7 @@ The semantic rule engine gates `validate_ast`, `rewrite_ir`, and `validate_lower
 
 The compiler also emits a bounded symbolic candidate set for advisory review. Each candidate is produced by the symbolic core, has a stable `candidate_id`, a compact feature map, and a legality flag. The emitted candidate set is serialized in compiler metadata as `symbolic_candidate_set_json`.
 
-The payload also contains `ranked_candidates`, a legal-candidate-only list ordered by deterministic compiler-side advisory ordering. The ML advisor is implemented as a separate sidecar service and does not participate in compiler correctness. Each ranked candidate MUST carry a `rank`, a `confidence` score, the bounded logical graph encoding that the advisor consumed, and an `explanation` object with a human-readable `why_preferred` summary plus bounded `influential_features` and `influential_subgraph` hooks. The ranking surface remains advisory only and may be replaced or disabled without changing AQO output or lowering correctness.
+The payload also contains `ranked_candidates`, a legal-candidate-only list ordered by deterministic compiler-side advisory ordering. The payload records the final `decision_source` as one of `symbolic_rules`, `gnn_ranking`, `boosting_ranking`, or `fallback` so the compile trace can show which advisory path produced the final choice. The ML advisor is implemented as a separate sidecar service and does not participate in compiler correctness. Each ranked candidate MUST carry a `rank`, a `confidence` score, the bounded logical graph encoding that the advisor consumed, and an `explanation` object with a human-readable `why_preferred` summary plus bounded `influential_features` and `influential_subgraph` hooks. The ranking surface remains advisory only and may be replaced or disabled without changing AQO output or lowering correctness.
 
 Ranking layers may only score candidates whose `legal` flag is `true`. They must not invent additional candidates, rename emitted IDs, or treat illegal candidates as admissible.
 
@@ -305,7 +306,7 @@ The compiler must persist:
 - deterministic replay bundle with symbolic rule attribution,
 - advisor influence outcome when present.
 
-Observability records must be bounded and must not leak secrets.
+Observability records must be bounded and must not leak secrets. Every compile trace must record the `decision_source` so downstream replay can distinguish symbolic-rule choices from GNN, boosting, or fallback paths.
 
 ---
 

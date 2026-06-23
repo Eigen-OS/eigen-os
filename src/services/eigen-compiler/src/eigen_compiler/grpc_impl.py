@@ -489,6 +489,32 @@ def _selected_candidate_signature(candidate_set: dict[str, object]) -> str:
     return ""
 
 
+def _compiler_decision_source(candidate_set: dict[str, object], *, default: str = "symbolic_rules") -> str:
+    if not isinstance(candidate_set, dict):
+        return default
+
+    explicit = str(candidate_set.get("decision_source", "")).strip()
+    if explicit:
+        return explicit
+
+    ranker = candidate_set.get("ranker", {})
+    if isinstance(ranker, dict):
+        source = str(ranker.get("decision_source", "")).strip()
+        if source:
+            return source
+        model_family = str(ranker.get("model_family", "")).strip().lower()
+        fallback_used = bool(ranker.get("fallback_used", False))
+        if fallback_used:
+            return "fallback"
+        if model_family in {"gnn", "graph_neural_network"} or "gnn" in model_family:
+            return "gnn_ranking"
+        if model_family in {"boosting", "boosted", "gradient_boosting", "xgboost", "lightgbm", "catboost"} or any(
+            token in model_family for token in ("boost", "xgb", "lgbm", "cat")
+        ):
+            return "boosting_ranking"
+    return default
+
+
 def _trace_digest_payload(
     *,
     rpc: str,
@@ -513,6 +539,7 @@ def _trace_digest_payload(
     failure_reason: str = "",
     compiler_replay_sha256: str = "",
     compiler_diagnostics_sha256: str = "",
+    decision_source: str = "",
 ) -> dict[str, str]:
     return {
         "rpc": rpc,
@@ -537,6 +564,7 @@ def _trace_digest_payload(
         "failure_reason": failure_reason,
         "compiler_replay_sha256": compiler_replay_sha256,
         "compiler_diagnostics_sha256": compiler_diagnostics_sha256,
+        "decision_source": decision_source,
     }
 
 
@@ -587,6 +615,10 @@ def _kb_index_compiler_trace(
         policy_snapshot_id = str(metadata.get("policy_snapshot_id", policy_snapshot_version) if metadata else policy_snapshot_version).strip() or policy_snapshot_version
         policy_digest = str(metadata.get("policy_digest", "") if metadata else "").strip()
         candidate_set = json.loads(candidate_set_json) if candidate_set_json else {"candidate_count": 0, "candidates": []}
+        decision_source = _compiler_decision_source(
+            candidate_set,
+            default=str(metadata.get("decision_source", "") if metadata else "").strip() or "symbolic_rules",
+        )
         candidate_entries = candidate_set.get("candidates", []) if isinstance(candidate_set, dict) else []
         pattern_signature = _selected_candidate_signature(candidate_set) if result is not None else f"failure:{failure_stage or 'compile'}"
         trace_payload = _trace_digest_payload(
@@ -612,6 +644,7 @@ def _kb_index_compiler_trace(
             failure_reason=failure_reason,
             compiler_replay_sha256=compiler_replay_sha256,
             compiler_diagnostics_sha256=compiler_diagnostics_sha256,
+            decision_source=decision_source,
         )
         trace_digest = _canonical_compiler_trace_digest(trace_payload)
 
@@ -645,6 +678,7 @@ def _kb_index_compiler_trace(
                 "trace_digest_sha256": trace_digest,
                 "pattern_signature": pattern_signature,
                 "compiler_status": "success" if result is not None else "failure",
+                "decision_source": decision_source,
                 "failure_stage": failure_stage,
                 "failure_reason": failure_reason,
                 "source_sha256": source_digest,
@@ -740,6 +774,7 @@ def _kb_index_compiler_trace(
                 "telemetry_feature_set_json": telemetry_feature_set_json,
                 "telemetry_feature_set_sha256": telemetry_feature_set_sha256,
                 "compiler_status": "success" if result is not None else "failure",
+                "decision_source": decision_source,
                 "accepted_rewrite_ids": _stable_json(accepted),
                 "rejected_rewrite_ids": _stable_json(rejected),
                 "failure_stage": failure_stage,
@@ -1720,6 +1755,7 @@ def _log_end(
             "traceparent": request_context.get("traceparent", ""),
             "stage": "rpc",
             "outcome": "success",
+            "decision_source": metadata.get("decision_source", ""),
             "source_sha256": metadata.get("source_sha256", ""),
             "aqo_sha256": metadata.get("aqo_sha256", ""),
         },
