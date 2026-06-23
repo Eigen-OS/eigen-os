@@ -29,6 +29,8 @@ This specification covers:
 - error and failure data flow (sync + async),
 - observability and trace propagation.
 
+If you are new to the pipeline, start with `docs/architecture/how-it-works.md` and then come back here for the normative flow contract.
+
 This document is aligned with:
 
 - `docs/architecture/contract-map.md`
