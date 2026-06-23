@@ -475,5 +475,313 @@ def prepare_training_dataset_manifest(bundle: dict[str, Any], *, caller_identity
         "record_digests": record_digests,
         "replay_ids": replay_ids,
     }
-    normalized_manifest["dataset_digest_sha256"] = _hex_digest(_stable_json(dataset_digest_source).encode("utf-8"))
+    return normalized_manifest
+
+
+_HISTORICAL_COMPILATION_BUNDLE_SCHEMA = "neuro-symbolic.historical-compilation-training.bundle.v1"
+_HISTORICAL_COMPILATION_RECORD_SCHEMA = "neuro-symbolic.historical-compilation-training.record.v1"
+
+
+def _normalize_string_list(value: Any, *, field_name: str, allow_empty: bool = False) -> tuple[str, ...]:
+    if value in (None, ""):
+        if allow_empty:
+            return tuple()
+        raise ProductionTraceTrainingError(f"{field_name} is required")
+    if isinstance(value, (list, tuple, set)):
+        items = value
+    else:
+        items = (value,)
+    normalized: list[str] = []
+    for item in items:
+        text = str(item).strip()
+        if text and text not in normalized:
+            normalized.append(text)
+    if not normalized and not allow_empty:
+        raise ProductionTraceTrainingError(f"{field_name} is required")
+    return tuple(sorted(normalized))
+
+
+def _normalize_numeric_tree(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(key): _normalize_numeric_tree(nested) for key, nested in sorted(value.items(), key=lambda item: str(item[0]))}
+    if isinstance(value, list):
+        return [_normalize_numeric_tree(item) for item in value]
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return round(float(value), 6)
+    return value
+
+
+def _normalize_historical_compilation_selection(
+    bundle: dict[str, Any],
+    *,
+    caller_identity: str,
+    tenant_id: str,
+    project_id: str,
+    policy_snapshot_version: str,
+) -> TrainingSelectionSummary:
+    selection = _require_mapping(bundle.get("selection"), field_name="selection")
+    selection_id = _require_string(selection.get("selection_id"), field_name="selection.selection_id")
+    selected_by = _require_string(selection.get("selected_by"), field_name="selection.selected_by")
+    selection_reason = _require_string(selection.get("selection_reason"), field_name="selection.selection_reason")
+    trace_ids = _normalize_string_list(selection.get("trace_ids") or selection.get("selected_trace_ids"), field_name="selection.trace_ids")
+    job_ids = _normalize_string_list(selection.get("job_ids"), field_name="selection.job_ids")
+    replay_ids = _normalize_string_list(selection.get("replay_ids"), field_name="selection.replay_ids")
+    selection_policy = _require_string(selection.get("policy_snapshot_version", policy_snapshot_version), field_name="selection.policy_snapshot_version")
+    selection_tenant = _require_string(selection.get("tenant_id", tenant_id), field_name="selection.tenant_id")
+    selection_project = _require_string(selection.get("project_id", project_id), field_name="selection.project_id")
+    if selection_tenant != tenant_id or selection_project != project_id:
+        raise ProductionTraceTrainingError("selection must remain tenant-scoped")
+    if selection_policy != policy_snapshot_version:
+        raise ProductionTraceTrainingError("selection policy snapshot version must match the bundle")
+    if selected_by != caller_identity:
+        raise ProductionTraceTrainingError("selection.selected_by must match the internal caller identity")
+    return TrainingSelectionSummary(
+        trace_ids=trace_ids,
+        replay_ids=replay_ids,
+        selection_id=selection_id,
+        selected_by=selected_by,
+        selection_reason=selection_reason,
+    )
+
+
+def _normalize_historical_compilation_approval(
+    bundle: dict[str, Any],
+    *,
+    tenant_id: str,
+    project_id: str,
+    policy_snapshot_version: str,
+    selection: TrainingSelectionSummary,
+) -> TrainingApprovalSummary:
+    approval = _require_mapping(bundle.get("approval"), field_name="approval")
+    approval_id = _require_string(approval.get("approval_id"), field_name="approval.approval_id")
+    approved_by = _require_string(approval.get("approved_by"), field_name="approval.approved_by")
+    approved_at = _require_string(approval.get("approved_at"), field_name="approval.approved_at")
+    decision = _require_string(approval.get("decision", "approved"), field_name="approval.decision")
+    if decision.lower() != "approved":
+        raise ProductionTraceTrainingError("approval.decision must be approved")
+    approval_ticket_ref = _require_string(approval.get("ticket_ref"), field_name="approval.ticket_ref")
+    approval_policy = _require_string(approval.get("policy_snapshot_version", policy_snapshot_version), field_name="approval.policy_snapshot_version")
+    approval_tenant = _require_string(approval.get("tenant_id", tenant_id), field_name="approval.tenant_id")
+    approval_project = _require_string(approval.get("project_id", project_id), field_name="approval.project_id")
+    replay_ids = _normalize_string_list(approval.get("replay_ids") or selection.replay_ids, field_name="approval.replay_ids")
+    if approval_tenant != tenant_id or approval_project != project_id:
+        raise ProductionTraceTrainingError("approval must remain tenant-scoped")
+    if approval_policy != policy_snapshot_version:
+        raise ProductionTraceTrainingError("approval policy snapshot version must match the bundle")
+    if not set(selection.replay_ids).issubset(set(replay_ids)):
+        raise ProductionTraceTrainingError("approval replay_ids must cover all selected replay identifiers")
+    return TrainingApprovalSummary(
+        approval_id=approval_id,
+        approved_by=approved_by,
+        approved_at=approved_at,
+        ticket_ref=approval_ticket_ref,
+        decision=decision,
+        policy_snapshot_version=approval_policy,
+        tenant_id=approval_tenant,
+        project_id=approval_project,
+        replay_ids=replay_ids,
+    )
+
+
+def _normalize_historical_compilation_record(
+    record: Any,
+    *,
+    idx: int,
+    tenant_id: str,
+    project_id: str,
+    policy_snapshot_version: str,
+    record_schema_version: str,
+) -> dict[str, Any]:
+    mapping = _require_mapping(record, field_name=f"records[{idx}]")
+    record_id = _require_string(mapping.get("record_id"), field_name=f"records[{idx}].record_id")
+    schema_version = _require_string(mapping.get("schema_version"), field_name=f"records[{idx}].schema_version")
+    if schema_version != record_schema_version:
+        raise ProductionTraceTrainingError(f"records[{idx}].schema_version must match the bundle record_schema_version")
+    job_id = _require_string(mapping.get("job_id"), field_name=f"records[{idx}].job_id")
+    trace_id = _require_string(mapping.get("trace_id"), field_name=f"records[{idx}].trace_id")
+    replay_id = _require_string(mapping.get("replay_id"), field_name=f"records[{idx}].replay_id")
+    request_id = _require_string(mapping.get("request_id"), field_name=f"records[{idx}].request_id")
+    record_tenant = _require_string(mapping.get("tenant_id", tenant_id), field_name=f"records[{idx}].tenant_id")
+    record_project = _require_string(mapping.get("project_id", project_id), field_name=f"records[{idx}].project_id")
+    record_policy = _require_string(mapping.get("policy_snapshot_version", policy_snapshot_version), field_name=f"records[{idx}].policy_snapshot_version")
+    if record_tenant != tenant_id or record_project != project_id:
+        raise ProductionTraceTrainingError(f"records[{idx}] must remain tenant-scoped")
+    if record_policy != policy_snapshot_version:
+        raise ProductionTraceTrainingError(f"records[{idx}].policy_snapshot_version must match the bundle")
+    payload = mapping.get("payload")
+    if not isinstance(payload, (dict, list, str, int, float, bool)):
+        raise ProductionTraceTrainingError(f"records[{idx}].payload must be JSON-serializable")
+    if not _is_redacted_payload(payload):
+        raise ProductionTraceTrainingError(f"records[{idx}] must be redacted before ingestion")
+    if not isinstance(payload, dict):
+        raise ProductionTraceTrainingError(f"records[{idx}].payload must be an object for historical compilation corpora")
+    compiler_status = _require_string(payload.get("compiler_status"), field_name=f"records[{idx}].payload.compiler_status")
+    rewrite_outcome = _require_string(payload.get("rewrite_outcome"), field_name=f"records[{idx}].payload.rewrite_outcome")
+    accepted_rewrite_ids = _normalize_string_list(payload.get("accepted_rewrite_ids"), field_name=f"records[{idx}].payload.accepted_rewrite_ids", allow_empty=True)
+    rejected_rewrite_ids = _normalize_string_list(payload.get("rejected_rewrite_ids"), field_name=f"records[{idx}].payload.rejected_rewrite_ids", allow_empty=True)
+    timing_ms = payload.get("timing_ms")
+    if timing_ms is None:
+        timing_ms = payload.get("stage_timings_ms")
+    if timing_ms is None:
+        timing_ms = payload.get("timings_ms")
+    if timing_ms is None:
+        raise ProductionTraceTrainingError(f"records[{idx}].payload.timing_ms is required")
+    final_aqo = payload.get("final_aqo")
+    if final_aqo is None:
+        final_aqo = payload.get("final_aqo_json")
+    if final_aqo is None:
+        raise ProductionTraceTrainingError(f"records[{idx}].payload.final_aqo is required")
+    final_aqo_sha256 = _hex_digest(_stable_json(final_aqo).encode("utf-8"))
+    content_payload = dict(payload)
+    content_payload["accepted_rewrite_ids"] = list(accepted_rewrite_ids)
+    content_payload["rejected_rewrite_ids"] = list(rejected_rewrite_ids)
+    content_payload["timing_ms"] = _normalize_numeric_tree(timing_ms)
+    content_payload["final_aqo"] = final_aqo
+    content_payload["compiler_status"] = compiler_status
+    content_payload["rewrite_outcome"] = rewrite_outcome
+    content_digest_sha256 = _hex_digest(_stable_json(content_payload).encode("utf-8"))
+    provenance = _normalize_record_provenance(mapping.get("provenance"), field_name=f"records[{idx}].provenance")
+    redaction = _normalize_redaction(mapping.get("redaction"), field_name=f"records[{idx}].redaction")
+    return {
+        "record_id": record_id,
+        "schema_version": schema_version,
+        "job_id": job_id,
+        "trace_id": trace_id,
+        "replay_id": replay_id,
+        "tenant_id": tenant_id,
+        "project_id": project_id,
+        "policy_snapshot_version": policy_snapshot_version,
+        "source_kind": "historical_compilation",
+        "content_digest_sha256": content_digest_sha256,
+        "payload": content_payload,
+        "provenance": provenance,
+        "redaction": redaction,
+        "trace_ref": f"nsc://trace/{trace_id}",
+        "replay_ref": f"nsc://replay/{trace_id}/{replay_id}",
+    }
+
+
+def prepare_historical_compilation_training_manifest(bundle: dict[str, Any], *, caller_identity: str) -> dict[str, Any]:
+    schema_version = _require_string(bundle.get("schema_version"), field_name="schema_version")
+    if schema_version != _HISTORICAL_COMPILATION_BUNDLE_SCHEMA:
+        raise ProductionTraceTrainingError("unsupported historical compilation bundle schema")
+    contract_version = _require_string(bundle.get("contract_version", _CONTRACT_VERSION), field_name="contract_version")
+    dataset_id = _require_string(bundle.get("dataset_id"), field_name="dataset_id")
+    dataset_version = _require_string(bundle.get("dataset_version"), field_name="dataset_version")
+    record_schema_version = _require_string(bundle.get("record_schema_version", _HISTORICAL_COMPILATION_RECORD_SCHEMA), field_name="record_schema_version")
+    tenant_id = _require_string(bundle.get("tenant_id"), field_name="tenant_id")
+    project_id = _require_string(bundle.get("project_id"), field_name="project_id")
+    policy_snapshot_version = _require_string(bundle.get("policy_snapshot_version"), field_name="policy_snapshot_version")
+
+    ownership = _require_mapping(bundle.get("ownership"), field_name="ownership")
+    service_identity = _require_string(ownership.get("service_identity"), field_name="ownership.service_identity")
+    requested_by = _require_string(ownership.get("requested_by", caller_identity), field_name="ownership.requested_by")
+    service_role = _require_string(ownership.get("service_role", "internal-ingest"), field_name="ownership.service_role")
+    if service_identity != caller_identity or requested_by != caller_identity:
+        raise ProductionTraceTrainingError("ownership must resolve to the internal caller identity")
+
+    selection = _normalize_historical_compilation_selection(
+        bundle,
+        caller_identity=caller_identity,
+        tenant_id=tenant_id,
+        project_id=project_id,
+        policy_snapshot_version=policy_snapshot_version,
+    )
+    approval = _normalize_historical_compilation_approval(
+        bundle,
+        tenant_id=tenant_id,
+        project_id=project_id,
+        policy_snapshot_version=policy_snapshot_version,
+        selection=selection,
+    )
+    provenance = _normalize_provenance(bundle.get("provenance"), field_name="provenance")
+    redaction = _normalize_redaction(bundle.get("redaction"), field_name="redaction")
+
+    records = bundle.get("records")
+    if not isinstance(records, list) or not records:
+        raise ProductionTraceTrainingError("records must be a non-empty list")
+
+    normalized_records = [
+        _normalize_historical_compilation_record(
+            record,
+            idx=idx,
+            tenant_id=tenant_id,
+            project_id=project_id,
+            policy_snapshot_version=policy_snapshot_version,
+            record_schema_version=record_schema_version,
+        )
+        for idx, record in enumerate(records)
+    ]
+    normalized_records.sort(key=lambda item: (item["trace_id"], item["job_id"], item["record_id"], item["replay_id"]))
+
+    record_digests = [record["content_digest_sha256"] for record in normalized_records]
+    trace_ids = [record["trace_id"] for record in normalized_records]
+    job_ids = [record["job_id"] for record in normalized_records]
+    replay_ids = [record["replay_id"] for record in normalized_records]
+    if tuple(trace_ids) != selection.trace_ids:
+        raise ProductionTraceTrainingError("selection.trace_ids must match the selected records")
+    if tuple(job_ids) != tuple(_normalize_string_list(bundle.get("selection", {}).get("job_ids"), field_name="selection.job_ids")):
+        raise ProductionTraceTrainingError("selection.job_ids must match the selected records")
+    if tuple(replay_ids) != selection.replay_ids:
+        raise ProductionTraceTrainingError("selection.replay_ids must match the selected records")
+
+    normalized_manifest = {
+        "schema_version": _TRAINING_DATASET_MANIFEST_SCHEMA,
+        "contract_version": contract_version,
+        "dataset_id": dataset_id,
+        "dataset_version": dataset_version,
+        "record_schema_version": record_schema_version,
+        "tenant_id": tenant_id,
+        "project_id": project_id,
+        "policy_snapshot_version": policy_snapshot_version,
+        "source_kind": "historical_compilations",
+        "ownership": {
+            "service_identity": service_identity,
+            "requested_by": requested_by,
+            "service_role": service_role,
+        },
+        "selection": {
+            "selection_id": selection.selection_id,
+            "selected_by": selection.selected_by,
+            "selection_reason": selection.selection_reason,
+            "job_ids": list(job_ids),
+            "trace_ids": list(trace_ids),
+            "replay_ids": list(replay_ids),
+            "tenant_id": tenant_id,
+            "project_id": project_id,
+            "policy_snapshot_version": policy_snapshot_version,
+        },
+        "approval": {
+            "approval_id": approval.approval_id,
+            "approved_by": approval.approved_by,
+            "approved_at": approval.approved_at,
+            "decision": approval.decision,
+            "ticket_ref": approval.ticket_ref,
+            "tenant_id": tenant_id,
+            "project_id": project_id,
+            "policy_snapshot_version": policy_snapshot_version,
+            "replay_ids": list(approval.replay_ids),
+        },
+        "provenance": provenance,
+        "redaction": redaction,
+        "records": normalized_records,
+    }
+
+    normalized_manifest["manifest_digest_sha256"] = _hex_digest(_stable_json(normalized_manifest).encode("utf-8"))
+    dataset_digest_source = {
+        "dataset_id": dataset_id,
+        "dataset_version": dataset_version,
+        "tenant_id": tenant_id,
+        "project_id": project_id,
+        "policy_snapshot_version": policy_snapshot_version,
+        "ownership": normalized_manifest["ownership"],
+        "selection": normalized_manifest["selection"],
+        "approval": normalized_manifest["approval"],
+        "provenance": provenance,
+        "redaction": redaction,
+        "record_digests": record_digests,
+        "job_ids": job_ids,
+        "trace_ids": trace_ids,
+        "replay_ids": replay_ids,
+    }
     return normalized_manifest
