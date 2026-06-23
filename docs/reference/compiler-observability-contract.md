@@ -118,6 +118,12 @@ Trace IDs, request IDs, tenant IDs, project IDs, and job IDs MUST NOT be exposed
 
 The evaluation metric families above MUST record successful compile traces and expose the final decision source and latency sliced by compiler version and job type so dashboards can compute model-assisted acceptance rate, fallback rate, and latency.
 
+### 3.1 Evaluation dashboards
+
+For A/B or shadow evaluations, dashboards MUST compare the baseline symbolic core against hybrid mode using the metric families above. For current compiler traffic, `QuantumJob` is the baseline symbolic-core slice and `HybridWorkflow` is the hybrid-mode slice.
+
+The canonical dashboard specification lives in `docs/reference/compiler-evaluation-dashboard.md`.
+
 ---
 
 ## 4. Structured logs
