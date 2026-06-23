@@ -378,6 +378,11 @@ def _timestamp_now() -> Timestamp:
 
 
 def _selected_candidate_signature(candidate_set: dict[str, object]) -> str:
+    if isinstance(candidate_set, dict):
+        selected_candidate_id = str(candidate_set.get("selected_candidate_id", "")).strip()
+        if selected_candidate_id:
+            return selected_candidate_id
+        
     ranked_candidates = candidate_set.get("ranked_candidates", []) if isinstance(candidate_set, dict) else []
     for candidate in ranked_candidates:
         if not isinstance(candidate, dict) or not candidate.get("legal", True):

@@ -179,9 +179,14 @@ def test_compile_circuit_happy_path(grpc_addr: str) -> None:
         "model_version": "pass-path-boosting-v1",
         "objective": "expected_usefulness",
         "explanation_hook": "feature_attribution",
+        "confidence_threshold": 0.9,
+        "selection_mode": "boosting",
+        "fallback_used": False,
+        "fallback_reason": "",
     }
     assert candidate_set["selected_candidate_id"] == candidate_set["ranked_candidates"][0]["candidate_id"]
     assert candidate_set["selected_candidate_explanation"].startswith("Preferred because ")
+    assert candidate_set["selected_candidate_id"] == "symbolic.rewrite_terminal_measurement"
     assert candidate_set["legal_candidate_count"] == len(candidate_set["ranked_candidates"])
     assert [candidate["rank"] for candidate in candidate_set["ranked_candidates"]] == list(
         range(1, len(candidate_set["ranked_candidates"]) + 1)
@@ -375,6 +380,61 @@ def test_pass_path_boosting_model_beats_symbolic_baseline() -> None:
 
     assert model_hits > baseline_hits
     assert _PASS_PATH_BOOSTING_MODEL.training_accuracy >= 0.9
+
+
+def test_pass_path_boosting_low_confidence_falls_back_to_symbolic_baseline(monkeypatch: pytest.MonkeyPatch) -> None:
+    from eigen_compiler import compiler as compiler_mod
+
+    monkeypatch.setattr(compiler_mod, "_PASS_PATH_BOOSTING_CONFIDENCE_THRESHOLD", 0.9)
+    monkeypatch.setattr(compiler_mod, "_symbolic_candidate_confidence", lambda candidate, usefulness_score: 0.5)
+
+    candidate_set = compiler_mod.SymbolicCandidateSet(
+        version="1.0.0",
+        candidate_budget=2,
+        candidates=(
+            compiler_mod.SymbolicCandidate(
+                candidate_id="symbolic.keep_lowered_ir",
+                features={
+                    "candidate_kind": "keep_lowered_ir",
+                    "operation_count": 1,
+                    "measurement_count": 0,
+                    "terminal_measurement_present": False,
+                    "has_expectation": False,
+                    "has_minimize": False,
+                    "distributed_enabled": False,
+                    "distributed_target": "",
+                    "distributed_partition_count": 0,
+                },
+                legal=True,
+                legality_reason="aqo_contract_valid",
+            ),
+            compiler_mod.SymbolicCandidate(
+                candidate_id="symbolic.rewrite_terminal_measurement",
+                features={
+                    "candidate_kind": "terminal_measurement_normalized",
+                    "operation_count": 2,
+                    "measurement_count": 1,
+                    "terminal_measurement_present": True,
+                    "has_expectation": False,
+                    "has_minimize": False,
+                    "distributed_enabled": False,
+                    "distributed_target": "",
+                    "distributed_partition_count": 0,
+                },
+                legal=True,
+                legality_reason="aqo_contract_valid",
+            ),
+        ),
+    )
+
+    payload = compiler_mod._symbolic_candidate_set_payload(candidate_set)
+
+    assert payload["ranker"]["confidence_threshold"] == 0.9
+    assert payload["ranker"]["selection_mode"] == "symbolic_baseline"
+    assert payload["ranker"]["fallback_used"] is True
+    assert payload["ranker"]["fallback_reason"] == "boosting_confidence_below_threshold"
+    assert payload["selected_candidate_id"] == "symbolic.keep_lowered_ir"
+    assert payload["selected_candidate_explanation"].startswith("Preferred because ")
 
 
 def test_compile_job_indexes_trace_and_rewrite_paths_in_kb(
