@@ -11,7 +11,7 @@ The Knowledge Base exposes two distinct behaviors:
 1. **Public record storage** — CRUD/query for KB records and decision logs.
 2. **Optimization Knowledge Base (OKB) retrieval** — deterministic reuse selection for compiler / AQO workflows.
 
-Runtime decision logs are append-only and MUST preserve the audit trail fields required by the neuro-symbolic compliance contract: caller identity, tenant, policy snapshot version, model version, retrieval sources, and final decision.
+Runtime decision logs are append-only and MUST preserve the audit trail fields required by the neuro-symbolic compliance contract: caller identity, tenant, policy snapshot version, model version, retrieval sources, final decision, and the final `decision_source` (`symbolic_rules`, `gnn_ranking`, `boosting_ranking`, or `fallback`).
 
 Compiler traces are indexed into the KB as replay-safe records and decision logs so later queries can bind to trace ID, trace digest, and pattern signature. The canonical rewrite-outcome taxonomy is `accepted`, `rejected`, `equivalent`, and `unsafe`; KB records and model-training corpora MUST use that same label set consistently. Both accepted and rejected rewrite paths MUST be retained, and equivalent/unsafe outcomes MUST be preserved for ranking and safety analysis.
 
