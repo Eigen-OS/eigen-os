@@ -364,6 +364,48 @@ def _kb_timeout_seconds() -> float:
     return max(0.1, value)
 
 
+def _request_timeout_seconds(request_context: dict[str, str]) -> float:
+    """Return a bounded timeout for best-effort KB RPCs.
+
+    The compiler must not let slow advisory side effects exceed the request
+    deadline when one is available, but it also must keep a minimum budget so
+    very small deadlines do not result in an immediate failure path.
+    """
+
+    deadline = str(request_context.get("deadline", "")).strip()
+    timeout = _kb_timeout_seconds()
+    if not deadline:
+        return timeout
+
+    parsed_deadline: float | None = None
+    if deadline.endswith("s"):
+        try:
+            parsed_deadline = float(deadline[:-1])
+        except ValueError:
+            parsed_deadline = None
+    elif ":" in deadline:
+        try:
+            days = 0
+            time_part = deadline
+            if " day" in deadline:
+                day_part, time_part = deadline.split(",", 1)
+                days = int(day_part.split()[0])
+                time_part = time_part.strip()
+            hours, minutes, seconds = time_part.split(":", 2)
+            parsed_deadline = (
+                days * 86400
+                + int(hours) * 3600
+                + int(minutes) * 60
+                + float(seconds)
+            )
+        except Exception:
+            parsed_deadline = None
+
+    if parsed_deadline is None:
+        return timeout
+    return max(0.1, min(timeout, parsed_deadline))
+
+
 def _kb_call_metadata(request_context: dict[str, str]) -> tuple[tuple[str, str], ...]:
     token = os.getenv(_KB_AUTH_TOKEN_ENV, os.getenv("SYSTEM_API_AUTH_TOKEN", "")).strip()
     roles = os.getenv(_KB_ROLES_ENV, "kb:read,kb:write").strip() or "kb:read,kb:write"
@@ -481,9 +523,11 @@ def _kb_index_compiler_trace(
     if not endpoint:
         return
 
+    timeout_seconds = _request_timeout_seconds(request_context)
+
     try:
         channel = grpc.insecure_channel(endpoint)
-        grpc.channel_ready_future(channel).result(timeout=_kb_timeout_seconds())
+        grpc.channel_ready_future(channel).result(timeout=timeout_seconds)
         stub = kb_pb_grpc.KnowledgeBaseServiceStub(channel)
     except Exception as exc:  # pragma: no cover - best-effort indexing
         _LOG.debug("compiler KB channel unavailable: %s", exc)
@@ -584,14 +628,19 @@ def _kb_index_compiler_trace(
 
         request_envelope = _kb_request_envelope(request_context)
 
-        stub.UpsertRecord(
-            kb_pb.UpsertRecordRequest(
-                envelope=request_envelope,
-                record=record,
-                allow_overwrite=True,
-            ),
-            metadata=_kb_call_metadata(request_context),
-        )
+        try:
+            stub.UpsertRecord(
+                kb_pb.UpsertRecordRequest(
+                    envelope=request_envelope,
+                    record=record,
+                    allow_overwrite=True,
+                ),
+                metadata=_kb_call_metadata(request_context),
+                timeout=timeout_seconds,
+            )
+        except Exception as exc:  # pragma: no cover - best-effort indexing
+            _LOG.debug("compiler KB upsert timed out or failed: %s", exc)
+            return
 
         for candidate in candidates:
             if not isinstance(candidate, dict):
@@ -640,13 +689,18 @@ def _kb_index_compiler_trace(
                 feature_snapshot=feature_snapshot,
                 decided_at=_timestamp_now(),
             )
-            stub.AppendDecisionLog(
-                kb_pb.AppendDecisionLogRequest(
-                    envelope=request_envelope,
-                    decision_log=decision_log,
-                ),
-                metadata=_kb_call_metadata(request_context),
-            )
+            try:
+                stub.AppendDecisionLog(
+                    kb_pb.AppendDecisionLogRequest(
+                        envelope=request_envelope,
+                        decision_log=decision_log,
+                    ),
+                    metadata=_kb_call_metadata(request_context),
+                    timeout=timeout_seconds,
+                )
+            except Exception as exc:  # pragma: no cover - best-effort indexing
+                _LOG.debug("compiler KB decision log append timed out or failed: %s", exc)
+                return
     except Exception as exc:  # pragma: no cover - best-effort indexing
         _LOG.debug("compiler KB indexing failed: %s", exc)
     finally:
