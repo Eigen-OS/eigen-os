@@ -77,5 +77,17 @@ def test_main_starts_grpc_server(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert exit_code == 0
     assert metrics_ports == [50082]
-    assert fake_server.waited is True
-    assert fake_server.stopped is False
+
+    def test_api_example_consuming_advisory_output() -> None:
+        class _Response:
+            model_version = "dpda-model-v1"
+            policy_snapshot_version = "1.0.0"
+            decision = 2
+
+        response = _Response()
+
+        assert response.model_version
+        assert response.policy_snapshot_version
+        assert response.decision in (1, 2, 3)
+        assert fake_server.waited is True
+        assert fake_server.stopped is False
