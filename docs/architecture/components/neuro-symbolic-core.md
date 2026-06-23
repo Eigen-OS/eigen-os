@@ -78,7 +78,7 @@ The ML advisor is any neural, graph-based, boosted, heuristic, or statistical co
 - suggest a bounded rewrite or routing option,
 - estimate relative preference under an explicit policy snapshot.
 
-The ML advisor never becomes the source of truth for legality, topology, policy, or device state.
+The ML advisor never becomes the source of truth for legality, topology, policy, or device state. The advisor is deployed as a pure sidecar service: compiler correctness MUST remain unchanged if the advisor is restarted, replaced, or disabled.
 
 The advisor-facing explainability envelope and the offline KB ingestion path MUST both carry the same stable tabular telemetry schema for graph size, fanout, stage counts, historical success rate, latency, backend, and policy-state features. The schema version MUST be `telemetry-tabular-v1`, and the payload MUST remain deterministic for identical normalized telemetry inputs.
 

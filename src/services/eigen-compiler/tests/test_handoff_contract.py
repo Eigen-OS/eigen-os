@@ -153,7 +153,7 @@ def test_handoff_schema_is_versioned_and_bounded() -> None:
     assert replay_bundle["logical_graph_schema"]["shared_between_training_and_inference"] is True
     assert replay_bundle["telemetry_feature_set"]["schema_version"] == "telemetry-tabular-v1"
     assert replay_bundle["telemetry_feature_set"]["offline_online_parity"] is True
-    assert replay_bundle["symbolic_candidate_set"]["ranker"]["model_family"] == "boosting"
+    assert replay_bundle["symbolic_candidate_set"]["ranker"]["model_family"] == "deterministic"
     assert replay_bundle["symbolic_candidate_set"]["selected_candidate_id"] == replay_bundle["symbolic_candidate_set"]["ranked_candidates"][0]["candidate_id"]
     assert replay_bundle["symbolic_candidate_set"]["selected_candidate_explanation"].startswith("Preferred because ")
     assert replay_bundle["symbolic_candidate_set"]["ranked_candidates"][0]["rank"] == 1

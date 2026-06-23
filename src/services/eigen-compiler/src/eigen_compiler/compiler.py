@@ -10,7 +10,7 @@ import re
 
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
-from math import exp, isfinite, log
+from math import isfinite
 from pathlib import Path
 from time import perf_counter
 from typing import Any, Callable, Iterator, TypeVar
@@ -46,14 +46,10 @@ _TABULAR_FEATURE_ORDER = (
     "policy_state",
 )
 
-_BOOSTING_MODEL_FAMILY = "boosting"
-_BOOSTING_MODEL_VERSION = "pass-path-boosting-v1"
-_BOOSTING_MODEL_ROUNDS = 5
-_PASS_PATH_BOOSTING_CONFIDENCE_THRESHOLD = 0.9
-_PASS_PATH_BOOSTING_SELECTION_MODE = "boosting"
-_PASS_PATH_SYMBOLIC_BASELINE_SELECTION_MODE = "symbolic_baseline"
-_PASS_PATH_BOOSTING_FALLBACK_REASON_LOW_CONFIDENCE = "boosting_confidence_below_threshold"
-_PASS_PATH_BOOSTING_FALLBACK_REASON_NO_LEGAL_CANDIDATES = "no_legal_candidates"
+_ADVISORY_MODEL_FAMILY = "deterministic"
+_ADVISORY_MODEL_VERSION = "compiler-advisory-v1"
+_ADVISORY_SELECTION_MODE = "deterministic_legal_preference"
+_ADVISORY_FALLBACK_REASON_NO_LEGAL_CANDIDATES = "no_legal_candidates"
 
 _REPLAY_MODE_DETERMINISTIC = "deterministic"
 _NEURO_MODEL_VERSION_ENV = "EIGEN_NEURO_SYMBOLIC_MODEL_VERSION"
@@ -189,7 +185,7 @@ class SymbolicCandidate:
 class SymbolicCandidateSet:
     version: str
     candidate_budget: int
-    candidates: tuple[SymbolicCandidate, ...]
+    candidates: tuple[SymbolicCandidate | str, ...]
 
 
 @dataclass
@@ -527,7 +523,14 @@ def _symbolic_candidate_features(
     }
 
 
-def _symbolic_candidate_payload(candidate: SymbolicCandidate) -> dict[str, object]:
+def _symbolic_candidate_payload(candidate: SymbolicCandidate | str) -> dict[str, object]:
+    if isinstance(candidate, str):
+        return {
+            "candidate_id": candidate,
+            "features": {},
+            "legal": False,
+            "legality_reason": "candidate_reference",
+        }
     return {
         "candidate_id": candidate.candidate_id,
         "features": candidate.features,
@@ -577,8 +580,8 @@ def _symbolic_candidate_graph_encoding(candidate: SymbolicCandidate) -> dict[str
             "kind": "rank_projection",
             "label": "expected_usefulness",
             "attributes": {
-                "model_family": _BOOSTING_MODEL_FAMILY,
-                "model_version": _BOOSTING_MODEL_VERSION,
+                "model_family": _ADVISORY_MODEL_FAMILY,
+                "model_version": _ADVISORY_MODEL_VERSION,
                 "objective": "expected_usefulness",
             },
         },
@@ -610,388 +613,32 @@ def _symbolic_candidate_graph_encoding(candidate: SymbolicCandidate) -> dict[str
     }
 
 
-def _pass_path_boosting_training_samples() -> tuple[tuple[dict[str, float], int], ...]:
-    def derive(
-        *,
-        candidate_is_normalized: bool,
-        terminal_measurement_present: bool,
-        has_expectation: bool,
-        has_minimize: bool,
-        distributed_enabled: bool,
-        operation_count: int,
-        measurement_count: int,
-        measurement_density: float,
-        graph_size_signal: float,
-        distributed_partition_count: int,
-        label: int,
-    ) -> tuple[dict[str, float], int]:
-        context_strength = int(terminal_measurement_present) + int(has_expectation) + int(has_minimize) + int(distributed_enabled)
-        normalized_path_strength = (1.0 if candidate_is_normalized else 0.0) * (1.0 + float(context_strength))
-        keep_path_strength = (0.0 if candidate_is_normalized else 1.0) * (1.0 + float(4 - context_strength))
-        return (
-            {
-                "candidate_is_normalized": 1.0 if candidate_is_normalized else 0.0,
-                "context_strength": float(context_strength),
-                "normalized_path_strength": round(normalized_path_strength, 6),
-                "keep_path_strength": round(keep_path_strength, 6),
-                "terminal_measurement_present": 1.0 if terminal_measurement_present else 0.0,
-                "has_expectation": 1.0 if has_expectation else 0.0,
-                "has_minimize": 1.0 if has_minimize else 0.0,
-                "distributed_enabled": 1.0 if distributed_enabled else 0.0,
-                "operation_count": float(operation_count),
-                "measurement_count": float(measurement_count),
-                "measurement_density": round(measurement_density, 6),
-                "graph_size_signal": round(graph_size_signal, 6),
-                "distributed_partition_count": float(distributed_partition_count),
-            },
-            label,
-        )
-
-    return (
-        derive(
-            candidate_is_normalized=False,
-            terminal_measurement_present=False,
-            has_expectation=False,
-            has_minimize=False,
-            distributed_enabled=False,
-            operation_count=2,
-            measurement_count=0,
-            measurement_density=0.0,
-            graph_size_signal=0.33,
-            distributed_partition_count=0,
-            label=1,
-        ),
-        derive(
-            candidate_is_normalized=True,
-            terminal_measurement_present=False,
-            has_expectation=False,
-            has_minimize=False,
-            distributed_enabled=False,
-            operation_count=2,
-            measurement_count=0,
-            measurement_density=0.0,
-            graph_size_signal=0.33,
-            distributed_partition_count=0,
-            label=0,
-        ),
-        derive(
-            candidate_is_normalized=True,
-            terminal_measurement_present=True,
-            has_expectation=False,
-            has_minimize=False,
-            distributed_enabled=False,
-            operation_count=6,
-            measurement_count=1,
-            measurement_density=0.166667,
-            graph_size_signal=0.875,
-            distributed_partition_count=0,
-            label=1,
-        ),
-        derive(
-            candidate_is_normalized=False,
-            terminal_measurement_present=True,
-            has_expectation=False,
-            has_minimize=False,
-            distributed_enabled=False,
-            operation_count=6,
-            measurement_count=1,
-            measurement_density=0.166667,
-            graph_size_signal=0.875,
-            distributed_partition_count=0,
-            label=0,
-        ),
-        derive(
-            candidate_is_normalized=True,
-            terminal_measurement_present=False,
-            has_expectation=True,
-            has_minimize=False,
-            distributed_enabled=False,
-            operation_count=5,
-            measurement_count=1,
-            measurement_density=0.2,
-            graph_size_signal=0.75,
-            distributed_partition_count=0,
-            label=1,
-        ),
-        derive(
-            candidate_is_normalized=False,
-            terminal_measurement_present=False,
-            has_expectation=True,
-            has_minimize=False,
-            distributed_enabled=False,
-            operation_count=5,
-            measurement_count=1,
-            measurement_density=0.2,
-            graph_size_signal=0.75,
-            distributed_partition_count=0,
-            label=0,
-        ),
-        derive(
-            candidate_is_normalized=True,
-            terminal_measurement_present=False,
-            has_expectation=False,
-            has_minimize=True,
-            distributed_enabled=False,
-            operation_count=5,
-            measurement_count=0,
-            measurement_density=0.0,
-            graph_size_signal=0.72,
-            distributed_partition_count=0,
-            label=1,
-        ),
-        derive(
-            candidate_is_normalized=False,
-            terminal_measurement_present=False,
-            has_expectation=False,
-            has_minimize=True,
-            distributed_enabled=False,
-            operation_count=5,
-            measurement_count=0,
-            measurement_density=0.0,
-            graph_size_signal=0.72,
-            distributed_partition_count=0,
-            label=0,
-        ),
-        derive(
-            candidate_is_normalized=True,
-            terminal_measurement_present=False,
-            has_expectation=False,
-            has_minimize=False,
-            distributed_enabled=True,
-            operation_count=7,
-            measurement_count=2,
-            measurement_density=0.285714,
-            graph_size_signal=0.9,
-            distributed_partition_count=2,
-            label=1,
-        ),
-        derive(
-            candidate_is_normalized=False,
-            terminal_measurement_present=False,
-            has_expectation=False,
-            has_minimize=False,
-            distributed_enabled=True,
-            operation_count=7,
-            measurement_count=2,
-            measurement_density=0.285714,
-            graph_size_signal=0.9,
-            distributed_partition_count=2,
-            label=0,
-        ),
-    )
-
-
-def _boosting_candidate_features(candidate: SymbolicCandidate) -> dict[str, object]:
+def _symbolic_candidate_priority(candidate: SymbolicCandidate) -> tuple[int, int, str]:
     features = candidate.features
-    operation_count = int(features.get("operation_count", 0) or 0)
-    measurement_count = int(features.get("measurement_count", 0) or 0)
-    terminal_measurement_present = bool(features.get("terminal_measurement_present", False))
-    has_expectation = bool(features.get("has_expectation", False))
-    has_minimize = bool(features.get("has_minimize", False))
-    distributed_enabled = bool(features.get("distributed_enabled", False))
-    measurement_density = round(measurement_count / max(operation_count, 1), 6)
-    graph_size_signal = round(
-        min((operation_count + measurement_count) / max(operation_count + 4, 1), 1.0),
-        6,
-    )
-    candidate_is_normalized = str(features.get("candidate_kind", "")).strip() == "terminal_measurement_normalized"
-    context_strength = int(terminal_measurement_present) + int(has_expectation) + int(has_minimize) + int(distributed_enabled)
-    normalized_path_strength = (1.0 if candidate_is_normalized else 0.0) * (1.0 + float(context_strength))
-    keep_path_strength = (0.0 if candidate_is_normalized else 1.0) * (1.0 + float(4 - context_strength))
-    return {
-        "candidate_kind": str(features.get("candidate_kind", "")).strip(),
-        "candidate_is_normalized": 1.0 if candidate_is_normalized else 0.0,
-        "context_strength": float(context_strength),
-        "normalized_path_strength": round(normalized_path_strength, 6),
-        "keep_path_strength": round(keep_path_strength, 6),
-        "operation_count": float(operation_count),
-        "measurement_count": float(measurement_count),
-        "measurement_density": measurement_density,
-        "terminal_measurement_present": 1.0 if terminal_measurement_present else 0.0,
-        "has_expectation": 1.0 if has_expectation else 0.0,
-        "has_minimize": 1.0 if has_minimize else 0.0,
-        "distributed_enabled": 1.0 if distributed_enabled else 0.0,
-        "graph_size_signal": graph_size_signal,
-        "distributed_partition_count": float(int(features.get("distributed_partition_count", 0) or 0)),
-        "qubits": float(int(features.get("qubits", 0) or 0)),
-    }
+    candidate_kind = str(features.get("candidate_kind", "")).strip()
+    kind_priority = 0 if candidate_kind == "terminal_measurement_normalized" else 1
+    legality_priority = 0 if candidate.legal else 1
+    return (kind_priority, legality_priority, candidate.candidate_id)
 
 
-@dataclass(frozen=True)
-class _BoostingStump:
-    feature_name: str
-    threshold: float
-    positive_on_ge: bool
-    alpha: float
-
-    def vote(self, features: dict[str, float]) -> int:
-        value = float(features.get(self.feature_name, 0.0) or 0.0)
-        is_positive = value >= self.threshold
-        if not self.positive_on_ge:
-            is_positive = not is_positive
-        return 1 if is_positive else -1
-
-    def contribution(self, features: dict[str, float]) -> float:
-        return round(self.alpha * self.vote(features), 6)
-
-    def describe(self, features: dict[str, float]) -> dict[str, object]:
-        value = float(features.get(self.feature_name, 0.0) or 0.0)
-        branch = ">= threshold" if (value >= self.threshold) == self.positive_on_ge else "< threshold"
-        return {
-            "name": self.feature_name,
-            "value": value,
-            "threshold": self.threshold,
-            "branch": branch,
-            "contribution": self.contribution(features),
-        }
-
-
-@dataclass(frozen=True)
-class _PassPathBoostingModel:
-    base_margin: float
-    stumps: tuple[_BoostingStump, ...]
-    feature_names: tuple[str, ...]
-    training_sample_count: int
-    training_accuracy: float
-
-    def margin(self, features: dict[str, float]) -> float:
-        return self.base_margin + sum(stump.alpha * stump.vote(features) for stump in self.stumps)
-
-    def score(self, features: dict[str, float]) -> float:
-        return round(1.0 / (1.0 + exp(-self.margin(features))), 6)
-
-    def predict_label(self, features: dict[str, float]) -> int:
-        return 1 if self.margin(features) >= 0.0 else 0
-
-    def contributions(self, features: dict[str, float]) -> list[dict[str, object]]:
-        return [stump.describe(features) for stump in self.stumps]
-
-
-def _fit_best_stump(
-    samples: tuple[tuple[dict[str, float], int], ...],
-    sample_weights: list[float],
-    feature_names: tuple[str, ...],
-) -> tuple[_BoostingStump | None, float, list[int]]:
-    best_stump: _BoostingStump | None = None
-    best_error = 1.0
-    best_predictions: list[int] = []
-    signed_labels = [1 if label else -1 for _, label in samples]
-
-    for feature_name in feature_names:
-        feature_values = sorted({float(features.get(feature_name, 0.0) or 0.0) for features, _ in samples})
-        if not feature_values:
-            continue
-        candidate_thresholds: list[float] = []
-        if len(feature_values) == 1:
-            value = feature_values[0]
-            candidate_thresholds = [value - 0.5, value + 0.5]
-        else:
-            candidate_thresholds = [feature_values[0] - 0.5]
-            candidate_thresholds.extend((left + right) / 2.0 for left, right in zip(feature_values, feature_values[1:]))
-            candidate_thresholds.append(feature_values[-1] + 0.5)
-
-        for threshold in candidate_thresholds:
-            for positive_on_ge in (True, False):
-                predictions: list[int] = []
-                error = 0.0
-                for (features, _), weight, signed_label in zip(samples, sample_weights, signed_labels):
-                    value = float(features.get(feature_name, 0.0) or 0.0)
-                    is_positive = value >= threshold
-                    if not positive_on_ge:
-                        is_positive = not is_positive
-                    prediction = 1 if is_positive else -1
-                    predictions.append(prediction)
-                    if prediction != signed_label:
-                        error += weight
-                if error < best_error - 1e-12:
-                    alpha = 0.5 * log((1.0 - max(error, 1e-6)) / max(error, 1e-6))
-                    best_error = error
-                    best_stump = _BoostingStump(
-                        feature_name=feature_name,
-                        threshold=threshold,
-                        positive_on_ge=positive_on_ge,
-                        alpha=round(alpha, 6),
-                    )
-                    best_predictions = predictions
-
-    return best_stump, best_error, best_predictions
-
-
-def _train_pass_path_boosting_model(
-    samples: tuple[tuple[dict[str, float], int], ...],
-    *,
-    rounds: int = 5,
-) -> _PassPathBoostingModel:
-    feature_names = tuple(sorted(samples[0][0].keys()))
-    signed_labels = [1 if label else -1 for _, label in samples]
-    sample_weights = [1.0 / len(samples)] * len(samples)
-    stumps: list[_BoostingStump] = []
-    base_margin = 0.0
-
-    for _ in range(rounds):
-        stump, error, predictions = _fit_best_stump(samples, sample_weights, feature_names)
-        if stump is None:
-            break
-        if error >= 0.5:
-            break
-        epsilon = min(max(error, 1e-6), 1.0 - 1e-6)
-        stump = _BoostingStump(
-            feature_name=stump.feature_name,
-            threshold=stump.threshold,
-            positive_on_ge=stump.positive_on_ge,
-            alpha=round(0.5 * log((1.0 - epsilon) / epsilon), 6),
-        )
-        stumps.append(stump)
-        updated_weights = []
-        for weight, label, prediction in zip(sample_weights, signed_labels, predictions):
-            updated_weights.append(weight * exp(-stump.alpha * label * prediction))
-        normalizer = sum(updated_weights) or 1.0
-        sample_weights = [weight / normalizer for weight in updated_weights]
-
-    model = _PassPathBoostingModel(
-        base_margin=base_margin,
-        stumps=tuple(stumps),
-        feature_names=feature_names,
-        training_sample_count=len(samples),
-        training_accuracy=round(
-            sum(
-                1
-                for features, label in samples
-                if (1 if (base_margin + sum(stump.alpha * stump.vote(features) for stump in stumps)) >= 0.0 else 0) == label
-            )
-            / len(samples),
-            6,
-        ),
-    )
-    return model
-
-
-_PASS_PATH_BOOSTING_MODEL = _train_pass_path_boosting_model(_pass_path_boosting_training_samples())
-
-
-def _boosting_candidate_usefulness_score(candidate: SymbolicCandidate) -> float:
-    features = _boosting_candidate_features(candidate)
-    return _PASS_PATH_BOOSTING_MODEL.score(features)
-
-
-def _symbolic_candidate_usefulness_score(candidate: SymbolicCandidate) -> float:
-    return _boosting_candidate_usefulness_score(candidate)
-
-
-def _symbolic_candidate_confidence(candidate: SymbolicCandidate, usefulness_score: float) -> float:
+def _symbolic_candidate_confidence(candidate: SymbolicCandidate, *, rank: int) -> float:
+    features = candidate.features
     graph = _symbolic_candidate_graph_encoding(candidate)
-    graph_size_bonus = min((len(graph["nodes"]) + len(graph["edges"])) * 0.01, 0.08)
-    confidence = 0.52 + (usefulness_score * 0.34) + graph_size_bonus
-    if candidate.legal:
-        confidence += 0.08
-    if bool(candidate.features.get("terminal_measurement_present", False)):
+    candidate_kind = str(features.get("candidate_kind", "")).strip()
+    graph_size_bonus = min((len(graph["nodes"]) + len(graph["edges"])) * 0.01, 0.05)
+    confidence = 0.92 + graph_size_bonus
+    if candidate_kind == "terminal_measurement_normalized":
         confidence += 0.03
-    return round(min(confidence, 0.99), 6)
+    if not candidate.legal:
+        confidence -= 0.12
+    confidence -= min(max(rank - 1, 0) * 0.01, 0.05)
+    return round(max(0.5, min(confidence, 0.99)), 6)
 
 
 def _symbolic_candidate_explanation(
     candidate: SymbolicCandidate,
-    usefulness_score: float,
+    *,
+    rank: int,
     confidence: float,
 ) -> dict[str, object]:
     graph = _symbolic_candidate_graph_encoding(candidate)
@@ -1003,7 +650,7 @@ def _symbolic_candidate_explanation(
     has_expectation = bool(features.get("has_expectation", False))
     has_minimize = bool(features.get("has_minimize", False))
     distributed_enabled = bool(features.get("distributed_enabled", False))
-    graph_size_bonus = round(min((len(graph["nodes"]) + len(graph["edges"])) * 0.01, 0.08), 6)
+    graph_size_bonus = round(min((len(graph["nodes"]) + len(graph["edges"])) * 0.01, 0.05), 6)
 
     influential_features: list[dict[str, object]] = []
     if candidate_kind == "terminal_measurement_normalized":
@@ -1030,7 +677,7 @@ def _symbolic_candidate_explanation(
                 "name": "candidate_kind",
                 "value": candidate_kind,
                 "contribution": 0.30,
-                "reason": "the candidate remains a legal rewrite option without changing rewrite class",
+                "reason": "the candidate remains a legal rewrite option with deterministic ordering",
             }
         )
         if terminal_measurement_present:
@@ -1048,7 +695,7 @@ def _symbolic_candidate_explanation(
             "name": "measurement_count",
             "value": measurement_count,
             "contribution": round(min(measurement_count * 0.03, 0.15), 6),
-            "reason": "more measurement activity increases the rewrite signal density",
+            "reason": "measurement activity contributes to bounded candidate context",
         }
     )
     influential_features.append(
@@ -1056,7 +703,7 @@ def _symbolic_candidate_explanation(
             "name": "operation_count",
             "value": operation_count,
             "contribution": round(min(operation_count * 0.01, 0.08), 6),
-            "reason": "larger candidates receive a bounded size-based usefulness boost",
+            "reason": "larger candidates receive a bounded size-based advisory weight",
         }
     )
     if has_expectation:
@@ -1065,7 +712,7 @@ def _symbolic_candidate_explanation(
                 "name": "has_expectation",
                 "value": has_expectation,
                 "contribution": 0.04,
-                "reason": "expectation-aware rewrites are prioritized",
+                "reason": "expectation-aware rewrites remain visible in the advisory envelope",
             }
         )
     if has_minimize:
@@ -1074,7 +721,7 @@ def _symbolic_candidate_explanation(
                 "name": "has_minimize",
                 "value": has_minimize,
                 "contribution": 0.04,
-                "reason": "minimize-aware rewrites are prioritized",
+                "reason": "minimize-aware rewrites remain visible in the advisory envelope",
             }
         )
     if distributed_enabled:
@@ -1083,7 +730,7 @@ def _symbolic_candidate_explanation(
                 "name": "distributed_enabled",
                 "value": distributed_enabled,
                 "contribution": 0.03,
-                "reason": "distributed routing support contributes a bounded priority boost",
+                "reason": "distributed routing support contributes bounded advisory context",
             }
         )
 
@@ -1096,31 +743,19 @@ def _symbolic_candidate_explanation(
         "edge_ids": [edge["id"] for edge in graph["edges"]],
     }
 
-    summary_clauses = []
     if candidate_kind == "terminal_measurement_normalized":
-        summary_clauses.append("it normalizes the terminal measurement shape")
+        summary_clause = "it normalizes the terminal measurement shape"
     elif terminal_measurement_present:
-        summary_clauses.append("it preserves an existing terminal measurement anchor")
+        summary_clause = "it preserves an existing terminal measurement anchor"
     else:
-        summary_clauses.append("it remains a legal rewrite candidate with a compact graph signature")
-    summary_clauses.append(
-        f"it is legal and scored expected usefulness {usefulness_score:.6f} with confidence {confidence:.6f}"
-    )
-    if measurement_count:
-        summary_clauses.append(
-            f"it carries {measurement_count} measurement operation(s) across {operation_count} total operation(s)"
-        )
-    if has_expectation:
-        summary_clauses.append("expectation support contributed to the preferred ranking")
-    if has_minimize:
-        summary_clauses.append("minimize support contributed to the preferred ranking")
-    if distributed_enabled:
-        summary_clauses.append("distributed routing support contributed to the preferred ranking")
-    summary_clauses.append(
-        f"the focus subgraph covers nodes {', '.join(focus_subgraph['node_ids'])}"
-    )
+        summary_clause = "it remains a legal rewrite candidate with a compact graph signature"
 
-    summary = "Preferred because " + "; ".join(summary_clauses) + "."
+    summary = (
+        f"Preferred because {summary_clause}; it is rank {rank} in deterministic advisory order "
+        f"with confidence {confidence:.6f}; it carries {measurement_count} measurement operation(s) "
+        f"across {operation_count} total operation(s); the focus subgraph covers nodes "
+        f"{', '.join(focus_subgraph['node_ids'])}."
+    )
 
     return {
         "summary": summary,
@@ -1128,15 +763,15 @@ def _symbolic_candidate_explanation(
         "influential_features": influential_features,
         "influential_subgraph": focus_subgraph,
         "score_breakdown": {
-            "expected_usefulness_score": usefulness_score,
+            "advisory_rank": rank,
             "confidence": confidence,
             "graph_size_bonus": graph_size_bonus,
         },
     }
 
 
-def _baseline_symbolic_candidate(candidates: list[SymbolicCandidate]) -> SymbolicCandidate | None:
-    legal_candidates = [candidate for candidate in candidates if candidate.legal]
+def _baseline_symbolic_candidate(candidates: list[SymbolicCandidate | str]) -> SymbolicCandidate | None:
+    legal_candidates = [candidate for candidate in candidates if isinstance(candidate, SymbolicCandidate) and candidate.legal]
     if not legal_candidates:
         return None
     for candidate in legal_candidates:
@@ -1147,25 +782,24 @@ def _baseline_symbolic_candidate(candidates: list[SymbolicCandidate]) -> Symboli
 
 def _symbolic_candidate_set_payload(candidate_set: SymbolicCandidateSet) -> dict[str, object]:
     candidates = [_symbolic_candidate_payload(candidate) for candidate in candidate_set.candidates]
-    legal_candidates = [candidate for candidate in candidate_set.candidates if candidate.legal]
+    legal_candidates = [candidate for candidate in candidate_set.candidates if isinstance(candidate, SymbolicCandidate) and candidate.legal]
     ranked_candidates = []
-    for candidate in legal_candidates:
-        usefulness_score = _symbolic_candidate_usefulness_score(candidate)
-        confidence = _symbolic_candidate_confidence(candidate, usefulness_score)
-        explanation = _symbolic_candidate_explanation(candidate, usefulness_score, confidence)
+    ordered_candidates = sorted(legal_candidates, key=_symbolic_candidate_priority)
+    for index, candidate in enumerate(ordered_candidates, start=1):
+        expected_usefulness_score = round(1.0 - min((index - 1) * 0.01, 0.05), 6)
+        confidence = _symbolic_candidate_confidence(candidate, rank=index)
+        explanation = _symbolic_candidate_explanation(candidate, rank=index, confidence=confidence)
         ranked_candidates.append(
             {
                 **_symbolic_candidate_payload(candidate),
-                "expected_usefulness_score": usefulness_score,
+                "rank": index,
+                "expected_usefulness_score": expected_usefulness_score,
                 "confidence": confidence,
                 "graph_encoding": _symbolic_candidate_graph_encoding(candidate),
                 "explanation": explanation,
                 "why_preferred": explanation["why_preferred"],
             }
         )
-    ranked_candidates.sort(
-        key=lambda item: (-float(item["expected_usefulness_score"]), -float(item["confidence"]), item["candidate_id"])
-    )
     for index, item in enumerate(ranked_candidates, start=1):
         item["rank"] = index
     
@@ -1173,33 +807,27 @@ def _symbolic_candidate_set_payload(candidate_set: SymbolicCandidateSet) -> dict
     selected_candidate = ranked_candidates[0] if ranked_candidates else None
     fallback_used = False
     fallback_reason = ""
-    selection_mode = _PASS_PATH_BOOSTING_SELECTION_MODE
+    selection_mode = _ADVISORY_SELECTION_MODE
 
     if not ranked_candidates:
         fallback_used = True
-        fallback_reason = _PASS_PATH_BOOSTING_FALLBACK_REASON_NO_LEGAL_CANDIDATES
-        selection_mode = _PASS_PATH_SYMBOLIC_BASELINE_SELECTION_MODE
-    elif float(ranked_candidates[0]["confidence"]) < _PASS_PATH_BOOSTING_CONFIDENCE_THRESHOLD:
-        fallback_used = True
-        fallback_reason = _PASS_PATH_BOOSTING_FALLBACK_REASON_LOW_CONFIDENCE
-        selection_mode = _PASS_PATH_SYMBOLIC_BASELINE_SELECTION_MODE
-
-    if fallback_used and baseline_candidate is not None:
-        baseline_usefulness_score = _symbolic_candidate_usefulness_score(baseline_candidate)
-        baseline_confidence = _symbolic_candidate_confidence(baseline_candidate, baseline_usefulness_score)
-        baseline_explanation = _symbolic_candidate_explanation(
-            baseline_candidate,
-            baseline_usefulness_score,
-            baseline_confidence,
-        )
-        selected_candidate = {
-            **_symbolic_candidate_payload(baseline_candidate),
-            "expected_usefulness_score": baseline_usefulness_score,
-            "confidence": baseline_confidence,
-            "graph_encoding": _symbolic_candidate_graph_encoding(baseline_candidate),
-            "explanation": baseline_explanation,
-            "why_preferred": baseline_explanation["why_preferred"],
-        }
+        fallback_reason = _ADVISORY_FALLBACK_REASON_NO_LEGAL_CANDIDATES
+        selection_mode = "symbolic_baseline"
+        if baseline_candidate is not None:
+            baseline_explanation = _symbolic_candidate_explanation(
+                baseline_candidate,
+                rank=1,
+                confidence=_symbolic_candidate_confidence(baseline_candidate, rank=1),
+            )
+            selected_candidate = {
+                **_symbolic_candidate_payload(baseline_candidate),
+                "rank": 1,
+                "expected_usefulness_score": 0.0,
+                "confidence": _symbolic_candidate_confidence(baseline_candidate, rank=1),
+                "graph_encoding": _symbolic_candidate_graph_encoding(baseline_candidate),
+                "explanation": baseline_explanation,
+                "why_preferred": baseline_explanation["why_preferred"],
+            }
 
     selected_candidate_id = str(selected_candidate["candidate_id"]) if selected_candidate else ""
     selected_candidate_explanation = str(selected_candidate["why_preferred"]) if selected_candidate else ""
@@ -1210,18 +838,17 @@ def _symbolic_candidate_set_payload(candidate_set: SymbolicCandidateSet) -> dict
         "candidate_count": len(candidates),
         "legal_candidate_count": len(legal_candidates),
         "ranker": {
-            "model_family": _BOOSTING_MODEL_FAMILY,
-            "model_version": _BOOSTING_MODEL_VERSION,
-            "objective": "expected_usefulness",
+            "model_family": _ADVISORY_MODEL_FAMILY,
+            "model_version": _ADVISORY_MODEL_VERSION,
+            "objective": "stable_legal_candidate_order",
             "explanation_hook": "feature_attribution",
-            "confidence_threshold": _PASS_PATH_BOOSTING_CONFIDENCE_THRESHOLD,
             "selection_mode": selection_mode,
             "fallback_used": fallback_used,
             "fallback_reason": fallback_reason,
         },
         "selected_candidate_id": selected_candidate_id,
         "selected_candidate_explanation": selected_candidate_explanation,
-        "candidate_ids": [candidate["candidate_id"] for candidate in candidates],
+        "candidate_ids": [str(candidate["candidate_id"]) for candidate in candidates],
         "candidates": candidates,
         "ranked_candidates": ranked_candidates,
     }
