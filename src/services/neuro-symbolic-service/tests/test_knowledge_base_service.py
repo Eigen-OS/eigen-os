@@ -494,6 +494,23 @@ def test_kb_queries_support_trace_digest_and_pattern_signature_filters(grpc_addr
     assert decisions.decision_logs[0].feature_snapshot["kb_decision_log_ref"] == "kb://decision-log/decision-trace-filter"
 
 
+def test_api_example_query_decision_logs(grpc_addr: str) -> None:
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = kb_pb_grpc.KnowledgeBaseServiceStub(channel)
+    envelope = _envelope(request_id="kb-api-example")
+
+    response = stub.QueryDecisionLogs(
+        kb_pb.QueryDecisionLogsRequest(
+            envelope=envelope,
+            trace_id="trace-b",
+            model_version="m1",
+            page_size=10,
+        )
+    )
+
+    assert hasattr(response, "decision_logs")
+
+
 def test_kb_records_and_decision_logs_are_project_scoped(grpc_addr: str) -> None:
     channel = grpc.insecure_channel(grpc_addr)
     stub = kb_pb_grpc.KnowledgeBaseServiceStub(channel)
