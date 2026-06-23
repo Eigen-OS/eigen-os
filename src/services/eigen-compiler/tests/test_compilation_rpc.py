@@ -175,9 +175,8 @@ def test_compile_circuit_happy_path(grpc_addr: str) -> None:
     assert candidate_set["candidate_count"] == len(candidate_set["candidates"])
     assert candidate_set["candidate_count"] <= candidate_set["candidate_budget"]
     assert candidate_set["ranker"] == {
-        "model_family": "gnn",
-        "model_version": "logical-rewrite-ranker-v1",
-        "graph_schema_version": "logical-compiler-graph-v1",
+        "model_family": "boosting",
+        "model_version": "pass-path-boosting-v1",
         "objective": "expected_usefulness",
         "explanation_hook": "feature_attribution",
     }
@@ -200,6 +199,182 @@ def test_compile_circuit_happy_path(grpc_addr: str) -> None:
         "graph_features",
         "rank_projection",
     ]
+
+
+def test_pass_path_boosting_model_beats_symbolic_baseline() -> None:
+    from eigen_compiler.compiler import SymbolicCandidate, _PASS_PATH_BOOSTING_MODEL, _boosting_candidate_usefulness_score
+
+    def candidate(
+        *,
+        candidate_id: str,
+        candidate_kind: str,
+        terminal_measurement_present: bool,
+        has_expectation: bool,
+        has_minimize: bool,
+        distributed_enabled: bool,
+        operation_count: int,
+        measurement_count: int,
+        measurement_density: float,
+        graph_size_signal: float,
+        distributed_partition_count: int,
+    ) -> SymbolicCandidate:
+        return SymbolicCandidate(
+            candidate_id=candidate_id,
+            features={
+                "candidate_kind": candidate_kind,
+                "candidate_is_normalized": 1.0 if candidate_kind == "terminal_measurement_normalized" else 0.0,
+                "context_strength": float(int(terminal_measurement_present) + int(has_expectation) + int(has_minimize) + int(distributed_enabled)),
+                "normalized_path_strength": float((1.0 if candidate_kind == "terminal_measurement_normalized" else 0.0) * (1.0 + int(terminal_measurement_present) + int(has_expectation) + int(has_minimize) + int(distributed_enabled))),
+                "keep_path_strength": float((0.0 if candidate_kind == "terminal_measurement_normalized" else 1.0) * (1.0 + (4 - (int(terminal_measurement_present) + int(has_expectation) + int(has_minimize) + int(distributed_enabled))))),
+                "operation_count": float(operation_count),
+                "measurement_count": float(measurement_count),
+                "measurement_density": float(measurement_density),
+                "terminal_measurement_present": 1.0 if terminal_measurement_present else 0.0,
+                "has_expectation": 1.0 if has_expectation else 0.0,
+                "has_minimize": 1.0 if has_minimize else 0.0,
+                "distributed_enabled": 1.0 if distributed_enabled else 0.0,
+                "graph_size_signal": float(graph_size_signal),
+                "distributed_partition_count": float(distributed_partition_count),
+                "qubits": 1.0,
+            },
+            legal=True,
+            legality_reason="aqo_contract_valid",
+        )
+
+    benchmark_cases = [
+        (
+            candidate(
+                candidate_id="symbolic.keep_lowered_ir",
+                candidate_kind="keep_lowered_ir",
+                terminal_measurement_present=True,
+                has_expectation=False,
+                has_minimize=False,
+                distributed_enabled=False,
+                operation_count=6,
+                measurement_count=1,
+                measurement_density=0.166667,
+                graph_size_signal=0.875,
+                distributed_partition_count=0,
+            ),
+            candidate(
+                candidate_id="symbolic.rewrite_terminal_measurement",
+                candidate_kind="terminal_measurement_normalized",
+                terminal_measurement_present=True,
+                has_expectation=False,
+                has_minimize=False,
+                distributed_enabled=False,
+                operation_count=6,
+                measurement_count=1,
+                measurement_density=0.166667,
+                graph_size_signal=0.875,
+                distributed_partition_count=0,
+            ),
+            "symbolic.rewrite_terminal_measurement",
+        ),
+        (
+            candidate(
+                candidate_id="symbolic.keep_lowered_ir",
+                candidate_kind="keep_lowered_ir",
+                terminal_measurement_present=False,
+                has_expectation=True,
+                has_minimize=False,
+                distributed_enabled=False,
+                operation_count=5,
+                measurement_count=1,
+                measurement_density=0.2,
+                graph_size_signal=0.75,
+                distributed_partition_count=0,
+            ),
+            candidate(
+                candidate_id="symbolic.rewrite_terminal_measurement",
+                candidate_kind="terminal_measurement_normalized",
+                terminal_measurement_present=False,
+                has_expectation=True,
+                has_minimize=False,
+                distributed_enabled=False,
+                operation_count=5,
+                measurement_count=1,
+                measurement_density=0.2,
+                graph_size_signal=0.75,
+                distributed_partition_count=0,
+            ),
+            "symbolic.rewrite_terminal_measurement",
+        ),
+        (
+            candidate(
+                candidate_id="symbolic.keep_lowered_ir",
+                candidate_kind="keep_lowered_ir",
+                terminal_measurement_present=False,
+                has_expectation=False,
+                has_minimize=False,
+                distributed_enabled=False,
+                operation_count=2,
+                measurement_count=0,
+                measurement_density=0.0,
+                graph_size_signal=0.33,
+                distributed_partition_count=0,
+            ),
+            candidate(
+                candidate_id="symbolic.rewrite_terminal_measurement",
+                candidate_kind="terminal_measurement_normalized",
+                terminal_measurement_present=False,
+                has_expectation=False,
+                has_minimize=False,
+                distributed_enabled=False,
+                operation_count=2,
+                measurement_count=0,
+                measurement_density=0.0,
+                graph_size_signal=0.33,
+                distributed_partition_count=0,
+            ),
+            "symbolic.keep_lowered_ir",
+        ),
+        (
+            candidate(
+                candidate_id="symbolic.keep_lowered_ir",
+                candidate_kind="keep_lowered_ir",
+                terminal_measurement_present=False,
+                has_expectation=False,
+                has_minimize=False,
+                distributed_enabled=True,
+                operation_count=7,
+                measurement_count=2,
+                measurement_density=0.285714,
+                graph_size_signal=0.9,
+                distributed_partition_count=2,
+            ),
+            candidate(
+                candidate_id="symbolic.rewrite_terminal_measurement",
+                candidate_kind="terminal_measurement_normalized",
+                terminal_measurement_present=False,
+                has_expectation=False,
+                has_minimize=False,
+                distributed_enabled=True,
+                operation_count=7,
+                measurement_count=2,
+                measurement_density=0.285714,
+                graph_size_signal=0.9,
+                distributed_partition_count=2,
+            ),
+            "symbolic.rewrite_terminal_measurement",
+        ),
+    ]
+
+    baseline_hits = 0
+    model_hits = 0
+    for keep_candidate, normalized_candidate, preferred_candidate_id in benchmark_cases:
+        baseline_prediction = keep_candidate.candidate_id
+        model_prediction = max(
+            (keep_candidate, normalized_candidate),
+            key=lambda candidate: _boosting_candidate_usefulness_score(candidate),
+        ).candidate_id
+        if baseline_prediction == preferred_candidate_id:
+            baseline_hits += 1
+        if model_prediction == preferred_candidate_id:
+            model_hits += 1
+
+    assert model_hits > baseline_hits
+    assert _PASS_PATH_BOOSTING_MODEL.training_accuracy >= 0.9
 
 
 def test_compile_job_indexes_trace_and_rewrite_paths_in_kb(
