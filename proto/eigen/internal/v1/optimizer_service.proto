@@ -35,7 +35,7 @@ message TopologyContext {
 }
 
 message GraphEncodingContext {
-  // Versioned canonical graph encoding shape.
+  // Legacy alias for the logical graph snapshot. Retained for backward compatibility.
   string encoding_version = 1;
   // Canonical serialization format name.
   string canonical_format = 2;
@@ -45,6 +45,51 @@ message GraphEncodingContext {
   string canonical_sha256 = 4;
   // True when the canonical payload round-trips without loss.
   bool round_trip_stability = 5;
+}
+
+message LogicalGraphContext {
+  // Stable identifier for the logical graph snapshot.
+  string graph_id = 1;
+  // Stable identifier that must match the paired physical graph snapshot.
+  string graph_pair_id = 2;
+  // Schema version for the logical graph payload.
+  string schema_version = 3;
+  // Canonical serialization format name.
+  string canonical_format = 4;
+  // Canonicalized logical graph payload encoded as deterministic JSON.
+  string canonical_graph_json = 5;
+  // SHA-256 of the canonical logical graph payload.
+  string canonical_sha256 = 6;
+  // True when the canonical payload round-trips without loss.
+  bool round_trip_stability = 7;
+}
+
+message PhysicalGraphContext {
+  // Stable identifier for the physical graph snapshot.
+  string graph_id = 1;
+  // Stable identifier that must match the paired logical graph snapshot.
+  string graph_pair_id = 2;
+  // Schema version for the physical graph payload.
+  string schema_version = 3;
+  // Canonical serialization format name.
+  string canonical_format = 4;
+  // Canonicalized physical graph payload encoded as deterministic JSON.
+  string canonical_graph_json = 5;
+  // SHA-256 of the canonical physical graph payload.
+  string canonical_sha256 = 6;
+  // True when the canonical payload round-trips without loss.
+  bool round_trip_stability = 7;
+}
+
+message GraphInterfaceContext {
+  // Stable identifier for the optimizer-owned logical/physical graph binding.
+  string graph_interface_id = 1;
+  // Canonical logical graph snapshot emitted by the compiler.
+  LogicalGraphContext logical_graph = 2;
+  // Canonical physical graph snapshot supplied by Driver Manager.
+  PhysicalGraphContext physical_graph = 3;
+  // Digest of the binding contract across logical and physical graphs.
+  string alignment_sha256 = 4;
 }
 
 message OptimizerPolicy {
@@ -79,9 +124,13 @@ message OptimizerServiceOptimizeCircuitRequest {
   uint32 candidate_budget = 7;
   uint32 timeout_ms = 8;
   map<string, string> trace_context = 9;
-  GraphEncodingContext graph_encoding = 10;
+  // Legacy alias for the logical graph snapshot only.
+  // Retained for backward compatibility; new optimizer-service integrations SHOULD use graph_interface.
+  GraphEncodingContext graph_encoding = 10 [deprecated = true];
   OptimizerPolicy policy = 11;
   OptimizerRankingSemantics ranking_semantics = 12;
+  // Canonical logical/physical graph bridge used by optimizer integrations.
+  GraphInterfaceContext graph_interface = 13;
 }
 
 message ScoreBreakdown {
@@ -138,6 +187,8 @@ message OptimizerServiceOptimizeCircuitResponse {
   double confidence_score = 14;
   string explanation_ref = 15;
   string optimizer_digest = 16;
+  // Echoed graph interface binding for deterministic replay and auditability.
+  GraphInterfaceContext graph_interface = 18;
 
   // Classification label for the model output.
   // Allowed values: Advisory, Optimization, Recommendation, Informational.
