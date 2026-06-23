@@ -12,6 +12,7 @@ They should stay precise, explicit, and implementation-agnostic.
 - Benchmark Run API: [`api/benchmark-run.md`](api/benchmark-run.md)
 - Benchmark observability contract: [`benchmark-observability-contract.md`](benchmark-observability-contract.md)
 - Internal API: [`api/grpc-internal.md`](api/grpc-internal.md)
+- Rewrite outcome taxonomy: [`rewrite-outcome-taxonomy.md`](rewrite-outcome-taxonomy.md)
 - Error model: [`error-model.md`](error-model.md)
 - Error mapping: [`error-mapping.md`](error-mapping.md)
 - Multi-device execution (split/merge): [`multi-device-execution-contract.md`](multi-device-execution-contract.md)

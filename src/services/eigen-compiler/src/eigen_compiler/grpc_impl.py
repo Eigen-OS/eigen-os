@@ -93,6 +93,7 @@ _AQO_DIGEST_TOTALS: Counter[tuple[tuple[str, str], ...]] = Counter()
 _REPLAY_TOTALS: Counter[tuple[tuple[str, str], ...]] = Counter()
 _SEEN_AQO_DIGESTS: set[str] = set()
 _OBSERVABILITY_CONTRACT_VERSION = "1.0.0"
+_REWRITE_OUTCOME_TAXONOMY = ("accepted", "rejected", "equivalent", "unsafe")
 
 _REDACTED_VALUE = "[REDACTED]"
 _MASKED_EMAIL_VALUE = "[REDACTED_EMAIL]"
@@ -236,6 +237,33 @@ def _bump(counter: Counter[tuple[tuple[str, str], ...]], **labels: str) -> None:
 
 def _stable_json(value: object) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+
+
+def _normalize_rewrite_outcome(value: object, *, field_name: str) -> str:
+    text = str(value).strip().lower()
+    if text not in _REWRITE_OUTCOME_TAXONOMY:
+        allowed = ", ".join(_REWRITE_OUTCOME_TAXONOMY)
+        raise ValueError(f"{field_name} must be one of: {allowed}")
+    return text
+
+
+def _rewrite_outcome_for_candidate(
+    candidate: dict[str, object],
+    *,
+    selected: bool,
+    result_present: bool,
+    candidate_legal: bool,
+) -> str:
+    explicit = candidate.get("rewrite_outcome")
+    if explicit not in (None, ""):
+        return _normalize_rewrite_outcome(explicit, field_name="candidate.rewrite_outcome")
+    if bool(candidate.get("unsafe", False)) or str(candidate.get("safety_status", "")).strip().lower() == "unsafe":
+        return "unsafe"
+    if bool(candidate.get("equivalent", False)) or str(candidate.get("rewrite_relation", "")).strip().lower() == "equivalent":
+        return "equivalent"
+    if selected and candidate_legal and result_present:
+        return "accepted"
+    return "rejected"
 
 
 def _bump_stage(stage: str, elapsed_seconds: float, outcome: str) -> None:
@@ -572,7 +600,12 @@ def _kb_index_compiler_trace(
             if not candidate_id:
                 continue
             candidate_legal = bool(candidate.get("legal", False))
-            rewrite_outcome = "accepted" if candidate_id == pattern_signature and candidate_legal and result is not None else "rejected"
+            rewrite_outcome = _rewrite_outcome_for_candidate(
+                candidate,
+                selected=candidate_id == pattern_signature,
+                result_present=result is not None,
+                candidate_legal=candidate_legal,
+            )
             feature_snapshot = {
                 "trace_id": request_context.get("trace_id", "").strip(),
                 "request_id": request_context.get("request_id", "").strip(),
