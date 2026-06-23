@@ -71,6 +71,33 @@ Clients **SHOULD** send:
 
 ## 3. Services Overview
 
+## API Examples
+
+### Querying the Knowledge Base
+
+```python
+response = stub.QueryDecisionLogs(
+    kb_pb.QueryDecisionLogsRequest(
+        envelope=envelope,
+        trace_id="trace-123",
+        model_version="m1",
+        page_size=10,
+    )
+)
+
+assert response.decision_logs
+assert response.decision_logs[0].decision_id
+```
+
+### Consuming Advisory Output
+
+```python
+response = service.ScoreCompilationPlan(request, context)
+assert response.model_version
+assert response.policy_snapshot_version
+assert response.decision in (1, 2, 3)
+```
+
 ### 3.1 JobService
 
 ```protobuf
