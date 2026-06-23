@@ -11,7 +11,7 @@ The Knowledge Base exposes two distinct behaviors:
 1. **Public record storage** — CRUD/query for KB records and decision logs.
 2. **Optimization Knowledge Base (OKB) retrieval** — deterministic reuse selection for compiler / AQO workflows.
 
-Runtime decision logs are append-only and MUST preserve the audit trail fields required by the neuro-symbolic compliance contract: caller identity, tenant, policy snapshot version, model version, retrieval sources, final decision, and the final `decision_source` (`symbolic_rules`, `gnn_ranking`, `boosting_ranking`, or `fallback`).
+Runtime decision logs are append-only and MUST preserve the audit trail fields required by the neuro-symbolic compliance contract: caller identity, tenant, policy snapshot version, model version, retrieval sources, final decision, and the final `decision_source` (`symbolic_rules`, `gnn_ranking`, `boosting_ranking`, or `fallback`). Each runtime decision log MUST also expose canonical KB provenance references: `kb://decision-log/<decision_id>`, `kb://replay/<decision_id>`, and `kb://provenance/<decision_id>`.
 
 Compiler traces are indexed into the KB as replay-safe records and decision logs so later queries can bind to trace ID, trace digest, and pattern signature. The canonical rewrite-outcome taxonomy is `accepted`, `rejected`, `equivalent`, and `unsafe`; KB records and model-training corpora MUST use that same label set consistently. Both accepted and rejected rewrite paths MUST be retained, and equivalent/unsafe outcomes MUST be preserved for ranking and safety analysis.
 
@@ -82,7 +82,7 @@ Normative rules:
 - Requests that omit required boundary fields MUST fail closed.
 - The same normalized `knowledge_context` MUST produce the same replay identity, candidate ordering, and provenance fields.
 
-Compiler trace index lookups use the same replay-safe discipline: `QueryRecords` and `QueryDecisionLogs` MAY filter by `trace_id`, `trace_digest_sha256`, and `pattern_signature`, and these fields MUST remain bounded, deterministic, and queryable without introducing model-authored truth.
+Compiler trace index lookups use the same replay-safe discipline: `QueryRecords` and `QueryDecisionLogs` MAY filter by `trace_id`, `trace_digest_sha256`, and `pattern_signature`, and these fields MUST remain bounded, deterministic, and queryable without introducing model-authored truth. Decision-log responses and optimizer candidates MUST carry KB provenance references for replay and explanation, and those references MUST be stable across identical inputs.
 
 ### 2.4.2 `PatternRecord`
 

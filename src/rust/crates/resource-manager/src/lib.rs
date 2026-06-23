@@ -1488,9 +1488,17 @@ pub struct ExplainBackendSelectionResponse {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExplainKnowledgeBaseProvenance {
+    pub decision_log_ref: String,
+    pub replay_bundle_ref: String,
+    pub provenance_ref: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExplainDecisionProvenance {
     pub tenant_context: ExplainTenantEvidence,
     pub policy_context: ExplainPolicyEvidence,
+    pub knowledge_base: ExplainKnowledgeBaseProvenance,
     pub evidence_ids: Vec<String>,
 }
 
@@ -3060,6 +3068,11 @@ pub fn explain_backend_selection(
                 fallback_reason: request.policy_context.fallback_reason.clone(),
                 plugin_trace: request.policy_context.plugin_trace.clone(),
             },
+            knowledge_base: ExplainKnowledgeBaseProvenance {
+                decision_log_ref: format!("kb://decision-log/{}", decision.decision_id),
+                replay_bundle_ref: format!("kb://replay/{}", decision.decision_id),
+                provenance_ref: format!("kb://provenance/{}", decision.decision_id),
+            },
             evidence_ids: vec![
                 format!("backend-decision:{}", decision.decision_id),
                 format!("tenant:{}:project:{}", redacted_tenant, redacted_project),
@@ -3069,6 +3082,9 @@ pub fn explain_backend_selection(
                     request.policy_context.policy_bundle_version
                 ),
                 format!("reason:{:?}", request.policy_context.transition_reason_code),
+                format!("kb://decision-log/{}", decision.decision_id),
+                format!("kb://replay/{}", decision.decision_id),
+                format!("kb://provenance/{}", decision.decision_id),
             ],
         },
         confidence: ExplainConfidenceMetadata {

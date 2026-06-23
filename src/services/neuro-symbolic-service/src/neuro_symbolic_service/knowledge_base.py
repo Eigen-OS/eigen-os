@@ -736,6 +736,15 @@ class KnowledgeBaseService:
         self._validate_decision_log(request.decision_log, context)
         sec_ctx, policy_version = self._retrieval_security_context(context, operation="append_decision_log")
         feature_snapshot = dict(getattr(request.decision_log, "feature_snapshot", {}) or {})
+        decision_log_ref = self._decision_log_ref(str(request.decision_log.decision_id).strip())
+        replay_bundle_ref = self._replay_bundle_ref(str(request.decision_log.decision_id).strip())
+        provenance_ref = self._decision_provenance_ref(str(request.decision_log.decision_id).strip())
+        feature_snapshot.setdefault("kb_decision_log_ref", decision_log_ref)
+        feature_snapshot.setdefault("kb_replay_bundle_ref", replay_bundle_ref)
+        feature_snapshot.setdefault("kb_provenance_ref", provenance_ref)
+        request.decision_log.feature_snapshot.clear()
+        for key, value in feature_snapshot.items():
+            request.decision_log.feature_snapshot[key] = str(value)
         caller_identity = getattr(sec_ctx, "subject", "") or ""
         retrieval_sources = _audit_string_list(
             feature_snapshot.get("retrieval_sources")
@@ -865,6 +874,9 @@ class KnowledgeBaseService:
                     "contract_version": _KB_CONTRACT_VERSION,
                     "candidate_source": item.candidate_source,
                     "source_ref": item.provenance_ref,
+                    "decision_log_ref": item.metadata.get("decision_log_ref", ""),
+                    "replay_bundle_ref": item.metadata.get("replay_bundle_ref", ""),
+                    "provenance_ref": item.metadata.get("provenance_ref", item.provenance_ref),
                     "transformation_ref": item.transformation_ref,
                     "explanation_ref": item.explanation_ref,
                     "compatibility_window": item.compatibility_window,
@@ -967,6 +979,9 @@ class KnowledgeBaseService:
             snapshot["confidence"] = f"{explainability_envelope['confidence']:.6f}"
             snapshot["retrieval_references"] = _stable_json(explainability_envelope["retrieval_references"])
             snapshot["replay_digest"] = explainability_envelope["replay_digest"]
+            snapshot["kb_decision_log_ref"] = self._decision_log_ref(decision_log.decision_id)
+            snapshot["kb_replay_bundle_ref"] = self._replay_bundle_ref(decision_log.decision_id)
+            snapshot["kb_provenance_ref"] = self._decision_provenance_ref(decision_log.decision_id)
             for key, value in snapshot.items():
                 decision_log.feature_snapshot[key] = str(value)
             decided_at = payload.get("decided_at")
@@ -1019,6 +1034,9 @@ class KnowledgeBaseService:
                         "evaluation_bundle_hash": str(payload.get("evaluation_bundle_hash", "")).strip(),
                         "promotion_policy_version": str(payload.get("promotion_policy_version", "")).strip(),
                         "explainability_envelope": explainability_envelope,
+                        "kb_decision_log_ref": self._decision_log_ref(decision_log.decision_id),
+                        "kb_replay_bundle_ref": self._replay_bundle_ref(decision_log.decision_id),
+                        "kb_provenance_ref": self._decision_provenance_ref(decision_log.decision_id),
                     },
                     model_version=decision_log.model_version,
                     training_set_hash=str(payload.get("training_set_hash", "")).strip(),
@@ -2254,9 +2272,15 @@ class KnowledgeBaseService:
     def _candidate_from_decision_log(self, entry: _StoredDecisionLog, query: dict[str, Any]) -> _OptimizationCandidate:
         candidate_id = f"okb-decision-{entry.decision_log.decision_id}"
         compatibility_window = f"{entry.decision_log.model_version or query['optimizer_version']}::{query['backend_profile_id'] or 'any'}"
+        decision_log_ref = self._decision_log_ref(entry.decision_log.decision_id)
+        replay_bundle_ref = self._replay_bundle_ref(entry.decision_log.decision_id)
+        provenance_ref = self._decision_provenance_ref(entry.decision_log.decision_id)
         basis = {
             "kind": "decision_log",
             "decision_id": entry.decision_log.decision_id,
+            "decision_log_ref": decision_log_ref,
+            "replay_bundle_ref": replay_bundle_ref,
+            "provenance_ref": provenance_ref,
             "trace_id": entry.decision_log.trace_id,
             "model_version": entry.decision_log.model_version,
             "component": entry.decision_log.component,
@@ -2270,7 +2294,7 @@ class KnowledgeBaseService:
             candidate_source="decision_log",
             optimization_type="decision-lineage-reuse",
             transformation_ref=entry.decision_log.selected_action or entry.decision_log.decision_id,
-            provenance_ref=entry.decision_log.trace_id or entry.decision_log.decision_id,
+            provenance_ref=provenance_ref,
             compatibility_window=compatibility_window,
             basis=basis,
             query=query,
@@ -2361,6 +2385,9 @@ class KnowledgeBaseService:
             "tenant_id": query["tenant_id"],
             "project_id": query["project_id"],
             "capability_scope": tuple(query.get("capability_scope", ())),
+            "decision_log_ref": basis.get("decision_log_ref", ""),
+            "replay_bundle_ref": basis.get("replay_bundle_ref", ""),
+            "provenance_ref": basis.get("provenance_ref", ""),
         }
         return _OptimizationCandidate(
             candidate_id=candidate_id,
@@ -3063,8 +3090,17 @@ class KnowledgeBaseService:
             "created_before": self._ts_signature(getattr(query_filter, "created_before", None)),
         }
 
+    def _decision_log_ref(self, decision_id: str) -> str:
+        return f"kb://decision-log/{decision_id}"
+
+
     def _replay_bundle_ref(self, record_id: str) -> str:
         return f"kb://replay/{record_id}"
+
+
+    def _decision_provenance_ref(self, decision_id: str) -> str:
+        return f"kb://provenance/{decision_id}"
+
 
     # Reconstructed Missing Internals -------------------------------------
 

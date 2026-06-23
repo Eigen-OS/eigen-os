@@ -173,6 +173,11 @@ fn explain_backend_selection_contract_matches_golden_fixture() {
                 "fallback_reason": response.decision_provenance.policy_context.fallback_reason,
                 "plugin_trace": response.decision_provenance.policy_context.plugin_trace,
             },
+            "knowledge_base": {
+                "decision_log_ref": response.decision_provenance.knowledge_base.decision_log_ref,
+                "replay_bundle_ref": response.decision_provenance.knowledge_base.replay_bundle_ref,
+                "provenance_ref": response.decision_provenance.knowledge_base.provenance_ref,
+            },
             "evidence_ids": response.decision_provenance.evidence_ids,
         },
     });
