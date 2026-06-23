@@ -48,6 +48,12 @@ _TABULAR_FEATURE_ORDER = (
 
 _BOOSTING_MODEL_FAMILY = "boosting"
 _BOOSTING_MODEL_VERSION = "pass-path-boosting-v1"
+_BOOSTING_MODEL_ROUNDS = 5
+_PASS_PATH_BOOSTING_CONFIDENCE_THRESHOLD = 0.9
+_PASS_PATH_BOOSTING_SELECTION_MODE = "boosting"
+_PASS_PATH_SYMBOLIC_BASELINE_SELECTION_MODE = "symbolic_baseline"
+_PASS_PATH_BOOSTING_FALLBACK_REASON_LOW_CONFIDENCE = "boosting_confidence_below_threshold"
+_PASS_PATH_BOOSTING_FALLBACK_REASON_NO_LEGAL_CANDIDATES = "no_legal_candidates"
 
 _REPLAY_MODE_DETERMINISTIC = "deterministic"
 _NEURO_MODEL_VERSION_ENV = "EIGEN_NEURO_SYMBOLIC_MODEL_VERSION"
@@ -1129,6 +1135,16 @@ def _symbolic_candidate_explanation(
     }
 
 
+def _baseline_symbolic_candidate(candidates: list[SymbolicCandidate]) -> SymbolicCandidate | None:
+    legal_candidates = [candidate for candidate in candidates if candidate.legal]
+    if not legal_candidates:
+        return None
+    for candidate in legal_candidates:
+        if candidate.candidate_id == "symbolic.keep_lowered_ir":
+            return candidate
+    return legal_candidates[0]
+
+
 def _symbolic_candidate_set_payload(candidate_set: SymbolicCandidateSet) -> dict[str, object]:
     candidates = [_symbolic_candidate_payload(candidate) for candidate in candidate_set.candidates]
     legal_candidates = [candidate for candidate in candidate_set.candidates if candidate.legal]
@@ -1153,6 +1169,41 @@ def _symbolic_candidate_set_payload(candidate_set: SymbolicCandidateSet) -> dict
     for index, item in enumerate(ranked_candidates, start=1):
         item["rank"] = index
     
+    baseline_candidate = _baseline_symbolic_candidate(list(candidate_set.candidates))
+    selected_candidate = ranked_candidates[0] if ranked_candidates else None
+    fallback_used = False
+    fallback_reason = ""
+    selection_mode = _PASS_PATH_BOOSTING_SELECTION_MODE
+
+    if not ranked_candidates:
+        fallback_used = True
+        fallback_reason = _PASS_PATH_BOOSTING_FALLBACK_REASON_NO_LEGAL_CANDIDATES
+        selection_mode = _PASS_PATH_SYMBOLIC_BASELINE_SELECTION_MODE
+    elif float(ranked_candidates[0]["confidence"]) < _PASS_PATH_BOOSTING_CONFIDENCE_THRESHOLD:
+        fallback_used = True
+        fallback_reason = _PASS_PATH_BOOSTING_FALLBACK_REASON_LOW_CONFIDENCE
+        selection_mode = _PASS_PATH_SYMBOLIC_BASELINE_SELECTION_MODE
+
+    if fallback_used and baseline_candidate is not None:
+        baseline_usefulness_score = _symbolic_candidate_usefulness_score(baseline_candidate)
+        baseline_confidence = _symbolic_candidate_confidence(baseline_candidate, baseline_usefulness_score)
+        baseline_explanation = _symbolic_candidate_explanation(
+            baseline_candidate,
+            baseline_usefulness_score,
+            baseline_confidence,
+        )
+        selected_candidate = {
+            **_symbolic_candidate_payload(baseline_candidate),
+            "expected_usefulness_score": baseline_usefulness_score,
+            "confidence": baseline_confidence,
+            "graph_encoding": _symbolic_candidate_graph_encoding(baseline_candidate),
+            "explanation": baseline_explanation,
+            "why_preferred": baseline_explanation["why_preferred"],
+        }
+
+    selected_candidate_id = str(selected_candidate["candidate_id"]) if selected_candidate else ""
+    selected_candidate_explanation = str(selected_candidate["why_preferred"]) if selected_candidate else ""
+
     return {
         "version": candidate_set.version,
         "candidate_budget": candidate_set.candidate_budget,
@@ -1163,9 +1214,13 @@ def _symbolic_candidate_set_payload(candidate_set: SymbolicCandidateSet) -> dict
             "model_version": _BOOSTING_MODEL_VERSION,
             "objective": "expected_usefulness",
             "explanation_hook": "feature_attribution",
+            "confidence_threshold": _PASS_PATH_BOOSTING_CONFIDENCE_THRESHOLD,
+            "selection_mode": selection_mode,
+            "fallback_used": fallback_used,
+            "fallback_reason": fallback_reason,
         },
-        "selected_candidate_id": ranked_candidates[0]["candidate_id"] if ranked_candidates else "",
-        "selected_candidate_explanation": ranked_candidates[0]["why_preferred"] if ranked_candidates else "",
+        "selected_candidate_id": selected_candidate_id,
+        "selected_candidate_explanation": selected_candidate_explanation,
         "candidate_ids": [candidate["candidate_id"] for candidate in candidates],
         "candidates": candidates,
         "ranked_candidates": ranked_candidates,
