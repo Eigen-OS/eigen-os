@@ -142,6 +142,7 @@ def _trace_digest_payload(
     failure_reason: str = "",
     compiler_replay_sha256: str = "",
     compiler_diagnostics_sha256: str = "",
+    decision_source: str = "",
 ) -> dict[str, str]:
     return {
         "rpc": rpc,
@@ -166,6 +167,7 @@ def _trace_digest_payload(
         "failure_reason": failure_reason,
         "compiler_replay_sha256": compiler_replay_sha256,
         "compiler_diagnostics_sha256": compiler_diagnostics_sha256,
+        "decision_source": decision_source,
     }
 
 
@@ -217,18 +219,21 @@ def test_compile_circuit_happy_path(grpc_addr: str) -> None:
     assert resp.metadata["compiler_replay_json"]
     assert len(resp.metadata["compiler_replay_sha256"]) == 64
     assert len(resp.metadata["symbolic_candidate_set_sha256"]) == 64
+    assert resp.metadata["decision_source"] == "symbolic_rules"
 
     candidate_set = json.loads(resp.metadata["symbolic_candidate_set_json"])
     assert candidate_set["version"] == "1.0.0"
     assert candidate_set["candidate_budget"] == 8
     assert candidate_set["candidate_count"] == len(candidate_set["candidates"])
     assert candidate_set["candidate_count"] <= candidate_set["candidate_budget"]
+    assert candidate_set["decision_source"] == "symbolic_rules"
     assert candidate_set["ranker"] == {
         "model_family": "deterministic",
         "model_version": "compiler-advisory-v1",
         "objective": "stable_legal_candidate_order",
         "explanation_hook": "feature_attribution",
         "selection_mode": "deterministic_legal_preference",
+        "decision_source": "symbolic_rules",
         "fallback_used": False,
         "fallback_reason": "",
     }
@@ -252,6 +257,8 @@ def test_compile_circuit_happy_path(grpc_addr: str) -> None:
         "graph_features",
         "rank_projection",
     ]
+    decision_lineage = json.loads(resp.metadata["decision_lineage_json"])
+    assert decision_lineage["decision_source"] == "symbolic_rules"
 
 
 def test_deterministic_advisor_prefers_terminal_measurement_candidates() -> None:
@@ -336,6 +343,7 @@ def test_deterministic_advisor_prefers_terminal_measurement_candidates() -> None
         "objective": "stable_legal_candidate_order",
         "explanation_hook": "feature_attribution",
         "selection_mode": "deterministic_legal_preference",
+        "decision_source": "symbolic_rules",
         "fallback_used": False,
         "fallback_reason": "",
     }
@@ -474,6 +482,7 @@ def test_compile_job_indexes_trace_and_rewrite_paths_in_kb(
         policy_digest=resp.metadata["policy_digest"],
         compiler_replay_sha256=resp.metadata["compiler_replay_sha256"],
         compiler_diagnostics_sha256=hashlib.sha256(resp.metadata["compiler_diagnostics_json"].encode("utf-8")).hexdigest(),
+        decision_source=resp.metadata["decision_source"],
     )
     trace_digest = hashlib.sha256(_stable_json(trace_payload).encode("utf-8")).hexdigest()
 

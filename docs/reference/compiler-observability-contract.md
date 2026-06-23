@@ -109,8 +109,9 @@ Compiler logs MUST include stable correlation fields:
 - `elapsed_ms`
 - `aqo_sha256`
 - `source_sha256`
+- `decision_source`
 
-When the symbolic rewrite pipeline is executed, logs MUST additionally include `rewrite_stage`, `rewrite_stage_index`, `rewrite_stage_outcome`, and `rewrite_stage_digest`.
+When the symbolic rewrite pipeline is executed, logs MUST additionally include `rewrite_stage`, `rewrite_stage_index`, `rewrite_stage_outcome`, and `rewrite_stage_digest`. For compile-end traces, logs MUST also include `decision_source` with one of `symbolic_rules`, `gnn_ranking`, `boosting_ranking`, or `fallback`.
 
 ---
 
@@ -132,6 +133,7 @@ Required payload fields:
 - `logical_graph_schema_sha256`
 - `telemetry_feature_set_json`
 - `telemetry_feature_set_sha256`
+- `decision_source`
 
 Those payloads MUST remain deterministic for identical inputs and MUST include only bounded trace and metric fields:
 
@@ -139,7 +141,7 @@ Those payloads MUST remain deterministic for identical inputs and MUST include o
 - metric fields: `rpc`, `stage`, `outcome`, `elapsed_ms`
 - label-family bounds: no request, trace, tenant, or project identifiers in metric labels
 
-`compiler_diagnostics_json` MUST summarize the compiler stage order, the resolved workload profile, and the backend contract in a machine-readable payload that remains stable for identical inputs.
+`compiler_diagnostics_json` MUST summarize the compiler stage order, the resolved workload profile, the backend contract, and the final `decision_source` in a machine-readable payload that remains stable for identical inputs.
 
 `symbolic_candidate_set_json` MUST summarize the bounded candidate set emitted by the symbolic core. Each candidate entry MUST expose a stable `candidate_id`, a compact feature map, and a boolean legality flag. The payload MUST also expose `ranked_candidates`, a legal-candidate-only list ordered by deterministic compiler-side advisory ordering. The ML advisor is a separate sidecar service and may be disabled without changing compiler correctness. Each ranked entry MUST expose `rank`, `confidence`, the `graph_encoding` consumed by the advisory layer, and an `explanation` object with a human-readable `why_preferred` summary plus bounded `influential_features` and `influential_subgraph` hooks. `selected_candidate_explanation` MUST mirror the first ranked candidate summary. Advisory layers MUST only score candidates where `legal` is true.
 

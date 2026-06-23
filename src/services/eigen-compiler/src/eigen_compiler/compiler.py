@@ -55,6 +55,11 @@ _ADVISORY_MODEL_VERSION = "compiler-advisory-v1"
 _ADVISORY_SELECTION_MODE = "deterministic_legal_preference"
 _ADVISORY_FALLBACK_REASON_NO_LEGAL_CANDIDATES = "no_legal_candidates"
 
+_DECISION_SOURCE_SYMBOLIC_RULES = "symbolic_rules"
+_DECISION_SOURCE_GNN_RANKING = "gnn_ranking"
+_DECISION_SOURCE_BOOSTING_RANKING = "boosting_ranking"
+_DECISION_SOURCE_FALLBACK = "fallback"
+
 _REPLAY_MODE_DETERMINISTIC = "deterministic"
 _NEURO_MODEL_VERSION_ENV = "EIGEN_NEURO_SYMBOLIC_MODEL_VERSION"
 _NEURO_POLICY_SNAPSHOT_VERSION_ENV = "EIGEN_NEURO_SYMBOLIC_POLICY_SNAPSHOT_VERSION"
@@ -337,6 +342,7 @@ def _compiler_replay_bundle(
         "workload_profile": workload_profile,
         "compiler_stage_order": compiler_stage_order,
         "handoff_stage_order": handoff_stage_order,
+        "decision_source": symbolic_candidates["decision_source"],
         "symbolic_rules": symbolic_rules,
         "model_snapshot": snapshot["model_snapshot"],
         "knowledge_base_snapshot": snapshot["knowledge_base_snapshot"],
@@ -836,6 +842,25 @@ def _baseline_symbolic_candidate(candidates: list[SymbolicCandidate | str]) -> S
     return legal_candidates[0]
 
 
+def _decision_source_for_ranker(*, model_family: str, fallback_used: bool) -> str:
+    if fallback_used:
+        return _DECISION_SOURCE_FALLBACK
+
+    normalized_family = model_family.strip().lower()
+    if normalized_family in {"gnn", "graph_neural_network"} or "gnn" in normalized_family:
+        return _DECISION_SOURCE_GNN_RANKING
+    if normalized_family in {
+        "boosting",
+        "boosted",
+        "gradient_boosting",
+        "xgboost",
+        "lightgbm",
+        "catboost",
+    } or any(token in normalized_family for token in ("boost", "xgb", "lgbm", "cat")):
+        return _DECISION_SOURCE_BOOSTING_RANKING
+    return _DECISION_SOURCE_SYMBOLIC_RULES
+
+
 def _symbolic_candidate_set_payload(candidate_set: SymbolicCandidateSet) -> dict[str, object]:
     candidates = [_symbolic_candidate_payload(candidate) for candidate in candidate_set.candidates]
     legal_candidates = [candidate for candidate in candidate_set.candidates if isinstance(candidate, SymbolicCandidate) and candidate.legal]
@@ -888,17 +913,21 @@ def _symbolic_candidate_set_payload(candidate_set: SymbolicCandidateSet) -> dict
     selected_candidate_id = str(selected_candidate["candidate_id"]) if selected_candidate else ""
     selected_candidate_explanation = str(selected_candidate["why_preferred"]) if selected_candidate else ""
 
+    decision_source = _decision_source_for_ranker(model_family=_ADVISORY_MODEL_FAMILY, fallback_used=fallback_used)
+
     return {
         "version": candidate_set.version,
         "candidate_budget": candidate_set.candidate_budget,
         "candidate_count": len(candidates),
         "legal_candidate_count": len(legal_candidates),
+        "decision_source": decision_source,
         "ranker": {
             "model_family": _ADVISORY_MODEL_FAMILY,
             "model_version": _ADVISORY_MODEL_VERSION,
             "objective": "stable_legal_candidate_order",
             "explanation_hook": "feature_attribution",
             "selection_mode": selection_mode,
+            "decision_source": decision_source,
             "fallback_used": fallback_used,
             "fallback_reason": fallback_reason,
         },
@@ -1977,6 +2006,7 @@ def compile_eigen_lang(
     symbolic_candidate_set_payload = _symbolic_candidate_set_payload(symbolic_candidate_set)
     symbolic_candidate_set_json = _canonical_json_text(symbolic_candidate_set_payload)
     symbolic_candidate_set_sha256 = hashlib.sha256(symbolic_candidate_set_json.encode("utf-8")).hexdigest()
+    decision_source = str(symbolic_candidate_set_payload.get("decision_source", _DECISION_SOURCE_SYMBOLIC_RULES)).strip() or _DECISION_SOURCE_SYMBOLIC_RULES
     logical_graph_schema_payload = _logical_graph_schema_payload()
     logical_graph_schema_json = _canonical_json_text(logical_graph_schema_payload)
     logical_graph_schema_sha256 = hashlib.sha256(logical_graph_schema_json.encode("utf-8")).hexdigest()
@@ -2102,6 +2132,7 @@ def compile_eigen_lang(
         "aqo_sha256": aqo_digest,
         "request_sha256": request_digest,
         "replay_mode": _REPLAY_MODE_DETERMINISTIC,
+        "decision_source": decision_source,
         "replay_bundle_sha256": replay_bundle_sha256,
         "snapshot_id": snapshot["snapshot_id"],
         "model_snapshot": replay_bundle["model_snapshot"],
@@ -2119,11 +2150,13 @@ def compile_eigen_lang(
             "tenant_ids_in_metrics": False,
             "project_ids_in_metrics": False,
         },
+        "decision_source": decision_source,
         "lineage_sha256": request_digest,
     }
     explainability = {
         "contract_version": "1.0.0",
         "decision": "compiler_to_optimizer_handoff",
+        "decision_source": decision_source,
         "trace_fields": ["request_id", "trace_id", "traceparent"],
         "lineage": decision_lineage,
         "bounded_fields": [
@@ -2169,6 +2202,7 @@ def compile_eigen_lang(
         "aqo_sha256": aqo_digest,
         "request_sha256": request_digest,
         "source_precedence": source_precedence,
+        "decision_source": decision_source,
         "options_json": options_json,
         "options_sha256": hashlib.sha256(options_json.encode("utf-8")).hexdigest(),
         "request_context_json": request_context_json,
