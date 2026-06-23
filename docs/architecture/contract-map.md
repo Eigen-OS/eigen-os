@@ -107,16 +107,18 @@ It serves as:
 
 #### Components
 
-- **Eigen-DPDA** (neuro-symbolic compiler): Eigen-Lang → AQO
-- **GNN Optimizer** (placement/routing): AQO + topology → QASM (or backend-native)
+- **Eigen-DPDA** (neuro-symbolic compiler): Eigen-Lang → AQO + compiler-owned logical graph metadata for optimizer matching
+- **GNN Optimizer** (placement/routing): AQO + logical graph + driver-manager physical graph → backend-optimized execution plan
 
 The source-of-truth boundary for the symbolic core, KB, optimizer, and driver-manager integrations is `docs/architecture/components/neuro-symbolic-core.md`.
 The stable KB request/response contract used by compiler queries is defined in `docs/architecture/components/knowledge-base.md` and `docs/reference/api/grpc-internal.md`.
+The logical/physical graph bridge used for optimizer matching is defined in `docs/reference/api/grpc-internal.md` and the component architecture docs.
 
 #### Responsibilities
 
 - deterministic compilation,
 - schema validation (Eigen-Lang allowlist; AQO invariants),
+- graph-matching handoff between compiler and optimizer,
 - optimization trace emission,
 - artifact production + persistence via QFS-L3.
 

@@ -139,6 +139,20 @@ DM MUST expose device topology and calibration/health snapshots to QRTX so QRTX 
 
 This is required by the technical specification architecture: **GNN-optimizer consumes device topology obtained via Driver Manager**.
 
+### 3.6 Physical topology graph source for optimizer matching
+
+DM MUST expose a canonical physical graph view for backend-aware optimization.
+
+The physical graph is Driver Manager-owned and MUST:
+
+- represent physical qubits, couplers, calibration data, health hints, and backend-specific topology constraints;
+- use the canonical schema version `physical-topology-graph-v1`;
+- use the canonical serialization format `eigen.physical-graph-json`;
+- include stable `graph_id`, `graph_pair_id`, `canonical_graph_json`, `canonical_sha256`, and `round_trip_stability` fields;
+- remain a deterministic snapshot of backend truth for a given topology/calibration version.
+
+The optimizer uses `graph_pair_id` to align this physical graph with the compiler-emitted logical graph, eliminating ad hoc translation between compiler output and backend resources.
+
 ---
 
 ## 4. Implementation Status (Repository Truthfulness)

@@ -45,10 +45,10 @@ use crate::proto::optimizer_service_client::OptimizerServiceClient;
 use crate::proto::stream_job_updates_response::JobUpdateEnvelope;
 use crate::proto::{
     CircuitPayload, CompileCircuitRequest, ExecuteCircuitRequest, GraphEncodingContext,
-    OptimizationObjective, OptimizerContractEnvelope, OptimizerPolicy,
-    OptimizerRankingSemantics, OptimizerServiceOptimizeCircuitRequest, RequestMetadata,
-    TopologyContext, CancelJobRequest, CancelJobResponse, DispatchRationale, EnqueueJobRequest,
-    WorkloadContract, WorkloadTopology,
+    GraphInterfaceContext, LogicalGraphContext, PhysicalGraphContext, OptimizationObjective,
+    OptimizerContractEnvelope, OptimizerPolicy, OptimizerRankingSemantics,
+    OptimizerServiceOptimizeCircuitRequest, RequestMetadata, TopologyContext, CancelJobRequest,
+    CancelJobResponse, DispatchRationale, EnqueueJobRequest, WorkloadContract, WorkloadTopology,
     EnqueueJobResponse, GetDispatchRationaleRequest, GetDispatchRationaleResponse,
     GetJobResultsRequest, GetJobResultsResponse, GetJobStatusRequest, GetJobStatusResponse,
     StreamJobUpdatesRequest, StreamJobUpdatesResponse, TaskState,
@@ -3177,6 +3177,9 @@ impl FixtureAdapters {
             .get("aqo_sha256")
             .cloned()
             .unwrap_or_else(|| self.sha256_hex(&circuit.data));
+        let compiled_aqo_json = String::from_utf8(circuit.data.clone()).unwrap_or_else(|_| {
+            String::from_utf8_lossy(&circuit.data).into_owned()
+        });
         let source_ref = format!("qfs://jobs/{}/input/program.eigen.py", submission.job_id);
 
         let provenance = CompiledArtifactProvenance {
@@ -3205,6 +3208,31 @@ impl FixtureAdapters {
             ),
             ("compiler_version".to_string(), compiler_version),
             ("compile_digest".to_string(), aqo_sha),
+            ("compiled_aqo_json".to_string(), compiled_aqo_json),
+            (
+                "symbolic_candidate_set_json".to_string(),
+                response
+                    .metadata
+                    .get("symbolic_candidate_set_json")
+                    .cloned()
+                    .unwrap_or_default(),
+            ),
+            (
+                "logical_graph_schema_json".to_string(),
+                response
+                    .metadata
+                    .get("logical_graph_schema_json")
+                    .cloned()
+                    .unwrap_or_default(),
+            ),
+            (
+                "telemetry_feature_set_json".to_string(),
+                response
+                    .metadata
+                    .get("telemetry_feature_set_json")
+                    .cloned()
+                    .unwrap_or_default(),
+            ),
         ]))
     }
 
@@ -3916,6 +3944,10 @@ impl OptimizerGateway for FixtureOptimizerGateway {
                 optimizer_score_breakdown_json(0.94, 0.92, 0.96, 0.91, 0.08),
             ),
             (
+                "graph_interface".to_string(),
+                optimizer_graph_interface_json(compile_output, submission),
+            ),
+            (
                 "topology_context".to_string(),
                 optimizer_topology_context_json(compile_output, submission),
             ),
@@ -3951,17 +3983,70 @@ impl GrpcOptimizerGateway {
             .get("compiled_artifact_ref")
             .cloned()
             .unwrap_or_else(|| format!("qfs://jobs/{}/compiled/circuit.aqo.json", submission.job_id));
-        let canonical_graph_json = serde_json::to_string(&serde_json::json!({
-            "canonical_graph_version": "aqo-graph-v1",
-            "compile_digest": compile_digest,
-            "compiled_artifact_ref": compiled_artifact_ref,
+        let compiled_aqo_json = compile_output.get("compiled_aqo_json").cloned().unwrap_or_else(|| {
+            serde_json::to_string(&serde_json::json!({
+                "canonical_graph_version": "aqo-graph-v1",
+                "compile_digest": compile_digest.clone(),
+                "compiled_artifact_ref": compiled_artifact_ref.clone(),
+            }))
+            .unwrap_or_else(|_| {
+                format!(
+                    r#"{{"canonical_graph_version":"aqo-graph-v1","compile_digest":"{}","compiled_artifact_ref":"{}"}}"#,
+                    compile_digest, compiled_artifact_ref
+                )
+            })
+        });
+
+        let graph_interface = optimizer_graph_interface_context(compile_output, submission);
+        let graph_encoding_payload = optimizer_graph_encoding_payload(compile_output).unwrap_or_else(|| {
+            serde_json::json!({
+                "schema_version": "logical-compiler-graph-v1",
+                "canonical_format": "eigen.logical-graph-json",
+                "graph_kind": "rewrite_candidate",
+                "compiled_aqo_json": compiled_aqo_json.clone(),
+            })
+        });
+        let canonical_graph_json = serde_json::to_string(&graph_encoding_payload)
+            .unwrap_or_else(|_| graph_encoding_payload.to_string());
+        let logical_graph_sha256 = hash_bytes_hex(canonical_graph_json.as_bytes());
+        let graph_encoding_round_trip_stability = graph_encoding_payload
+            .get("round_trip_stability")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(true);
+
+        let graph_interface_id = graph_interface
+            .as_ref()
+            .map(|graph_interface| graph_interface.graph_interface_id.clone())
+            .unwrap_or_else(|| {
+                stable_hash_hex(&format!(
+                    "{}:{}:{}",
+                    submission.job_id, submission.request_id, compile_digest
+                ))
+            });
+        let physical_graph_json = serde_json::to_string(&serde_json::json!({
+            "topology_ref": compiled_artifact_ref.clone(),
+            "topology_digest_sha256": compile_digest.clone(),
+            "noise_snapshot_ref": "",
+            "backend_profile": submission.target.clone(),
         }))
         .unwrap_or_else(|_| {
             format!(
-                r#"{{"canonical_graph_version":"aqo-graph-v1","compile_digest":"{}","compiled_artifact_ref":"{}"}}"#,
-                compile_digest, compiled_artifact_ref
+                r#"{{"topology_ref":"{}","topology_digest_sha256":"{}","noise_snapshot_ref":"","backend_profile":"{}"}}"#,
+                compiled_artifact_ref.clone(),
+                compile_digest,
+                submission.target
             )
         });
+        let physical_graph_sha256 = hash_bytes_hex(physical_graph_json.as_bytes());
+        let alignment_sha256 = graph_interface
+            .as_ref()
+            .map(|graph_interface| graph_interface.alignment_sha256.clone())
+            .unwrap_or_else(|| {
+                stable_hash_hex(&format!(
+                    "{}:{}:{}",
+                    graph_interface_id, logical_graph_sha256, physical_graph_sha256
+                ))
+            });
         
         OptimizerServiceOptimizeCircuitRequest {
             envelope: Some(OptimizerContractEnvelope {
@@ -3970,10 +4055,10 @@ impl GrpcOptimizerGateway {
             request_id: submission.request_id.clone(),
             input_aqo: Some(CircuitPayload {
                 format: 1,
-                data: canonical_graph_json.as_bytes().to_vec(),
+                data: compiled_aqo_json.as_bytes().to_vec(),
             }),
             topology: Some(TopologyContext {
-                topology_ref: compiled_artifact_ref,
+                topology_ref: compiled_artifact_ref.clone(),
                 topology_digest_sha256: compile_digest.clone(),
                 noise_snapshot_ref: String::new(),
                 backend_profile: submission.target.clone(),
@@ -4003,12 +4088,21 @@ impl GrpcOptimizerGateway {
                 ("traceparent".to_string(), submission.traceparent.clone()),
             ]),
             graph_encoding: Some(GraphEncodingContext {
-                encoding_version: "aqo-graph-v1".to_string(),
-                canonical_format: "aqo-json".to_string(),
-                canonical_graph_json: canonical_graph_json.clone(),
-                canonical_sha256: hash_bytes_hex(canonical_graph_json.as_bytes()),
-                round_trip_stability: true,
+                encoding_version: graph_encoding_payload
+                    .get("schema_version")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("logical-compiler-graph-v1")
+                    .to_string(),
+                canonical_format: graph_encoding_payload
+                    .get("canonical_format")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("eigen.logical-graph-json")
+                    .to_string(),
+                canonical_graph_json,
+                canonical_sha256: logical_graph_sha256,
+                round_trip_stability: graph_encoding_round_trip_stability,
             }),
+            graph_interface,
             policy: Some(OptimizerPolicy {
                 mode: "deterministic".to_string(),
                 minimum_confidence: 0.8,
@@ -4084,6 +4178,14 @@ impl OptimizerGateway for GrpcOptimizerGateway {
             })
             .unwrap_or_else(|| optimizer_score_breakdown_json(0.0, 0.0, 0.0, 0.0, 0.0));
         output.insert("score_breakdown".to_string(), score_breakdown);
+        output.insert(
+            "graph_interface".to_string(),
+            response
+                .graph_interface
+                .as_ref()
+                .map(optimizer_graph_interface_context_json)
+                .unwrap_or_else(|| optimizer_graph_interface_json(compile_output, submission)),
+        );
         output.insert("topology_context".to_string(), optimizer_topology_context_json(compile_output, submission));
         output.insert("trace_context".to_string(), optimizer_trace_context_json(submission));
 
@@ -5442,6 +5544,167 @@ fn optimizer_topology_context_json(compile_output: &BTreeMap<String, String>, su
     .unwrap_or_else(|_| "{}".to_string())
 }
 
+fn optimizer_graph_encoding_payload(compile_output: &BTreeMap<String, String>) -> Option<serde_json::Value> {
+    let candidate_set_json = compile_output.get("symbolic_candidate_set_json")?;
+    let candidate_set: serde_json::Value = serde_json::from_str(candidate_set_json).ok()?;
+    let ranked_candidates = candidate_set.get("ranked_candidates").and_then(|value| value.as_array());
+    let candidate = ranked_candidates
+        .and_then(|items| items.first())
+        .or_else(|| candidate_set.get("candidates").and_then(|value| value.as_array()).and_then(|items| items.first()))?;
+    candidate.get("graph_encoding").cloned().filter(|value| value.is_object())
+}
+
+fn optimizer_logical_graph_context(compile_output: &BTreeMap<String, String>, submission: &NormalizedSubmission) -> Option<LogicalGraphContext> {
+    let graph_encoding = optimizer_graph_encoding_payload(compile_output)?;
+    let canonical_graph_json = serde_json::to_string(&graph_encoding).ok()?;
+    let graph_sha256 = hash_bytes_hex(canonical_graph_json.as_bytes());
+    let graph_pair_id = compile_output
+        .get("compile_digest")
+        .cloned()
+        .unwrap_or_else(|| submission.program_hash.clone());
+    let graph_id = graph_encoding
+        .get("graph_id")
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+        .or_else(|| {
+            graph_encoding
+                .get("candidate_id")
+                .and_then(|value| value.as_str())
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| graph_sha256.clone());
+    let schema_version = graph_encoding
+        .get("schema_version")
+        .and_then(|value| value.as_str())
+        .unwrap_or("logical-compiler-graph-v1")
+        .to_string();
+    let canonical_format = graph_encoding
+        .get("canonical_format")
+        .and_then(|value| value.as_str())
+        .unwrap_or("eigen.logical-graph-json")
+        .to_string();
+    let round_trip_stability = graph_encoding
+        .get("round_trip_stability")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(true);
+    Some(LogicalGraphContext {
+        graph_id,
+        graph_pair_id,
+        schema_version,
+        canonical_format,
+        canonical_graph_json,
+        canonical_sha256: graph_sha256,
+        round_trip_stability,
+    })
+}
+
+fn optimizer_physical_graph_context(compile_output: &BTreeMap<String, String>, submission: &NormalizedSubmission) -> PhysicalGraphContext {
+    let topology_json = optimizer_topology_context_json(compile_output, submission);
+    let topology_digest = hash_bytes_hex(topology_json.as_bytes());
+    let graph_pair_id = compile_output
+        .get("compile_digest")
+        .cloned()
+        .unwrap_or_else(|| submission.program_hash.clone());
+    PhysicalGraphContext {
+        graph_id: compile_output
+            .get("compiled_artifact_ref")
+            .cloned()
+            .unwrap_or_else(|| format!("qfs://jobs/{}/compiled/circuit.aqo.json", submission.job_id)),
+        graph_pair_id,
+        schema_version: "physical-topology-graph-v1".to_string(),
+        canonical_format: "eigen.physical-topology-json".to_string(),
+        canonical_graph_json: topology_json,
+        canonical_sha256: topology_digest,
+        round_trip_stability: true,
+    }
+}
+
+fn optimizer_graph_interface_context(compile_output: &BTreeMap<String, String>, submission: &NormalizedSubmission) -> Option<GraphInterfaceContext> {
+    let logical_graph = optimizer_logical_graph_context(compile_output, submission)?;
+    let physical_graph = optimizer_physical_graph_context(compile_output, submission);
+    let graph_pair_id = logical_graph.graph_pair_id.clone();
+    let graph_interface_id = hash_bytes_hex(
+        serde_json::to_string(&serde_json::json!({
+            "graph_pair_id": graph_pair_id.clone(),
+            "logical_graph_sha256": logical_graph.canonical_sha256.clone(),
+            "physical_graph_sha256": physical_graph.canonical_sha256.clone(),
+        }))
+        .unwrap_or_else(|_| "{}".to_string())
+        .as_bytes(),
+    );
+    let alignment_sha256 = hash_bytes_hex(
+        serde_json::to_string(&serde_json::json!({
+            "graph_interface_id": graph_interface_id.clone(),
+            "graph_pair_id": logical_graph.graph_pair_id.clone(),
+            "logical_graph_sha256": logical_graph.canonical_sha256.clone(),
+            "physical_graph_sha256": physical_graph.canonical_sha256.clone(),
+        }))
+        .unwrap_or_else(|_| "{}".to_string())
+        .as_bytes(),
+    );
+    Some(GraphInterfaceContext {
+        graph_interface_id,
+        logical_graph: Some(logical_graph),
+        physical_graph: Some(physical_graph),
+        alignment_sha256,
+    })
+}
+
+fn optimizer_graph_interface_json(compile_output: &BTreeMap<String, String>, submission: &NormalizedSubmission) -> String {
+    let Some(graph_interface) = optimizer_graph_interface_context(compile_output, submission) else {
+        return "{}".to_string();
+    };
+    serde_json::to_string(&serde_json::json!({
+        "graph_interface_id": graph_interface.graph_interface_id.clone(),
+        "alignment_sha256": graph_interface.alignment_sha256.clone(),
+        "logical_graph": {
+            "graph_id": graph_interface.logical_graph.as_ref().map(|graph| graph.graph_id.clone()).unwrap_or_default(),
+            "graph_pair_id": graph_interface.logical_graph.as_ref().map(|graph| graph.graph_pair_id.clone()).unwrap_or_default(),
+            "schema_version": graph_interface.logical_graph.as_ref().map(|graph| graph.schema_version.clone()).unwrap_or_default(),
+            "canonical_format": graph_interface.logical_graph.as_ref().map(|graph| graph.canonical_format.clone()).unwrap_or_default(),
+            "canonical_graph_json": graph_interface.logical_graph.as_ref().map(|graph| graph.canonical_graph_json.clone()).unwrap_or_default(),
+            "canonical_sha256": graph_interface.logical_graph.as_ref().map(|graph| graph.canonical_sha256.clone()).unwrap_or_default(),
+            "round_trip_stability": graph_interface.logical_graph.as_ref().map(|graph| graph.round_trip_stability).unwrap_or(true),
+        },
+        "physical_graph": {
+            "graph_id": graph_interface.physical_graph.as_ref().map(|graph| graph.graph_id.clone()).unwrap_or_default(),
+            "graph_pair_id": graph_interface.physical_graph.as_ref().map(|graph| graph.graph_pair_id.clone()).unwrap_or_default(),
+            "schema_version": graph_interface.physical_graph.as_ref().map(|graph| graph.schema_version.clone()).unwrap_or_default(),
+            "canonical_format": graph_interface.physical_graph.as_ref().map(|graph| graph.canonical_format.clone()).unwrap_or_default(),
+            "canonical_graph_json": graph_interface.physical_graph.as_ref().map(|graph| graph.canonical_graph_json.clone()).unwrap_or_default(),
+            "canonical_sha256": graph_interface.physical_graph.as_ref().map(|graph| graph.canonical_sha256.clone()).unwrap_or_default(),
+            "round_trip_stability": graph_interface.physical_graph.as_ref().map(|graph| graph.round_trip_stability).unwrap_or(true),
+        },
+    }))
+    .unwrap_or_else(|_| "{}".to_string())
+}
+
+fn optimizer_graph_interface_context_json(graph_interface: &GraphInterfaceContext) -> String {
+    serde_json::to_string(&serde_json::json!({
+        "graph_interface_id": graph_interface.graph_interface_id.clone(),
+        "alignment_sha256": graph_interface.alignment_sha256.clone(),
+        "logical_graph": graph_interface.logical_graph.as_ref().map(|graph| serde_json::json!({
+            "graph_id": graph.graph_id.clone(),
+            "graph_pair_id": graph.graph_pair_id.clone(),
+            "schema_version": graph.schema_version.clone(),
+            "canonical_format": graph.canonical_format.clone(),
+            "canonical_graph_json": graph.canonical_graph_json.clone(),
+            "canonical_sha256": graph.canonical_sha256.clone(),
+            "round_trip_stability": graph.round_trip_stability,
+        })).unwrap_or_else(|| serde_json::json!({})),
+        "physical_graph": graph_interface.physical_graph.as_ref().map(|graph| serde_json::json!({
+            "graph_id": graph.graph_id.clone(),
+            "graph_pair_id": graph.graph_pair_id.clone(),
+            "schema_version": graph.schema_version.clone(),
+            "canonical_format": graph.canonical_format.clone(),
+            "canonical_graph_json": graph.canonical_graph_json.clone(),
+            "canonical_sha256": graph.canonical_sha256.clone(),
+            "round_trip_stability": graph.round_trip_stability,
+        })).unwrap_or_else(|| serde_json::json!({})),
+    }))
+    .unwrap_or_else(|_| "{}".to_string())
+}
+
 fn ts_to_json(ts: &Timestamp) -> serde_json::Value {
     serde_json::json!({
         "seconds": ts.seconds,
@@ -6140,7 +6403,7 @@ spec:
     }
 
     #[test]
-    fn optimizer_gateway_request_uses_bounded_defaults_and_canonical_graph_json() {
+    fn optimizer_gateway_request_uses_graph_interface_bridge_and_compiler_aqo() {
         let gateway = GrpcOptimizerGateway {
             endpoint: "http://127.0.0.1:50052".to_string(),
         };
@@ -6151,6 +6414,49 @@ spec:
             "compiled_artifact_ref".to_string(),
             "qfs://jobs/job-1/compiled/circuit.aqo.json".to_string(),
         );
+        compile_output.insert(
+            "compiled_aqo_json".to_string(),
+            r#"{"version":"1.0.0","operations":[{"op":"RY","params":{"theta":1.0},"q":[0]}]}"#.to_string(),
+        );
+        compile_output.insert(
+            "symbolic_candidate_set_json".to_string(),
+            serde_json::json!({
+                "version": "1.0.0",
+                "selected_candidate_id": "candidate-0",
+                "ranked_candidates": [
+                    {
+                        "candidate_id": "candidate-0",
+                        "graph_encoding": {
+                            "schema_version": "logical-compiler-graph-v1",
+                            "canonical_format": "eigen.logical-graph-json",
+                            "graph_kind": "rewrite_candidate",
+                            "nodes": [
+                                {
+                                    "id": "candidate",
+                                    "kind": "rewrite_candidate",
+                                    "label": "candidate-0",
+                                    "attributes": {
+                                        "candidate_kind": "compiler_output",
+                                        "legal": true,
+                                        "operation_count": 1,
+                                        "measurement_count": 0,
+                                        "terminal_measurement_present": true,
+                                        "has_expectation": false,
+                                        "has_minimize": false,
+                                        "distributed_enabled": false,
+                                        "distributed_target": "sim:local",
+                                        "distributed_partition_count": 0
+                                    }
+                                }
+                            ],
+                            "edges": []
+                        }
+                    }
+                ],
+                "candidates": []
+            })
+            .to_string(),
+        );
 
         let request = gateway.build_request(&submission, &compile_output);
         assert_eq!(request.candidate_budget, 1);
@@ -6158,19 +6464,40 @@ spec:
         assert_eq!(request.trace_context.get("request_id"), Some(&submission.request_id));
         assert_eq!(request.trace_context.get("traceparent"), Some(&submission.traceparent));
 
+        let input_aqo = request.input_aqo.expect("input aqo");
+        assert_eq!(input_aqo.data, compile_output.get("compiled_aqo_json").expect("compiled aqo json").as_bytes());
+
         let graph_encoding = request.graph_encoding.expect("graph encoding");
+        let graph_interface = request.graph_interface.expect("graph interface");
+        let logical_graph = graph_interface.logical_graph.expect("logical graph");
+        let physical_graph = graph_interface.physical_graph.expect("physical graph");
         let graph_json: serde_json::Value = serde_json::from_str(&graph_encoding.canonical_graph_json)
             .expect("canonical graph json");
-        assert_eq!(graph_json["canonical_graph_version"], "aqo-graph-v1");
-        assert_eq!(graph_json["compile_digest"], "compile-digest-0001");
+        assert_eq!(graph_json["schema_version"], "logical-compiler-graph-v1");
+        assert_eq!(graph_json["canonical_format"], "eigen.logical-graph-json");
+        assert_eq!(graph_json["graph_kind"], "rewrite_candidate");
+        assert_eq!(graph_encoding.canonical_sha256, hash_bytes_hex(graph_encoding.canonical_graph_json.as_bytes()));
+
+        assert_eq!(logical_graph.graph_pair_id, physical_graph.graph_pair_id);
+        assert_eq!(logical_graph.graph_pair_id, "compile-digest-0001");
+        assert!(!graph_interface.graph_interface_id.is_empty());
+        assert_eq!(logical_graph.schema_version, "logical-compiler-graph-v1");
+        assert_eq!(logical_graph.canonical_format, "eigen.logical-graph-json");
+        assert_eq!(logical_graph.canonical_graph_json, graph_encoding.canonical_graph_json);
+        assert_eq!(logical_graph.canonical_sha256, graph_encoding.canonical_sha256);
+        assert_eq!(logical_graph.round_trip_stability, true);
         assert_eq!(
-            graph_json["compiled_artifact_ref"],
-            "qfs://jobs/job-1/compiled/circuit.aqo.json"
+            logical_graph.canonical_sha256,
+            hash_bytes_hex(logical_graph.canonical_graph_json.as_bytes())
         );
+        assert_eq!(physical_graph.schema_version, "physical-topology-graph-v1");
+        assert_eq!(physical_graph.canonical_format, "eigen.physical-topology-json");
         assert_eq!(
-            graph_encoding.canonical_sha256,
-            hash_bytes_hex(graph_encoding.canonical_graph_json.as_bytes())
+            physical_graph.canonical_sha256,
+            hash_bytes_hex(physical_graph.canonical_graph_json.as_bytes())
         );
+        assert_eq!(physical_graph.round_trip_stability, true);
+        assert!(!graph_interface.alignment_sha256.is_empty());
     }
 
     #[tokio::test]
