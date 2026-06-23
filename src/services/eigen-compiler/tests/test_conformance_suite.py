@@ -449,3 +449,17 @@ def test_metrics_expose_contract_marker() -> None:
     text = render_metrics_text()
     assert 'eigen_observability_contract_info{version="1.0.0"} 1' in text
     assert 'eigen_compiler_contract_info{version="1.0.0"} 1' in text
+
+
+def test_compiler_evaluation_dashboard_targets_version_and_job_type() -> None:
+    dashboard = json.loads((Path(__file__).resolve().parents[4] / "monitoring" / "dashboards" / "compiler_evaluation_dashboard.json").read_text(encoding="utf-8"))
+
+    assert dashboard["title"] == "Eigen Compiler — Evaluation Dashboard"
+    variable_names = {item["name"] for item in dashboard["templating"]["list"]}
+    assert {"compiler_version", "job_type"} <= variable_names
+
+    exprs = "\n".join(target["expr"] for panel in dashboard["panels"] for target in panel["targets"])
+    assert "eigen_compiler_evaluation_total" in exprs
+    assert 'compiler_version=~"$compiler_version"' in exprs
+    assert 'job_type=~"$job_type"' in exprs
+    assert 'decision_source="fallback"' in exprs

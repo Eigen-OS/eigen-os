@@ -43,6 +43,9 @@ The compiler observability surface MUST include:
 - `eigen_compiler_validation_failures_total{stage,reason}`
 - `eigen_compiler_aqo_digest_emitted_total{kind}`
 - `eigen_compiler_replay_compiles_total{kind}`
+- `eigen_compiler_evaluation_total{compiler_version,job_type,decision_source}`
+- `eigen_compiler_evaluation_latency_seconds_count{compiler_version,job_type,decision_source}`
+- `eigen_compiler_evaluation_latency_seconds_sum{compiler_version,job_type,decision_source}`
 - `eigen_compiler_symbolic_rewrite_stage_duration_seconds_count{stage,outcome}`
 - `eigen_compiler_symbolic_rewrite_stage_duration_seconds_sum{stage,outcome}`
 
@@ -91,7 +94,29 @@ The compiler observability surface MUST include:
 - `aqo`
 - `duplicate`
 
+**compiler_version**
+
+- bounded compiler contract version string emitted in compile metadata (for example, `1.0.0`)
+
+**job_type**
+
+- `QuantumJob`
+- `HybridWorkflow`
+- `DistributedJob`
+- `BenchmarkJob`
+- `PipelineJob`
+- `ReplayJob`
+
+**decision_source**
+
+- `symbolic_rules`
+- `gnn_ranking`
+- `boosting_ranking`
+- `fallback`
+
 Trace IDs, request IDs, tenant IDs, project IDs, and job IDs MUST NOT be exposed in metric labels.
+
+The evaluation metric families above MUST record successful compile traces and expose the final decision source and latency sliced by compiler version and job type so dashboards can compute model-assisted acceptance rate, fallback rate, and latency.
 
 ---
 
