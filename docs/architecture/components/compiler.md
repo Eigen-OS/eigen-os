@@ -222,6 +222,8 @@ Pass ordering and pass outputs must remain stable for identical normalized input
 - Stage failures must be attributable to a named stage and a structured violation.
 - Advisor influence must be recorded as accepted, rejected, or transformed into a deterministic compiler action.
 - Evaluation dashboards must slice `eigen_compiler_evaluation_total` and `eigen_compiler_evaluation_latency_seconds_*` by `compiler_version` and `job_type` to show model-assisted acceptance rate, fallback rate, and latency.
+- The canonical dashboard specification lives in `docs/reference/compiler-evaluation-dashboard.md`.
+- For the current A/B / shadow comparison, `QuantumJob` is the baseline symbolic-core slice and `HybridWorkflow` is the hybrid-mode slice.
 
 ---
 
