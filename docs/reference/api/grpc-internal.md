@@ -529,7 +529,7 @@ service NeuroSymbolicService {
 
 ### 5.3 OptimizerService Graph Interface
 
-The internal optimizer contract MUST distinguish between the compiler-owned logical graph and the Driver Manager-owned physical graph.
+The internal optimizer contract MUST distinguish between the compiler-owned logical graph emitted by the compiler and the Driver Manager-owned physical graph emitted by the Driver Manager.
 
 Canonical request / response binding:
 
@@ -569,6 +569,7 @@ Normative rules:
 - `graph_encoding` is a deprecated legacy alias for `logical_graph` only and MUST NOT be used to carry the physical graph.
 - The logical graph schema version MUST be `logical-compiler-graph-v1`.
 - The physical graph schema version MUST be `physical-topology-graph-v1`.
+- The optimizer MUST consume the compiler output directly through this interface; no ad hoc translation layer is permitted between compiler and driver-manager snapshots.
 - The optimizer MAY reject a request with `FAILED_PRECONDITION` when the logical/physical pair identifiers do not match.
 
 ---

@@ -103,6 +103,20 @@ The compiler must produce:
 
 Optional transport encodings may exist, but they must preserve AQO semantics exactly.
 
+### 3.3 Logical graph export for optimizer handoff
+
+When backend-aware optimization is enabled, the compiler MUST emit a canonical logical graph view alongside AQO metadata.
+
+The logical graph is compiler-owned and MUST:
+
+- represent logical qubits, semantic edges, and compiler-visible constraints;
+- use the canonical schema version `logical-compiler-graph-v1`;
+- use the canonical serialization format `eigen.logical-graph-json`;
+- include stable `graph_id`, `graph_pair_id`, `canonical_graph_json`, `canonical_sha256`, and `round_trip_stability` fields;
+- remain deterministic for identical source, options, and replay context.
+
+`graph_pair_id` is the matching identifier used by the Optimizer Service to bind the compiler-emitted logical graph to the Driver Manager-emitted physical graph. The compiler MUST not invent backend-specific physical labels; mapping to physical resources is delegated to the optimizer contract.
+
 ---
 
 ## 4. Deterministic compilation guarantees

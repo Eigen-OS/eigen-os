@@ -178,6 +178,8 @@ Those payloads MUST remain deterministic for identical inputs and MUST include o
 
 `logical_graph_schema_json` MUST describe the canonical graph schema used by the compiler for AST, IR, and DPDA state graphs. The schema MUST be shared by training and inference consumers, MUST define bounded node and edge fields, MUST define stable labels for each graph kind, and MUST preserve deterministic ordering semantics. `logical_graph_schema_sha256` MUST be the SHA-256 digest of that canonical JSON payload.
 
+This compiler-side schema is the logical-graph contract that the Optimizer Service matches against the Driver Manager physical graph via `graph_pair_id` and `graph_interface_id`. It MUST stay aligned with `logical-compiler-graph-v1` in the internal optimizer contract.
+
 `telemetry_feature_set_json` MUST describe the stable tabular telemetry feature set used for compiler and KB telemetry parity. The schema version MUST be `telemetry-tabular-v1`, and the payload MUST expose graph size, fanout, stage counts, historical success rate, latency, backend, and policy-state features in a deterministic order. `telemetry_feature_set_sha256` MUST be the SHA-256 digest of that canonical JSON payload.
 
 Validation failures MUST also carry structured gRPC details with:
