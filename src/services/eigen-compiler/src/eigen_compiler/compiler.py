@@ -10,7 +10,7 @@ import re
 
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
-from math import isfinite
+from math import exp, isfinite, log
 from pathlib import Path
 from time import perf_counter
 from typing import Any, Callable, Iterator, TypeVar
@@ -45,6 +45,9 @@ _TABULAR_FEATURE_ORDER = (
     "backend",
     "policy_state",
 )
+
+_BOOSTING_MODEL_FAMILY = "boosting"
+_BOOSTING_MODEL_VERSION = "pass-path-boosting-v1"
 
 _REPLAY_MODE_DETERMINISTIC = "deterministic"
 _NEURO_MODEL_VERSION_ENV = "EIGEN_NEURO_SYMBOLIC_MODEL_VERSION"
@@ -568,7 +571,8 @@ def _symbolic_candidate_graph_encoding(candidate: SymbolicCandidate) -> dict[str
             "kind": "rank_projection",
             "label": "expected_usefulness",
             "attributes": {
-                "model_family": "gnn",
+                "model_family": _BOOSTING_MODEL_FAMILY,
+                "model_version": _BOOSTING_MODEL_VERSION,
                 "objective": "expected_usefulness",
             },
         },
@@ -600,36 +604,372 @@ def _symbolic_candidate_graph_encoding(candidate: SymbolicCandidate) -> dict[str
     }
 
 
-def _symbolic_candidate_usefulness_score(candidate: SymbolicCandidate) -> float:
+def _pass_path_boosting_training_samples() -> tuple[tuple[dict[str, float], int], ...]:
+    def derive(
+        *,
+        candidate_is_normalized: bool,
+        terminal_measurement_present: bool,
+        has_expectation: bool,
+        has_minimize: bool,
+        distributed_enabled: bool,
+        operation_count: int,
+        measurement_count: int,
+        measurement_density: float,
+        graph_size_signal: float,
+        distributed_partition_count: int,
+        label: int,
+    ) -> tuple[dict[str, float], int]:
+        context_strength = int(terminal_measurement_present) + int(has_expectation) + int(has_minimize) + int(distributed_enabled)
+        normalized_path_strength = (1.0 if candidate_is_normalized else 0.0) * (1.0 + float(context_strength))
+        keep_path_strength = (0.0 if candidate_is_normalized else 1.0) * (1.0 + float(4 - context_strength))
+        return (
+            {
+                "candidate_is_normalized": 1.0 if candidate_is_normalized else 0.0,
+                "context_strength": float(context_strength),
+                "normalized_path_strength": round(normalized_path_strength, 6),
+                "keep_path_strength": round(keep_path_strength, 6),
+                "terminal_measurement_present": 1.0 if terminal_measurement_present else 0.0,
+                "has_expectation": 1.0 if has_expectation else 0.0,
+                "has_minimize": 1.0 if has_minimize else 0.0,
+                "distributed_enabled": 1.0 if distributed_enabled else 0.0,
+                "operation_count": float(operation_count),
+                "measurement_count": float(measurement_count),
+                "measurement_density": round(measurement_density, 6),
+                "graph_size_signal": round(graph_size_signal, 6),
+                "distributed_partition_count": float(distributed_partition_count),
+            },
+            label,
+        )
+
+    return (
+        derive(
+            candidate_is_normalized=False,
+            terminal_measurement_present=False,
+            has_expectation=False,
+            has_minimize=False,
+            distributed_enabled=False,
+            operation_count=2,
+            measurement_count=0,
+            measurement_density=0.0,
+            graph_size_signal=0.33,
+            distributed_partition_count=0,
+            label=1,
+        ),
+        derive(
+            candidate_is_normalized=True,
+            terminal_measurement_present=False,
+            has_expectation=False,
+            has_minimize=False,
+            distributed_enabled=False,
+            operation_count=2,
+            measurement_count=0,
+            measurement_density=0.0,
+            graph_size_signal=0.33,
+            distributed_partition_count=0,
+            label=0,
+        ),
+        derive(
+            candidate_is_normalized=True,
+            terminal_measurement_present=True,
+            has_expectation=False,
+            has_minimize=False,
+            distributed_enabled=False,
+            operation_count=6,
+            measurement_count=1,
+            measurement_density=0.166667,
+            graph_size_signal=0.875,
+            distributed_partition_count=0,
+            label=1,
+        ),
+        derive(
+            candidate_is_normalized=False,
+            terminal_measurement_present=True,
+            has_expectation=False,
+            has_minimize=False,
+            distributed_enabled=False,
+            operation_count=6,
+            measurement_count=1,
+            measurement_density=0.166667,
+            graph_size_signal=0.875,
+            distributed_partition_count=0,
+            label=0,
+        ),
+        derive(
+            candidate_is_normalized=True,
+            terminal_measurement_present=False,
+            has_expectation=True,
+            has_minimize=False,
+            distributed_enabled=False,
+            operation_count=5,
+            measurement_count=1,
+            measurement_density=0.2,
+            graph_size_signal=0.75,
+            distributed_partition_count=0,
+            label=1,
+        ),
+        derive(
+            candidate_is_normalized=False,
+            terminal_measurement_present=False,
+            has_expectation=True,
+            has_minimize=False,
+            distributed_enabled=False,
+            operation_count=5,
+            measurement_count=1,
+            measurement_density=0.2,
+            graph_size_signal=0.75,
+            distributed_partition_count=0,
+            label=0,
+        ),
+        derive(
+            candidate_is_normalized=True,
+            terminal_measurement_present=False,
+            has_expectation=False,
+            has_minimize=True,
+            distributed_enabled=False,
+            operation_count=5,
+            measurement_count=0,
+            measurement_density=0.0,
+            graph_size_signal=0.72,
+            distributed_partition_count=0,
+            label=1,
+        ),
+        derive(
+            candidate_is_normalized=False,
+            terminal_measurement_present=False,
+            has_expectation=False,
+            has_minimize=True,
+            distributed_enabled=False,
+            operation_count=5,
+            measurement_count=0,
+            measurement_density=0.0,
+            graph_size_signal=0.72,
+            distributed_partition_count=0,
+            label=0,
+        ),
+        derive(
+            candidate_is_normalized=True,
+            terminal_measurement_present=False,
+            has_expectation=False,
+            has_minimize=False,
+            distributed_enabled=True,
+            operation_count=7,
+            measurement_count=2,
+            measurement_density=0.285714,
+            graph_size_signal=0.9,
+            distributed_partition_count=2,
+            label=1,
+        ),
+        derive(
+            candidate_is_normalized=False,
+            terminal_measurement_present=False,
+            has_expectation=False,
+            has_minimize=False,
+            distributed_enabled=True,
+            operation_count=7,
+            measurement_count=2,
+            measurement_density=0.285714,
+            graph_size_signal=0.9,
+            distributed_partition_count=2,
+            label=0,
+        ),
+    )
+
+
+def _boosting_candidate_features(candidate: SymbolicCandidate) -> dict[str, object]:
     features = candidate.features
-    candidate_kind = str(features.get("candidate_kind", "")).strip()
     operation_count = int(features.get("operation_count", 0) or 0)
     measurement_count = int(features.get("measurement_count", 0) or 0)
     terminal_measurement_present = bool(features.get("terminal_measurement_present", False))
     has_expectation = bool(features.get("has_expectation", False))
     has_minimize = bool(features.get("has_minimize", False))
     distributed_enabled = bool(features.get("distributed_enabled", False))
+    measurement_density = round(measurement_count / max(operation_count, 1), 6)
+    graph_size_signal = round(
+        min((operation_count + measurement_count) / max(operation_count + 4, 1), 1.0),
+        6,
+    )
+    candidate_is_normalized = str(features.get("candidate_kind", "")).strip() == "terminal_measurement_normalized"
+    context_strength = int(terminal_measurement_present) + int(has_expectation) + int(has_minimize) + int(distributed_enabled)
+    normalized_path_strength = (1.0 if candidate_is_normalized else 0.0) * (1.0 + float(context_strength))
+    keep_path_strength = (0.0 if candidate_is_normalized else 1.0) * (1.0 + float(4 - context_strength))
+    return {
+        "candidate_kind": str(features.get("candidate_kind", "")).strip(),
+        "candidate_is_normalized": 1.0 if candidate_is_normalized else 0.0,
+        "context_strength": float(context_strength),
+        "normalized_path_strength": round(normalized_path_strength, 6),
+        "keep_path_strength": round(keep_path_strength, 6),
+        "operation_count": float(operation_count),
+        "measurement_count": float(measurement_count),
+        "measurement_density": measurement_density,
+        "terminal_measurement_present": 1.0 if terminal_measurement_present else 0.0,
+        "has_expectation": 1.0 if has_expectation else 0.0,
+        "has_minimize": 1.0 if has_minimize else 0.0,
+        "distributed_enabled": 1.0 if distributed_enabled else 0.0,
+        "graph_size_signal": graph_size_signal,
+        "distributed_partition_count": float(int(features.get("distributed_partition_count", 0) or 0)),
+        "qubits": float(int(features.get("qubits", 0) or 0)),
+    }
 
-    score = 0.0
-    if candidate_kind == "terminal_measurement_normalized":
-        score += 0.40
-        if not terminal_measurement_present:
-            score += 0.22
-    else:
-        score += 0.30
-        if terminal_measurement_present:
-            score += 0.12
 
-    score += min(measurement_count * 0.03, 0.15)
-    score += min(operation_count * 0.01, 0.08)
-    if has_expectation:
-        score += 0.04
-    if has_minimize:
-        score += 0.04
-    if distributed_enabled:
-        score += 0.03
+@dataclass(frozen=True)
+class _BoostingStump:
+    feature_name: str
+    threshold: float
+    positive_on_ge: bool
+    alpha: float
 
-    return round(min(score, 1.0), 6)
+    def vote(self, features: dict[str, float]) -> int:
+        value = float(features.get(self.feature_name, 0.0) or 0.0)
+        is_positive = value >= self.threshold
+        if not self.positive_on_ge:
+            is_positive = not is_positive
+        return 1 if is_positive else -1
+
+    def contribution(self, features: dict[str, float]) -> float:
+        return round(self.alpha * self.vote(features), 6)
+
+    def describe(self, features: dict[str, float]) -> dict[str, object]:
+        value = float(features.get(self.feature_name, 0.0) or 0.0)
+        branch = ">= threshold" if (value >= self.threshold) == self.positive_on_ge else "< threshold"
+        return {
+            "name": self.feature_name,
+            "value": value,
+            "threshold": self.threshold,
+            "branch": branch,
+            "contribution": self.contribution(features),
+        }
+
+
+@dataclass(frozen=True)
+class _PassPathBoostingModel:
+    base_margin: float
+    stumps: tuple[_BoostingStump, ...]
+    feature_names: tuple[str, ...]
+    training_sample_count: int
+    training_accuracy: float
+
+    def margin(self, features: dict[str, float]) -> float:
+        return self.base_margin + sum(stump.alpha * stump.vote(features) for stump in self.stumps)
+
+    def score(self, features: dict[str, float]) -> float:
+        return round(1.0 / (1.0 + exp(-self.margin(features))), 6)
+
+    def predict_label(self, features: dict[str, float]) -> int:
+        return 1 if self.margin(features) >= 0.0 else 0
+
+    def contributions(self, features: dict[str, float]) -> list[dict[str, object]]:
+        return [stump.describe(features) for stump in self.stumps]
+
+
+def _fit_best_stump(
+    samples: tuple[tuple[dict[str, float], int], ...],
+    sample_weights: list[float],
+    feature_names: tuple[str, ...],
+) -> tuple[_BoostingStump | None, float, list[int]]:
+    best_stump: _BoostingStump | None = None
+    best_error = 1.0
+    best_predictions: list[int] = []
+    signed_labels = [1 if label else -1 for _, label in samples]
+
+    for feature_name in feature_names:
+        feature_values = sorted({float(features.get(feature_name, 0.0) or 0.0) for features, _ in samples})
+        if not feature_values:
+            continue
+        candidate_thresholds: list[float] = []
+        if len(feature_values) == 1:
+            value = feature_values[0]
+            candidate_thresholds = [value - 0.5, value + 0.5]
+        else:
+            candidate_thresholds = [feature_values[0] - 0.5]
+            candidate_thresholds.extend((left + right) / 2.0 for left, right in zip(feature_values, feature_values[1:]))
+            candidate_thresholds.append(feature_values[-1] + 0.5)
+
+        for threshold in candidate_thresholds:
+            for positive_on_ge in (True, False):
+                predictions: list[int] = []
+                error = 0.0
+                for (features, _), weight, signed_label in zip(samples, sample_weights, signed_labels):
+                    value = float(features.get(feature_name, 0.0) or 0.0)
+                    is_positive = value >= threshold
+                    if not positive_on_ge:
+                        is_positive = not is_positive
+                    prediction = 1 if is_positive else -1
+                    predictions.append(prediction)
+                    if prediction != signed_label:
+                        error += weight
+                if error < best_error - 1e-12:
+                    alpha = 0.5 * log((1.0 - max(error, 1e-6)) / max(error, 1e-6))
+                    best_error = error
+                    best_stump = _BoostingStump(
+                        feature_name=feature_name,
+                        threshold=threshold,
+                        positive_on_ge=positive_on_ge,
+                        alpha=round(alpha, 6),
+                    )
+                    best_predictions = predictions
+
+    return best_stump, best_error, best_predictions
+
+
+def _train_pass_path_boosting_model(
+    samples: tuple[tuple[dict[str, float], int], ...],
+    *,
+    rounds: int = 5,
+) -> _PassPathBoostingModel:
+    feature_names = tuple(sorted(samples[0][0].keys()))
+    signed_labels = [1 if label else -1 for _, label in samples]
+    sample_weights = [1.0 / len(samples)] * len(samples)
+    stumps: list[_BoostingStump] = []
+    base_margin = 0.0
+
+    for _ in range(rounds):
+        stump, error, predictions = _fit_best_stump(samples, sample_weights, feature_names)
+        if stump is None:
+            break
+        if error >= 0.5:
+            break
+        epsilon = min(max(error, 1e-6), 1.0 - 1e-6)
+        stump = _BoostingStump(
+            feature_name=stump.feature_name,
+            threshold=stump.threshold,
+            positive_on_ge=stump.positive_on_ge,
+            alpha=round(0.5 * log((1.0 - epsilon) / epsilon), 6),
+        )
+        stumps.append(stump)
+        updated_weights = []
+        for weight, label, prediction in zip(sample_weights, signed_labels, predictions):
+            updated_weights.append(weight * exp(-stump.alpha * label * prediction))
+        normalizer = sum(updated_weights) or 1.0
+        sample_weights = [weight / normalizer for weight in updated_weights]
+
+    model = _PassPathBoostingModel(
+        base_margin=base_margin,
+        stumps=tuple(stumps),
+        feature_names=feature_names,
+        training_sample_count=len(samples),
+        training_accuracy=round(
+            sum(
+                1
+                for features, label in samples
+                if (1 if (base_margin + sum(stump.alpha * stump.vote(features) for stump in stumps)) >= 0.0 else 0) == label
+            )
+            / len(samples),
+            6,
+        ),
+    )
+    return model
+
+
+_PASS_PATH_BOOSTING_MODEL = _train_pass_path_boosting_model(_pass_path_boosting_training_samples())
+
+
+def _boosting_candidate_usefulness_score(candidate: SymbolicCandidate) -> float:
+    features = _boosting_candidate_features(candidate)
+    return _PASS_PATH_BOOSTING_MODEL.score(features)
+
+
+def _symbolic_candidate_usefulness_score(candidate: SymbolicCandidate) -> float:
+    return _boosting_candidate_usefulness_score(candidate)
 
 
 def _symbolic_candidate_confidence(candidate: SymbolicCandidate, usefulness_score: float) -> float:
@@ -819,9 +1159,8 @@ def _symbolic_candidate_set_payload(candidate_set: SymbolicCandidateSet) -> dict
         "candidate_count": len(candidates),
         "legal_candidate_count": len(legal_candidates),
         "ranker": {
-            "model_family": "gnn",
-            "model_version": "logical-rewrite-ranker-v1",
-            "graph_schema_version": "logical-compiler-graph-v1",
+            "model_family": _BOOSTING_MODEL_FAMILY,
+            "model_version": _BOOSTING_MODEL_VERSION,
             "objective": "expected_usefulness",
             "explanation_hook": "feature_attribution",
         },
