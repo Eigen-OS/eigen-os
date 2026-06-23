@@ -24,6 +24,10 @@ from .validation import (
 )
 
 AQO_VERSION = "1.0.0"
+_KB_CONTRACT_VERSION = "1.0.0"
+_KB_VERSION_ENV = "EIGEN_KB_VERSION"
+_NEURO_MODEL_VERSION_DEFAULT = "dpda-model-v1"
+_NEURO_POLICY_SNAPSHOT_DEFAULT = "policy-2026-06-15"
 
 _SYMBOLIC_CANDIDATE_ENUMERATION_VERSION = "1.0.0"
 _SYMBOLIC_CANDIDATE_BUDGET = 8
@@ -222,10 +226,59 @@ def _stable_hash(payload: object) -> str:
     return f"sha256:{hashlib.sha256(_stable_json(payload).encode('utf-8')).hexdigest()}"
 
 
-def _compiler_replay_snapshot() -> dict[str, str]:
+def _snapshot_digest(value: str) -> str:
+    value = value.strip()
+    if not value:
+        return ""
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _compiler_replay_snapshot() -> dict[str, object]:
+    model_version = os.getenv(_NEURO_MODEL_VERSION_ENV, _NEURO_MODEL_VERSION_DEFAULT).strip() or _NEURO_MODEL_VERSION_DEFAULT
+    policy_snapshot_version = os.getenv(_NEURO_POLICY_SNAPSHOT_VERSION_ENV, _NEURO_POLICY_SNAPSHOT_DEFAULT).strip() or _NEURO_POLICY_SNAPSHOT_DEFAULT
+    kb_version = os.getenv(_KB_VERSION_ENV, _KB_CONTRACT_VERSION).strip() or _KB_CONTRACT_VERSION
+    policy_mode = "deterministic"
+    model_snapshot = {
+        "model_version": model_version,
+        "model_snapshot_id": model_version,
+        "model_snapshot_digest": _snapshot_digest(model_version),
+    }
+    knowledge_base_snapshot = {
+        "kb_version": kb_version,
+        "kb_snapshot_id": kb_version,
+        "kb_snapshot_digest": _snapshot_digest(kb_version),
+    }
+    policy_snapshot = {
+        "policy_mode": policy_mode,
+        "policy_snapshot_version": policy_snapshot_version,
+        "policy_snapshot_id": policy_snapshot_version,
+        "policy_digest": _snapshot_digest(policy_snapshot_version),
+    }
+    snapshot_id = hashlib.sha256(
+        _canonical_json_text(
+            {
+                "kb_snapshot_id": kb_version,
+                "model_snapshot_id": model_version,
+                "policy_snapshot_version": policy_snapshot_version,
+                "policy_digest": policy_snapshot["policy_digest"],
+            }
+        ).encode("utf-8")
+    ).hexdigest()
     return {
-        "model_version": os.getenv(_NEURO_MODEL_VERSION_ENV, "").strip(),
-        "policy_snapshot_version": os.getenv(_NEURO_POLICY_SNAPSHOT_VERSION_ENV, "").strip(),
+        "snapshot_id": snapshot_id,
+        "model_version": model_version,
+        "model_snapshot_id": model_version,
+        "model_snapshot_digest": model_snapshot["model_snapshot_digest"],
+        "kb_version": kb_version,
+        "kb_snapshot_id": kb_version,
+        "kb_snapshot_digest": knowledge_base_snapshot["kb_snapshot_digest"],
+        "policy_mode": policy_mode,
+        "policy_snapshot_version": policy_snapshot_version,
+        "policy_snapshot_id": policy_snapshot_version,
+        "policy_digest": policy_snapshot["policy_digest"],
+        "model_snapshot": model_snapshot,
+        "knowledge_base_snapshot": knowledge_base_snapshot,
+        "policy_snapshot": policy_snapshot,
     }
 
 
@@ -264,6 +317,7 @@ def _compiler_replay_bundle(
     replay_bundle: dict[str, object] = {
         "contract_version": "1.0.0",
         "replay_mode": _REPLAY_MODE_DETERMINISTIC,
+        "snapshot_id": snapshot["snapshot_id"],
         "request": {
             "request_id": request_context.request_id,
             "trace_id": request_context.trace_id,
@@ -284,7 +338,9 @@ def _compiler_replay_bundle(
         "compiler_stage_order": compiler_stage_order,
         "handoff_stage_order": handoff_stage_order,
         "symbolic_rules": symbolic_rules,
-        "model_snapshot": snapshot,
+        "model_snapshot": snapshot["model_snapshot"],
+        "knowledge_base_snapshot": snapshot["knowledge_base_snapshot"],
+        "policy_snapshot": snapshot["policy_snapshot"],
         "symbolic_candidate_set": symbolic_candidates,
         "logical_graph_schema": logical_graph_schema,
         "telemetry_feature_set": telemetry_feature_set,
@@ -1999,7 +2055,7 @@ def compile_eigen_lang(
             "stage_count": len(compiler_stage_order),
             "stage_success_count": len(compiler_stage_order),
             "stage_failure_count": 0,
-            "latency_ms": round((perf_counter() - compile_started) * 1000.0, 6),
+            "latency_ms": 0.0,
             "backend": backend_contract.get("declared_backend_target", "") or backend_contract.get("backend_target_class", ""),
             "policy_state": workload_profile.kind,
         },
@@ -2016,6 +2072,7 @@ def compile_eigen_lang(
     telemetry_feature_set_json = _canonical_json_text(telemetry_feature_set_payload)
     telemetry_feature_set_sha256 = hashlib.sha256(telemetry_feature_set_json.encode("utf-8")).hexdigest()
 
+    snapshot = _compiler_replay_snapshot()
     replay_bundle, replay_bundle_sha256 = _compiler_replay_bundle(
         request_context=normalized_request_context,
         workload_profile=workload_profile.kind,
@@ -2043,9 +2100,13 @@ def compile_eigen_lang(
         "workload_profile": workload_profile.kind,
         "source_sha256": source_digest,
         "aqo_sha256": aqo_digest,
-        "request_sha256": request_digest,"replay_mode": _REPLAY_MODE_DETERMINISTIC,
+        "request_sha256": request_digest,
+        "replay_mode": _REPLAY_MODE_DETERMINISTIC,
         "replay_bundle_sha256": replay_bundle_sha256,
+        "snapshot_id": snapshot["snapshot_id"],
         "model_snapshot": replay_bundle["model_snapshot"],
+        "knowledge_base_snapshot": replay_bundle["knowledge_base_snapshot"],
+        "policy_snapshot": replay_bundle["policy_snapshot"],
     }
     observability = {
         "contract_version": "1.0.0",
@@ -2120,6 +2181,17 @@ def compile_eigen_lang(
         "sandbox_profile": normalized_request_context.sandbox_profile,
         "tenant_id": normalized_request_context.tenant_id,
         "project_id": normalized_request_context.project_id,
+        "snapshot_id": str(snapshot["snapshot_id"]),
+        "model_version": str(snapshot["model_version"]),
+        "model_snapshot_id": str(snapshot["model_snapshot_id"]),
+        "model_snapshot_digest": str(snapshot["model_snapshot_digest"]),
+        "kb_version": str(snapshot["kb_version"]),
+        "kb_snapshot_id": str(snapshot["kb_snapshot_id"]),
+        "kb_snapshot_digest": str(snapshot["kb_snapshot_digest"]),
+        "policy_mode": str(snapshot["policy_mode"]),
+        "policy_snapshot_version": str(snapshot["policy_snapshot_version"]),
+        "policy_snapshot_id": str(snapshot["policy_snapshot_id"]),
+        "policy_digest": str(snapshot["policy_digest"]),
         "compiler_pass_pipeline_version": "1.0.0",
         "compiler_passes_json": _canonical_json_text(
             {
