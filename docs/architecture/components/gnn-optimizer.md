@@ -276,6 +276,24 @@ This digest MUST be persisted in artifacts and included in response metadata.
 - calibration snapshot (bounded)
 - queue/capacity hints (optional, bounded)
 
+#### Logical / physical graph bridge
+
+Optimizer-service integrations MUST carry both graph views when a backend-aware optimization is performed:
+
+- **logical graph**: the compiler-emitted circuit graph over logical qubits and semantic edges.
+- **physical graph**: the Driver Manager-emitted hardware graph over physical qubits, couplers, and backend constraints.
+
+The bridge is identified by a stable `graph_interface_id` owned by the optimizer service. The logical and physical graphs MUST share the same `graph_pair_id`, and that binding MUST be echoed in request and response payloads.
+
+Canonical schema requirements:
+
+| Graph | Schema version | Canonical format | Source of truth |
+|---|---|---|---|
+| Logical graph | `logical-compiler-graph-v1` | `eigen.logical-graph-json` | Compiler |
+| Physical graph | `physical-topology-graph-v1` | `eigen.physical-graph-json` | Driver Manager |
+
+The graph snapshots MUST be deterministic, bounded, and independently hashable. The logical graph snapshot MUST remain stable across replayable compiles. The physical graph snapshot MUST represent the backend truth used for placement and routing decisions.
+
 #### Runtime/policy inputs
 
 - policy mode: `balanced | latency | cost | availability | deterministic | compliance`
@@ -299,6 +317,7 @@ The optimizer produces:
 | `confidence_score` | optional | bounded [0..1] |
 | `fallback_used` | required | boolean |
 | `fallback_reason` | required if fallback_used | stable reason code |
+| `graph_interface` | optional | logical/physical graph binding echoed for replay |
 | `explanation_ref` | optional | QFS reference to explain payload |
 | `optimizer_digest` | required | reproducibility hash |
 
@@ -323,6 +342,9 @@ eigen.internal.v1.OptimizerService
 - backend identity (device/backend id)
 - determinism flag and seed (seed required when deterministic=true)
 - objective/policy envelope
+- graph interface binding with matching `graph_pair_id` values for the logical graph and physical graph snapshots
+
+`graph_encoding` remains a backward-compatible alias for the logical graph snapshot only and is deprecated for new optimizer-service integrations. New integrations SHOULD prefer `graph_interface`.
 
 #### Response MUST include:
 
@@ -331,6 +353,7 @@ eigen.internal.v1.OptimizerService
 - timing metrics (latency)
 - trace/correlation metadata
 - deterministic digest
+- the echoed `graph_interface` binding when the request supplied it
 
 **Note:** If the optimizer service is not deployed, callers MUST treat it as optional and rely on fallback/heuristic behavior in compiler/kernel (policy-dependent).
 

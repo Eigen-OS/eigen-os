@@ -527,6 +527,50 @@ service NeuroSymbolicService {
 - Any recommendation intended for security-sensitive use MUST pass through validation before the policy engine sees it.
 - There MUST be no direct model-to-execution path.
 
+### 5.3 OptimizerService Graph Interface
+
+The internal optimizer contract MUST distinguish between the compiler-owned logical graph and the Driver Manager-owned physical graph.
+
+Canonical request / response binding:
+
+```protobuf
+message LogicalGraphContext {
+  string graph_id = 1;
+  string graph_pair_id = 2;
+  string schema_version = 3;
+  string canonical_format = 4;
+  string canonical_graph_json = 5;
+  string canonical_sha256 = 6;
+  bool round_trip_stability = 7;
+}
+
+message PhysicalGraphContext {
+  string graph_id = 1;
+  string graph_pair_id = 2;
+  string schema_version = 3;
+  string canonical_format = 4;
+  string canonical_graph_json = 5;
+  string canonical_sha256 = 6;
+  bool round_trip_stability = 7;
+}
+
+message GraphInterfaceContext {
+  string graph_interface_id = 1;
+  LogicalGraphContext logical_graph = 2;
+  PhysicalGraphContext physical_graph = 3;
+  string alignment_sha256 = 4;
+}
+```
+
+Normative rules:
+
+- `graph_interface_id` MUST remain stable across request/response echoes for the same optimizer invocation.
+- `logical_graph.graph_pair_id` and `physical_graph.graph_pair_id` MUST be identical.
+- `graph_encoding` is a deprecated legacy alias for `logical_graph` only and MUST NOT be used to carry the physical graph.
+- The logical graph schema version MUST be `logical-compiler-graph-v1`.
+- The physical graph schema version MUST be `physical-topology-graph-v1`.
+- The optimizer MAY reject a request with `FAILED_PRECONDITION` when the logical/physical pair identifiers do not match.
+
 ---
 
 ## 6. Common Types
