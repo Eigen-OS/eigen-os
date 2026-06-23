@@ -52,7 +52,16 @@ def _patch_pipeline_dependencies(monkeypatch):
             aqo={"version": "1.0.0", "qubits": kwargs["qubits"], "operations": kwargs["operations"]},
         ),
     )
-    monkeypatch.setattr(sr, "_compiler_replay_bundle", lambda **kwargs: ({"model_snapshot": {}}, "bundle-sha"))
+    monkeypatch.setattr(
+        sr,
+        "_compiler_replay_bundle",
+        lambda **kwargs: ({
+            "snapshot_id": "snapshot-sha",
+            "model_snapshot": {"model_version": "dpda-model-v1", "model_snapshot_id": "dpda-model-v1", "model_snapshot_digest": "model-digest"},
+            "knowledge_base_snapshot": {"kb_version": "1.0.0", "kb_snapshot_id": "1.0.0", "kb_snapshot_digest": "kb-digest"},
+            "policy_snapshot": {"policy_mode": "deterministic", "policy_snapshot_version": "policy-2026-06-15", "policy_snapshot_id": "policy-2026-06-15", "policy_digest": "policy-digest"},
+        }, "bundle-sha"),
+    )
 
 
 def test_symbolic_rewrite_pipeline_exposes_stages_and_logs_them(monkeypatch):
