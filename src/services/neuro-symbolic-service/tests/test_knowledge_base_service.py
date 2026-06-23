@@ -357,6 +357,71 @@ def test_runtime_decision_ingest_persists_explainability_envelope(monkeypatch: p
     assert audit["immutable"] is True
 
 
+@pytest.mark.parametrize("rewrite_outcome", ["accepted", "rejected", "equivalent", "unsafe"])
+def test_decision_log_accepts_canonical_rewrite_outcomes(grpc_addr: str, rewrite_outcome: str) -> None:
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = kb_pb_grpc.KnowledgeBaseServiceStub(channel)
+    envelope = _envelope(request_id=f"kb-rewrite-{rewrite_outcome}")
+
+    stub.AppendDecisionLog(
+        kb_pb.AppendDecisionLogRequest(
+            envelope=envelope,
+            decision_log=kb_pb.DecisionLog(
+                decision_id=f"decision-{rewrite_outcome}",
+                trace_id=f"trace-{rewrite_outcome}",
+                model_version="m1",
+                component="compiler",
+                policy_branch="symbolic_rewrite",
+                selected_action="rewrite-1",
+                fallback_used=False,
+                feature_snapshot={
+                    "rewrite_outcome": rewrite_outcome,
+                    "trace_digest_sha256": "sha256:trace-digest",
+                    "pattern_signature": "rewrite-1",
+                },
+                decided_at=_ts("2026-06-11T12:01:00+00:00"),
+            ),
+        )
+    )
+
+    decisions = stub.QueryDecisionLogs(
+        kb_pb.QueryDecisionLogsRequest(
+            envelope=envelope,
+            trace_id=f"trace-{rewrite_outcome}",
+            model_version="m1",
+            page_size=10,
+        )
+    )
+    assert len(decisions.decision_logs) == 1
+    assert decisions.decision_logs[0].feature_snapshot["rewrite_outcome"] == rewrite_outcome
+
+
+def test_decision_log_rejects_unknown_rewrite_outcome(grpc_addr: str) -> None:
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = kb_pb_grpc.KnowledgeBaseServiceStub(channel)
+    envelope = _envelope(request_id="kb-rewrite-invalid")
+
+    with pytest.raises(grpc.RpcError) as excinfo:
+        stub.AppendDecisionLog(
+            kb_pb.AppendDecisionLogRequest(
+                envelope=envelope,
+                decision_log=kb_pb.DecisionLog(
+                    decision_id="decision-invalid",
+                    trace_id="trace-invalid",
+                    model_version="m1",
+                    component="compiler",
+                    policy_branch="symbolic_rewrite",
+                    selected_action="rewrite-1",
+                    fallback_used=False,
+                    feature_snapshot={"rewrite_outcome": "maybe"},
+                    decided_at=_ts("2026-06-11T12:01:00+00:00"),
+                ),
+            )
+        )
+
+    assert excinfo.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+
+
 def test_kb_queries_support_trace_digest_and_pattern_signature_filters(grpc_addr: str) -> None:
     channel = grpc.insecure_channel(grpc_addr)
     stub = kb_pb_grpc.KnowledgeBaseServiceStub(channel)

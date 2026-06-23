@@ -382,11 +382,14 @@ Responsibilities:
 
 The Knowledge Base (KB) stores reusable execution intelligence and records used by the platform and developer tooling.
 
+The canonical rewrite-outcome taxonomy is defined in `reference/rewrite-outcome-taxonomy.md`; KB annotation, ranking, and review workflows MUST use the same label set without aliases or intermediate values.
+
 KB-facing APIs now live in `neuro-symbolic-service` and are no longer owned by `system-api`.
 
 Target capabilities:
 
 - circuit and artifact reuse,
+- rewrite-outcome labeling for ranking and safety,
 - optimization reuse,
 - analytics and trace-backed auditability,
 - future integration with intelligent scheduling.
@@ -398,6 +401,7 @@ Target capabilities:
 Eigen OS architecture includes forward-compatible services for:
 
 - dataset ingestion and caching (Dataset Pipeline),
+- model-training corpora that preserve the canonical rewrite-outcome taxonomy,
 - continuous learning signals and model refresh,
 - optimizer integration (e.g., GNN optimizer).
 

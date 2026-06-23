@@ -18,6 +18,7 @@ _REDACTED_VALUE = "[REDACTED]"
 _MASKED_EMAIL_VALUE = "[REDACTED_EMAIL]"
 _MASKED_PHONE_VALUE = "[REDACTED_PHONE]"
 _MASKED_IDENTIFIER_VALUE = "[REDACTED_ID]"
+_REWRITE_OUTCOME_TAXONOMY = ("accepted", "rejected", "equivalent", "unsafe")
 
 _REDACT_DELETE_KEYS = {
     "authorization",
@@ -173,6 +174,32 @@ def _require_string(value: Any, *, field_name: str) -> str:
     if not text or text.lower() == "none":
         raise ProductionTraceTrainingError(f"{field_name} is required")
     return text
+
+
+def _normalize_rewrite_outcome(value: Any, *, field_name: str) -> str:
+    outcome = _require_string(value, field_name=field_name).lower()
+    if outcome not in _REWRITE_OUTCOME_TAXONOMY:
+        allowed = ", ".join(_REWRITE_OUTCOME_TAXONOMY)
+        raise ProductionTraceTrainingError(f"{field_name} must be one of: {allowed}")
+    return outcome
+
+
+def _normalize_rewrite_outcome_tree(value: Any, *, field_name: str) -> Any:
+    if isinstance(value, dict):
+        normalized: dict[str, Any] = {}
+        for key, nested in value.items():
+            nested_field = f"{field_name}.{key}" if field_name else str(key)
+            if str(key).strip().lower() == "rewrite_outcome":
+                normalized[key] = _normalize_rewrite_outcome(nested, field_name=nested_field)
+            else:
+                normalized[key] = _normalize_rewrite_outcome_tree(nested, field_name=nested_field)
+        return normalized
+    if isinstance(value, list):
+        return [
+            _normalize_rewrite_outcome_tree(item, field_name=f"{field_name}[{idx}]")
+            for idx, item in enumerate(value)
+        ]
+    return value
 
 
 def _require_digest(value: Any, *, field_name: str) -> str:
@@ -333,8 +360,9 @@ def _normalize_trace_record(record: Any, *, idx: int, tenant_id: str, project_id
         raise ProductionTraceTrainingError(f"records[{idx}].payload must be JSON-serializable")
     if not _is_redacted_payload(payload):
         raise ProductionTraceTrainingError(f"records[{idx}] must be redacted before ingestion")
+    normalized_payload = _normalize_rewrite_outcome_tree(payload, field_name=f"records[{idx}].payload")
     content_digest_sha256 = _require_digest(mapping.get("content_digest_sha256"), field_name=f"records[{idx}].content_digest_sha256")
-    computed_content_digest = hashlib.sha256(_stable_json(payload).encode("utf-8")).hexdigest()
+    computed_content_digest = hashlib.sha256(_stable_json(normalized_payload).encode("utf-8")).hexdigest()
     if computed_content_digest != content_digest_sha256:
         raise ProductionTraceTrainingError(f"records[{idx}].content_digest_sha256 mismatch")
     provenance = _normalize_record_provenance(mapping.get("provenance"), field_name=f"records[{idx}].provenance")
@@ -615,11 +643,12 @@ def _normalize_historical_compilation_record(
         raise ProductionTraceTrainingError(f"records[{idx}] must be redacted before ingestion")
     if not isinstance(payload, dict):
         raise ProductionTraceTrainingError(f"records[{idx}].payload must be an object for historical compilation corpora")
-    compiler_status = _require_string(payload.get("compiler_status"), field_name=f"records[{idx}].payload.compiler_status")
-    rewrite_outcome = _require_string(payload.get("rewrite_outcome"), field_name=f"records[{idx}].payload.rewrite_outcome")
-    accepted_rewrite_ids = _normalize_string_list(payload.get("accepted_rewrite_ids"), field_name=f"records[{idx}].payload.accepted_rewrite_ids", allow_empty=True)
-    rejected_rewrite_ids = _normalize_string_list(payload.get("rejected_rewrite_ids"), field_name=f"records[{idx}].payload.rejected_rewrite_ids", allow_empty=True)
-    timing_ms = payload.get("timing_ms")
+    normalized_payload = _normalize_rewrite_outcome_tree(payload, field_name=f"records[{idx}].payload")
+    compiler_status = _require_string(normalized_payload.get("compiler_status"), field_name=f"records[{idx}].payload.compiler_status")
+    rewrite_outcome = _normalize_rewrite_outcome(normalized_payload.get("rewrite_outcome"), field_name=f"records[{idx}].payload.rewrite_outcome")
+    accepted_rewrite_ids = _normalize_string_list(normalized_payload.get("accepted_rewrite_ids"), field_name=f"records[{idx}].payload.accepted_rewrite_ids", allow_empty=True)
+    rejected_rewrite_ids = _normalize_string_list(normalized_payload.get("rejected_rewrite_ids"), field_name=f"records[{idx}].payload.rejected_rewrite_ids", allow_empty=True)
+    timing_ms = normalized_payload.get("timing_ms")
     if timing_ms is None:
         timing_ms = payload.get("stage_timings_ms")
     if timing_ms is None:
@@ -628,11 +657,11 @@ def _normalize_historical_compilation_record(
         raise ProductionTraceTrainingError(f"records[{idx}].payload.timing_ms is required")
     final_aqo = payload.get("final_aqo")
     if final_aqo is None:
-        final_aqo = payload.get("final_aqo_json")
+        final_aqo = normalized_payload.get("final_aqo_json")
     if final_aqo is None:
         raise ProductionTraceTrainingError(f"records[{idx}].payload.final_aqo is required")
     final_aqo_sha256 = _hex_digest(_stable_json(final_aqo).encode("utf-8"))
-    content_payload = dict(payload)
+    content_payload = dict(normalized_payload)
     content_payload["accepted_rewrite_ids"] = list(accepted_rewrite_ids)
     content_payload["rejected_rewrite_ids"] = list(rejected_rewrite_ids)
     content_payload["timing_ms"] = _normalize_numeric_tree(timing_ms)

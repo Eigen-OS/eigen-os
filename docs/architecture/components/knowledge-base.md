@@ -13,7 +13,7 @@ The Knowledge Base exposes two distinct behaviors:
 
 Runtime decision logs are append-only and MUST preserve the audit trail fields required by the neuro-symbolic compliance contract: caller identity, tenant, policy snapshot version, model version, retrieval sources, and final decision.
 
-Compiler traces are indexed into the KB as replay-safe records and decision logs so later queries can bind to trace ID, trace digest, and pattern signature. Both accepted and rejected rewrite paths MUST be retained.
+Compiler traces are indexed into the KB as replay-safe records and decision logs so later queries can bind to trace ID, trace digest, and pattern signature. The canonical rewrite-outcome taxonomy is `accepted`, `rejected`, `equivalent`, and `unsafe`; KB records and model-training corpora MUST use that same label set consistently. Both accepted and rejected rewrite paths MUST be retained, and equivalent/unsafe outcomes MUST be preserved for ranking and safety analysis.
 
 This document defines the retrieval semantics for both candidate similarity search and canonical pattern lookup.
 The boundary between KB retrieval, deterministic replay, and ML-advisor consumption is defined in `docs/architecture/components/neuro-symbolic-core.md`.

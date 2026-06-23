@@ -210,9 +210,10 @@ The stable KB request/response contract used by compiler queries is defined in `
 #### Responsibilities
 
 - store circuit/task records and traces,
+- store canonical rewrite-outcome labels with provenance,
 - similarity search (vector index),
 - structural queries (metrics filtering),
-- training dataset assembly and governance.
+- training dataset assembly and governance using the canonical rewrite-outcome taxonomy in `docs/reference/rewrite-outcome-taxonomy.md`.
 
 ---
 

@@ -47,6 +47,8 @@ _REDACTED_VALUE = "[REDACTED]"
 _MASKED_EMAIL_VALUE = "[REDACTED_EMAIL]"
 _MASKED_PHONE_VALUE = "[REDACTED_PHONE]"
 _MASKED_IDENTIFIER_VALUE = "[REDACTED_ID]"
+_REWRITE_OUTCOME_TAXONOMY = ("accepted", "rejected", "equivalent", "unsafe")
+_TRAINING_POSITIVE_REWRITE_OUTCOMES = {"accepted", "equivalent"}
 _REDACT_DELETE_KEYS = {
     "authorization",
     "auth_header",
@@ -97,6 +99,47 @@ _EMAIL_RE = re.compile(r"(?i)\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b")
 _PHONE_RE = re.compile(r"(?i)(?<!\d)(?:\+?\d{1,3}[-.\s]?)?(?:\(?\d{2,4}\)?[-.\s]?){1,3}\d{2,4}(?!\d)")
 _BEARER_RE = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{8,}\b")
 _UUID_RE = re.compile(r"(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b")
+
+def _normalize_rewrite_outcome(value: Any, *, field_name: str) -> str:
+    text = str(value).strip().lower()
+    if text not in _REWRITE_OUTCOME_TAXONOMY:
+        allowed = ", ".join(_REWRITE_OUTCOME_TAXONOMY)
+        raise ValueError(f"{field_name} must be one of: {allowed}")
+    return text
+
+
+def _training_dataset_record_count(records: list[dict[str, Any]]) -> int:
+    labeled_count = 0
+    saw_label = False
+    for record in records:
+        payload = record.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        if "rewrite_outcome" not in payload:
+            continue
+        saw_label = True
+        if _normalize_rewrite_outcome(payload["rewrite_outcome"], field_name="records[].payload.rewrite_outcome") in _TRAINING_POSITIVE_REWRITE_OUTCOMES:
+            labeled_count += 1
+    return labeled_count if saw_label else len(records)
+
+
+def _normalize_rewrite_outcome_tree(value: Any, *, field_name: str) -> Any:
+    if isinstance(value, dict):
+        normalized: dict[str, Any] = {}
+        for key, nested in value.items():
+            nested_field = f"{field_name}.{key}" if field_name else str(key)
+            if str(key).strip().lower() == "rewrite_outcome":
+                normalized[key] = _normalize_rewrite_outcome(nested, field_name=nested_field)
+            else:
+                normalized[key] = _normalize_rewrite_outcome_tree(nested, field_name=nested_field)
+        return normalized
+    if isinstance(value, list):
+        return [
+            _normalize_rewrite_outcome_tree(item, field_name=f"{field_name}[{idx}]")
+            for idx, item in enumerate(value)
+        ]
+    return value
+
 
 def _redact_scalar_text(text: str, path: str, redactions: set[str]) -> str:
     original = text
@@ -1444,10 +1487,16 @@ class KnowledgeBaseService:
             redacted_payload = _redact_json_value(payload, "$", set())
             if redacted_payload != payload:
                 raise KnowledgeBaseUnavailable(f"records[{idx}] must be redacted before ingestion")
+            normalized_payload = _normalize_rewrite_outcome_tree(redacted_payload, field_name=f"records[{idx}].payload")
+            if isinstance(redacted_payload, dict) and "rewrite_outcome" in redacted_payload:
+                redacted_payload = dict(redacted_payload)
+                redacted_payload["rewrite_outcome"] = _normalize_rewrite_outcome(
+                    redacted_payload["rewrite_outcome"],
+                    field_name=f"records[{idx}].payload.rewrite_outcome"),
             content_digest = str(record.get("content_digest_sha256", "")).strip().lower()
             if not re.fullmatch(r"[0-9a-f]{64}", content_digest):
                 raise ValueError(f"records[{idx}].content_digest_sha256 must be a SHA-256 hex digest")
-            computed_content_digest = hashlib.sha256(_stable_json(redacted_payload).encode("utf-8")).hexdigest()
+            computed_content_digest = hashlib.sha256(_stable_json(normalized_payload).encode("utf-8")).hexdigest()
             if computed_content_digest != content_digest:
                 raise KnowledgeBaseUnavailable(f"records[{idx}] content digest mismatch")
 
@@ -1482,7 +1531,7 @@ class KnowledgeBaseService:
                 "record_id": record_id,
                 "schema_version": record_schema,
                 "content_digest_sha256": content_digest,
-                "payload": redacted_payload,
+                "payload": normalized_payload,
                 "provenance": {
                     "source_ref": record_provenance_ref,
                     "captured_at": record_provenance_captured_at,
@@ -1778,7 +1827,7 @@ class KnowledgeBaseService:
                     "dataset_version": dataset["dataset_version"],
                     "dataset_digest_sha256": dataset["dataset_digest_sha256"],
                     "dataset_manifest_digest_sha256": dataset["manifest_digest_sha256"],
-                    "dataset_record_count": dataset["record_count"],
+                    "dataset_record_count": _training_dataset_record_count(dataset["records"]),
                 }
             )
         record_kb_query("learning_models", hit=True)
@@ -2763,6 +2812,19 @@ class KnowledgeBaseService:
             violations.append(FieldViolation(field="decision_log.decision_id", description="decision_id is required"))
         if not str(getattr(decision_log, "trace_id", "")).strip():
             violations.append(FieldViolation(field="decision_log.trace_id", description="trace_id is required"))
+        feature_snapshot = dict(getattr(decision_log, "feature_snapshot", {}) or {})
+        rewrite_outcome = feature_snapshot.get("rewrite_outcome")
+        if rewrite_outcome not in (None, ""):
+            try:
+                normalized_rewrite_outcome = _normalize_rewrite_outcome(
+                    rewrite_outcome,
+                    field_name="decision_log.feature_snapshot.rewrite_outcome",
+                )
+            except ValueError as exc:
+                violations.append(FieldViolation(field="decision_log.feature_snapshot.rewrite_outcome", description=str(exc)))
+            else:
+                if hasattr(decision_log, "feature_snapshot"):
+                    decision_log.feature_snapshot["rewrite_outcome"] = normalized_rewrite_outcome
         if violations:
             abort_invalid_argument(context, "validation failed", violations)
 
