@@ -514,6 +514,77 @@ def test_compile_job_indexes_trace_and_rewrite_paths_in_kb(
     assert rejected_logs.decision_logs[0].feature_snapshot["trace_digest_sha256"] == trace_digest
 
 
+def test_compile_job_gracefully_degrades_when_kb_is_slow(
+    grpc_addr: str,
+    kb_server: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("EIGEN_KB_GRPC_ENDPOINT", kb_server)
+    monkeypatch.setenv("EIGEN_KB_AUTH_TOKEN", "kb-test-token")
+    monkeypatch.setenv("EIGEN_KB_SERVICE_IDENTITY", "eigen-compiler")
+    monkeypatch.setenv("EIGEN_KB_SERVICE_ROLE", "compiler")
+    monkeypatch.setenv("EIGEN_KB_ROLES", "kb:read,kb:write")
+    monkeypatch.setenv("EIGEN_KB_TIMEOUT_SECONDS", "0.1")
+    monkeypatch.setenv("EIGEN_NEURO_SYMBOLIC_MODEL_VERSION", "model-2026-06-23")
+    monkeypatch.setenv("EIGEN_NEURO_SYMBOLIC_POLICY_SNAPSHOT_VERSION", "policy-2026-06-15")
+
+    from neuro_symbolic_service import knowledge_base as kb_mod
+
+    original_upsert = kb_mod.KnowledgeBaseService.UpsertRecord
+    original_append = kb_mod.KnowledgeBaseService.AppendDecisionLog
+
+    def slow_upsert(self, request, context):
+        time.sleep(3.0)
+        return original_upsert(self, request, context)
+
+    def slow_append(self, request, context):
+        time.sleep(3.0)
+        return original_append(self, request, context)
+
+    monkeypatch.setattr(kb_mod.KnowledgeBaseService, "UpsertRecord", slow_upsert)
+    monkeypatch.setattr(kb_mod.KnowledgeBaseService, "AppendDecisionLog", slow_append)
+
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = comp_pb_grpc.CompilationServiceStub(channel)
+
+    request_metadata = kernel_pb.RequestMetadata()
+    request_metadata.contract_version = "1.0.0"
+    request_metadata.request_id = "req-kb-slow-001"
+    request_metadata.trace_id = "trace-kb-slow-001"
+    request_metadata.traceparent = "00-11111111111111111111111111111111-2222222222222222-01"
+    request_metadata.deadline.seconds = 60
+    request_metadata.retry_policy = "retry-none"
+    request_metadata.security_context = "compiler-test"
+    request_metadata.tenant_id = "tenant-a"
+    request_metadata.project_id = "project-a"
+    request_metadata.workload.kind = kernel_pb.WORKLOAD_FAMILY_KIND_HYBRID_WORKFLOW
+    request_metadata.workload.execution_profile = "hybrid"
+    request_metadata.workload.backend_target = "sim:local"
+
+    start = time.perf_counter()
+    resp = stub.CompileJob(
+        comp_pb.CompileJobRequest(
+            job_id="job-kb-slow-001",
+            language="eigen-lang",
+            source=(
+                b"from eigen_lang import hybrid_program, ry\n\n"
+                b"@hybrid_program(target=\"sim\", shots=1000)\n"
+                b"def main():\n"
+                b"    ry(0, theta=1.0)\n"
+            ),
+            request_metadata=request_metadata,
+        )
+    )
+    elapsed = time.perf_counter() - start
+
+    assert elapsed < 1.5
+    assert resp.metadata["workload_profile"] == "HybridWorkflow"
+    assert resp.metadata["compiler_replay_json"]
+    assert resp.metadata["aqo_sha256"]
+    candidate_set = json.loads(resp.metadata["symbolic_candidate_set_json"])
+    assert candidate_set["selected_candidate_id"] == "symbolic.rewrite_terminal_measurement"
+
+
 def test_compile_job_uses_request_metadata_workload_profile(grpc_addr: str) -> None:
     channel = grpc.insecure_channel(grpc_addr)
     stub = comp_pb_grpc.CompilationServiceStub(channel)

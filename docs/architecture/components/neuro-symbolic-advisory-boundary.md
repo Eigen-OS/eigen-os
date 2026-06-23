@@ -10,7 +10,9 @@ The normative source of truth for the full symbolic-core / KB / ML-advisor bound
 
 The compiler must treat neuro-symbolic output as advisory only. Deterministic validation, normalization, lowering, AQO contract checks, and workload-profile resolution remain authoritative.
 
-If model output is missing, malformed, low-confidence, or invalid, the compiler must ignore it and continue with the symbolic baseline.
+If model output is missing, malformed, low-confidence, invalid, or delayed past the request budget, the compiler must ignore it and continue with the symbolic baseline.
+
+Any advisory-side or KB-side effect used for ranking, tracing, or telemetry must be bounded by the active request deadline (or the configured service timeout when no deadline is available). `UNAVAILABLE` and `DEADLINE_EXCEEDED` responses must degrade gracefully and must not fail compilation on their own.
 
 Neuro-symbolic suggestions must not be able to produce invalid IR, bypass semantic validation, infer compiler legality, or relax lowering constraints.
 
