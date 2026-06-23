@@ -321,6 +321,12 @@ Required for:
 - Continuous Learning,
 - scheduler validation.
 
+The provenance envelope MUST include the canonical KB bindings for the selected decision artifact, replay bundle, and provenance artifact so that the explanation can be replayed from KB without ad hoc translation:
+
+- `kb://decision-log/<decision_id>`
+- `kb://replay/<decision_id>`
+- `kb://provenance/<decision_id>`
+
 ---
 
 ## 9. Runtime Semantics
