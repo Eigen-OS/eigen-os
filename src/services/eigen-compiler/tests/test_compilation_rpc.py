@@ -43,7 +43,7 @@ from eigen.internal.v1 import kernel_gateway_pb2 as kernel_pb  # noqa: E402
 from eigen.internal.v1 import neuro_symbolic_service_pb2_grpc as nsc_pb_grpc  # noqa: E402
 from eigen.internal.v1 import types_pb2 as types_pb  # noqa: E402
 
-from eigen_compiler.grpc_impl import _rewrite_outcome_for_candidate  # noqa: E402
+from eigen_compiler.grpc_impl import _rewrite_outcome_for_candidate, render_metrics_text, reset_metrics  # noqa: E402
 
 
 def _enum_value(module, *names: str) -> int:
@@ -259,6 +259,62 @@ def test_compile_circuit_happy_path(grpc_addr: str) -> None:
     ]
     decision_lineage = json.loads(resp.metadata["decision_lineage_json"])
     assert decision_lineage["decision_source"] == "symbolic_rules"
+
+
+def test_evaluation_metrics_are_labeled_by_compiler_version_and_job_type(grpc_addr: str) -> None:
+    reset_metrics()
+
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = comp_pb_grpc.CompilationServiceStub(channel)
+
+    circuit_source = (
+        b"from eigen_lang import hybrid_program\n\n"
+        b"@hybrid_program()\n"
+        b"def main():\n"
+        b"    ry(0, theta=1.0)\n"
+    )
+
+    circuit_resp = stub.CompileCircuit(
+        comp_pb.CompileCircuitRequest(
+            language="eigen-lang",
+            source=circuit_source,
+        )
+    )
+    assert circuit_resp.metadata["compiler_contract_version"] == "1.0.0"
+    assert circuit_resp.metadata["workload_profile"] == "QuantumJob"
+
+    request_metadata = kernel_pb.RequestMetadata()
+    request_metadata.contract_version = "1.0.0"
+    request_metadata.request_id = "req-metrics-001"
+    request_metadata.trace_id = "trace-metrics-001"
+    request_metadata.traceparent = "00-11111111111111111111111111111111-2222222222222222-01"
+    request_metadata.deadline.seconds = 60
+    request_metadata.retry_policy = "retry-none"
+    request_metadata.security_context = "compiler-test"
+    request_metadata.tenant_id = "tenant-a"
+    request_metadata.project_id = "project-a"
+    request_metadata.workload.kind = kernel_pb.WORKLOAD_FAMILY_KIND_HYBRID_WORKFLOW
+    request_metadata.workload.execution_profile = "hybrid"
+    request_metadata.workload.backend_target = "sim:local"
+
+    job_resp = stub.CompileJob(
+        comp_pb.CompileJobRequest(
+            job_id="job-metrics-001",
+            language="eigen-lang",
+            source=circuit_source,
+            request_metadata=request_metadata,
+        )
+    )
+    assert job_resp.metadata["compiler_contract_version"] == "1.0.0"
+    assert job_resp.metadata["workload_profile"] == "HybridWorkflow"
+
+    metrics = render_metrics_text()
+    assert 'eigen_compiler_evaluation_total{compiler_version="1.0.0",decision_source="symbolic_rules",job_type="QuantumJob"} 1' in metrics
+    assert 'eigen_compiler_evaluation_total{compiler_version="1.0.0",decision_source="symbolic_rules",job_type="HybridWorkflow"} 1' in metrics
+    assert 'eigen_compiler_evaluation_latency_seconds_count{compiler_version="1.0.0",decision_source="symbolic_rules",job_type="QuantumJob"} 1' in metrics
+    assert 'eigen_compiler_evaluation_latency_seconds_count{compiler_version="1.0.0",decision_source="symbolic_rules",job_type="HybridWorkflow"} 1' in metrics
+    assert 'eigen_compiler_evaluation_latency_seconds_sum{compiler_version="1.0.0",decision_source="symbolic_rules",job_type="QuantumJob"}' in metrics
+    assert 'eigen_compiler_evaluation_latency_seconds_sum{compiler_version="1.0.0",decision_source="symbolic_rules",job_type="HybridWorkflow"}' in metrics
 
 
 def test_deterministic_advisor_prefers_terminal_measurement_candidates() -> None:

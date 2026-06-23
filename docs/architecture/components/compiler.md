@@ -221,6 +221,7 @@ Pass ordering and pass outputs must remain stable for identical normalized input
 - Duplicate / replay compiles must be observable.
 - Stage failures must be attributable to a named stage and a structured violation.
 - Advisor influence must be recorded as accepted, rejected, or transformed into a deterministic compiler action.
+- Evaluation dashboards must slice `eigen_compiler_evaluation_total` and `eigen_compiler_evaluation_latency_seconds_*` by `compiler_version` and `job_type` to show model-assisted acceptance rate, fallback rate, and latency.
 
 ---
 

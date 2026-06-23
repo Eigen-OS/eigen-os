@@ -1,0 +1,232 @@
+{
+  "title": "Eigen Compiler \u2014 Evaluation Dashboard",
+  "uid": "eigen-compiler-evaluation-v1",
+  "tags": [
+    "eigen",
+    "compiler",
+    "evaluation",
+    "observability"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "templating": {
+    "list": [
+      {
+        "name": "compiler_version",
+        "label": "Compiler Version",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "DS_PROMETHEUS"
+        },
+        "query": "label_values(eigen_compiler_evaluation_total, compiler_version)",
+        "definition": "label_values(eigen_compiler_evaluation_total, compiler_version)",
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        }
+      },
+      {
+        "name": "job_type",
+        "label": "Job Type",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "DS_PROMETHEUS"
+        },
+        "query": "label_values(eigen_compiler_evaluation_total, job_type)",
+        "definition": "label_values(eigen_compiler_evaluation_total, job_type)",
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Model-assisted Acceptance Rate (5m)",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "DS_PROMETHEUS"
+      },
+      "targets": [
+        {
+          "expr": "100 * sum(rate(eigen_compiler_evaluation_total{compiler_version=~\"$compiler_version\",job_type=~\"$job_type\",decision_source=~\"gnn_ranking|boosting_ranking\"}[5m])) / clamp_min(sum(rate(eigen_compiler_evaluation_total{compiler_version=~\"$compiler_version\",job_type=~\"$job_type\"}[5m])), 1e-9)",
+          "legendFormat": "accepted %"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "orange",
+                "value": 50
+              },
+              {
+                "color": "red",
+                "value": 20
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Fallback Rate (5m)",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "DS_PROMETHEUS"
+      },
+      "targets": [
+        {
+          "expr": "100 * sum(rate(eigen_compiler_evaluation_total{compiler_version=~\"$compiler_version\",job_type=~\"$job_type\",decision_source=\"fallback\"}[5m])) / clamp_min(sum(rate(eigen_compiler_evaluation_total{compiler_version=~\"$compiler_version\",job_type=~\"$job_type\"}[5m])), 1e-9)",
+          "legendFormat": "fallback %"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "orange",
+                "value": 10
+              },
+              {
+                "color": "red",
+                "value": 30
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Average Compile Latency (ms, 5m)",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "DS_PROMETHEUS"
+      },
+      "targets": [
+        {
+          "expr": "1000 * sum(rate(eigen_compiler_evaluation_latency_seconds_sum{compiler_version=~\"$compiler_version\",job_type=~\"$job_type\"}[5m])) / clamp_min(sum(rate(eigen_compiler_evaluation_latency_seconds_count{compiler_version=~\"$compiler_version\",job_type=~\"$job_type\"}[5m])), 1e-9)",
+          "legendFormat": "avg latency"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "orange",
+                "value": 500
+              },
+              {
+                "color": "red",
+                "value": 1500
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Decision Source Mix (5m)",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "DS_PROMETHEUS"
+      },
+      "targets": [
+        {
+          "expr": "sum by (decision_source) (rate(eigen_compiler_evaluation_total{compiler_version=~\"$compiler_version\",job_type=~\"$job_type\"}[5m]))",
+          "legendFormat": "{{decision_source}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "stacking": {
+            "mode": "normal",
+            "group": "A"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    }
+  ]
+}

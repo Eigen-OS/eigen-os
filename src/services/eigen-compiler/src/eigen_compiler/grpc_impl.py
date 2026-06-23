@@ -16,6 +16,7 @@ import re
 import sys
 import threading
 import types
+from time import perf_counter
 from typing import Callable
 
 import grpc
@@ -91,6 +92,9 @@ _STAGE_SECONDS_TOTALS: defaultdict[tuple[tuple[str, str], ...], float] = default
 _VALIDATION_FAILURE_TOTALS: Counter[tuple[tuple[str, str], ...]] = Counter()
 _AQO_DIGEST_TOTALS: Counter[tuple[tuple[str, str], ...]] = Counter()
 _REPLAY_TOTALS: Counter[tuple[tuple[str, str], ...]] = Counter()
+_EVALUATION_TOTALS: Counter[tuple[tuple[str, str], ...]] = Counter()
+_EVALUATION_LATENCY_SECONDS_COUNT_TOTALS: Counter[tuple[tuple[str, str], ...]] = Counter()
+_EVALUATION_LATENCY_SECONDS_SUM_TOTALS: defaultdict[tuple[tuple[str, str], ...], float] = defaultdict(float)
 _SEEN_AQO_DIGESTS: set[str] = set()
 _OBSERVABILITY_CONTRACT_VERSION = "1.0.0"
 _REWRITE_OUTCOME_TAXONOMY = ("accepted", "rejected", "equivalent", "unsafe")
@@ -291,6 +295,24 @@ def _record_replay(kind: str = "duplicate") -> None:
     _bump(_REPLAY_TOTALS, kind=kind)
 
 
+def _record_evaluation_metrics(
+    *,
+    compiler_version: str,
+    job_type: str,
+    decision_source: str,
+    elapsed_seconds: float,
+) -> None:
+    labels = _label_tuple(
+        compiler_version=compiler_version,
+        job_type=job_type,
+        decision_source=decision_source,
+    )
+    with _METRIC_LOCK:
+        _EVALUATION_TOTALS[labels] += 1
+        _EVALUATION_LATENCY_SECONDS_COUNT_TOTALS[labels] += 1
+        _EVALUATION_LATENCY_SECONDS_SUM_TOTALS[labels] += elapsed_seconds
+
+
 def reset_metrics() -> None:
     with _METRIC_LOCK:
         _RPC_TOTALS.clear()
@@ -299,6 +321,9 @@ def reset_metrics() -> None:
         _VALIDATION_FAILURE_TOTALS.clear()
         _AQO_DIGEST_TOTALS.clear()
         _REPLAY_TOTALS.clear()
+        _EVALUATION_TOTALS.clear()
+        _EVALUATION_LATENCY_SECONDS_COUNT_TOTALS.clear()
+        _EVALUATION_LATENCY_SECONDS_SUM_TOTALS.clear()
         _SEEN_AQO_DIGESTS.clear()
 
 
@@ -343,6 +368,11 @@ def render_metrics_text() -> str:
         lines.extend(_render_counter_family("eigen_compiler_validation_failures_total", _VALIDATION_FAILURE_TOTALS))
         lines.extend(_render_counter_family("eigen_compiler_aqo_digest_emitted_total", _AQO_DIGEST_TOTALS))
         lines.extend(_render_counter_family("eigen_compiler_replay_compiles_total", _REPLAY_TOTALS))
+        lines.extend(_render_counter_family("eigen_compiler_evaluation_total", _EVALUATION_TOTALS))
+        lines.extend(_render_counter_family("eigen_compiler_evaluation_latency_seconds_count", _EVALUATION_LATENCY_SECONDS_COUNT_TOTALS))
+        lines.append("# TYPE eigen_compiler_evaluation_latency_seconds_sum counter")
+        for labels, value in sorted(_EVALUATION_LATENCY_SECONDS_SUM_TOTALS.items(), key=lambda item: item[0]):
+            lines.append(f"eigen_compiler_evaluation_latency_seconds_sum{_fmt_labels(labels)} {value:.9f}")
         return "\n".join(lines) + "\n"
 
 
@@ -1077,6 +1107,7 @@ class CompilationService:
         options = _request_metadata_workload_options(getattr(request, "request_metadata", None))
         options.update({str(k): str(v) for k, v in dict(request.options).items()})
         try:
+            compile_started = perf_counter()
             resp = self._compile_response(
                 rpc="CompileCircuit",
                 source=source,
@@ -1086,6 +1117,13 @@ class CompilationService:
             )
 
             _record_rpc("CompileCircuit", "success")
+
+            _record_evaluation_metrics(
+                compiler_version=str(resp.metadata.get("compiler_contract_version", "1.0.0")).strip() or "1.0.0",
+                job_type=str(resp.metadata.get("workload_profile", "unknown")).strip() or "unknown",
+                decision_source=str(resp.metadata.get("decision_source", "symbolic_rules")).strip() or "symbolic_rules",
+                elapsed_seconds=perf_counter() - compile_started,
+            )
 
             aqo_sha = resp.metadata.get("aqo_sha256", "")
 
@@ -1164,6 +1202,7 @@ class CompilationService:
         options = _request_metadata_workload_options(getattr(request, "request_metadata", None))
         options.update({str(k): str(v) for k, v in dict(request.options).items()})
         try:
+            compile_started = perf_counter()
             compiled = self._compile_response(
                 rpc="CompileJob",
                 source=source,
@@ -1194,6 +1233,13 @@ class CompilationService:
 
         _record_rpc("CompileJob", "success")
 
+        _record_evaluation_metrics(
+            compiler_version=str(compiled.metadata.get("compiler_contract_version", "1.0.0")).strip() or "1.0.0",
+            job_type=str(compiled.metadata.get("workload_profile", "unknown")).strip() or "unknown",
+            decision_source=str(compiled.metadata.get("decision_source", "symbolic_rules")).strip() or "symbolic_rules",
+            elapsed_seconds=perf_counter() - compile_started,
+        )
+        
         aqo_sha = compiled.metadata.get("aqo_sha256", "")
 
         if aqo_sha:
