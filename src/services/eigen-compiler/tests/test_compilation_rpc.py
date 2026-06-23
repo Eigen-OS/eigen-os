@@ -204,12 +204,11 @@ def test_compile_circuit_happy_path(grpc_addr: str) -> None:
     assert candidate_set["candidate_count"] == len(candidate_set["candidates"])
     assert candidate_set["candidate_count"] <= candidate_set["candidate_budget"]
     assert candidate_set["ranker"] == {
-        "model_family": "boosting",
-        "model_version": "pass-path-boosting-v1",
-        "objective": "expected_usefulness",
+        "model_family": "deterministic",
+        "model_version": "compiler-advisory-v1",
+        "objective": "stable_legal_candidate_order",
         "explanation_hook": "feature_attribution",
-        "confidence_threshold": 0.9,
-        "selection_mode": "boosting",
+        "selection_mode": "deterministic_legal_preference",
         "fallback_used": False,
         "fallback_reason": "",
     }
@@ -235,8 +234,8 @@ def test_compile_circuit_happy_path(grpc_addr: str) -> None:
     ]
 
 
-def test_pass_path_boosting_model_beats_symbolic_baseline() -> None:
-    from eigen_compiler.compiler import SymbolicCandidate, _PASS_PATH_BOOSTING_MODEL, _boosting_candidate_usefulness_score
+def test_deterministic_advisor_prefers_terminal_measurement_candidates() -> None:
+    from eigen_compiler.compiler import SymbolicCandidate, SymbolicCandidateSet, _symbolic_candidate_set_payload
 
     def candidate(
         *,
@@ -275,66 +274,10 @@ def test_pass_path_boosting_model_beats_symbolic_baseline() -> None:
             legality_reason="aqo_contract_valid",
         )
 
-    benchmark_cases = [
-        (
-            candidate(
-                candidate_id="symbolic.keep_lowered_ir",
-                candidate_kind="keep_lowered_ir",
-                terminal_measurement_present=True,
-                has_expectation=False,
-                has_minimize=False,
-                distributed_enabled=False,
-                operation_count=6,
-                measurement_count=1,
-                measurement_density=0.166667,
-                graph_size_signal=0.875,
-                distributed_partition_count=0,
-            ),
-            candidate(
-                candidate_id="symbolic.rewrite_terminal_measurement",
-                candidate_kind="terminal_measurement_normalized",
-                terminal_measurement_present=True,
-                has_expectation=False,
-                has_minimize=False,
-                distributed_enabled=False,
-                operation_count=6,
-                measurement_count=1,
-                measurement_density=0.166667,
-                graph_size_signal=0.875,
-                distributed_partition_count=0,
-            ),
-            "symbolic.rewrite_terminal_measurement",
-        ),
-        (
-            candidate(
-                candidate_id="symbolic.keep_lowered_ir",
-                candidate_kind="keep_lowered_ir",
-                terminal_measurement_present=False,
-                has_expectation=True,
-                has_minimize=False,
-                distributed_enabled=False,
-                operation_count=5,
-                measurement_count=1,
-                measurement_density=0.2,
-                graph_size_signal=0.75,
-                distributed_partition_count=0,
-            ),
-            candidate(
-                candidate_id="symbolic.rewrite_terminal_measurement",
-                candidate_kind="terminal_measurement_normalized",
-                terminal_measurement_present=False,
-                has_expectation=True,
-                has_minimize=False,
-                distributed_enabled=False,
-                operation_count=5,
-                measurement_count=1,
-                measurement_density=0.2,
-                graph_size_signal=0.75,
-                distributed_partition_count=0,
-            ),
-            "symbolic.rewrite_terminal_measurement",
-        ),
-        (
+    candidate_set = SymbolicCandidateSet(
+        version="1.0.0",
+        candidate_budget=8,
+        candidates=(
             candidate(
                 candidate_id="symbolic.keep_lowered_ir",
                 candidate_kind="keep_lowered_ir",
@@ -351,71 +294,42 @@ def test_pass_path_boosting_model_beats_symbolic_baseline() -> None:
             candidate(
                 candidate_id="symbolic.rewrite_terminal_measurement",
                 candidate_kind="terminal_measurement_normalized",
-                terminal_measurement_present=False,
+                terminal_measurement_present=True,
                 has_expectation=False,
                 has_minimize=False,
                 distributed_enabled=False,
-                operation_count=2,
-                measurement_count=0,
-                measurement_density=0.0,
-                graph_size_signal=0.33,
+                operation_count=6,
+                measurement_count=1,
+                measurement_density=0.166667,
+                graph_size_signal=0.875,
                 distributed_partition_count=0,
             ),
             "symbolic.keep_lowered_ir",
         ),
-        (
-            candidate(
-                candidate_id="symbolic.keep_lowered_ir",
-                candidate_kind="keep_lowered_ir",
-                terminal_measurement_present=False,
-                has_expectation=False,
-                has_minimize=False,
-                distributed_enabled=True,
-                operation_count=7,
-                measurement_count=2,
-                measurement_density=0.285714,
-                graph_size_signal=0.9,
-                distributed_partition_count=2,
-            ),
-            candidate(
-                candidate_id="symbolic.rewrite_terminal_measurement",
-                candidate_kind="terminal_measurement_normalized",
-                terminal_measurement_present=False,
-                has_expectation=False,
-                has_minimize=False,
-                distributed_enabled=True,
-                operation_count=7,
-                measurement_count=2,
-                measurement_density=0.285714,
-                graph_size_signal=0.9,
-                distributed_partition_count=2,
-            ),
-            "symbolic.rewrite_terminal_measurement",
-        ),
+    )
+
+    payload = _symbolic_candidate_set_payload(candidate_set)
+
+    assert payload["ranker"] == {
+        "model_family": "deterministic",
+        "model_version": "compiler-advisory-v1",
+        "objective": "stable_legal_candidate_order",
+        "explanation_hook": "feature_attribution",
+        "selection_mode": "deterministic_legal_preference",
+        "fallback_used": False,
+        "fallback_reason": "",
+    }
+    assert [candidate["candidate_id"] for candidate in payload["ranked_candidates"]] == [
+        "symbolic.rewrite_terminal_measurement",
+        "symbolic.keep_lowered_ir",
     ]
-
-    baseline_hits = 0
-    model_hits = 0
-    for keep_candidate, normalized_candidate, preferred_candidate_id in benchmark_cases:
-        baseline_prediction = keep_candidate.candidate_id
-        model_prediction = max(
-            (keep_candidate, normalized_candidate),
-            key=lambda candidate: _boosting_candidate_usefulness_score(candidate),
-        ).candidate_id
-        if baseline_prediction == preferred_candidate_id:
-            baseline_hits += 1
-        if model_prediction == preferred_candidate_id:
-            model_hits += 1
-
-    assert model_hits > baseline_hits
-    assert _PASS_PATH_BOOSTING_MODEL.training_accuracy >= 0.9
+    assert payload["selected_candidate_id"] == "symbolic.rewrite_terminal_measurement"
+    assert payload["selected_candidate_explanation"].startswith("Preferred because ")
+    assert payload["ranked_candidates"][0]["confidence"] >= payload["ranked_candidates"][-1]["confidence"]
 
 
-def test_pass_path_boosting_low_confidence_falls_back_to_symbolic_baseline(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_deterministic_advisor_handles_no_legal_candidates(monkeypatch: pytest.MonkeyPatch) -> None:
     from eigen_compiler import compiler as compiler_mod
-
-    monkeypatch.setattr(compiler_mod, "_PASS_PATH_BOOSTING_CONFIDENCE_THRESHOLD", 0.9)
-    monkeypatch.setattr(compiler_mod, "_symbolic_candidate_confidence", lambda candidate, usefulness_score: 0.5)
 
     candidate_set = compiler_mod.SymbolicCandidateSet(
         version="1.0.0",
@@ -434,8 +348,8 @@ def test_pass_path_boosting_low_confidence_falls_back_to_symbolic_baseline(monke
                     "distributed_target": "",
                     "distributed_partition_count": 0,
                 },
-                legal=True,
-                legality_reason="aqo_contract_valid",
+                legal=False,
+                legality_reason="aqo_contract_invalid",
             ),
             compiler_mod.SymbolicCandidate(
                 candidate_id="symbolic.rewrite_terminal_measurement",
@@ -450,20 +364,19 @@ def test_pass_path_boosting_low_confidence_falls_back_to_symbolic_baseline(monke
                     "distributed_target": "",
                     "distributed_partition_count": 0,
                 },
-                legal=True,
-                legality_reason="aqo_contract_valid",
+                legal=False,
+                legality_reason="aqo_contract_invalid",
             ),
         ),
     )
 
     payload = compiler_mod._symbolic_candidate_set_payload(candidate_set)
 
-    assert payload["ranker"]["confidence_threshold"] == 0.9
     assert payload["ranker"]["selection_mode"] == "symbolic_baseline"
     assert payload["ranker"]["fallback_used"] is True
-    assert payload["ranker"]["fallback_reason"] == "boosting_confidence_below_threshold"
-    assert payload["selected_candidate_id"] == "symbolic.keep_lowered_ir"
-    assert payload["selected_candidate_explanation"].startswith("Preferred because ")
+    assert payload["ranker"]["fallback_reason"] == "no_legal_candidates"
+    assert payload["selected_candidate_id"] == ""
+    assert payload["selected_candidate_explanation"] == ""
 
 
 def test_compile_job_indexes_trace_and_rewrite_paths_in_kb(
