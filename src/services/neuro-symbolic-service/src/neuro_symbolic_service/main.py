@@ -15,7 +15,7 @@ from eigen.api.v1 import types_pb2 as types_pb
 from .grpc_server import serve
 from .knowledge_base import KnowledgeBaseService
 from .observability import JsonFormatter, start_metrics_server
-from .production_trace_training import prepare_training_dataset_manifest
+from .production_trace_training import prepare_historical_compilation_training_manifest, prepare_training_dataset_manifest
 
 
 def _load_manifest(path: Path) -> dict[str, object]:
@@ -49,6 +49,15 @@ def _ingest_production_traces(manifest_path: Path, *, caller_identity: str) -> i
     return 0
 
 
+def _ingest_historical_compilations(manifest_path: Path, *, caller_identity: str) -> int:
+    service = KnowledgeBaseService(kb_pb=kb_pb, types_pb=types_pb)
+    bundle = _load_manifest(manifest_path)
+    dataset_manifest = prepare_historical_compilation_training_manifest(bundle, caller_identity=caller_identity)
+    summary = service.ingest_training_dataset(dataset_manifest, caller_identity=caller_identity)
+    print(json.dumps(summary, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="neuro-symbolic-service")
     subparsers = parser.add_subparsers(dest="command")
@@ -72,6 +81,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Internal caller identity that must match the manifest ownership",
     )
 
+    historical = subparsers.add_parser(
+        "ingest-historical-compilations",
+        help="Promote historical compiler runs into the KB-backed training corpus",
+    )
+    historical.add_argument("--manifest", required=True, type=Path, help="Path to the historical compilation bundle JSON")
+    historical.add_argument(
+        "--caller-identity",
+        default=os.getenv("NEURO_SYMBOLIC_CLI_CALLER_IDENTITY", os.getenv("NEURO_SYMBOLIC_SERVICE_IDENTITY", "neuro-symbolic-service")),
+        help="Internal caller identity that must match the manifest ownership",
+    )
+
     parser.add_argument("--log-level", default=os.getenv("NEURO_SYMBOLIC_LOG_LEVEL", "INFO"), help=argparse.SUPPRESS)
 
     args = parser.parse_args(list(argv) if argv is not None else None)
@@ -87,6 +107,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _ingest_dataset(args.manifest, caller_identity=args.caller_identity)
     if args.command == "ingest-production-traces":
         return _ingest_production_traces(args.manifest, caller_identity=args.caller_identity)
+    if args.command == "ingest-historical-compilations":
+        return _ingest_historical_compilations(args.manifest, caller_identity=args.caller_identity)
     return _serve()
 
 
