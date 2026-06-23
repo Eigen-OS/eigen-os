@@ -145,8 +145,16 @@
       "backend-decision:backend-selection-decision-001",
       "tenant:tena***:project:proj***",
       "policy:balanced@1.0.0",
-      "reason:DeterministicSelection"
+      "reason:DeterministicSelection",
+      "kb://decision-log/backend-selection-decision-001",
+      "kb://replay/backend-selection-decision-001",
+      "kb://provenance/backend-selection-decision-001"
     ],
+    "knowledge_base": {
+      "decision_log_ref": "kb://decision-log/backend-selection-decision-001",
+      "replay_bundle_ref": "kb://replay/backend-selection-decision-001",
+      "provenance_ref": "kb://provenance/backend-selection-decision-001"
+    },
     "policy_context": {
       "fallback_applied": false,
       "fallback_reason": null,

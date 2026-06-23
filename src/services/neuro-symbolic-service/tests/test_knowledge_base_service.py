@@ -273,6 +273,9 @@ def test_decision_log_lineage_validation_and_ordering(grpc_addr: str) -> None:
     )
     assert [item.decision_id for item in query.decision_logs] == ["decision-a", "decision-b"]
     assert [item.selected_action for item in query.decision_logs] == ["backend-alpha", "backend-beta"]
+    assert query.decision_logs[0].feature_snapshot["kb_decision_log_ref"] == "kb://decision-log/decision-a"
+    assert query.decision_logs[0].feature_snapshot["kb_replay_bundle_ref"] == "kb://replay/decision-a"
+    assert query.decision_logs[0].feature_snapshot["kb_provenance_ref"] == "kb://provenance/decision-a"
 
 
 def test_runtime_decision_ingest_persists_explainability_envelope(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
@@ -332,6 +335,9 @@ def test_runtime_decision_ingest_persists_explainability_envelope(monkeypatch: p
     assert snapshot["project_id"] == "project-a"
     assert snapshot["policy_snapshot_version"] == "policy-2026-06-15"
     assert snapshot["final_decision"] == "backend-alpha"
+    assert snapshot["kb_decision_log_ref"] == "kb://decision-log/decision-runtime-1"
+    assert snapshot["kb_replay_bundle_ref"] == "kb://replay/decision-runtime-1"
+    assert snapshot["kb_provenance_ref"] == "kb://provenance/decision-runtime-1"
     assert json.loads(snapshot["retrieval_sources"]) == [
         "nsc://feature-set/tenant-a/project-a/request-1/feature-digest",
         "nsc://policy-snapshot/policy-2026-06-15",
@@ -485,6 +491,7 @@ def test_kb_queries_support_trace_digest_and_pattern_signature_filters(grpc_addr
     assert [item.decision_id for item in decisions.decision_logs] == ["decision-trace-filter"]
     assert decisions.decision_logs[0].selected_action == "symbolic.rewrite_terminal_measurement"
     assert decisions.decision_logs[0].feature_snapshot["rewrite_outcome"] == "accepted"
+    assert decisions.decision_logs[0].feature_snapshot["kb_decision_log_ref"] == "kb://decision-log/decision-trace-filter"
 
 
 def test_kb_records_and_decision_logs_are_project_scoped(grpc_addr: str) -> None:
