@@ -148,7 +148,23 @@ def test_handoff_schema_is_versioned_and_bounded() -> None:
     logical_graph_schema = json.loads(handoff["compiler_metadata"]["logical_graph_schema_json"])
 
     assert replay_bundle["replay_mode"] == "deterministic"
-    assert replay_bundle["model_snapshot"] == {"model_version": "", "policy_snapshot_version": ""}
+    assert replay_bundle["snapshot_id"] == _sha256_hex(_canonical_json({"kb_snapshot_id": "1.0.0", "model_snapshot_id": "dpda-model-v1", "policy_snapshot_version": "policy-2026-06-15", "policy_digest": _sha256_hex("policy-2026-06-15")}))
+    assert replay_bundle["model_snapshot"] == {
+        "model_version": "dpda-model-v1",
+        "model_snapshot_id": "dpda-model-v1",
+        "model_snapshot_digest": _sha256_hex("dpda-model-v1"),
+    }
+    assert replay_bundle["knowledge_base_snapshot"] == {
+        "kb_version": "1.0.0",
+        "kb_snapshot_id": "1.0.0",
+        "kb_snapshot_digest": _sha256_hex("1.0.0"),
+    }
+    assert replay_bundle["policy_snapshot"] == {
+        "policy_mode": "deterministic",
+        "policy_snapshot_version": "policy-2026-06-15",
+        "policy_snapshot_id": "policy-2026-06-15",
+        "policy_digest": _sha256_hex("policy-2026-06-15"),
+    }
     assert replay_bundle["symbolic_rules"][0]["rule"] == "compiler.source.lower_to_ir"
     assert replay_bundle["logical_graph_schema"]["shared_between_training_and_inference"] is True
     assert replay_bundle["telemetry_feature_set"]["schema_version"] == "telemetry-tabular-v1"
@@ -196,7 +212,10 @@ def test_handoff_schema_is_versioned_and_bounded() -> None:
     assert observability["metric_bounds"]["request_ids_in_metrics"] is False
     assert explainability["decision"] == "compiler_to_optimizer_handoff"
     assert decision_lineage["replay_mode"] == "deterministic"
-    assert decision_lineage["model_snapshot"] == {"model_version": "", "policy_snapshot_version": ""}
+    assert decision_lineage["snapshot_id"] == replay_bundle["snapshot_id"]
+    assert decision_lineage["model_snapshot"] == replay_bundle["model_snapshot"]
+    assert decision_lineage["knowledge_base_snapshot"] == replay_bundle["knowledge_base_snapshot"]
+    assert decision_lineage["policy_snapshot"] == replay_bundle["policy_snapshot"]
     assert explainability["bounded_fields"] == [
         "request_id",
         "trace_id",

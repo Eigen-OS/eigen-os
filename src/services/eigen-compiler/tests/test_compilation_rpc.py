@@ -128,6 +128,16 @@ def _trace_digest_payload(
     aqo_sha256: str,
     pattern_signature: str,
     compiler_status: str,
+    snapshot_id: str = "",
+    model_snapshot_id: str = "",
+    model_snapshot_digest: str = "",
+    kb_version: str = "",
+    kb_snapshot_id: str = "",
+    kb_snapshot_digest: str = "",
+    policy_mode: str = "",
+    policy_snapshot_version: str = "",
+    policy_snapshot_id: str = "",
+    policy_digest: str = "",
     failure_stage: str = "",
     failure_reason: str = "",
     compiler_replay_sha256: str = "",
@@ -142,6 +152,16 @@ def _trace_digest_payload(
         "aqo_sha256": aqo_sha256,
         "pattern_signature": pattern_signature,
         "compiler_status": compiler_status,
+        "snapshot_id": snapshot_id,
+        "model_snapshot_id": model_snapshot_id,
+        "model_snapshot_digest": model_snapshot_digest,
+        "kb_version": kb_version,
+        "kb_snapshot_id": kb_snapshot_id,
+        "kb_snapshot_digest": kb_snapshot_digest,
+        "policy_mode": policy_mode,
+        "policy_snapshot_version": policy_snapshot_version,
+        "policy_snapshot_id": policy_snapshot_id,
+        "policy_digest": policy_digest,
         "failure_stage": failure_stage,
         "failure_reason": failure_reason,
         "compiler_replay_sha256": compiler_replay_sha256,
@@ -442,6 +462,16 @@ def test_compile_job_indexes_trace_and_rewrite_paths_in_kb(
         aqo_sha256=resp.metadata["aqo_sha256"],
         pattern_signature=selected,
         compiler_status="success",
+        snapshot_id=resp.metadata["snapshot_id"],
+        model_snapshot_id=resp.metadata["model_snapshot_id"],
+        model_snapshot_digest=resp.metadata["model_snapshot_digest"],
+        kb_version=resp.metadata["kb_version"],
+        kb_snapshot_id=resp.metadata["kb_snapshot_id"],
+        kb_snapshot_digest=resp.metadata["kb_snapshot_digest"],
+        policy_mode=resp.metadata["policy_mode"],
+        policy_snapshot_version=resp.metadata["policy_snapshot_version"],
+        policy_snapshot_id=resp.metadata["policy_snapshot_id"],
+        policy_digest=resp.metadata["policy_digest"],
         compiler_replay_sha256=resp.metadata["compiler_replay_sha256"],
         compiler_diagnostics_sha256=hashlib.sha256(resp.metadata["compiler_diagnostics_json"].encode("utf-8")).hexdigest(),
     )
@@ -644,8 +674,23 @@ def test_compile_circuit_exposes_diagnostics_payload(grpc_addr: str) -> None:
     assert diagnostics["backend_contract"]["backend_target_class"] == "implicit"
     assert diagnostics["explainability"]["decision"] == "compiler_to_optimizer_handoff"
     assert replay["replay_mode"] == "deterministic"
-    assert set(replay["model_snapshot"]) == {"model_version", "policy_snapshot_version"}
-
+    assert len(replay["snapshot_id"]) == 64
+    assert replay["model_snapshot"] == {
+        "model_version": "dpda-model-v1",
+        "model_snapshot_id": "dpda-model-v1",
+        "model_snapshot_digest": hashlib.sha256("dpda-model-v1".encode("utf-8")).hexdigest(),
+    }
+    assert replay["knowledge_base_snapshot"] == {
+        "kb_version": "1.0.0",
+        "kb_snapshot_id": "1.0.0",
+        "kb_snapshot_digest": hashlib.sha256("1.0.0".encode("utf-8")).hexdigest(),
+    }
+    assert replay["policy_snapshot"] == {
+        "policy_mode": "deterministic",
+        "policy_snapshot_version": "policy-2026-06-15",
+        "policy_snapshot_id": "policy-2026-06-15",
+        "policy_digest": hashlib.sha256("policy-2026-06-15".encode("utf-8")).hexdigest(),
+    }
 
 def test_compile_circuit_emits_distributed_metadata_hints(grpc_addr: str) -> None:
     channel = grpc.insecure_channel(grpc_addr)

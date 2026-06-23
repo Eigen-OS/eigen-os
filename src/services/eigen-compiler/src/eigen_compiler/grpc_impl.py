@@ -448,25 +448,38 @@ def _timestamp_now() -> Timestamp:
 
 
 def _selected_candidate_signature(candidate_set: dict[str, object]) -> str:
-    if isinstance(candidate_set, dict):
-        selected_candidate_id = str(candidate_set.get("selected_candidate_id", "")).strip()
-        if selected_candidate_id:
-            return selected_candidate_id
-        
-    ranked_candidates = candidate_set.get("ranked_candidates", []) if isinstance(candidate_set, dict) else []
+    if not isinstance(candidate_set, dict):
+        return ""
+
+    ranked_candidates = candidate_set.get("ranked_candidates", [])
+    for candidate in ranked_candidates:
+        if not isinstance(candidate, dict) or not candidate.get("legal", True):
+            continue
+        candidate_kind = candidate.get("features", {}).get("candidate_kind") if isinstance(candidate.get("features"), dict) else ""
+        if candidate_kind == "terminal_measurement_normalized":
+            candidate_id = str(candidate.get("candidate_id", "")).strip()
+            if candidate_id:
+                return candidate_id
+
+    candidates = candidate_set.get("candidates", [])
+    legal_candidates = [candidate for candidate in candidates if isinstance(candidate, dict) and candidate.get("legal")]
+    for candidate in legal_candidates:
+        candidate_kind = candidate.get("features", {}).get("candidate_kind") if isinstance(candidate.get("features"), dict) else ""
+        if candidate_kind == "terminal_measurement_normalized":
+            candidate_id = str(candidate.get("candidate_id", "")).strip()
+            if candidate_id:
+                return candidate_id
+
+    selected_candidate_id = str(candidate_set.get("selected_candidate_id", "")).strip()
+    if selected_candidate_id:
+        return selected_candidate_id
+
     for candidate in ranked_candidates:
         if not isinstance(candidate, dict) or not candidate.get("legal", True):
             continue
         candidate_id = str(candidate.get("candidate_id", "")).strip()
         if candidate_id:
             return candidate_id
-        
-    candidates = candidate_set.get("candidates", []) if isinstance(candidate_set, dict) else []
-    legal_candidates = [candidate for candidate in candidates if isinstance(candidate, dict) and candidate.get("legal")]
-    for candidate in legal_candidates:
-        candidate_kind = candidate.get("features", {}).get("candidate_kind") if isinstance(candidate.get("features"), dict) else ""
-        if candidate_kind == "terminal_measurement_normalized":
-            return str(candidate.get("candidate_id", "")).strip()
     if legal_candidates:
         return str(legal_candidates[0].get("candidate_id", "")).strip()
     if candidates:
@@ -479,12 +492,23 @@ def _selected_candidate_signature(candidate_set: dict[str, object]) -> str:
 def _trace_digest_payload(
     *,
     rpc: str,
-    request_context: dict[str, str],
+    request_id: str,
+    trace_id: str,
     source_sha256: str,
     request_sha256: str,
     aqo_sha256: str,
     pattern_signature: str,
     compiler_status: str,
+    snapshot_id: str = "",
+    model_snapshot_id: str = "",
+    model_snapshot_digest: str = "",
+    kb_version: str = "",
+    kb_snapshot_id: str = "",
+    kb_snapshot_digest: str = "",
+    policy_mode: str = "",
+    policy_snapshot_version: str = "",
+    policy_snapshot_id: str = "",
+    policy_digest: str = "",
     failure_stage: str = "",
     failure_reason: str = "",
     compiler_replay_sha256: str = "",
@@ -492,13 +516,23 @@ def _trace_digest_payload(
 ) -> dict[str, str]:
     return {
         "rpc": rpc,
-        "request_id": request_context.get("request_id", "").strip(),
-        "trace_id": request_context.get("trace_id", "").strip(),
+        "request_id": request_id,
+        "trace_id": trace_id,
         "source_sha256": source_sha256,
         "request_sha256": request_sha256,
         "aqo_sha256": aqo_sha256,
         "pattern_signature": pattern_signature,
         "compiler_status": compiler_status,
+        "snapshot_id": snapshot_id,
+        "model_snapshot_id": model_snapshot_id,
+        "model_snapshot_digest": model_snapshot_digest,
+        "kb_version": kb_version,
+        "kb_snapshot_id": kb_snapshot_id,
+        "kb_snapshot_digest": kb_snapshot_digest,
+        "policy_mode": policy_mode,
+        "policy_snapshot_version": policy_snapshot_version,
+        "policy_snapshot_id": policy_snapshot_id,
+        "policy_digest": policy_digest,
         "failure_stage": failure_stage,
         "failure_reason": failure_reason,
         "compiler_replay_sha256": compiler_replay_sha256,
@@ -527,7 +561,6 @@ def _kb_index_compiler_trace(
 
     try:
         channel = grpc.insecure_channel(endpoint)
-        grpc.channel_ready_future(channel).result(timeout=timeout_seconds)
         stub = kb_pb_grpc.KnowledgeBaseServiceStub(channel)
     except Exception as exc:  # pragma: no cover - best-effort indexing
         _LOG.debug("compiler KB channel unavailable: %s", exc)
@@ -543,16 +576,38 @@ def _kb_index_compiler_trace(
         candidate_set_json = str(metadata.get("symbolic_candidate_set_json", "") if metadata else "").strip()
         telemetry_feature_set_json = str(metadata.get("telemetry_feature_set_json", "") if metadata else "").strip()
         telemetry_feature_set_sha256 = str(metadata.get("telemetry_feature_set_sha256", "") if metadata else "").strip()
+        snapshot_id = str(metadata.get("snapshot_id", "") if metadata else "").strip()
+        model_snapshot_id = str(metadata.get("model_snapshot_id", metadata.get("model_version", os.getenv(_NEURO_MODEL_VERSION_ENV, "dpda-model-v1"))) if metadata else os.getenv(_NEURO_MODEL_VERSION_ENV, "dpda-model-v1")).strip() or os.getenv(_NEURO_MODEL_VERSION_ENV, "dpda-model-v1")
+        model_snapshot_digest = str(metadata.get("model_snapshot_digest", "") if metadata else "").strip()
+        kb_version = str(metadata.get("kb_version", _KB_CONTRACT_VERSION) if metadata else _KB_CONTRACT_VERSION).strip() or _KB_CONTRACT_VERSION
+        kb_snapshot_id = str(metadata.get("kb_snapshot_id", kb_version) if metadata else kb_version).strip() or kb_version
+        kb_snapshot_digest = str(metadata.get("kb_snapshot_digest", "") if metadata else "").strip()
+        policy_mode = str(metadata.get("policy_mode", "deterministic") if metadata else "deterministic").strip() or "deterministic"
+        policy_snapshot_version = str(metadata.get("policy_snapshot_version", _NEURO_POLICY_SNAPSHOT_DEFAULT) if metadata else _NEURO_POLICY_SNAPSHOT_DEFAULT).strip() or _NEURO_POLICY_SNAPSHOT_DEFAULT
+        policy_snapshot_id = str(metadata.get("policy_snapshot_id", policy_snapshot_version) if metadata else policy_snapshot_version).strip() or policy_snapshot_version
+        policy_digest = str(metadata.get("policy_digest", "") if metadata else "").strip()
         candidate_set = json.loads(candidate_set_json) if candidate_set_json else {"candidate_count": 0, "candidates": []}
+        candidate_entries = candidate_set.get("candidates", []) if isinstance(candidate_set, dict) else []
         pattern_signature = _selected_candidate_signature(candidate_set) if result is not None else f"failure:{failure_stage or 'compile'}"
         trace_payload = _trace_digest_payload(
             rpc=rpc,
-            request_context=request_context,
+            request_id=request_context.get("request_id", ""),
+            trace_id=request_context.get("trace_id", ""),
             source_sha256=source_digest,
             request_sha256=request_sha256,
             aqo_sha256=aqo_sha256,
             pattern_signature=pattern_signature,
             compiler_status="success" if result is not None else "failure",
+            snapshot_id=snapshot_id,
+            model_snapshot_id=model_snapshot_id,
+            model_snapshot_digest=model_snapshot_digest,
+            kb_version=kb_version,
+            kb_snapshot_id=kb_snapshot_id,
+            kb_snapshot_digest=kb_snapshot_digest,
+            policy_mode=policy_mode,
+            policy_snapshot_version=policy_snapshot_version,
+            policy_snapshot_id=policy_snapshot_id,
+            policy_digest=policy_digest,
             failure_stage=failure_stage,
             failure_reason=failure_reason,
             compiler_replay_sha256=compiler_replay_sha256,
@@ -560,19 +615,9 @@ def _kb_index_compiler_trace(
         )
         trace_digest = _canonical_compiler_trace_digest(trace_payload)
 
-        candidates = candidate_set.get("candidates", []) if isinstance(candidate_set, dict) else []
-        accepted = []
-        rejected = []
-        for candidate in candidates:
-            if not isinstance(candidate, dict):
-                continue
-            candidate_id = str(candidate.get("candidate_id", "")).strip()
-            if not candidate_id:
-                continue
-            if candidate_id == pattern_signature and candidate.get("legal", False):
-                accepted.append(candidate_id)
-            else:
-                rejected.append(candidate_id)
+        candidate_ids = [str(candidate.get("candidate_id", "")).strip() for candidate in candidate_entries if isinstance(candidate, dict)]
+        accepted = [pattern_signature] if pattern_signature else []
+        rejected = [candidate_id for candidate_id in candidate_ids if candidate_id and candidate_id != pattern_signature]
 
         record_id = f"compiler-trace:{request_context.get('trace_id', '') or request_context.get('request_id', '')}:{trace_digest[:16]}"
         record = kb_pb.KnowledgeRecord(
@@ -582,8 +627,8 @@ def _kb_index_compiler_trace(
             artifact_ref=f"compiler-trace://{trace_digest}",
             dataset_ref="compiler-traces",
             backend_profile=str(metadata.get("workload_profile", "compiler")) if metadata else "compiler",
-            optimizer_version=os.getenv("EIGEN_NEURO_SYMBOLIC_MODEL_VERSION", "").strip(),
-            qubit_count=int(candidate_set.get("candidates", [{}])[0].get("features", {}).get("qubits", 0) or 0) if candidates else 0,
+            optimizer_version=model_snapshot_id,
+            qubit_count=int(candidate_entries[0].get("features", {}).get("qubits", 0) or 0) if candidate_entries else 0,
             entanglement_score=0.0,
             noise_profile_id="",
             backend_class=str(metadata.get("workload_profile", "compiler")) if metadata else "compiler",
@@ -605,6 +650,17 @@ def _kb_index_compiler_trace(
                 "source_sha256": source_digest,
                 "request_sha256": request_sha256,
                 "aqo_sha256": aqo_sha256,
+                "snapshot_id": snapshot_id,
+                "model_version": model_snapshot_id,
+                "model_snapshot_id": model_snapshot_id,
+                "model_snapshot_digest": model_snapshot_digest,
+                "kb_version": kb_version,
+                "kb_snapshot_id": kb_snapshot_id,
+                "kb_snapshot_digest": kb_snapshot_digest,
+                "policy_mode": policy_mode,
+                "policy_snapshot_version": policy_snapshot_version,
+                "policy_snapshot_id": policy_snapshot_id,
+                "policy_digest": policy_digest,
                 "compiler_replay_sha256": compiler_replay_sha256,
                 "compiler_diagnostics_sha256": compiler_diagnostics_sha256,
                 "symbolic_candidate_set_sha256": str(metadata.get("symbolic_candidate_set_sha256", "")).strip() if metadata else "",
@@ -618,10 +674,10 @@ def _kb_index_compiler_trace(
                 "source_precedence": str(metadata.get("source_precedence", "")).strip() if metadata else "",
             },
             lineage=kb_pb.ModelLineage(
-                model_version=os.getenv("EIGEN_NEURO_SYMBOLIC_MODEL_VERSION", "").strip(),
+                model_version=model_snapshot_id,
                 training_set_hash=request_sha256 or trace_digest,
                 evaluation_bundle_hash=compiler_replay_sha256 or compiler_diagnostics_sha256,
-                promotion_policy_version=os.getenv("EIGEN_NEURO_SYMBOLIC_POLICY_SNAPSHOT_VERSION", "").strip(),
+                promotion_policy_version=policy_snapshot_version,
                 promotion_outcome="PROMOTED" if result is not None else "REJECTED",
             ),
         )
@@ -642,12 +698,10 @@ def _kb_index_compiler_trace(
             _LOG.debug("compiler KB upsert timed out or failed: %s", exc)
             return
 
-        for candidate in candidates:
+        for candidate in candidate_entries:
             if not isinstance(candidate, dict):
                 continue
             candidate_id = str(candidate.get("candidate_id", "")).strip()
-            if not candidate_id:
-                continue
             candidate_legal = bool(candidate.get("legal", False))
             rewrite_outcome = _rewrite_outcome_for_candidate(
                 candidate,
@@ -655,6 +709,8 @@ def _kb_index_compiler_trace(
                 result_present=result is not None,
                 candidate_legal=candidate_legal,
             )
+            accepted = [candidate_id] if candidate_legal and candidate_id == pattern_signature and result is not None else []
+            rejected = [candidate_id] if candidate_id and candidate_id != pattern_signature else []
             feature_snapshot = {
                 "trace_id": request_context.get("trace_id", "").strip(),
                 "request_id": request_context.get("request_id", "").strip(),
@@ -667,6 +723,17 @@ def _kb_index_compiler_trace(
                 "source_sha256": source_digest,
                 "request_sha256": request_sha256,
                 "aqo_sha256": aqo_sha256,
+                "snapshot_id": snapshot_id,
+                "model_version": model_snapshot_id,
+                "model_snapshot_id": model_snapshot_id,
+                "model_snapshot_digest": model_snapshot_digest,
+                "kb_version": kb_version,
+                "kb_snapshot_id": kb_snapshot_id,
+                "kb_snapshot_digest": kb_snapshot_digest,
+                "policy_mode": policy_mode,
+                "policy_snapshot_version": policy_snapshot_version,
+                "policy_snapshot_id": policy_snapshot_id,
+                "policy_digest": policy_digest,
                 "compiler_replay_sha256": compiler_replay_sha256,
                 "compiler_diagnostics_sha256": compiler_diagnostics_sha256,
                 "symbolic_candidate_set_sha256": str(metadata.get("symbolic_candidate_set_sha256", "")).strip() if metadata else "",
@@ -681,7 +748,7 @@ def _kb_index_compiler_trace(
             decision_log = kb_pb.DecisionLog(
                 decision_id=f"compiler-rewrite:{request_context.get('trace_id', '') or request_context.get('request_id', '')}:{candidate_id}",
                 trace_id=request_context.get("trace_id", "").strip(),
-                model_version=os.getenv("EIGEN_NEURO_SYMBOLIC_MODEL_VERSION", "").strip(),
+                model_version=model_snapshot_id,
                 component="compiler",
                 policy_branch="symbolic_rewrite",
                 selected_action=candidate_id,
@@ -1131,6 +1198,7 @@ _NEURO_CALLERS_ENV = "EIGEN_NEURO_SYMBOLIC_ALLOWED_CALLERS"
 _NEURO_MODEL_VERSION_ENV = "EIGEN_NEURO_SYMBOLIC_MODEL_VERSION"
 _NEURO_POLICY_SNAPSHOT_VERSION_ENV = "EIGEN_NEURO_SYMBOLIC_POLICY_SNAPSHOT_VERSION"
 _NEURO_POLICY_SNAPSHOT_DEFAULT = "policy-2026-06-15"
+_KB_CONTRACT_VERSION = "1.0.0"
 _NEURO_MAX_FEATURE_VECTOR_BYTES_ENV = "EIGEN_NEURO_SYMBOLIC_MAX_FEATURE_VECTOR_BYTES"
 _NEURO_MAX_FEATURE_VECTOR_BYTES_DEFAULT = 65536
 

@@ -440,7 +440,10 @@ class SymbolicRewritePipeline:
                 "request_sha256": state.request_digest,
                 "replay_mode": "deterministic",
                 "replay_bundle_sha256": replay_bundle_sha256,
+                "snapshot_id": replay_bundle["snapshot_id"],
                 "model_snapshot": replay_bundle["model_snapshot"],
+                "knowledge_base_snapshot": replay_bundle["knowledge_base_snapshot"],
+                "policy_snapshot": replay_bundle["policy_snapshot"],
             }
             observability = {
                 "contract_version": "1.0.0",
