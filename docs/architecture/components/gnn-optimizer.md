@@ -278,7 +278,7 @@ This digest MUST be persisted in artifacts and included in response metadata.
 
 #### Logical / physical graph bridge
 
-Optimizer-service integrations MUST carry both graph views when a backend-aware optimization is performed:
+Optimizer-service integrations MUST carry both graph views when a backend-aware optimization is performed. The optimizer consumes the compiler-emitted logical graph and the Driver Manager-emitted physical graph directly, so no ad hoc translation layer is permitted outside this shared interface:
 
 - **logical graph**: the compiler-emitted circuit graph over logical qubits and semantic edges.
 - **physical graph**: the Driver Manager-emitted hardware graph over physical qubits, couplers, and backend constraints.
