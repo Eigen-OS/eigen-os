@@ -193,18 +193,47 @@ def _training_dataset_manifest() -> dict[str, object]:
     record_payload_1 = {
         "feature": "stable",
         "value": 7,
-        "tags": ["clean", "redacted"],
+        "rewrite_outcome": "accepted",
     }
     record_payload_2 = {
         "feature": "stable",
         "value": 9,
         "tags": ["clean", "redacted"],
+        "rewrite_outcome": "equivalent",
+    }
+    record_payload_3 = {
+        "feature": "stable",
+        "value": 11,
+        "tags": ["clean", "redacted"],
+        "rewrite_outcome": "rejected",
+    }
+    record_payload_4 = {
+        "feature": "stable",
+        "value": 13,
+        "tags": ["clean", "redacted"],
+        "rewrite_outcome": "unsafe",
     }
 
     record_provenance_1 = _with_digest(
         {
             "source_ref": "qfs://datasets/raw/sample-1.json",
             "captured_at": "2026-06-16T08:00:00+00:00",
+            "requested_by": "neuro-symbolic-service",
+        },
+        "source_digest_sha256",
+    )
+    record_provenance_3 = _with_digest(
+        {
+            "source_ref": "qfs://datasets/raw/sample-3.json",
+            "captured_at": "2026-06-16T08:02:00+00:00",
+            "requested_by": "neuro-symbolic-service",
+        },
+        "source_digest_sha256",
+    )
+    record_provenance_4 = _with_digest(
+        {
+            "source_ref": "qfs://datasets/raw/sample-4.json",
+            "captured_at": "2026-06-16T08:03:00+00:00",
             "requested_by": "neuro-symbolic-service",
         },
         "source_digest_sha256",
@@ -233,6 +262,22 @@ def _training_dataset_manifest() -> dict[str, object]:
         },
         "redaction_digest_sha256",
     )
+    record_redaction_3 = _with_digest(
+        {
+            "applied": True,
+            "validated": True,
+            "rules": ["secret", "pii"],
+        },
+        "redaction_digest_sha256",
+    )
+    record_redaction_4 = _with_digest(
+        {
+            "applied": True,
+            "validated": True,
+            "rules": ["secret", "pii"],
+        },
+        "redaction_digest_sha256",
+    )
 
     records = [
         {
@@ -250,6 +295,22 @@ def _training_dataset_manifest() -> dict[str, object]:
             "provenance": record_provenance_2,
             "redaction": record_redaction_2,
             "content_digest_sha256": _json_digest(record_payload_2),
+        },
+        {
+            "record_id": "sample-3",
+            "schema_version": "training-record.v1",
+            "payload": record_payload_3,
+            "provenance": record_provenance_3,
+            "redaction": record_redaction_3,
+            "content_digest_sha256": _json_digest(record_payload_3),
+        },
+        {
+            "record_id": "sample-4",
+            "schema_version": "training-record.v1",
+            "payload": record_payload_4,
+            "provenance": record_provenance_4,
+            "redaction": record_redaction_4,
+            "content_digest_sha256": _json_digest(record_payload_4),
         },
     ]
 
@@ -466,7 +527,7 @@ def test_training_dataset_ingestion_round_trip_and_replayability(monkeypatch: py
 
     assert summary["dataset_id"] == "training-batch-2026-06-16"
     assert summary["dataset_version"] == "2026.06.16"
-    assert summary["record_count"] == 2
+    assert summary["record_count"] == 4
     assert summary["manifest_digest_sha256"] == manifest["manifest_digest_sha256"]
     assert summary["dataset_digest_sha256"] == replay["dataset_digest_sha256"]
     assert summary["evidence_id"] == replay["evidence_id"]
@@ -576,7 +637,7 @@ def test_training_dataset_cli_ingest_command(monkeypatch: pytest.MonkeyPatch, tm
     assert exit_code == 0
     assert summary["dataset_id"] == "training-batch-2026-06-16"
     assert summary["dataset_version"] == "2026.06.16"
-    assert summary["record_count"] == 2
+    assert summary["record_count"] == 4
     assert summary["evidence_ref"].startswith("kb://learning/")
 
 
@@ -750,6 +811,64 @@ def _historical_compilation_training_bundle() -> dict[str, object]:
                 "timing_ms": {"parse": 5.0, "rewrite": 9.5, "emit": 2.5},
             }),
         },
+        {
+            "record_id": "hist-004",
+            "schema_version": "neuro-symbolic.historical-compilation-training.record.v1",
+            "job_id": "job-004",
+            "trace_id": "trace-004",
+            "replay_id": "replay-004",
+            "request_id": "request-004",
+            "tenant_id": "tenant-a",
+            "project_id": "project-a",
+            "policy_snapshot_version": "1.0.0",
+            "payload": {
+                "compiler_status": "DONE",
+                "rewrite_outcome": "unsafe",
+                "accepted_rewrite_ids": [],
+                "rejected_rewrite_ids": ["rewrite-reject-004a"],
+                "timing_ms": {"parse": 6.0, "rewrite": 11.0, "emit": 3.5},
+                "final_aqo": aqo_2,
+            },
+            "provenance": record_provenance_2,
+            "redaction": record_redaction,
+            "content_digest_sha256": _json_digest({
+                "accepted_rewrite_ids": [],
+                "compiler_status": "DONE",
+                "final_aqo": aqo_2,
+                "rejected_rewrite_ids": ["rewrite-reject-004a"],
+                "rewrite_outcome": "unsafe",
+                "timing_ms": {"parse": 6.0, "rewrite": 11.0, "emit": 3.5},
+            }),
+        },
+        {
+            "record_id": "hist-003",
+            "schema_version": "neuro-symbolic.historical-compilation-training.record.v1",
+            "job_id": "job-003",
+            "trace_id": "trace-003",
+            "replay_id": "replay-003",
+            "request_id": "request-003",
+            "tenant_id": "tenant-a",
+            "project_id": "project-a",
+            "policy_snapshot_version": "1.0.0",
+            "payload": {
+                "compiler_status": "DONE",
+                "rewrite_outcome": "equivalent",
+                "accepted_rewrite_ids": ["rewrite-equivalent-003a"],
+                "rejected_rewrite_ids": [],
+                "timing_ms": {"parse": 4.25, "rewrite": 7.5, "emit": 2.0},
+                "final_aqo": aqo_1,
+            },
+            "provenance": record_provenance_1,
+            "redaction": record_redaction,
+            "content_digest_sha256": _json_digest({
+                "accepted_rewrite_ids": ["rewrite-equivalent-003a"],
+                "compiler_status": "DONE",
+                "final_aqo": aqo_1,
+                "rejected_rewrite_ids": [],
+                "rewrite_outcome": "equivalent",
+                "timing_ms": {"parse": 4.25, "rewrite": 7.5, "emit": 2.0},
+            }),
+        },
     ]
     provenance = _with_digest(
         {
@@ -773,9 +892,9 @@ def _historical_compilation_training_bundle() -> dict[str, object]:
         "selection_id": "selection-hist-2026-06-16",
         "selected_by": "neuro-symbolic-service",
         "selection_reason": "historical compiler runs selected for pass-path corpus extraction",
-        "job_ids": ["job-002", "job-001"],
-        "trace_ids": ["trace-002", "trace-001"],
-        "replay_ids": ["replay-002", "replay-001"],
+        "job_ids": ["job-002", "job-001", "job-004", "job-003"],
+        "trace_ids": ["trace-002", "trace-001", "trace-004", "trace-003"],
+        "replay_ids": ["replay-002", "replay-001", "replay-004", "replay-003"],
         "tenant_id": "tenant-a",
         "project_id": "project-a",
         "policy_snapshot_version": "1.0.0",
@@ -790,7 +909,7 @@ def _historical_compilation_training_bundle() -> dict[str, object]:
         "tenant_id": "tenant-a",
         "project_id": "project-a",
         "policy_snapshot_version": "1.0.0",
-        "replay_ids": ["replay-002", "replay-001"],
+        "replay_ids": ["replay-002", "replay-001", "replay-004", "replay-003"],
     }
     approval["approval_digest_sha256"] = _json_digest(approval)
     bundle = {
@@ -845,9 +964,9 @@ def test_historical_compilation_training_dataset_is_reproducible(monkeypatch: py
 
     assert first["schema_version"] == "neuro-symbolic.training-dataset.manifest.v1"
     assert first["source_kind"] == "historical_compilations"
-    assert first["selection"]["job_ids"] == ["job-001", "job-002"]
-    assert first["selection"]["trace_ids"] == ["trace-001", "trace-002"]
-    assert first["selection"]["replay_ids"] == ["replay-001", "replay-002"]
+    assert first["selection"]["job_ids"] == ["job-001", "job-002", "job-003", "job-004"]
+    assert first["selection"]["trace_ids"] == ["trace-001", "trace-002", "trace-003", "trace-004"]
+    assert first["selection"]["replay_ids"] == ["replay-001", "replay-002", "replay-003", "replay-004"]
     assert first["records"][0]["job_id"] == "job-001"
     assert first["records"][0]["trace_ref"] == "nsc://trace/trace-001"
     assert first["records"][0]["replay_ref"] == "nsc://replay/trace-001/replay-001"
@@ -878,11 +997,12 @@ def test_historical_compilation_training_dataset_ingests_and_clis(monkeypatch: p
     summary = service.ingest_training_dataset(manifest, caller_identity="neuro-symbolic-service")
     replay_summary = service.ingest_training_dataset(manifest, caller_identity="neuro-symbolic-service")
     assert summary["dataset_id"] == "historical-compilation-batch-2026-06-16"
-    assert summary["record_count"] == 2
+    assert summary["record_count"] == 4
     assert summary["source_kind"] == "historical_compilations"
     assert summary["selection"]["selection_id"] == "selection-hist-2026-06-16"
     assert summary["approval"]["approval_id"] == "approval-hist-2026-06-16"
     assert summary["records"][0]["payload"]["compiler_status"] == "DONE"
+    assert sorted(record["payload"]["rewrite_outcome"] for record in summary["records"]) == ["accepted", "equivalent", "rejected", "unsafe"]
     assert summary["dataset_digest_sha256"] == replay_summary["dataset_digest_sha256"]
     assert summary["evidence_id"] == replay_summary["evidence_id"]
 
@@ -898,7 +1018,7 @@ def test_historical_compilation_training_dataset_ingests_and_clis(monkeypatch: p
 
     assert exit_code == 0
     assert cli_summary["dataset_id"] == "historical-compilation-batch-2026-06-16"
-    assert cli_summary["record_count"] == 2
+    assert cli_summary["record_count"] == 4
     assert cli_summary["source_kind"] == "historical_compilations"
-    assert cli_summary["trace_ids"] == ["trace-001", "trace-002"]
-    assert cli_summary["replay_ids"] == ["replay-001", "replay-002"]
+    assert cli_summary["trace_ids"] == ["trace-001", "trace-002", "trace-003", "trace-004"]
+    assert cli_summary["replay_ids"] == ["replay-001", "replay-002", "replay-003", "replay-004"]

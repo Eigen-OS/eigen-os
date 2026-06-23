@@ -43,12 +43,41 @@ from eigen.internal.v1 import kernel_gateway_pb2 as kernel_pb  # noqa: E402
 from eigen.internal.v1 import neuro_symbolic_service_pb2_grpc as nsc_pb_grpc  # noqa: E402
 from eigen.internal.v1 import types_pb2 as types_pb  # noqa: E402
 
+from eigen_compiler.grpc_impl import _rewrite_outcome_for_candidate  # noqa: E402
+
 
 def _enum_value(module, *names: str) -> int:
     for name in names:
         if hasattr(module, name):
             return int(getattr(module, name))
     raise AttributeError(f"None of enum names exist: {names}")
+
+
+def test_rewrite_outcome_helper_covers_canonical_taxonomy() -> None:
+    assert _rewrite_outcome_for_candidate(
+        {"rewrite_outcome": "accepted"},
+        selected=True,
+        result_present=True,
+        candidate_legal=True,
+    ) == "accepted"
+    assert _rewrite_outcome_for_candidate(
+        {"rewrite_outcome": "rejected"},
+        selected=False,
+        result_present=True,
+        candidate_legal=False,
+    ) == "rejected"
+    assert _rewrite_outcome_for_candidate(
+        {"rewrite_outcome": "equivalent"},
+        selected=False,
+        result_present=True,
+        candidate_legal=True,
+    ) == "equivalent"
+    assert _rewrite_outcome_for_candidate(
+        {"rewrite_outcome": "unsafe"},
+        selected=False,
+        result_present=False,
+        candidate_legal=False,
+    ) == "unsafe"
 
 
 def _extract_bad_request(err: grpc.RpcError) -> error_details_pb2.BadRequest:
