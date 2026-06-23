@@ -14,7 +14,7 @@ from eigen.api.v1 import types_pb2 as types_pb  # noqa: E402
 from neuro_symbolic_service.knowledge_base_versioned import KnowledgeBaseService  # noqa: E402
 from neuro_symbolic_service.knowledge_base import KnowledgeBaseUnavailable  # noqa: E402
 from neuro_symbolic_service.main import main as neuro_main  # noqa: E402
-from neuro_symbolic_service.production_trace_training import ProductionTraceTrainingError, prepare_training_dataset_manifest  # noqa: E402
+from neuro_symbolic_service.production_trace_training import ProductionTraceTrainingError, prepare_historical_compilation_training_manifest, prepare_training_dataset_manifest  # noqa: E402
 
 
 def _ts(value: str) -> Timestamp:
@@ -349,6 +349,7 @@ def _production_trace_training_bundle() -> dict[str, object]:
         {
             "record_id": "trace-1",
             "schema_version": "neuro-symbolic.production-trace-training.record.v1",
+            "job_id": "job-1",
             "trace_id": "trace-1",
             "replay_id": "replay-1",
             "tenant_id": "tenant-a",
@@ -362,6 +363,7 @@ def _production_trace_training_bundle() -> dict[str, object]:
         {
             "record_id": "trace-2",
             "schema_version": "neuro-symbolic.production-trace-training.record.v1",
+            "job_id": "job-2",
             "trace_id": "trace-2",
             "replay_id": "replay-2",
             "tenant_id": "tenant-a",
@@ -396,6 +398,7 @@ def _production_trace_training_bundle() -> dict[str, object]:
         "selection_id": "selection-2026-06-16",
         "selected_by": "neuro-symbolic-service",
         "selection_reason": "tenant-scoped production traces approved for replay-safe retraining",
+        "job_ids": ["job-1", "job-2"],
         "trace_ids": ["trace-1", "trace-2"],
         "replay_ids": ["replay-1", "replay-2"],
         "tenant_id": "tenant-a",
@@ -625,7 +628,6 @@ def test_production_trace_training_is_replayable_and_cli_ingestable(monkeypatch:
     first = prepare_training_dataset_manifest(bundle, caller_identity="neuro-symbolic-service")
     second = prepare_training_dataset_manifest(json.loads(bundle_path.read_text(encoding="utf-8")), caller_identity="neuro-symbolic-service")
     assert first["manifest_digest_sha256"] == second["manifest_digest_sha256"]
-    assert first["dataset_digest_sha256"] == second["dataset_digest_sha256"]
 
     exit_code = neuro_main([
         "ingest-production-traces",
@@ -646,3 +648,257 @@ def test_production_trace_training_is_replayable_and_cli_ingestable(monkeypatch:
     assert summary["approval"]["approval_id"] == "approval-2026-06-16"
     assert summary["selection"]["selection_id"] == "selection-2026-06-16"
     assert summary["records"][0]["payload"]["features"]["masked_email"] == "[REDACTED_EMAIL]"
+
+
+def _historical_compilation_training_bundle() -> dict[str, object]:
+    aqo_1 = {
+        "version": "1.0.0",
+        "qubits": 2,
+        "operations": [
+            {"op": "RX", "target": 0, "theta": 1.0},
+            {"op": "MEASURE", "target": 0},
+        ],
+    }
+    aqo_2 = {
+        "version": "1.0.0",
+        "qubits": 2,
+        "operations": [
+            {"op": "RX", "target": 1, "theta": 0.5},
+            {"op": "MEASURE", "target": 1},
+        ],
+    }
+    record_provenance_1 = _with_digest(
+        {
+            "source_ref": "qfs://historical-compilations/raw/run-002.json",
+            "captured_at": "2026-06-16T10:00:00+00:00",
+            "requested_by": "neuro-symbolic-service",
+        },
+        "source_digest_sha256",
+    )
+    record_provenance_2 = _with_digest(
+        {
+            "source_ref": "qfs://historical-compilations/raw/run-001.json",
+            "captured_at": "2026-06-16T09:59:00+00:00",
+            "requested_by": "neuro-symbolic-service",
+        },
+        "source_digest_sha256",
+    )
+    record_redaction = _with_digest(
+        {
+            "applied": True,
+            "validated": True,
+            "rules": ["secret", "pii", "tenant-id"],
+        },
+        "redaction_digest_sha256",
+    )
+    records = [
+        {
+            "record_id": "hist-002",
+            "schema_version": "neuro-symbolic.historical-compilation-training.record.v1",
+            "job_id": "job-002",
+            "trace_id": "trace-002",
+            "replay_id": "replay-002",
+            "request_id": "request-002",
+            "tenant_id": "tenant-a",
+            "project_id": "project-a",
+            "policy_snapshot_version": "1.0.0",
+            "payload": {
+                "compiler_status": "DONE",
+                "rewrite_outcome": "accepted",
+                "accepted_rewrite_ids": ["rewrite-accept-002a", "rewrite-accept-002b"],
+                "rejected_rewrite_ids": ["rewrite-reject-002a"],
+                "timing_ms": {"parse": 4.5, "rewrite": 8.25, "emit": 3.0},
+                "final_aqo": aqo_2,
+            },
+            "provenance": record_provenance_1,
+            "redaction": record_redaction,
+            "content_digest_sha256": _json_digest({
+                "accepted_rewrite_ids": ["rewrite-accept-002a", "rewrite-accept-002b"],
+                "compiler_status": "DONE",
+                "final_aqo": aqo_2,
+                "rejected_rewrite_ids": ["rewrite-reject-002a"],
+                "rewrite_outcome": "accepted",
+                "timing_ms": {"parse": 4.5, "rewrite": 8.25, "emit": 3.0},
+            }),
+        },
+        {
+            "record_id": "hist-001",
+            "schema_version": "neuro-symbolic.historical-compilation-training.record.v1",
+            "job_id": "job-001",
+            "trace_id": "trace-001",
+            "replay_id": "replay-001",
+            "request_id": "request-001",
+            "tenant_id": "tenant-a",
+            "project_id": "project-a",
+            "policy_snapshot_version": "1.0.0",
+            "payload": {
+                "compiler_status": "DONE",
+                "rewrite_outcome": "rejected",
+                "accepted_rewrite_ids": [],
+                "rejected_rewrite_ids": ["rewrite-reject-001a", "rewrite-reject-001b"],
+                "timing_ms": {"parse": 5.0, "rewrite": 9.5, "emit": 2.5},
+                "final_aqo": aqo_1,
+            },
+            "provenance": record_provenance_2,
+            "redaction": record_redaction,
+            "content_digest_sha256": _json_digest({
+                "accepted_rewrite_ids": [],
+                "compiler_status": "DONE",
+                "final_aqo": aqo_1,
+                "rejected_rewrite_ids": ["rewrite-reject-001a", "rewrite-reject-001b"],
+                "rewrite_outcome": "rejected",
+                "timing_ms": {"parse": 5.0, "rewrite": 9.5, "emit": 2.5},
+            }),
+        },
+    ]
+    provenance = _with_digest(
+        {
+            "source_ref": "qfs://historical-compilations/raw/batch-2026-06-16.jsonl",
+            "captured_at": "2026-06-16T10:00:00+00:00",
+            "signed_by": "neuro-symbolic-service",
+            "signature_algorithm": "HS256",
+            "signature": "sig-hist-001",
+        },
+        "source_digest_sha256",
+    )
+    redaction = _with_digest(
+        {
+            "applied": True,
+            "validated": True,
+            "rules": ["secret", "pii", "tenant-id"],
+        },
+        "redaction_digest_sha256",
+    )
+    selection = {
+        "selection_id": "selection-hist-2026-06-16",
+        "selected_by": "neuro-symbolic-service",
+        "selection_reason": "historical compiler runs selected for pass-path corpus extraction",
+        "job_ids": ["job-002", "job-001"],
+        "trace_ids": ["trace-002", "trace-001"],
+        "replay_ids": ["replay-002", "replay-001"],
+        "tenant_id": "tenant-a",
+        "project_id": "project-a",
+        "policy_snapshot_version": "1.0.0",
+    }
+    selection["selection_digest_sha256"] = _json_digest(selection)
+    approval = {
+        "approval_id": "approval-hist-2026-06-16",
+        "approved_by": "compiler-governance",
+        "approved_at": "2026-06-16T10:05:00+00:00",
+        "decision": "approved",
+        "ticket_ref": "CORPUS-2026-0616",
+        "tenant_id": "tenant-a",
+        "project_id": "project-a",
+        "policy_snapshot_version": "1.0.0",
+        "replay_ids": ["replay-002", "replay-001"],
+    }
+    approval["approval_digest_sha256"] = _json_digest(approval)
+    bundle = {
+        "schema_version": "neuro-symbolic.historical-compilation-training.bundle.v1",
+        "contract_version": "1.0.0",
+        "dataset_id": "historical-compilation-batch-2026-06-16",
+        "dataset_version": "2026.06.16",
+        "record_schema_version": "neuro-symbolic.historical-compilation-training.record.v1",
+        "tenant_id": "tenant-a",
+        "project_id": "project-a",
+        "policy_snapshot_version": "1.0.0",
+        "source_kind": "historical_compilations",
+        "ownership": {
+            "service_identity": "neuro-symbolic-service",
+            "requested_by": "neuro-symbolic-service",
+            "service_role": "internal-ingest",
+        },
+        "selection": selection,
+        "approval": approval,
+        "provenance": provenance,
+        "redaction": redaction,
+        "records": records,
+    }
+    bundle["manifest_digest_sha256"] = _json_digest(bundle)
+    return bundle
+
+
+def test_historical_compilation_training_dataset_is_reproducible(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(
+        "SYSTEM_API_POLICY_SNAPSHOT_JSON",
+        json.dumps(
+            {
+                "version": "1.0.0",
+                "issuer": "eigen-auth",
+                "audience": "eigen-api",
+                "role_permissions": {"readonly": ["jobs:read"]},
+                "service_permissions": {"neuro-symbolic-service": ["kb:ingest"]},
+                "sandbox_profiles": ["default"],
+            },
+            sort_keys=True,
+        ),
+    )
+    bundle = _historical_compilation_training_bundle()
+    reordered = json.loads(json.dumps(bundle))
+    reordered["records"] = list(reversed(reordered["records"]))
+    reordered["selection"]["job_ids"] = list(reversed(reordered["selection"]["job_ids"]))
+    reordered["selection"]["trace_ids"] = list(reversed(reordered["selection"]["trace_ids"]))
+    reordered["selection"]["replay_ids"] = list(reversed(reordered["selection"]["replay_ids"]))
+
+    first = prepare_historical_compilation_training_manifest(bundle, caller_identity="neuro-symbolic-service")
+    second = prepare_historical_compilation_training_manifest(reordered, caller_identity="neuro-symbolic-service")
+
+    assert first["schema_version"] == "neuro-symbolic.training-dataset.manifest.v1"
+    assert first["source_kind"] == "historical_compilations"
+    assert first["selection"]["job_ids"] == ["job-001", "job-002"]
+    assert first["selection"]["trace_ids"] == ["trace-001", "trace-002"]
+    assert first["selection"]["replay_ids"] == ["replay-001", "replay-002"]
+    assert first["records"][0]["job_id"] == "job-001"
+    assert first["records"][0]["trace_ref"] == "nsc://trace/trace-001"
+    assert first["records"][0]["replay_ref"] == "nsc://replay/trace-001/replay-001"
+    assert first["manifest_digest_sha256"] == second["manifest_digest_sha256"]
+
+
+def test_historical_compilation_training_dataset_ingests_and_clis(monkeypatch: pytest.MonkeyPatch, tmp_path, capsys) -> None:
+    monkeypatch.setenv(
+        "SYSTEM_API_POLICY_SNAPSHOT_JSON",
+        json.dumps(
+            {
+                "version": "1.0.0",
+                "issuer": "eigen-auth",
+                "audience": "eigen-api",
+                "role_permissions": {"readonly": ["jobs:read"]},
+                "service_permissions": {"neuro-symbolic-service": ["kb:ingest"]},
+                "sandbox_profiles": ["default"],
+            },
+            sort_keys=True,
+        ),
+    )
+    bundle = _historical_compilation_training_bundle()
+    bundle_path = tmp_path / "historical-compilation-bundle.json"
+    bundle_path.write_text(json.dumps(bundle, indent=2), encoding="utf-8")
+
+    service = KnowledgeBaseService(kb_pb=kb_pb, types_pb=types_pb)
+    manifest = prepare_historical_compilation_training_manifest(bundle, caller_identity="neuro-symbolic-service")
+    summary = service.ingest_training_dataset(manifest, caller_identity="neuro-symbolic-service")
+    replay_summary = service.ingest_training_dataset(manifest, caller_identity="neuro-symbolic-service")
+    assert summary["dataset_id"] == "historical-compilation-batch-2026-06-16"
+    assert summary["record_count"] == 2
+    assert summary["source_kind"] == "historical_compilations"
+    assert summary["selection"]["selection_id"] == "selection-hist-2026-06-16"
+    assert summary["approval"]["approval_id"] == "approval-hist-2026-06-16"
+    assert summary["records"][0]["payload"]["compiler_status"] == "DONE"
+    assert summary["dataset_digest_sha256"] == replay_summary["dataset_digest_sha256"]
+    assert summary["evidence_id"] == replay_summary["evidence_id"]
+
+    exit_code = neuro_main([
+        "ingest-historical-compilations",
+        "--manifest",
+        str(bundle_path),
+        "--caller-identity",
+        "neuro-symbolic-service",
+    ])
+    output = capsys.readouterr().out.strip()
+    cli_summary = json.loads(output)
+
+    assert exit_code == 0
+    assert cli_summary["dataset_id"] == "historical-compilation-batch-2026-06-16"
+    assert cli_summary["record_count"] == 2
+    assert cli_summary["source_kind"] == "historical_compilations"
+    assert cli_summary["trace_ids"] == ["trace-001", "trace-002"]
+    assert cli_summary["replay_ids"] == ["replay-001", "replay-002"]

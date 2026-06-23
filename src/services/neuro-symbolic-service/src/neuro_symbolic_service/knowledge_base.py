@@ -1351,12 +1351,15 @@ class KnowledgeBaseService:
         computed_redaction_digest = hashlib.sha256(_stable_json({k: v for k, v in redaction.items() if k != "redaction_digest_sha256"}).encode("utf-8")).hexdigest()
         if computed_redaction_digest != redaction_digest:
             raise KnowledgeBaseUnavailable("redaction digest mismatch")
-        
+
+        source_kind = str(manifest_payload.get("source_kind", "")).strip()
+
         selection = manifest_payload.get("selection")
         normalized_selection: dict[str, Any] | None = None
         if selection is not None:
             if not isinstance(selection, dict):
                 raise ValueError("selection must be an object")
+            selection_job_ids = _audit_string_list(selection.get("job_ids"))
             selection_trace_ids = _audit_string_list(selection.get("trace_ids") or selection.get("selected_trace_ids"))
             selection_replay_ids = _audit_string_list(selection.get("replay_ids"))
             selection_id = str(selection.get("selection_id", "")).strip()
@@ -1367,6 +1370,8 @@ class KnowledgeBaseService:
             selection_project_id = str(selection.get("project_id", project_id)).strip() or project_id
             if not selection_id or not selected_by or not selection_reason or not selection_trace_ids or not selection_replay_ids:
                 raise ValueError("selection.selection_id, selected_by, selection_reason, trace_ids, and replay_ids are required")
+            if source_kind == "historical_compilations" and not selection_job_ids:
+                raise ValueError("selection.job_ids are required for historical compilation datasets")
             if selection_tenant_id != tenant_id or selection_project_id != project_id:
                 raise KnowledgeBaseUnavailable("selection must remain tenant-scoped")
             if selection_policy_snapshot_version != policy_snapshot_version:
@@ -1381,6 +1386,8 @@ class KnowledgeBaseService:
                 "project_id": selection_project_id,
                 "policy_snapshot_version": selection_policy_snapshot_version,
             }
+            if selection_job_ids:
+                normalized_selection["job_ids"] = selection_job_ids
 
         approval = manifest_payload.get("approval")
         normalized_approval: dict[str, Any] | None = None
@@ -1489,9 +1496,12 @@ class KnowledgeBaseService:
                     "rules": [str(rule).strip() for rule in (record_redaction.get("rules") or []) if str(rule).strip()],
                 },
             }
+            job_id = str(record.get("job_id", "")).strip()
             trace_id = str(record.get("trace_id", "")).strip()
             replay_id = str(record.get("replay_id", "")).strip()
             source_kind = str(record.get("source_kind", "")).strip()
+            if job_id:
+                normalized_record["job_id"] = job_id
             if trace_id:
                 normalized_record["trace_id"] = trace_id
                 normalized_record["trace_ref"] = f"nsc://trace/{trace_id}"
@@ -1509,6 +1519,17 @@ class KnowledgeBaseService:
                 normalized_record["source_kind"] = source_kind
             normalized_records.append(normalized_record)
             record_digests.append(content_digest)
+
+        normalized_records = sorted(
+            normalized_records,
+            key=lambda item: (
+                str(item.get("trace_id", "")),
+                str(item.get("job_id", "")),
+                str(item.get("record_id", "")),
+                str(item.get("replay_id", "")),
+            ),
+        )
+        record_digests = [str(item["content_digest_sha256"]) for item in normalized_records]
 
         normalized_manifest = {
             "schema_version": schema_version,
@@ -1567,6 +1588,8 @@ class KnowledgeBaseService:
             dataset_digest_source["selection"] = normalized_selection
             dataset_digest_source["trace_ids"] = list(normalized_selection["trace_ids"])
             dataset_digest_source["replay_ids"] = list(normalized_selection["replay_ids"])
+            if "job_ids" in normalized_selection:
+                dataset_digest_source["job_ids"] = list(normalized_selection["job_ids"])
         if normalized_approval is not None:
             dataset_digest_source["approval"] = normalized_approval
         dataset_digest_sha256 = hashlib.sha256(_stable_json(dataset_digest_source).encode("utf-8")).hexdigest()
@@ -1594,6 +1617,8 @@ class KnowledgeBaseService:
             dataset_summary["source_kind"] = normalized_manifest["source_kind"]
         if normalized_selection is not None:
             dataset_summary["selection"] = normalized_selection
+            if "job_ids" in normalized_selection:
+                dataset_summary["job_ids"] = list(normalized_selection["job_ids"])
             dataset_summary["trace_ids"] = list(normalized_selection["trace_ids"])
             dataset_summary["replay_ids"] = list(normalized_selection["replay_ids"])
         if normalized_approval is not None:
@@ -1624,6 +1649,8 @@ class KnowledgeBaseService:
                 evidence_metadata["selection_id"] = normalized_selection["selection_id"]
                 evidence_metadata["replay_ids"] = list(normalized_selection["replay_ids"])
                 evidence_metadata["trace_ids"] = list(normalized_selection["trace_ids"])
+                if "job_ids" in normalized_selection:
+                    evidence_metadata["job_ids"] = list(normalized_selection["job_ids"])
             if normalized_approval is not None:
                 evidence_metadata["approval_id"] = normalized_approval["approval_id"]
 

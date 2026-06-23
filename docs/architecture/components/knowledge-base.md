@@ -566,3 +566,21 @@ Ingestion MUST fail closed unless:
 ### 12.3 Replayability
 
 The corpus MUST preserve the dataset version, record digests, provenance, and redaction metadata so the same manifest can be re-ingested deterministically and later consumed by the training pipeline without live lookups.
+
+### 12.4 Historical compilation corpus extraction
+
+Historical compilation corpora MUST be built from replay-safe compiler histories only.
+
+The extraction pipeline MUST collect, for every selected historical compilation record:
+
+- `job_id`
+- `trace_id`
+- `replay_id`
+- `compiler_status`
+- `rewrite_outcome`
+- `accepted_rewrite_ids`
+- `rejected_rewrite_ids`
+- `timing_ms`
+- `final_aqo`
+
+The dataset selection section MUST carry the corresponding `job_ids`, `trace_ids`, and `replay_ids`, and the approval section MUST be explicit about the replay-safe decision. The extraction pipeline MUST canonicalize record ordering, record digests, and manifest digests so the same historical source bundle always produces the same training dataset manifest.
