@@ -291,6 +291,20 @@ Missing snapshots, digest mismatches, integrity failures, policy mismatches, ten
 
 When advisory output is absent, invalid, or below the policy-defined confidence threshold, the deterministic symbolic baseline MUST be used and the advisory result MUST be ignored for decision-making.
 
+### 6.4 Failure modes
+
+The following operational behaviors are normative and testable:
+
+| Condition | Normative behavior | Retry / fallback | Observable reason code |
+|---|---|---|---|
+| Model timeout | Discard the advisor result and continue with the deterministic symbolic baseline bound to the frozen request snapshots. A timeout in the advisory path does **not** by itself change the semantic result. | The request MAY complete successfully without model input. If the overall request deadline is exceeded before the deterministic path completes, the request MUST fail with `DEADLINE_EXCEEDED`. | `EIGEN_NSC_MODEL_TIMEOUT` |
+| Bad candidate | Reject the candidate before it can be ranked, selected, or persisted as authoritative truth. A bad candidate MUST never become canonical, and it MUST never be used to justify a downstream state change. | Continue with the remaining valid candidates; if none remain, fall back to the deterministic symbolic baseline. | `EIGEN_NSC_BAD_CANDIDATE` |
+| KB miss | Do not fabricate a canonical pattern, candidate pattern, or explanation. A miss is a non-fatal absence of evidence, not a positive match. | Continue without KB evidence; the deterministic symbolic baseline remains authoritative for the final decision. | `EIGEN_NSC_KB_MISS` |
+| Stale snapshot | Use only frozen snapshots recorded on the request. Live snapshot discovery is prohibited on the replay path. If a required snapshot is missing, expired, or digest-mismatched, the request MUST fail closed. | No automatic refresh on the same request. A new request with a new snapshot binding is required. | `EIGEN_NSC_STALE_SNAPSHOT` |
+| Invalid graph | Reject the graph and prevent any downstream optimizer, reranker, or driver logic from consuming it. If the graph is compiler-owned, the compiler MUST regenerate it from deterministic source before retrying. If the graph violates an internal invariant, the service MUST fail with `INTERNAL`; if it is malformed input, the service MUST fail with `INVALID_ARGUMENT`. | Do not use the invalid graph in any selection, placement, or replay decision. | `EIGEN_NSC_INVALID_GRAPH` |
+
+Every failure mode MUST emit bounded diagnostics that include the failing stage, the reason code, the snapshot identifiers involved, and whether the deterministic baseline or a hard failure was used.
+
 ---
 
 ## 7. Explainability and auditability
