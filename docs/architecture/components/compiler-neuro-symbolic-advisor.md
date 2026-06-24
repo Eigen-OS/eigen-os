@@ -4,7 +4,7 @@
 - **Subsystem:** Compiler Service advisory boundary
 - **Contract version:** `1.0.0`
 - **Applies to:** `src/services/eigen-compiler/`, `src/services/neuro-symbolic-service/`
-- **Last updated:** 2026-06-22
+- **Last updated:** 2026-06-24
 
 The authoritative architecture spec for the symbolic core, knowledge base, and ML advisor boundary is:
 
@@ -72,7 +72,23 @@ For the symbolic rewrite pipeline, each stage invocation MUST be logged independ
 
 ---
 
-## 4. Compatibility
+## 4. Failure modes
+
+The following behaviors are normative and testable.
+
+| Failure mode | Required behavior | Observable outcome |
+|---|---|---|
+| Model timeout or unavailable advisor | Ignore the advisor response and continue with the symbolic baseline. A timeout or `UNAVAILABLE` response MUST NOT fail compilation by itself. | Compile continues; the advisor result is recorded as `fallback`. |
+| Bad candidate | Reject the candidate, keep it out of the admissible set, and continue evaluating the remaining legal candidates. If none remain, use the symbolic baseline. | Candidate outcome is `rejected`; compilation still succeeds if the baseline succeeds. |
+| KB miss | Treat a `NOT_FOUND` KB response or an empty candidate result as empty advisory input. Do not invent a candidate or block compilation. | Advisory result is empty; compile continues with the symbolic baseline. |
+| Stale snapshot | If the request snapshot, model snapshot, policy snapshot, or KB snapshot does not match the frozen decision context, fail closed before advisory scoring or replay. | Request fails with `FAILED_PRECONDITION`. |
+| Invalid graph | If the graph payload is malformed or the logical/physical pair is inconsistent, reject the request before scoring. A malformed graph fails with `INVALID_ARGUMENT`; a pair mismatch fails with `FAILED_PRECONDITION`. | No advisor output is consumed; no invalid graph is admitted. |
+
+These rules ensure the compiler remains deterministic and the advisor stays advisory-only.
+
+---
+
+## 5. Compatibility
 
 This boundary is advisory-only and does not change the deterministic compiler contract or AQO schema.
 
