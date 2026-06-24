@@ -13,6 +13,7 @@ They should stay precise, explicit, and implementation-agnostic.
 - Benchmark observability contract: [`benchmark-observability-contract.md`](benchmark-observability-contract.md)
 - Internal API: [`api/grpc-internal.md`](api/grpc-internal.md)
 - Contributor guide: [`../howto/how-it-works.md`](../howto/how-it-works.md)
+- Neuro-symbolic failure modes: [`../architecture/components/compiler-neuro-symbolic-advisor.md`](../architecture/components/compiler-neuro-symbolic-advisor.md)
 - Rewrite outcome taxonomy: [`rewrite-outcome-taxonomy.md`](rewrite-outcome-taxonomy.md)
 - Error model: [`error-model.md`](error-model.md)
 - Error mapping: [`error-mapping.md`](error-mapping.md)
