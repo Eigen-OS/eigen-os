@@ -5,12 +5,23 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+# Compiler
 COPY src/services/eigen-compiler /app/src/services/eigen-compiler
+
+# Neuro-symbolic API (types_pb2.py, *_grpc.py и др.)
+COPY src/services/neuro-symbolic-service /app/src/services/neuro-symbolic-service
+
+# Общие proto
 COPY proto /app/proto
 
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir \
-      grpcio>=1.76 grpcio-tools>=1.76 grpcio-status>=1.76 googleapis-common-protos>=1.72 protobuf>=6.33 \
+        "grpcio>=1.76" \
+        "grpcio-tools>=1.76" \
+        "grpcio-status>=1.76" \
+        "googleapis-common-protos>=1.72" \
+        "protobuf>=6.33" \
+    && pip install --no-cache-dir -e /app/src/services/neuro-symbolic-service \
     && pip install --no-cache-dir -e /app/src/services/eigen-compiler
 
 EXPOSE 50071 9093

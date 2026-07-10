@@ -162,10 +162,10 @@ def test_list_devices_returns_simulator_devices(grpc_addr: str) -> None:
 
     resp = stub.ListDevices(drv_pb.ListDevicesRequest())
 
-    assert {device.device_id for device in resp.devices} == {"cluster:auto", "sim:local"}
+    assert {device.device_id for device in resp.devices} == {"cluster:auto", "sim:local", "runtime:deterministic"}
 
 
-@pytest.mark.parametrize("device_id", ["cluster:auto", "sim:local"])
+@pytest.mark.parametrize("device_id", ["cluster:auto", "sim:local", "runtime:deterministic"])
 def test_get_device_status_returns_simulator_status(grpc_addr: str, device_id: str) -> None:
     channel = grpc.insecure_channel(grpc_addr)
     stub = drv_pb_grpc.DriverManagerServiceStub(channel)
