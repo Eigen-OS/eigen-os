@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import importlib
 import logging
 import os
+import sys
 from concurrent import futures
 import threading
+from pathlib import Path
 
 import grpc
 
@@ -43,6 +46,7 @@ def _start_metrics_server(bind: str) -> ThreadingHTTPServer:
 def serve(bind: str | None = None, metrics_bind: str | None = None) -> grpc.Server:
     reset_metrics()
     ensure_generated()
+    _ensure_local_eigen_namespace()
 
     from eigen.internal.v1 import compilation_service_pb2 as comp_pb
     from eigen.internal.v1 import compilation_service_pb2_grpc as comp_pb_grpc
@@ -70,3 +74,20 @@ def serve(bind: str | None = None, metrics_bind: str | None = None) -> grpc.Serv
     _LOG.info("eigen-compiler gRPC server started on %s", addr)
     _LOG.info("eigen-compiler metrics server started on %s", metrics_addr)
     return server
+
+
+def _ensure_local_eigen_namespace() -> None:
+    """Make generated ``eigen.internal`` stubs importable in mixed service envs."""
+    local_src = Path(__file__).resolve().parents[1]
+    local_eigen = str(local_src / "eigen")
+    if str(local_src) not in sys.path:
+        sys.path.insert(0, str(local_src))
+
+    eigen_pkg = sys.modules.get("eigen")
+    if eigen_pkg is None:
+        importlib.import_module("eigen")
+        eigen_pkg = sys.modules.get("eigen")
+
+    package_path = getattr(eigen_pkg, "__path__", None)
+    if package_path is not None and local_eigen not in package_path:
+        package_path.insert(0, local_eigen)
