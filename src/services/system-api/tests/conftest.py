@@ -74,13 +74,20 @@ def _start_python_service(module: str, cwd: Path, env: dict[str, str], ready_por
         [sys.executable, "-m", module],
         cwd=str(cwd),
         env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
     )
     deadline = time.time() + 120
     while time.time() < deadline:
         if proc.poll() is not None:
-            raise RuntimeError(f"{module} exited early with code {proc.returncode}")
+            stdout, stderr = proc.communicate()
+            error_msg = f"{module} exited early with code {proc.returncode}"
+            if stderr:
+                error_msg += f"\nstderr:\n{stderr}"
+            if stdout:
+                error_msg += f"\nstdout:\n{stdout}"
+            raise RuntimeError(error_msg)
         try:
             with socket.create_connection(("127.0.0.1", ready_port), timeout=0.25):
                 break
