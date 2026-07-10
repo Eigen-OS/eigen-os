@@ -390,19 +390,41 @@ class DeviceService:
         rc.service_identity = sec.service_identity
 
         # backend_type is optional
-        resp = self._dev_pb.ListDevicesResponse(
-            devices=[
-                self._types_pb.DeviceInfo(
-                    device_id="sim:local",
-                    name="Local simulator",
-                    backend_type="simulator",
-                    status=self._types_pb.DEVICE_STATUS_ONLINE,
-                    queue_depth=0,
-                    estimated_wait_sec=0,
-                    capabilities={"shots": "1024"},
-                )
-            ]
-        )
+        devices = [
+            self._types_pb.DeviceInfo(
+                device_id="sim:local",
+                name="Local simulator",
+                backend_type="simulator",
+                status=self._types_pb.DEVICE_STATUS_ONLINE,
+                queue_depth=0,
+                estimated_wait_sec=0,
+                capabilities={"shots": "1024"},
+            )
+        ]
+        if sec.auth_mode == "allow_all":
+            devices.extend(
+                [
+                    self._types_pb.DeviceInfo(
+                        device_id="cluster:auto",
+                        name="Automatic cluster scheduler",
+                        backend_type="cluster",
+                        status=self._types_pb.DEVICE_STATUS_ONLINE,
+                        queue_depth=0,
+                        estimated_wait_sec=0,
+                        capabilities={"placement": "automatic"},
+                    ),
+                    self._types_pb.DeviceInfo(
+                        device_id="runtime:deterministic",
+                        name="Deterministic runtime",
+                        backend_type="runtime",
+                        status=self._types_pb.DEVICE_STATUS_ONLINE,
+                        queue_depth=0,
+                        estimated_wait_sec=0,
+                        capabilities={"mode": "deterministic"},
+                    ),
+                ]
+            )
+        resp = self._dev_pb.ListDevicesResponse(devices=devices)
 
         log_request_end("DeviceService.ListDevices", rc)
         return resp
