@@ -6,23 +6,39 @@ metadata:
     example: "true"
     domain: telecom
     workload: distributed
+    topology: "8-partitions"
+    execution: "simulator-backed"
 spec:
   target: cluster:auto
   program:
     path: program.eigen.py
     entrypoint: main
   priority: 80
+
+  # Compiler flags are intentionally kept separate from the canonical
+  # workload topology below.
   compiler_options:
     distributed.enabled: "true"
     distributed.target: "cluster:auto"
     distributed.partition_count: "8"
     distributed.queue_provider: "memory"
     distributed.topology_hint: "data_parallel"
+
   workload:
     kind: DistributedJob
     execution_profile: distributed
     replayable: true
     backend_target: cluster:auto
+
+    # Canonical topology: two qubits per logical partition.
+    # partition-0 -> q0, q1
+    # partition-1 -> q2, q3
+    # partition-2 -> q4, q5
+    # partition-3 -> q6, q7
+    # partition-4 -> q8, q9
+    # partition-5 -> q10, q11
+    # partition-6 -> q12, q13
+    # partition-7 -> q14, q15
     topology:
       cluster_id: cluster:auto
       partition_count: 8
@@ -44,9 +60,13 @@ spec:
         - worker-f
         - worker-g
         - worker-h
+
   metadata:
     shots: "2048"
     domain: "telecom-network"
-    partition_strategy: "data_parallel"
+    scenario: "partition-boundary-healing"
+    partition_strategy: "isolate-heal"
+    partition_layout: "2-qubits-per-partition"
     cluster_id: "cluster:auto"
+    execution_mode: "simulator-backed"
     
