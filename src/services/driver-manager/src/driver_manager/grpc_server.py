@@ -8,12 +8,10 @@ from concurrent import futures
 
 import grpc
 
-from .aws_braket_driver import AwsBraketDriver
 from .grpc_impl import DriverManagerService
+from .plugin_loader import load_plugins
 from .proto_gen import ensure_generated
-from .qiskit_runtime_driver import QiskitRuntimeDriver
 from .registry import DriverRegistry
-from .simulator_driver import SimulatorDriver
 
 _LOG = logging.getLogger("driver_manager")
 
@@ -30,19 +28,8 @@ def _driver_config_from_env(prefix: str) -> dict[str, str]:
 def _build_registry(types_pb) -> DriverRegistry:
     registry = DriverRegistry()
 
-    simulator = SimulatorDriver(types_pb=types_pb)
-    simulator.initialize(config={})
-    registry.add_driver(simulator.name, simulator)
-
-    if os.getenv("DRIVER_MANAGER_QISKIT_RUNTIME_ENABLED", "false").lower() in {"1", "true", "yes"}:
-        qiskit = QiskitRuntimeDriver(types_pb=types_pb)
-        qiskit.initialize(config=_driver_config_from_env("DRIVER_MANAGER_QISKIT_RUNTIME"))
-        registry.add_driver(qiskit.name, qiskit)
-
-    if os.getenv("DRIVER_MANAGER_AWS_BRAKET_ENABLED", "false").lower() in {"1", "true", "yes"}:
-        aws = AwsBraketDriver(types_pb=types_pb)
-        aws.initialize(config=_driver_config_from_env("DRIVER_MANAGER_AWS_BRAKET"))
-        registry.add_driver(aws.name, aws)
+    for driver in load_plugins(types_pb=types_pb):
+        registry.add_driver(driver.name, driver)
 
     return registry
 

@@ -9,6 +9,24 @@ Implemented in this milestone:
 - `BaseDriver` (`QDriver`) interface with capability handshake and healthcheck.
 - In-memory `DriverRegistry` with device-to-driver lookup.
 - Qiskit Runtime and AWS Braket adapter hardening baseline with secret-ref auth resolution, timeout/retry policy, and provider error normalization.
+
+# Driver plugins
+
+The driver-manager discovers backends through the
+`eigen_os.driver_plugins` Python entry-point group.
+
+The built-in AQO simulator is enabled by default. Other plugins are opt-in:
+
+```bash
+pip install -e 'src/services/driver-manager[pennylane]'
+export DRIVER_MANAGER_PLUGIN_PENNYLANE_ENABLED=true
+export DRIVER_MANAGER_PLUGIN_PENNYLANE_DEVICE=default.qubit
+python -m driver_manager.main
+```
+
+Devices are routed by their registered `device_id`; no simulator is treated as
+a default fallback by the registry.
+
 - HTTP endpoints: `/metrics` and `/healthz`.
 
 ## Run

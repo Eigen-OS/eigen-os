@@ -241,19 +241,6 @@ class DriverRegistry:
         if requested in {profile.profile_name, profile.driver_name, profile.backend_type, profile.profile_version, profile.device_id}:
             return profile
 
-        simulator_profile = next(
-            (
-                candidate
-                for candidate in self.device_profile_snapshot()
-                if candidate.profile_name == "simulator"
-                or candidate.driver_name == "simulator"
-                or candidate.backend_type == "simulator"
-            ),
-            None,
-        )
-        if simulator_profile is not None:
-            return simulator_profile
-
         raise ValueError(f"unsupported device profile '{requested}' for device_id '{device_id}'")
 
     def negotiate_device_profile(

@@ -19,9 +19,17 @@ dependencies = [
 dev = [
   "pytest>=9",
 ]
+pennylane = [
+  "pennylane>=0.45,<0.46",
+]
 
 [project.scripts]
 driver-manager = "driver_manager.main:main"
+
+[project.entry-points."eigen_os.driver_plugins"]
+aqo-simulator = "driver_manager.simulator_driver:create_plugin"
+qiskit-runtime = "driver_manager.qiskit_runtime_driver:create_plugin"
+aws-braket = "driver_manager.aws_braket_driver:create_plugin"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
