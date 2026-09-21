@@ -8,8 +8,11 @@ and compose them safely.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, Sequence
+
+pi = math.pi
 
 __all__ = [
     "ClassicalRegister",
@@ -21,6 +24,8 @@ __all__ = [
     "Param",
     "ProgramMetadata",
     "QubitRegister",
+    "cp",
+    "crz",
     "cx",
     "cnot",
     "h",
@@ -28,6 +33,7 @@ __all__ = [
     "load_dataset",
     "measure",
     "minimize",
+    "pi",
     "reset",
     "rx",
     "ry",
@@ -207,6 +213,16 @@ def cx(control: int, target: int) -> Operation:
 
 def cnot(control: int, target: int) -> Operation:
     return cx(control, target)
+
+
+def cp(control: int, target: int, theta: Any = None, **params: Any) -> Operation:
+    if theta is not None and "theta" not in params:
+        params["theta"] = theta
+    return _gate("CP", (control, target), **params)
+
+
+def crz(control: int, target: int, theta: Any = None, **params: Any) -> Operation:
+    return cp(control=control, target=target, theta=theta, **params)
 
 
 def swap(a: int, b: int) -> Operation:
