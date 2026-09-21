@@ -136,6 +136,8 @@ services:
       OTEL_TRACES_EXPORTER: otlp
       OTEL_METRICS_EXPORTER: none
       OTEL_LOGS_EXPORTER: none
+      DRIVER_MANAGER_PLUGIN_PENNYLANE_ENABLED: "true"
+      DRIVER_MANAGER_PLUGIN_PENNYLANE_DEVICE: default.qubit
     ports:
       - "50061:50061"
       - "9092:9092"

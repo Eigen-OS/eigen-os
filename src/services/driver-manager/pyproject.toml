@@ -30,6 +30,7 @@ driver-manager = "driver_manager.main:main"
 aqo-simulator = "driver_manager.simulator_driver:create_plugin"
 qiskit-runtime = "driver_manager.qiskit_runtime_driver:create_plugin"
 aws-braket = "driver_manager.aws_braket_driver:create_plugin"
+pennylane = "driver_manager.pennylane_driver:create_plugin"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
