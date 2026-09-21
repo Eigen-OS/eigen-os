@@ -10,13 +10,13 @@ spec:
   program:
     path: program.eigen.py
     entrypoint: main
-  target: sim:local
+  target: sim:pennylane
   priority: 60
   workload:
     kind: BenchmarkJob
     execution_profile: benchmark
     replayable: false
-    backend_target: sim:local
+    backend_target: sim:pennylane
     seed: 42
   metadata:
     optimizer: "none"

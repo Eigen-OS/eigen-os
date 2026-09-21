@@ -82,6 +82,10 @@ class _MeasureMap:
     cbit: int
 
 
+def create_plugin(*, types_pb) -> "SimulatorDriver":
+    return SimulatorDriver(types_pb=types_pb)
+
+
 class SimulatorDriver:
     """Simple statevector simulator for AQO JSON payloads."""
 
