@@ -91,6 +91,9 @@ class SimulatorDriver:
         self._types_pb = types_pb
         self._sessions: dict[str, str] = {}
 
+    def create_plugin(*, types_pb) -> SimulatorDriver:
+        return SimulatorDriver(types_pb=types_pb)
+
     def initialize(self, config: dict[str, str]) -> None:
         _ = config
 

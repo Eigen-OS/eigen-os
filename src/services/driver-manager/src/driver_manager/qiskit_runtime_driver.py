@@ -21,6 +21,10 @@ class _AuthConfig:
     token: str
 
 
+def create_plugin(*, types_pb) -> "QiskitRuntimeDriver":
+    return QiskitRuntimeDriver(types_pb=types_pb)
+
+
 class QiskitRuntimeDriver:
     """Production baseline skeleton for IBM Qiskit Runtime integration."""
 

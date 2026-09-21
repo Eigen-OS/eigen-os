@@ -22,6 +22,10 @@ class _AwsAuthConfig:
     secret_access_key: str
 
 
+def create_plugin(*, types_pb) -> "AwsBraketDriver":
+    return AwsBraketDriver(types_pb=types_pb)
+
+
 class AwsBraketDriver:
     """Production baseline skeleton for AWS Braket integration."""
 
