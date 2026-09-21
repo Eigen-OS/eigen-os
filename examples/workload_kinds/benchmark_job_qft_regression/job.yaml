@@ -19,9 +19,5 @@ spec:
     backend_target: sim:local
     seed: 42
   metadata:
-    shots: "16384"
     optimizer: "none"
-    algorithm: "qft"
-    n: "16"
-    seed: "42"
     

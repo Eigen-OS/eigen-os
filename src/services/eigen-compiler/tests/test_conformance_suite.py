@@ -485,3 +485,37 @@ def test_compiler_evaluation_dashboard_targets_version_and_job_type() -> None:
     assert 'compiler_version=~"$compiler_version"' in exprs
     assert 'job_type=~"$job_type"' in exprs
     assert 'decision_source="fallback"' in exprs
+
+
+def test_qft_static_loop_and_keyword_cp_lowering() -> None:
+    source = b"""
+from eigen_lang import QubitRegister, ClassicalRegister, cp, h, hybrid_program, pi, swap
+
+@hybrid_program(target="simulator", shots=16384, seed=42)
+def main(n: int = 16):
+    q = QubitRegister(n)
+    c = ClassicalRegister(n)
+    for j in range(n):
+        h(j)
+        for k in range(j + 1, n):
+            angle = 2.0 * pi / (2 ** (k - j + 1))
+            cp(control=k, target=j, theta=angle)
+    for i in range(n // 2):
+        swap(i, n - 1 - i)
+"""
+
+    compiled = compile_eigen_lang(
+        source,
+        options={
+            "spec.workload.kind": "BenchmarkJob",
+            "spec.workload.seed": "42",
+            "spec.workload.backend_target": "sim:local",
+        },
+    )
+    payload = json.loads(compiled.aqo_json)
+
+    assert payload["qubits"] == 16
+    assert sum(1 for operation in payload["operations"] if operation["op"] == "H") == 16
+    assert sum(1 for operation in payload["operations"] if operation["op"] == "CP") == 120
+    assert sum(1 for operation in payload["operations"] if operation["op"] == "SWAP") == 8
+    assert payload["operations"][-1]["op"] == "MEASURE"

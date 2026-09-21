@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import copy
 import hashlib
 import json
 import os
@@ -10,7 +11,7 @@ import re
 
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
-from math import isfinite
+from math import isfinite, pi
 from pathlib import Path
 from time import perf_counter
 from typing import Any, Callable, Iterator, TypeVar
@@ -399,6 +400,9 @@ def _literal_scalar(node: ast.AST) -> str | int | float | None:
     numeric constants only. Names, calls, attributes, subscripts, and other
     AST forms remain rejected.
     """
+
+    if isinstance(node, ast.Name) and node.id == "pi":
+        return pi
 
     if isinstance(node, ast.Constant):
         if isinstance(node.value, str):
@@ -1569,25 +1573,27 @@ def _expand_static_for_loops(tree: ast.AST) -> list[ast.stmt]:
       - for i in range(j + 1, n):
       - for i in range(0, n, 2):
 
-    This keeps the compiler deterministic and still rejects dynamic or
-    non-constant control flow.
+    The expansion is performed inside the decorated entrypoint. Function
+    defaults and values assigned during expansion are added to a closed
+    static environment so nested loops and expressions such as
+    ``2.0 * pi / (2 ** (k - j + 1))`` can be folded without executing user
+    code.
     """
-    expanded: list[ast.stmt] = []
-    env: dict[str, object] = {}
-
-    def _read_env_value(node: ast.AST) -> object | None:
+    def _read_env_value(node: ast.AST, env: dict[str, object]) -> object | None:
+        if isinstance(node, ast.Name) and node.id == "pi":
+            return pi
         if isinstance(node, ast.Constant):
             return node.value
         if isinstance(node, ast.Name):
             return env.get(node.id)
         if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
-            value = _read_env_value(node.operand)
+            value = _read_env_value(node.operand, env)
             if isinstance(value, (int, float)) and not isinstance(value, bool):
                 return value if isinstance(node.op, ast.UAdd) else -value
             return None
         if isinstance(node, ast.BinOp):
-            left = _read_env_value(node.left)
-            right = _read_env_value(node.right)
+            left = _read_env_value(node.left, env)
+            right = _read_env_value(node.right, env)
             if not isinstance(left, (int, float)) or not isinstance(right, (int, float)):
                 return None
             try:
@@ -1602,19 +1608,38 @@ def _expand_static_for_loops(tree: ast.AST) -> list[ast.stmt]:
                 if isinstance(node.op, ast.FloorDiv):
                     return left // right
                 if isinstance(node.op, ast.Pow):
-                    return left ** right
+                    return left**right
                 if isinstance(node.op, ast.Mod):
                     return left % right
-            except Exception:
+            except (ArithmeticError, TypeError, ValueError):
                 return None
         return None
 
-    def _expand_stmt_list(body: list[ast.stmt]) -> list[ast.stmt]:
+    class _SubstituteStaticNames(ast.NodeTransformer):
+        def __init__(self, env: dict[str, object]):
+            self.env = env
+
+        def visit_Name(self, node: ast.Name) -> ast.AST:
+            if isinstance(node.ctx, ast.Load) and node.id in self.env:
+                value = self.env[node.id]
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    return ast.copy_location(ast.Constant(value=value), node)
+            return node
+
+    def _substitute(node: ast.AST, env: dict[str, object]) -> ast.AST:
+        return _SubstituteStaticNames(env).visit(copy.deepcopy(node))
+
+    def _expand_stmt_list(body: list[ast.stmt], inherited_env: dict[str, object]) -> list[ast.stmt]:
         out: list[ast.stmt] = []
+        env = dict(inherited_env)
+
         for stmt in body:
             if isinstance(stmt, ast.Assign):
                 if len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name):
-                    env[stmt.targets[0].id] = _read_env_value(stmt.value)
+                    value = _read_env_value(stmt.value, env)
+                    if value is not None:
+                        env[stmt.targets[0].id] = value
+                out.append(ast.fix_missing_locations(_substitute(stmt, env)))
             elif isinstance(stmt, ast.For):
                 target = stmt.target
                 if not isinstance(target, ast.Name):
@@ -1626,27 +1651,35 @@ def _expand_static_for_loops(tree: ast.AST) -> list[ast.stmt]:
                     raise CompilerValidationError(
                         violations=(FieldViolation(field="source", description="for-loops must be statically bounded via range()"),)
                     )
-                values = [ _read_env_value(arg) for arg in iter_values.args ]
-                if not 1 <= len(values) <= 3 or not all(isinstance(v, int) for v in values if v is not None):
+                values = [_read_env_value(arg, env) for arg in iter_values.args]
+                if not 1 <= len(values) <= 3 or not all(isinstance(v, int) for v in values):
                     raise CompilerValidationError(
                         violations=(FieldViolation(field="source", description="range() bounds must be statically evaluable integers"),)
                     )
                 seq = list(range(*tuple(values)))  # type: ignore[arg-type]
                 for idx in seq:
-                    loop_env = env.copy()
+                    loop_env = dict(env)
                     loop_env[target.id] = idx
-                    for inner in _expand_stmt_list(stmt.body):
-                        if isinstance(inner, ast.Assign):
-                            if len(inner.targets) == 1 and isinstance(inner.targets[0], ast.Name):
-                                new_value = _read_env_value(inner.value)
-                                if new_value is not None:
-                                    loop_env[inner.targets[0].id] = new_value
-                        out.append(ast.fix_missing_locations(inner))
+                    out.extend(_expand_stmt_list(stmt.body, loop_env))
             else:
-                out.append(stmt)
+                if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    function_env: dict[str, object] = {}
+                    positional_args = list(stmt.args.args)
+                    defaults = [None] * (len(positional_args) - len(stmt.args.defaults)) + list(stmt.args.defaults)
+                    for argument, default in zip(positional_args, defaults, strict=True):
+                        if default is not None:
+                            value = _read_env_value(default, env)
+                            if value is not None:
+                                function_env[argument.arg] = value
+
+                    rewritten = copy.deepcopy(stmt)
+                    rewritten.body = _expand_stmt_list(rewritten.body, function_env)
+                    out.append(ast.fix_missing_locations(rewritten))
+                else:
+                    out.append(ast.fix_missing_locations(_substitute(stmt, env)))
         return out
 
-    return _expand_stmt_list(tree.body)
+    return _expand_stmt_list(list(tree.body), {})
 
 
 def _extract_qubits_from_args(args: list[ast.AST], *, arity: int, name: str) -> list[int]:
@@ -1683,6 +1716,10 @@ def _collect_operations(tree: ast.AST, params: dict[str, dict[str, object]]) -> 
 
         lowered: dict[str, object] | None = None
         positional_qubits = [arg for arg in node.args]
+        
+        def _keyword_value(name: str) -> ast.AST | None:
+            return next((keyword.value for keyword in node.keywords if keyword.arg == name), None)
+        
         if name in {"rx", "ry", "rz"}:
             q = _extract_qubits_from_args(positional_qubits[:1], arity=1, name=name.upper())
             theta_expr = next((kw.value for kw in node.keywords if kw.arg == "theta"), None)
@@ -1694,7 +1731,13 @@ def _collect_operations(tree: ast.AST, params: dict[str, dict[str, object]]) -> 
                 )
             lowered = {"op": name.upper(), "q": q, "params": {"theta": _resolve_theta_expr(theta_expr, params)}}
         elif name in {"cp", "crz"}:
-            q = _extract_qubits_from_args(positional_qubits[:2], arity=2, name="CP")
+            qubit_args = positional_qubits[:2]
+            if len(qubit_args) < 2:
+                control = _keyword_value("control")
+                target = _keyword_value("target")
+                if control is not None and target is not None:
+                    qubit_args = [control, target]
+            q = _extract_qubits_from_args(qubit_args, arity=2, name="CP")
             theta_expr = next((kw.value for kw in node.keywords if kw.arg == "theta"), None)
             if theta_expr is None and len(node.args) >= 3:
                 theta_expr = node.args[2]

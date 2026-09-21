@@ -420,10 +420,10 @@ def test_execute_circuit_reports_unsupported_op_exhaustively(grpc_addr: str) -> 
     stub = drv_pb_grpc.DriverManagerServiceStub(channel)
 
     with pytest.raises(grpc.RpcError) as err:
-        _execute(stub, payload=_aqo([{"op": "H", "q": [0]}], qubits=1))
+        _execute(stub, payload=_aqo([{"op": "NOT_A_GATE", "q": [0]}], qubits=1))
 
     assert err.value.code() == grpc.StatusCode.UNIMPLEMENTED
-    assert "Unsupported Op: H at operation[0]" in err.value.details()
+    assert "Unsupported Op: NOT_A_GATE at operation[0]" in err.value.details()
 
 
 def test_execute_circuit_reports_simulator_out_of_memory(grpc_addr: str) -> None:

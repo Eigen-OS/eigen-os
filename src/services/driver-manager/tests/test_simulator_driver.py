@@ -98,6 +98,71 @@ def test_circuit_ry_pi_cx_rz_then_measure() -> None:
     assert counts == {"11": 32}
 
 
+def test_circuit_hadamard_then_measure_is_uniform() -> None:
+    drv = _driver()
+
+    counts, _, _ = drv.execute_circuit(
+        device_id="sim:golden",
+        circuit=_aqo(
+            [
+                {"op": "H", "q": [0]},
+                {"op": "MEASURE", "q": [0], "c": [0]},
+            ],
+            qubits=1,
+       ),
+        shots=4096,
+        options={"seed": "7"},
+    )
+
+    assert sum(counts.values()) == 4096
+    assert set(counts) == {"0", "1"}
+    assert abs(counts["0"] - counts["1"]) < 250
+
+
+def test_circuit_controlled_phase_preserves_probability() -> None:
+    drv = _driver()
+
+    counts, _, _ = drv.execute_circuit(
+        device_id="sim:golden",
+        circuit=_aqo(
+            [
+                {"op": "H", "q": [0]},
+                {"op": "H", "q": [1]},
+                {
+                    "op": "CP",
+                    "q": [0, 1],
+                    "params": {"theta": math.pi},
+                },
+                {"op": "MEASURE", "q": [0, 1], "c": [0, 1]},
+            ]
+        ),
+        shots=1024,
+        options={"seed": "9"},
+    )
+
+    assert sum(counts.values()) == 1024
+    assert set(counts) == {"00", "01", "10", "11"}
+
+
+def test_circuit_swap_exchanges_qubit_states() -> None:
+    drv = _driver()
+
+    counts, _, _ = drv.execute_circuit(
+        device_id="sim:golden",
+        circuit=_aqo(
+            [
+                {"op": "X", "q": [0]},
+                {"op": "SWAP", "q": [0, 1]},
+                {"op": "MEASURE", "q": [0, 1], "c": [0, 1]},
+            ]
+        ),
+        shots=32,
+        options={"seed": "11"},
+    )
+
+    assert counts == {"10": 32}
+
+
 def test_simulated_errors() -> None:
     drv = _driver()
     payload = _aqo([{"op": "MEASURE", "q": [0], "c": [0]}], qubits=1)
