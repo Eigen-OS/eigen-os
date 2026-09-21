@@ -1,10 +1,11 @@
 from eigen_lang import (
     ClassicalRegister,
     QubitRegister,
-    cnot,
+    cp,
+    h,
     hybrid_program,
-    rx,
-    rz,
+    pi,
+    swap,
 )
 
 
@@ -15,69 +16,41 @@ from eigen_lang import (
     optimization_level=1,
     seed=42,
     metadata={
-        "example": "qft-benchmark-regression",
-        "domain": "benchmarking",
-        "benchmark": "qft-depth-regression",
-        "seed": 42,
+        "example": "qft-native",
+        "domain": "quantum-algorithms",
+        "algorithm": "qft",
     },
 )
-def main():
-    """A reproducible benchmark workload for compiler/runtime regression checks."""
-    qreg = QubitRegister(16)
-    creg = ClassicalRegister(16)
+def main(n: int = 16):
+    """Canonical n-qubit Quantum Fourier Transform.
 
-    rx(0, theta=0.13)
-    rz(0, theta=0.07)
-    rx(1, theta=0.13)
-    rz(1, theta=0.07)
-    rx(2, theta=0.13)
-    rz(2, theta=0.07)
-    rx(3, theta=0.13)
-    rz(3, theta=0.07)
-    rx(4, theta=0.13)
-    rz(4, theta=0.07)
-    rx(5, theta=0.13)
-    rz(5, theta=0.07)
-    rx(6, theta=0.13)
-    rz(6, theta=0.07)
-    rx(7, theta=0.13)
-    rz(7, theta=0.07)
-    rx(8, theta=0.13)
-    rz(8, theta=0.07)
-    rx(9, theta=0.13)
-    rz(9, theta=0.07)
-    rx(10, theta=0.13)
-    rz(10, theta=0.07)
-    rx(11, theta=0.13)
-    rz(11, theta=0.07)
-    rx(12, theta=0.13)
-    rz(12, theta=0.07)
-    rx(13, theta=0.13)
-    rz(13, theta=0.07)
-    rx(14, theta=0.13)
-    rz(14, theta=0.07)
-    rx(15, theta=0.13)
-    rz(15, theta=0.07)
+    |0...0>  ->  (1/sqrt(2^n)) * sum_x |x>
 
-    cnot(0, 1)
-    cnot(1, 2)
-    cnot(2, 3)
-    cnot(3, 4)
-    cnot(4, 5)
-    cnot(5, 6)
-    cnot(6, 7)
-    cnot(7, 8)
-    cnot(8, 9)
-    cnot(9, 10)
-    cnot(10, 11)
-    cnot(11, 12)
-    cnot(12, 13)
-    cnot(13, 14)
-    cnot(14, 15)
+    Circuit:
+      1. For each j: H(j), then controlled-phase CP(k, j, 2*pi / 2^(k-j+1))
+         for k = j+1 .. n-1.
+      2. Reverse qubit order with n/2 SWAPs.
+
+    On the ideal simulator this yields a uniform distribution over
+    2^n basis states; nonzero_bitstrings must approach 2^n * (1 - e^-lambda)
+    with lambda = shots / 2^n.
+    """
+    q = QubitRegister(n)
+    c = ClassicalRegister(n)
+
+    for j in range(n):
+        h(j)
+        for k in range(j + 1, n):
+            angle = 2.0 * pi / (2 ** (k - j + 1))
+            cp(control=k, target=j, theta=angle)
+
+    for i in range(n // 2):
+        swap(i, n - 1 - i)
 
     return {
-        "qubits": qreg.size,
-        "classical_bits": creg.size,
-        "benchmark": "qft-depth-regression",
-        "seed": 42,
+        "qubits": q.size,
+        "classical_bits": c.size,
+        "algorithm": "qft",
+        "n": n,
     }
+    

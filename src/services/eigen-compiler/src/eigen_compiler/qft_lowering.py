@@ -50,3 +50,36 @@ def static_range(node: ast.AST, env: dict[str, Any] | None = None) -> list[int] 
         return list(range(*values))
     except (TypeError, ValueError):
         return None
+
+
+def resolve_static_expr(node: ast.AST, env: dict[str, Any] | None = None) -> Any:
+    """Resolve literal arithmetic / pi expressions without evaluation of code."""
+    env = env or {}
+    value = static_value(node, env)
+    if value is not None:
+        return value
+    if isinstance(node, ast.Name):
+        if node.id == "pi":
+            return math.pi
+        return env.get(node.id)
+    return None
+
+
+def expand_static_for_loops(tree: ast.AST, env: dict[str, Any] | None = None) -> list[ast.stmt]:
+    env = env or {}
+    out: list[ast.stmt] = []
+    for stmt in tree.body:
+        if isinstance(stmt, ast.For):
+            target = stmt.target
+            if not isinstance(target, ast.Name):
+                raise ValueError("for-loop target must be a simple name")
+            rng = static_range(stmt.iter, env)
+            if rng is None:
+                raise ValueError("for-loop must be over a statically bounded range()")
+            for idx in rng:
+                next_env = dict(env)
+                next_env[target.id] = idx
+                out.extend(expand_static_for_loops(ast.Module(body=stmt.body, type_ignores=[]), next_env))
+        else:
+            out.append(stmt)
+    return out
