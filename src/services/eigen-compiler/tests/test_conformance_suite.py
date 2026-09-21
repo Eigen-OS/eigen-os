@@ -104,6 +104,28 @@ def test_compile_accepts_negative_and_arithmetic_scalar_literals() -> None:
     assert compiled["operations"][1]["params"]["theta"] == "phi"
 
 
+def test_compile_accepts_static_qft_loop_lowering() -> None:
+    source = (
+        b"from eigen_lang import ClassicalRegister, QubitRegister, cp, h, hybrid_program, pi, swap\n\n"
+        b"@hybrid_program(target=\"sim\", shots=16384, optimization_level=1, seed=42)\n"
+        b"def main(n: int = 16):\n"
+        b"    q = QubitRegister(n)\n"
+        b"    c = ClassicalRegister(n)\n"
+        b"    for j in range(n):\n"
+        b"        h(j)\n"
+        b"        for k in range(j + 1, n):\n"
+        b"            angle = 2.0 * pi / (2 ** (k - j + 1))\n"
+        b"            cp(control=k, target=j, theta=angle)\n"
+        b"    for i in range(n // 2):\n"
+        b"        swap(i, n - 1 - i)\n"
+        b"    return {\"qubits\": q.size, \"classical_bits\": c.size, \"n\": n}\n"
+    )
+    compiled = json.loads(compile_eigen_lang(source).aqo_json.decode("utf-8"))
+    assert compiled["qubits"] == 16
+    assert any(op["op"] == "CP" for op in compiled["operations"])
+    assert any(op["op"] == "SWAP" for op in compiled["operations"])
+
+
 @pytest.mark.parametrize(
     "source, options, expected_stages",
     [

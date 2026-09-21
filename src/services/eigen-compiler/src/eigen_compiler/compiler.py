@@ -84,6 +84,7 @@ _AQO_ALLOWED_OPS = {
     "RX",
     "RY",
     "RZ",
+    "CP",
     "CX",
     "CZ",
     "SWAP",
@@ -98,7 +99,7 @@ _AQO_ALLOWED_OPS = {
     "MEASURE",
     "RESET",
 }
-_AQO_ROTATION_OPS = {"RX", "RY", "RZ"}
+_AQO_ROTATION_OPS = {"RX", "RY", "RZ", "CP"}
 _AQO_MEASUREMENT_BASIS = {"X", "Y", "Z"}
 _AQO_NON_PARAMETERIZED_OPS = {
     "CX",
@@ -118,6 +119,7 @@ _AQO_ARITY = {
     "RX": 1,
     "RY": 1,
     "RZ": 1,
+    "CP": 2,
     "CX": 2,
     "CZ": 2,
     "SWAP": 2,
@@ -1296,7 +1298,10 @@ def _parse_python_source(source: bytes) -> ast.AST:
 
 
 def _reject_dynamic_control_flow(tree: ast.AST) -> tuple[FieldViolation, ...]:
-    banned_nodes = (ast.If, ast.For, ast.AsyncFor, ast.While, ast.Match, ast.IfExp)
+    # QFT and similar kernel circuits are valid only when loops are statically
+    # bounded over literal range() values. A runtime loop or branching body is
+    # rejected; but plain for-range loops are expanded by a dedicated helper.
+    banned_nodes = (ast.If, ast.AsyncFor, ast.While, ast.Match, ast.IfExp)
     if any(isinstance(node, banned_nodes) for node in ast.walk(tree)):
         return (
             FieldViolation(
@@ -1556,6 +1561,94 @@ def _resolve_theta_expr(expr: ast.AST, params: dict[str, dict[str, object]]) -> 
     )
 
 
+def _expand_static_for_loops(tree: ast.AST) -> list[ast.stmt]:
+    """Inline bounded for-range loops into a flat statement list.
+
+    Accepted patterns:
+      - for i in range(n):
+      - for i in range(j + 1, n):
+      - for i in range(0, n, 2):
+
+    This keeps the compiler deterministic and still rejects dynamic or
+    non-constant control flow.
+    """
+    expanded: list[ast.stmt] = []
+    env: dict[str, object] = {}
+
+    def _read_env_value(node: ast.AST) -> object | None:
+        if isinstance(node, ast.Constant):
+            return node.value
+        if isinstance(node, ast.Name):
+            return env.get(node.id)
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+            value = _read_env_value(node.operand)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                return value if isinstance(node.op, ast.UAdd) else -value
+            return None
+        if isinstance(node, ast.BinOp):
+            left = _read_env_value(node.left)
+            right = _read_env_value(node.right)
+            if not isinstance(left, (int, float)) or not isinstance(right, (int, float)):
+                return None
+            try:
+                if isinstance(node.op, ast.Add):
+                    return left + right
+                if isinstance(node.op, ast.Sub):
+                    return left - right
+                if isinstance(node.op, ast.Mult):
+                    return left * right
+                if isinstance(node.op, ast.Div):
+                    return left / right
+                if isinstance(node.op, ast.FloorDiv):
+                    return left // right
+                if isinstance(node.op, ast.Pow):
+                    return left ** right
+                if isinstance(node.op, ast.Mod):
+                    return left % right
+            except Exception:
+                return None
+        return None
+
+    def _expand_stmt_list(body: list[ast.stmt]) -> list[ast.stmt]:
+        out: list[ast.stmt] = []
+        for stmt in body:
+            if isinstance(stmt, ast.Assign):
+                if len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name):
+                    env[stmt.targets[0].id] = _read_env_value(stmt.value)
+            elif isinstance(stmt, ast.For):
+                target = stmt.target
+                if not isinstance(target, ast.Name):
+                    raise CompilerValidationError(
+                        violations=(FieldViolation(field="source", description="for-loop target must be a simple variable"),)
+                    )
+                iter_values = stmt.iter
+                if not isinstance(iter_values, ast.Call) or not isinstance(iter_values.func, ast.Name) or iter_values.func.id != "range":
+                    raise CompilerValidationError(
+                        violations=(FieldViolation(field="source", description="for-loops must be statically bounded via range()"),)
+                    )
+                values = [ _read_env_value(arg) for arg in iter_values.args ]
+                if not 1 <= len(values) <= 3 or not all(isinstance(v, int) for v in values if v is not None):
+                    raise CompilerValidationError(
+                        violations=(FieldViolation(field="source", description="range() bounds must be statically evaluable integers"),)
+                    )
+                seq = list(range(*tuple(values)))  # type: ignore[arg-type]
+                for idx in seq:
+                    loop_env = env.copy()
+                    loop_env[target.id] = idx
+                    for inner in _expand_stmt_list(stmt.body):
+                        if isinstance(inner, ast.Assign):
+                            if len(inner.targets) == 1 and isinstance(inner.targets[0], ast.Name):
+                                new_value = _read_env_value(inner.value)
+                                if new_value is not None:
+                                    loop_env[inner.targets[0].id] = new_value
+                        out.append(ast.fix_missing_locations(inner))
+            else:
+                out.append(stmt)
+        return out
+
+    return _expand_stmt_list(tree.body)
+
+
 def _extract_qubits_from_args(args: list[ast.AST], *, arity: int, name: str) -> list[int]:
     if len(args) != arity:
         raise CompilerValidationError(
@@ -1568,7 +1661,19 @@ def _collect_operations(tree: ast.AST, params: dict[str, dict[str, object]]) -> 
     operations: list[dict] = []
     qubit_count = 1
 
-    for node in ast.walk(tree):
+    # Lower static for-range loops before collecting calls. This is essential for
+    # valid QFT kernels such as:
+    #   for j in range(n):
+    #       h(j)
+    #       for k in range(j + 1, n):
+    #           cp(control=k, target=j, theta=angle)
+    expanded_body = _expand_static_for_loops(tree)
+    call_nodes: list[ast.Call] = []
+    for node in ast.walk(ast.Module(body=expanded_body, type_ignores=[])):
+        if isinstance(node, ast.Call):
+            call_nodes.append(node)
+
+    for node in call_nodes:
         if not isinstance(node, ast.Call):
             continue
 
@@ -1588,12 +1693,25 @@ def _collect_operations(tree: ast.AST, params: dict[str, dict[str, object]]) -> 
                     violations=(FieldViolation(field="source", description=f"{name.upper()} requires theta"),)
                 )
             lowered = {"op": name.upper(), "q": q, "params": {"theta": _resolve_theta_expr(theta_expr, params)}}
+        elif name in {"cp", "crz"}:
+            q = _extract_qubits_from_args(positional_qubits[:2], arity=2, name="CP")
+            theta_expr = next((kw.value for kw in node.keywords if kw.arg == "theta"), None)
+            if theta_expr is None and len(node.args) >= 3:
+                theta_expr = node.args[2]
+            if theta_expr is None:
+                raise CompilerValidationError(
+                    violations=(FieldViolation(field="source", description="CP requires theta"),)
+                )
+            lowered = {"op": "CP", "q": q, "params": {"theta": _resolve_theta_expr(theta_expr, params)}}
         elif name in {"x", "y", "z", "h", "s", "t", "reset"}:
             q = _extract_qubits_from_args(positional_qubits[:1], arity=1, name=name.upper())
             lowered = {"op": name.upper(), "q": q}
-        elif name in {"cx", "cnot", "cz", "swap"}:
+        elif name in {"cx", "cnot", "cz"}:
             q = _extract_qubits_from_args(positional_qubits[:2], arity=2, name=("CX" if name == "cnot" else name.upper()))
             lowered = {"op": "CX" if name == "cnot" else name.upper(), "q": q}
+        elif name == "swap":
+            q = _extract_qubits_from_args(positional_qubits[:2], arity=2, name="SWAP")
+            lowered = {"op": "SWAP", "q": q}
         elif name in {"ccx", "ccz"}:
             q = _extract_qubits_from_args(positional_qubits[:3], arity=3, name=name.upper())
             lowered = {"op": name.upper(), "q": q}
