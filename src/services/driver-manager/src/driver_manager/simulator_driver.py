@@ -14,7 +14,7 @@ import grpc
 
 from .base_driver import DeviceStatusInfo, DriverCapabilities, DriverHealth
 
-_SUPPORTED_OPS = {"RX", "RY", "RZ", "CX", "MEASURE"}
+_SUPPORTED_OPS = {"RX", "RY", "RZ", "H", "X", "CP", "CX", "SWAP", "MEASURE"}
 _MAX_QUBITS = 16
 
 
@@ -109,7 +109,7 @@ class SimulatorDriver:
     def get_devices(self) -> list[object]:
         simulator_capabilities = {
             "formats": "AQO_JSON",
-            "ops": "RX,RY,RZ,CX,MEASURE",
+            "ops": "RX,RY,RZ,H,X,CP,CX,SWAP,MEASURE",
             "bitstring_order": "msb_first_by_classical_index",
         }
         return [
@@ -321,10 +321,39 @@ class SimulatorDriver:
                     raise DriverExecutionError(grpc.StatusCode.INVALID_ARGUMENT, f"{op} requires exactly one qubit")
                 theta = self._get_theta(raw_op, payload=payload, options=options, idx=idx)
                 self._apply_single_qubit_rotation(state, qubits, q[0], op, theta)
+            elif op == "H":
+                if len(q) != 1:
+                    raise DriverExecutionError(
+                        grpc.StatusCode.INVALID_ARGUMENT,
+                        "H requires exactly one qubit",
+                    )
+                self._apply_hadamard(state, qubits, q[0])
+            elif op == "X":
+                if len(q) != 1:
+                    raise DriverExecutionError(
+                        grpc.StatusCode.INVALID_ARGUMENT,
+                        "X requires exactly one qubit",
+                    )
+                self._apply_x(state, qubits, q[0])
+            elif op == "CP":
+                if len(q) != 2:
+                    raise DriverExecutionError(
+                        grpc.StatusCode.INVALID_ARGUMENT,
+                        "CP requires exactly two qubits",
+                    )
+                theta = self._get_theta(raw_op, payload=payload, options=options, idx=idx)
+                self._apply_controlled_phase(state, qubits, q[0], q[1], theta)
             elif op == "CX":
                 if len(q) != 2:
                     raise DriverExecutionError(grpc.StatusCode.INVALID_ARGUMENT, "CX requires exactly two qubits")
                 self._apply_cx(state, qubits, q[0], q[1])
+            elif op == "SWAP":
+                if len(q) != 2:
+                    raise DriverExecutionError(
+                        grpc.StatusCode.INVALID_ARGUMENT,
+                        "SWAP requires exactly two qubits",
+                    )
+                self._apply_swap(state, qubits, q[0], q[1])
             elif op == "MEASURE":
                 c = raw_op.get("c")
                 if not isinstance(c, list) or len(c) != len(q) or not all(isinstance(v, int) for v in c):
@@ -424,6 +453,81 @@ class SimulatorDriver:
             counts[bitstring] = counts.get(bitstring, 0) + 1
 
         return counts
+
+    def _apply_x(self, state: list[complex], qubits: int, target: int) -> None:
+        _ = qubits
+        mask = 1 << target
+        for idx in range(len(state)):
+            swapped_idx = idx ^ mask
+            if idx < swapped_idx:
+                state[idx], state[swapped_idx] = state[swapped_idx], state[idx]
+
+
+    def _apply_hadamard(self, state: list[complex], qubits: int, target: int) -> None:
+        _ = qubits
+        scale = 1.0 / math.sqrt(2.0)
+        step = 1 << target
+        span = step << 1
+
+        for base in range(0, len(state), span):
+            for offset in range(step):
+                i0 = base + offset
+                i1 = i0 + step
+                a0 = state[i0]
+                a1 = state[i1]
+                state[i0] = (a0 + a1) * scale
+                state[i1] = (a0 - a1) * scale
+
+    def _apply_controlled_phase(
+        self,
+        state: list[complex],
+        qubits: int,
+        control: int,
+        target: int,
+        theta: float,
+    ) -> None:
+        _ = qubits
+        if control == target:
+            raise DriverExecutionError(
+                grpc.StatusCode.INVALID_ARGUMENT,
+                "CP control and target must differ",
+            )
+
+        phase = cmath.exp(1j * theta)
+        control_mask = 1 << control
+        target_mask = 1 << target
+
+        for idx in range(len(state)):
+            if (idx & control_mask) and (idx & target_mask):
+                state[idx] *= phase
+
+    def _apply_swap(
+        self,
+        state: list[complex],
+        qubits: int,
+        first: int,
+        second: int,
+    ) -> None:
+        _ = qubits
+        if first == second:
+            raise DriverExecutionError(
+                grpc.StatusCode.INVALID_ARGUMENT,
+                "SWAP qubits must differ",
+            )
+
+        first_mask = 1 << first
+        second_mask = 1 << second
+
+        for idx in range(len(state)):
+            first_bit = bool(idx & first_mask)
+            second_bit = bool(idx & second_mask)
+            if first_bit == second_bit:
+                continue
+
+            swapped_idx = idx ^ first_mask ^ second_mask
+            if idx < swapped_idx:
+                state[idx], state[swapped_idx] = state[swapped_idx], state[idx]
+
 
     def _apply_single_qubit_rotation(
         self,
