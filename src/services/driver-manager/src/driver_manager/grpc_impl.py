@@ -13,7 +13,6 @@ from .driver_selection import DriverSelectionError, resolve_execution_target
 from .errors import FieldViolation, abort_invalid_argument, abort_normalized, map_backend_error
 from .registry import DriverRegistry
 from .simulator_driver import DriverExecutionError
-import time
 
 
 def _circuit_format_value(types_pb, *names: str) -> int:
@@ -157,17 +156,11 @@ class DriverManagerService:
                 provider=target.driver_name,
             )
 
-        response_metadata = dict(metadata)
-        response_metadata.update({
-            "driver": target.driver_name,
-            "device_id": target.device_id,
-            "driver_selection": target.selection,
-        })
 
         resp = self._drv_pb.ExecuteCircuitResponse(
             counts=_normalize_counts(counts),
             execution_time_sec=_normalize_execution_time_sec(execution_time_sec),
-            metadata=_normalize_metadata(response_metadata),
+            metadata=_normalize_metadata(metadata),
         )
         from . import main as driver_manager_main
 

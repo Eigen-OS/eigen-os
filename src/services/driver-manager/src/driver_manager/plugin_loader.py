@@ -6,6 +6,7 @@ The driver-manager does not know concrete backend implementations.
 
 from __future__ import annotations
 
+import importlib
 import importlib.metadata
 import logging
 import os
@@ -17,6 +18,12 @@ from .base_driver import BaseDriver
 _LOG = logging.getLogger("driver_manager.plugins")
 
 DriverFactory = Callable[..., BaseDriver]
+
+# The simulator is shipped by this package. Keep a source-tree fallback so
+# running pytest from a checkout does not depend on editable-install metadata.
+_BUILTIN_FACTORIES: dict[str, str] = {
+    "aqo-simulator": "driver_manager.simulator_driver:create_plugin",
+}
 
 
 def _enabled(name: str) -> bool:
@@ -42,16 +49,43 @@ def _entry_points() -> dict[str, importlib.metadata.EntryPoint]:
     return {entry.name: entry for entry in selected}
 
 
+def _builtin_factory(name: str) -> DriverFactory | None:
+    target = _BUILTIN_FACTORIES.get(name)
+    if target is None:
+        return None
+
+    module_name, factory_name = target.split(":", 1)
+    module = importlib.import_module(module_name)
+    return getattr(module, factory_name)
+
+
 def load_plugins(types_pb: Any) -> list[BaseDriver]:
-    """Load enabled driver plugins from Python package entry points."""
+    """Load enabled driver plugins from entry points and built-ins."""
 
     plugins: list[BaseDriver] = []
-    for name, entry_point in sorted(_entry_points().items()):
+    entry_points = _entry_points()
+    names = sorted(
+        set(entry_points)
+        | {name for name in _BUILTIN_FACTORIES if _enabled(name)}
+    )
+
+    for name in names:
         if not _enabled(name):
             continue
 
         try:
-            factory = entry_point.load()
+            entry_point = entry_points.get(name)
+            factory = (
+                entry_point.load()
+                if entry_point is not None
+                else _builtin_factory(name)
+            )
+            if factory is None:
+                _LOG.warning(
+                    "enabled driver plugin %s has no registered entry point",
+                    name,
+                )
+                continue
             driver = factory(types_pb=types_pb)
             driver.initialize(config=_plugin_config(name))
         except Exception:
