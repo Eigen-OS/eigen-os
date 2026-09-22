@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from eigen_lang import (
     ClassicalRegister,
     ExpectationValue,
@@ -47,3 +49,9 @@ def test_eigen_lang_public_surface_and_aliases():
     assert getattr(main, "__eigen_lang_entrypoint__", False) is True
     assert main.__eigen_lang_program__.target == "sim"
     assert main.__eigen_lang_program__.shots == 1024
+
+
+def test_minimize_never_fabricates_a_runtime_result():
+    with pytest.raises(RuntimeError, match="declarative Eigen-Lang construct"):
+        minimize(ExpectationValue("ansatz"), [0.1])
+
