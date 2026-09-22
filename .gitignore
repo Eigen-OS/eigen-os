@@ -31,3 +31,7 @@ logs/
 # Misc
 *.tmp
 *.bak
+# Local test/coverage output
+.coverage
+.coverage.*
+htmlcov/
