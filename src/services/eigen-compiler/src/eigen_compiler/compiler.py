@@ -1981,16 +1981,43 @@ def _build_aqo_payload(
         aqo["annotations"] = annotations
 
     if distributed.enabled:
+        partition_count = distributed.partition_count or 1
+        partition_qubits = _partition_qubit_mapping(
+            qubits=qubits,
+            partition_count=partition_count,
+        )
         aqo["topology"] = {
             "version": "1.0.0",
             "enabled": True,
             "target": distributed.target or "cluster",
-            "partition_count": distributed.partition_count or 1,
+            "partition_count": partition_count,
             "queue_provider": distributed.queue_provider or "",
             "topology_hint": distributed.topology_hint or "data_parallel",
+            "partition_qubits": partition_qubits,
         }
 
     return aqo
+
+
+def _partition_qubit_mapping(*, qubits: int, partition_count: int) -> list[list[int]]:
+    """Build a deterministic contiguous partition -> qubits mapping.
+
+    The mapping is derived from the logical AQO width and the bounded
+    partition count. It describes topology ownership only; it does not imply
+    that a physical worker executed each partition.
+    """
+
+    if partition_count < 1:
+        return []
+
+    base_size, remainder = divmod(qubits, partition_count)
+    mapping: list[list[int]] = []
+    offset = 0
+    for partition_index in range(partition_count):
+        size = base_size + (1 if partition_index < remainder else 0)
+        mapping.append(list(range(offset, offset + size)))
+        offset += size
+    return mapping
 
 
 def compile_eigen_lang(

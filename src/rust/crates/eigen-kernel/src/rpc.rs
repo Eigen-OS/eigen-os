@@ -463,10 +463,22 @@ impl NormalizedSubmission {
             .as_ref()
             .and_then(|d| normalized_deadline_at(d));
         let compiler_options = canonical_string_map(&request.compiler_options);
-        let metadata_kvs = canonical_string_map(&request.metadata_kvs);
+        let mut metadata_kvs = canonical_string_map(&request.metadata_kvs);
         let request_workload = metadata
             .workload
             .as_ref();
+
+        // Keep the public workload-family kind available to every orchestration
+        // stage. Distributed metadata is intentionally separate, so result
+        // classification must not infer the kind from distributed-only fields.
+        if let Some(workload_kind) = request_workload
+            .and_then(workload_family_kind_label)
+        {
+            metadata_kvs
+                .entry("workload_kind".to_string())
+                .or_insert(workload_kind);
+        }
+
         let workload_metadata = distributed_workload_metadata(&metadata_kvs, &compiler_options, request_workload)?;
         let program_hash = hash_bytes_hex(&program);
         let trace_id = trace_id_from_traceparent(&traceparent)
@@ -5936,6 +5948,12 @@ mod tests {
 
         let job = wait_for_terminal(runtime.clone(), &response.job_id).await;
         assert_eq!(job.state, TaskState::Done);
+        assert_eq!(
+            job.metadata
+                .get("result.summary.workload_kind")
+                .map(String::as_str),
+            Some("DistributedJob")
+        );
         assert_eq!(job.metadata.get("distributed.cluster_id").map(String::as_str), Some("cluster:auto"));
         assert_eq!(job.metadata.get("distributed.partition_count").map(String::as_str), Some("2"));
         assert_eq!(job.metadata.get("distributed.partition_ids").map(String::as_str), Some("[\"partition-0\",\"partition-1\"]"));
@@ -5980,6 +5998,30 @@ mod tests {
         let rationale = status.rationale.expect("rationale should exist");
         assert_eq!(rationale.attributes.get("distributed.cluster_id").map(String::as_str), Some("cluster:auto"));
         assert_eq!(rationale.attributes.get("distributed.partition_count").map(String::as_str), Some("2"));
+    }
+
+    #[test]
+    fn distributed_workload_kind_is_not_classified_as_hybrid_workflow() {
+        let mut request = make_distributed_request("distributed-kind");
+        request.metadata_kvs.insert(
+            "jobspec_workload".to_string(),
+            serde_json::json!({
+                "kind": "DistributedJob",
+                "execution_profile": "distributed",
+                "topology": {
+                    "cluster_id": "cluster:auto",
+                    "partition_count": 2,
+                    "partition_ids": ["partition-0", "partition-1"],
+                    "preferred_workers": ["worker-a", "worker-b"]
+                }
+            })
+            .to_string(),
+        );
+
+        let submission = NormalizedSubmission::from_request(&request)
+            .expect("distributed request should normalize");
+
+        assert_eq!(workload_kind_label(&submission), "DistributedJob");
     }
 
     #[tokio::test]
@@ -6857,7 +6899,14 @@ fn workload_kind_label(submission: &NormalizedSubmission) -> String {
         .cloned()
         .or_else(|| submission.metadata_kvs.get("kind").cloned())
         .or_else(|| submission.metadata_kvs.get("execution_profile").cloned())
-        .unwrap_or_else(|| "HybridWorkflow".to_string());
+        .or_else(|| {
+            submission
+                .metadata_kvs
+                .get("jobspec_workload")
+                .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
+                .and_then(|value| value.get("kind").and_then(|kind| kind.as_str()).map(str::to_string))
+        })
+        .unwrap_or_else(|| "QuantumJob".to_string());
 
     match raw.as_str() {
         "hybrid" | "HybridWorkflow" => "HybridWorkflow".to_string(),
@@ -6866,6 +6915,18 @@ fn workload_kind_label(submission: &NormalizedSubmission) -> String {
         "pipeline" | "PipelineJob" => "PipelineJob".to_string(),
         "replay" | "ReplayJob" => "ReplayJob".to_string(),
         other => other.to_string(),
+    }
+}
+
+fn workload_family_kind_label(workload: &WorkloadContract) -> Option<String> {
+    match workload.kind {
+        1 => Some("QuantumJob".to_string()),
+        2 => Some("HybridWorkflow".to_string()),
+        3 => Some("DistributedJob".to_string()),
+        4 => Some("BenchmarkJob".to_string()),
+        5 => Some("PipelineJob".to_string()),
+        6 => Some("ReplayJob".to_string()),
+        _ => None,
     }
 }
 
