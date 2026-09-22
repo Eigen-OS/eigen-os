@@ -35,3 +35,8 @@ logs/
 .coverage
 .coverage.*
 htmlcov/
+
+# Local test/coverage output
+.coverage
+.coverage.*
+htmlcov/
