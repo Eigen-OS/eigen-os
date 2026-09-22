@@ -25,6 +25,7 @@ from .validation import (
 )
 
 AQO_VERSION = "1.0.0"
+ITERATIVE_HYBRID_WORKFLOW_VERSION = "1.0.0"
 _KB_CONTRACT_VERSION = "1.0.0"
 _KB_VERSION_ENV = "EIGEN_KB_VERSION"
 _NEURO_MODEL_VERSION_DEFAULT = "dpda-model-v1"
@@ -1154,6 +1155,7 @@ def enumerate_symbolic_candidates(
     request_digest: str,
     has_expectation: bool,
     has_minimize: bool,
+    iterative_hybrid_workflow: dict[str, object] | None,
     observable_bindings: dict[str, dict[str, object]],
     expectation_annotation: dict[str, object] | None,
     distributed: DistributedCompileConfig,
@@ -1177,6 +1179,7 @@ def enumerate_symbolic_candidates(
             request_digest=request_digest,
             has_expectation=has_expectation,
             has_minimize=has_minimize,
+            iterative_hybrid_workflow=iterative_hybrid_workflow,
             observable_bindings=observable_bindings,
             expectation_annotation=expectation_annotation,
             distributed=distributed,
@@ -1545,6 +1548,108 @@ def _collect_expectation_annotation(
     return None
 
 
+def _workflow_literal(node: ast.AST, *, field: str) -> object:
+    value = _literal_jsonish(node)
+    if value is None:
+        raise CompilerValidationError(
+            violations=(FieldViolation(field=field, description=f"{field} must be statically declared"),)
+        )
+    return value
+
+
+def _collect_iterative_hybrid_workflow(
+    tree: ast.AST,
+    params: dict[str, dict[str, object]],
+    execution_defaults: dict[str, object],
+) -> dict[str, object] | None:
+    """Lower the supported ``minimize`` declaration without evaluating Python."""
+    calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call) and _call_name(node.func) == "minimize"]
+    if not calls:
+        return None
+    if len(calls) != 1:
+        raise CompilerValidationError(
+            violations=(FieldViolation(field="minimize", description="exactly one iterative workflow declaration is supported"),)
+        )
+    call = calls[0]
+    if len(call.args) < 2:
+        raise CompilerValidationError(
+            violations=(FieldViolation(field="minimize", description="objective and initial_params are required"),)
+        )
+    objective = call.args[0]
+    if not (isinstance(objective, ast.Call) and _call_name(objective.func) == "ExpectationValue"):
+        # A named objective is accepted only when its assignment is an expectation.
+        assigned = next((node.value for node in ast.walk(tree) if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) and isinstance(objective, ast.Name) and node.targets[0].id == objective.id), None)
+        if not (isinstance(assigned, ast.Call) and _call_name(assigned.func) == "ExpectationValue"):
+            raise CompilerValidationError(
+                violations=(FieldViolation(field="minimize.objective", description="objective must be an ExpectationValue declaration"),)
+            )
+        objective = assigned
+    initial_values = _workflow_literal(call.args[1], field="minimize.initial_params")
+    if not isinstance(initial_values, list) or not initial_values or not all(isinstance(value, (int, float)) and not isinstance(value, bool) for value in initial_values):
+        raise CompilerValidationError(
+            violations=(FieldViolation(field="minimize.initial_params", description="initial_params must be a non-empty literal numeric list"),)
+        )
+    ordered_params = [value for _, value in sorted(params.items(), key=lambda item: item[1]["name"])]
+    if len(initial_values) != len(ordered_params):
+        raise CompilerValidationError(
+            violations=(FieldViolation(field="minimize.initial_params", description="initial_params must unambiguously bind every declared Param"),)
+        )
+    keywords = {keyword.arg: keyword.value for keyword in call.keywords if keyword.arg is not None}
+    if any(keyword.arg is None for keyword in call.keywords):
+        raise CompilerValidationError(violations=(FieldViolation(field="minimize", description="keyword expansion is not supported"),))
+    method_expr = keywords.pop("method", None)
+    method = _workflow_literal(method_expr, field="minimize.method") if method_expr else "COBYLA"
+    if not isinstance(method, str) or not method:
+        raise CompilerValidationError(violations=(FieldViolation(field="minimize.method", description="method must be a non-empty literal string"),))
+    convergence_expr = keywords.pop("convergence", None)
+    convergence = _workflow_literal(convergence_expr, field="minimize.convergence") if convergence_expr else {"max_iterations": 1000}
+    if not isinstance(convergence, dict) or not convergence:
+        raise CompilerValidationError(violations=(FieldViolation(field="minimize.convergence", description="convergence must be a non-empty literal object"),))
+    optimizer_config = {name: _workflow_literal(value, field=f"minimize.{name}") for name, value in sorted(keywords.items())}
+    observable = _collect_expectation_annotation(ast.Module(body=[ast.Expr(value=objective)], type_ignores=[]), {}) or {"kind": "ExpectationValue"}
+    return {
+        "version": ITERATIVE_HYBRID_WORKFLOW_VERSION,
+        "workflow_kind": "iterative_hybrid",
+        "ansatz": {"kind": "aqo_operations", "ref": "aqo://operations"},
+        "parameters": [
+            {"id": param["name"], "initial_value": initial}
+            for param, initial in zip(ordered_params, initial_values, strict=True)
+        ],
+        "objective": {"kind": "expectation_value", **observable},
+        "optimizer": {"method": method, "config": optimizer_config},
+        "convergence": convergence,
+        "execution": {
+            "backend": optimizer_config.pop("backend", execution_defaults["backend"]),
+            "shots": optimizer_config.pop("shots", execution_defaults["shots"]),
+            "noise_model": optimizer_config.pop("noise_model", execution_defaults["noise_model"]),
+            "seed": optimizer_config.pop("seed", execution_defaults["seed"]),
+        },
+        "provenance": {"source": "eigen_lang_ast", "replay": "canonical_aqo_sha256"},
+    }
+
+
+def _collect_workflow_execution_defaults(tree: ast.AST) -> dict[str, object]:
+    entrypoint = next(
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef)
+        and any(_decorator_name(decorator) == "hybrid_program" for decorator in node.decorator_list)
+    )
+    decorator = next(
+        (decorator for decorator in entrypoint.decorator_list if isinstance(decorator, ast.Call) and _decorator_name(decorator) == "hybrid_program"),
+        None,
+    )
+    if decorator is None:
+        return {"backend": "unspecified", "shots": None, "noise_model": None, "seed": None}
+    values = {keyword.arg: _workflow_literal(keyword.value, field=f"hybrid_program.{keyword.arg}") for keyword in decorator.keywords if keyword.arg in {"target", "shots", "noise_model", "seed"}}
+    return {
+        "backend": values.get("target", "unspecified"),
+        "shots": values.get("shots"),
+        "noise_model": values.get("noise_model"),
+        "seed": values.get("seed"),
+    }
+
+
+
 def _resolve_int_expr(expr: ast.AST, *, context: str) -> int:
     value = _literal_scalar(expr)
     if isinstance(value, int):
@@ -1864,6 +1969,7 @@ def _build_compiler_pass_pipeline(
     request_digest: str,
     has_expectation: bool,
     has_minimize: bool,
+    iterative_hybrid_workflow: dict[str, object] | None,
     observable_bindings: dict[str, dict[str, object]],
     expectation_annotation: dict[str, object] | None,
     distributed: DistributedCompileConfig,
@@ -1881,6 +1987,7 @@ def _build_compiler_pass_pipeline(
         request_digest=request_digest,
         has_expectation=has_expectation,
         has_minimize=has_minimize,
+        iterative_hybrid_workflow=iterative_hybrid_workflow,
         observable_bindings=observable_bindings,
         expectation_annotation=expectation_annotation,
         distributed=distributed,
@@ -1938,6 +2045,7 @@ def _build_aqo_payload(
     request_digest: str,
     has_expectation: bool,
     has_minimize: bool,
+    iterative_hybrid_workflow: dict[str, object] | None,
     observable_bindings: dict[str, dict[str, object]],
     expectation_annotation: dict[str, object] | None,
     distributed: DistributedCompileConfig,
@@ -1975,8 +2083,8 @@ def _build_aqo_payload(
         annotations["observables"] = observable_bindings
     if has_expectation:
         annotations["expectation"] = expectation_annotation or {"kind": "ExpectationValue"}
-    if has_minimize:
-        annotations["hybrid_plan_marker"] = {"kind": "minimize", "expanded_by": "kernel"}
+    if iterative_hybrid_workflow is not None:
+        annotations["iterative_hybrid_workflow"] = iterative_hybrid_workflow
     if annotations:
         aqo["annotations"] = annotations
 
@@ -2092,7 +2200,10 @@ def compile_eigen_lang(
             ) from None
 
     params, observable_bindings, expectation_annotation = _run_stage("annotate", observer, _annotate_tree)
-    
+    iterative_hybrid_workflow = _collect_iterative_hybrid_workflow(
+        tree, params, _collect_workflow_execution_defaults(tree)
+    )
+
     def _lower_to_ir() -> tuple[list[dict], int]:
         try:
             return _collect_operations(tree, params)
@@ -2187,6 +2298,7 @@ def compile_eigen_lang(
         request_digest=aqo_request_digest,
         has_expectation=has_expectation,
         has_minimize=has_minimize,
+        iterative_hybrid_workflow=iterative_hybrid_workflow,
         observable_bindings=observable_bindings,
         expectation_annotation=expectation_annotation,
         distributed=distributed,
@@ -2210,6 +2322,7 @@ def compile_eigen_lang(
                 request_digest=aqo_request_digest,
                 has_expectation=has_expectation,
                 has_minimize=has_minimize,
+                iterative_hybrid_workflow=iterative_hybrid_workflow,
                 observable_bindings=observable_bindings,
                 expectation_annotation=expectation_annotation,
                 distributed=distributed,

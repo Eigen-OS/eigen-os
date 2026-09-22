@@ -251,10 +251,16 @@ def minimize(
     method: str = "COBYLA",
     **metadata: Any,
 ) -> OptimizationResult:
-    return OptimizationResult(
-        fun=0.0,
-        x=tuple(initial_params),
-        method=method,
-        objective=objective,
-        metadata=dict(metadata),
+    """Declare an iterative workflow for static compilation.
+
+    ``minimize`` is deliberately not an optimizer runtime API.  Calling an
+    Eigen-Lang program as ordinary Python must not fabricate a successful
+    optimization result; the compiler lowers this declaration without
+    executing it.
+    """
+
+    del objective, initial_params, method, metadata
+    raise RuntimeError(
+        "minimize() is a declarative Eigen-Lang construct and can only be "
+        "used through static compilation; no optimizer runtime is provided"
     )

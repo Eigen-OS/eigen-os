@@ -520,10 +520,25 @@ Defines observable evaluation.
 ### 15.2 `minimize`
 
 ```python
-minimize(cost_fn, initial_params, method="COBYLA")
+minimize(cost_fn, initial_params, method="COBYLA", convergence={"max_iterations": 200})
 ```
 
-Defines classical optimization orchestration.
+Declares a generic **Iterative Hybrid Workflow**; it does not execute an
+optimizer when the source is imported or called as Python. `minimize` remains
+the compatible Eigen-Lang spelling for this declaration. The compiler lowers
+it statically to `annotations.iterative_hybrid_workflow`, version `1.0.0`.
+The canonical IR contains `workflow_kind`, stable parameter IDs and initial
+values, an AQO ansatz reference, expectation objective, optimizer method and
+literal configuration, convergence settings, execution defaults, and replay
+provenance. It is generic and is not a VQE runtime format.
+
+`objective` MUST be an `ExpectationValue` declaration, `initial_params` MUST
+be a non-empty literal numeric list that binds every declared `Param` in
+stable name order, and all optimizer/configuration values MUST be literal.
+`convergence` MUST be a non-empty literal object. Invalid or ambiguous
+declarations fail static compilation; no runtime optimization loop, simulator,
+or optimizer implementation is supplied by this API.
+
 
 ---
 
