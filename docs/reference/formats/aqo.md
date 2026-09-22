@@ -325,3 +325,31 @@ Recommended observability fields:
 Observability values must remain bounded and must not leak secrets or unbounded identifiers.
 
 Compiler pass traces, rewrite summaries, and lowering diagnostics belong in compiler metadata rather than as new AQO top-level fields.
+
+## 14. Parameter binding and Hamiltonian objectives
+
+AQO `parameters` keys are stable symbolic parameter IDs. A symbolic ansatz
+uses these IDs in gate `params.theta`; parameter defaults are declarations,
+not values substituted during lowering. A bound payload adds the optional
+`parameter_bindings` object and replaces all referenced symbolic values with
+finite numeric values. It MUST bind every declared ID exactly once. Binding is
+an immutable transformation: the symbolic AQO artifact is never rewritten.
+
+A reusable expectation objective is encoded independently of the ansatz in
+`annotations.observables` as a canonical Pauli Hamiltonian:
+
+```json
+{
+  "kind": "pauli_hamiltonian",
+  "terms": [
+    {"coefficient": -0.5, "paulis": [{"pauli": "X", "qubit": 0}, {"pauli": "X", "qubit": 1}]},
+    {"coefficient": 0.5, "paulis": [{"pauli": "Z", "qubit": 0}, {"pauli": "Z", "qubit": 1}]}
+  ]
+}
+```
+
+`pauli` is one of `I`, `X`, `Y`, or `Z`; coefficients are finite numbers;
+qubit indices are unique within a term and in range. Terms and factors are
+canonically sorted before serialization. An iterative workflow objective uses
+an `hamiltonian_ref` to this model, preserving ansatz, objective, and optimizer
+as distinct reusable artifacts.

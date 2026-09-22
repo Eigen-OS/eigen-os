@@ -544,3 +544,79 @@ def main(n: int = 16):
     assert sum(1 for operation in payload["operations"] if operation["op"] == "CP") == 120
     assert sum(1 for operation in payload["operations"] if operation["op"] == "SWAP") == 8
     assert payload["operations"][-1]["op"] == "MEASURE"
+
+
+def test_parameter_binding_keeps_symbolic_ansatz_immutable() -> None:
+    from eigen_compiler.compiler import bind_aqo_parameters
+
+    source = b'''from eigen_lang import Param, hybrid_program, ry, rz
+@hybrid_program(target="sim")
+def main():
+    theta = Param("theta", 0.1)
+    phi = Param("phi", 0.2)
+    ry(0, theta=theta)
+    rz(0, theta=phi)
+'''
+    ansatz = json.loads(compile_eigen_lang(source).aqo_json.decode("utf-8"))
+    bound = bind_aqo_parameters(ansatz, {"theta": 1.25, "phi": -0.5})
+
+    assert ansatz["operations"][0]["params"]["theta"] == "theta"
+    assert ansatz["operations"][1]["params"]["theta"] == "phi"
+    assert bound["operations"][0]["params"]["theta"] == 1.25
+    assert bound["operations"][1]["params"]["theta"] == -0.5
+    assert bound["parameter_bindings"] == {"phi": -0.5, "theta": 1.25}
+
+
+@pytest.mark.parametrize(
+    "hamiltonian, message",
+    [
+        ('{"A0": 1.0}', "Pauli terms must use"),
+        ('{"Z5": 1.0}', "Pauli qubit index out of range"),
+        ('{"Z0 X0": 1.0}', "cannot contain multiple factors"),
+    ],
+)
+def test_hamiltonian_rejects_malformed_terms(hamiltonian: str, message: str) -> None:
+    source = f'''from eigen_lang import PauliHamiltonian, ExpectationValue, hybrid_program, h
+@hybrid_program(target="sim")
+def main():
+    h(0)
+    observable = PauliHamiltonian({hamiltonian})
+    return ExpectationValue(observable=observable)
+'''.encode()
+    with pytest.raises(CompilerValidationError) as exc_info:
+        compile_eigen_lang(source)
+    assert any(message in violation.description for violation in exc_info.value.violations)
+
+
+def test_hamiltonian_is_canonical_and_replay_safe() -> None:
+    source = b'''from eigen_lang import PauliHamiltonian, ExpectationValue, hybrid_program, h
+@hybrid_program(target="sim")
+def main():
+    h(0)
+    h(1)
+    observable = PauliHamiltonian({"X0 X1": -0.5, "Z1 Z0": 1.25, "Y0 Y1": 0.25})
+    return ExpectationValue(observable=observable)
+'''
+    compiled = json.loads(compile_eigen_lang(source).aqo_json.decode("utf-8"))
+    terms = compiled["annotations"]["observables"]["observable"]["terms"]
+    assert terms == [
+        {"coefficient": -0.5, "paulis": [{"pauli": "X", "qubit": 0}, {"pauli": "X", "qubit": 1}]},
+        {"coefficient": 0.25, "paulis": [{"pauli": "Y", "qubit": 0}, {"pauli": "Y", "qubit": 1}]},
+        {"coefficient": 1.25, "paulis": [{"pauli": "Z", "qubit": 0}, {"pauli": "Z", "qubit": 1}]},
+    ]
+
+
+def test_iterative_expectation_references_reusable_hamiltonian() -> None:
+    source = b'''from eigen_lang import Param, PauliHamiltonian, ExpectationValue, hybrid_program, minimize, ry
+@hybrid_program(target="sim")
+def main():
+    theta = Param("theta")
+    ry(0, theta=theta)
+    hamiltonian = PauliHamiltonian({"Z0": 1.0})
+    cost = ExpectationValue(observable=hamiltonian)
+    minimize(cost, [0.1])
+'''
+    compiled = json.loads(compile_eigen_lang(source).aqo_json.decode("utf-8"))
+    objective = compiled["annotations"]["iterative_hybrid_workflow"]["objective"]
+    assert objective["hamiltonian_ref"] == "aqo://annotations/observables/hamiltonian"
+    assert compiled["annotations"]["observables"]["hamiltonian"]["kind"] == "pauli_hamiltonian"

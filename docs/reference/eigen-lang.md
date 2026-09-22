@@ -462,6 +462,40 @@ Observable(Z=0, X=1)
 
 ---
 
+## 13.2.1 `PauliHamiltonian` and reusable parameter binding
+
+`PauliHamiltonian` is the canonical observable model for a reusable expectation
+objective. It is separate from the ansatz and optimizer and accepts a mapping
+from a Pauli tensor-product string to a finite numeric coefficient:
+
+```python
+from eigen_lang import PauliHamiltonian
+
+hamiltonian = PauliHamiltonian({
+    "Z0 Z1": 0.5,
+    "X0 X1": -0.25,
+    "Y0 Y1": 0.125,
+    "I0": 0.75,
+})
+```
+
+Each factor MUST be `I`, `X`, `Y`, or `Z` followed by a non-negative logical
+qubit index. Factors in one term MUST use distinct qubits, coefficients MUST
+be finite numbers, and every index MUST be within the ansatz qubit range. The
+compiler canonicalizes factor order and term order into
+`annotations.observables.<name>.terms`, so source mapping order cannot affect
+replay or equality.
+
+`Param` names are stable AQO parameter IDs. Gate payloads retain those IDs
+rather than their defaults. A runtime binds an immutable symbolic AQO ansatz
+with `bind_aqo_parameters(aqo, {"theta": 1.0})`; it returns a copied,
+canonical bound-circuit payload and requires exactly one finite numeric value
+for every declared ID. The original AQO artifact remains unchanged. Iterative
+`ExpectationValue` objectives refer to the named Hamiltonian through
+`hamiltonian_ref`, rather than carrying workload- or simulator-specific
+annotations.
+
+
 ### 13.3 Registers
 
 ```python
