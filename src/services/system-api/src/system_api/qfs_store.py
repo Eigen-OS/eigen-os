@@ -11,8 +11,6 @@ from pathlib import Path
 from datetime import UTC, datetime
 from typing import Callable, Protocol
 
-from botocore.config import Config
-
 
 class BlobBackend(Protocol):
     """Backend contract for byte-oriented object storage."""
@@ -138,6 +136,7 @@ class S3BlobBackend:
         if client is None:
             try:
                 import boto3
+                from botocore.config import Config
             except ModuleNotFoundError as exc:
                 raise RuntimeError("boto3 is required for S3 backend") from exc
             client = boto3.client(
