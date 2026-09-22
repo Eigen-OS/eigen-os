@@ -24,8 +24,19 @@ export DRIVER_MANAGER_PLUGIN_PENNYLANE_DEVICE=default.qubit
 python -m driver_manager.main
 ```
 
-Devices are routed by their registered `device_id`; no simulator is treated as
-a default fallback by the registry.
+Devices are routed by a concrete `device_id`; explicit routing is the default.
+`driver_selection=auto` is opt-in and deterministic. It is not a fallback to
+simulator or Qiskit and it is rejected when no healthy AQO-capable backend
+exists.
+
+The default behavior is:
+  - explicit mode: device_id must be concrete
+  - auto mode: request sets `driver_selection=auto`
+  - no implicit driver defaults
+
+Auto selection example: + +```bash +curl -X POST ... \
+
+- d '{"device_id":"auto","options":{"driver_selection":"auto"}}' +```
 
 - HTTP endpoints: `/metrics` and `/healthz`.
 

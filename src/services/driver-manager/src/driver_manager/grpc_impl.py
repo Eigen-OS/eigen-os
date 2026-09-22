@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 import time
 
 import grpc
 
+from .driver_selection import DriverSelectionError, resolve_execution_target
 from .errors import FieldViolation, abort_invalid_argument, abort_normalized, map_backend_error
 from .registry import DriverRegistry
 from .simulator_driver import DriverExecutionError
@@ -47,6 +49,9 @@ class DriverManagerService:
         self._drv_pb = drv_pb
         self._types_pb = types_pb
         self._registry = registry
+        self._selection_mode = os.getenv("DRIVER_MANAGER_DRIVER_SELECTION", "explicit").strip().lower()
+        if self._selection_mode not in {"explicit", "auto"}:
+            raise ValueError("DRIVER_MANAGER_DRIVER_SELECTION must be explicit or auto")
 
     def ListDevices(self, request, context: grpc.ServicerContext):
         start = time.perf_counter()
@@ -105,13 +110,22 @@ class DriverManagerService:
         if violations:
             abort_invalid_argument(context, message="validation failed", violations=violations)
 
-        driver = self._registry.get_driver_for_device(request.device_id)
-        if driver is None:
+        options = dict(request.options)
+        try:
+            target = resolve_execution_target(
+                self._registry,
+                device_id=request.device_id,
+                driver_name=options.get("driver", ""),
+                selection=options.get("driver_selection", self._selection_mode),
+            )
+        except DriverSelectionError as err:
             abort_normalized(
                 context,
-                normalized=map_backend_error(grpc.StatusCode.INVALID_ARGUMENT, f"device not registered: {request.device_id}"),
-                provider="driver_registry",
+                normalized=map_backend_error(grpc.StatusCode.INVALID_ARGUMENT, str(err)),
+                job_id=request.job_id,
+                provider="driver_selection",
             )
+        driver = target.driver
 
         aqo_json_format = _circuit_format_value(self._types_pb, "CIRCUIT_FORMAT_AQO_JSON", "AQO_JSON")
         if request.payload.format != aqo_json_format:
@@ -127,30 +141,37 @@ class DriverManagerService:
 
         try:
             counts, execution_time_sec, metadata = driver.execute_circuit(
-                device_id=request.device_id,
+                device_id=target.device_id,
                 circuit=request.payload.data,
                 shots=request.shots,
-                options=dict(request.options),
+                options=options,
             )
         except DriverExecutionError as err:
             from . import main as driver_manager_main
 
-            driver_manager_main.record_backend_failure("driver_manager", err.code.name.lower())
+            driver_manager_main.record_backend_failure(target.driver_name, err.code.name.lower())
             abort_normalized(
                 context,
                 normalized=map_backend_error(err.code, err.message),
                 job_id=request.job_id,
-                provider=getattr(driver, "name", "unknown"),
+                provider=target.driver_name,
             )
+
+        response_metadata = dict(metadata)
+        response_metadata.update({
+            "driver": target.driver_name,
+            "device_id": target.device_id,
+            "driver_selection": target.selection,
+        })
 
         resp = self._drv_pb.ExecuteCircuitResponse(
             counts=_normalize_counts(counts),
             execution_time_sec=_normalize_execution_time_sec(execution_time_sec),
-            metadata=_normalize_metadata(metadata),
+            metadata=_normalize_metadata(response_metadata),
         )
         from . import main as driver_manager_main
 
-        driver_manager_main.record_driver_session(getattr(driver, "name", "unknown"), "active")
+        driver_manager_main.record_driver_session(target.driver_name, "active")
         driver_manager_main.record_driver_request("ExecuteCircuit", "OK", (time.perf_counter() - start) * 1000.0)
         _log_end("DriverManagerService.ExecuteCircuit", request.job_id, context)
 
