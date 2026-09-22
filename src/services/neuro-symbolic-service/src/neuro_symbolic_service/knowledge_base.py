@@ -241,6 +241,7 @@ class _StoredDecisionLog:
     project_id: str
     capability_scope: Sequence[str]
     decided_at: datetime
+    stored_at: datetime
     fingerprint: str
     sequence: int
 
@@ -3179,6 +3180,7 @@ class KnowledgeBaseService:
 
     def _store_decision_log(self, decision_log: Any, envelope: dict[str, Any], context: grpc.ServicerContext | None, capability_scope: Sequence[str] | None = None) -> _StoredDecisionLog:
         self._sequence += 1
+        stored_at = datetime.now(timezone.utc)
         decided_at = _ts_to_dt(decision_log.decided_at) if getattr(decision_log, "decided_at", None) else datetime.now(timezone.utc)
         decision_log.decided_at.FromDatetime(decided_at)
         
@@ -3190,6 +3192,7 @@ class KnowledgeBaseService:
             project_id=envelope["project_id"],
             capability_scope=tuple(capability_scope or ()),
             decided_at=decided_at,
+            stored_at=stored_at,
             fingerprint=fingerprint,
             sequence=self._sequence,
         )
@@ -3240,10 +3243,13 @@ class KnowledgeBaseService:
         self._records = {
             key: value
             for key, value in self._records.items()
-            if value.created_at >= cutoff
+            # Retention is based on when the item entered the KB, not on the
+            # event's domain timestamp. Historical/replayed events may have
+            # an old created_at but must remain queryable after ingestion.
+            if value.updated_at >= cutoff
         }
         self._decision_logs = [
-            item for item in self._decision_logs if item.decided_at >= cutoff
+            item for item in self._decision_logs if item.stored_at >= cutoff
         ]
         self._learning_evidence = [
             item
