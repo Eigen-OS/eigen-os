@@ -2548,7 +2548,25 @@ spec:
         )
         .unwrap();
 
-        let err = compile_job_to_aqo_json(&yaml_path).unwrap_err();
+        let req = build_submit_request_from_job_file(&yaml_path)
+            .expect("policy conflict fixture must produce a valid submit request");
+
+        let err = runtime_intelligence_hints_for_compile(&req)
+            .expect_err("policy conflict must be reported by runtime diagnostics");
+
+        assert_eq!(err.code, "RUNTIME_INTELLIGENCE_DIAGNOSTIC");
+        assert_eq!(err.violations.len(), 2);
+        assert!(err.violations.iter().any(|v| {
+            v.description
+                .contains("policy conflict with spec.metadata.runtime.policy")
+        }));
+        assert!(err.violations.iter().any(|v| {
+            v.description
+                .contains("runtime.require_backend=qpu cannot target simulator")
+        }));
+
+        let
+
         match err {
             SubmitBuildError::Validation(validation) => {
                 assert_eq!(validation.code, "RUNTIME_INTELLIGENCE_DIAGNOSTIC");

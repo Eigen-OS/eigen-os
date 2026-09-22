@@ -540,8 +540,19 @@ class SymbolicRewritePipeline:
                 metadata["distributed.topology_hints_version"] = "1.0.0"
                 metadata["distributed.enabled"] = "true"
                 metadata["distributed.target"] = state.distributed.target or "cluster"
-                metadata["distributed.partition_count"] = str(state.distributed.partition_count or 1)
+                partition_count = state.distributed.partition_count or 1
+                metadata["distributed.partition_count"] = str(partition_count)
                 metadata["distributed.topology_hint"] = state.distributed.topology_hint or "data_parallel"
+                metadata["distributed.partition_qubits"] = json.dumps(
+                    [
+                        list(range(start, end))
+                        for start, end in _partition_ranges(
+                            qubits=state.qubits,
+                            partition_count=partition_count,
+                        )
+                    ],
+                    separators=(",", ":"),
+                )
                 if state.distributed.queue_provider:
                     metadata["distributed.queue_provider"] = state.distributed.queue_provider
 
@@ -552,6 +563,17 @@ class SymbolicRewritePipeline:
             return result
 
         return _run_stage("emit_aqo", self._observer, _emit)
+
+    def _partition_ranges(*, qubits: int, partition_count: int) -> list[tuple[int, int]]:
+        base_size, remainder = divmod(qubits, partition_count)
+        ranges: list[tuple[int, int]] = []
+        start = 0
+        for partition_index in range(partition_count):
+            size = base_size + (1 if partition_index < remainder else 0)
+            end = start + size
+            ranges.append((start, end))
+            start = end
+        return ranges
 
     def compile(
         self,

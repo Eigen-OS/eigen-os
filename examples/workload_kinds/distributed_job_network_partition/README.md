@@ -186,10 +186,46 @@ partition_count: 8
 target: cluster:auto
 queue_provider: memory
 topology_hint: data_parallel
+partition_qubits:
+  partition-0: [0, 1]
+  partition-1: [2, 3]
+  partition-2: [4, 5]
+  partition-3: [6, 7]
+  partition-4: [8, 9]
+  partition-5: [10, 11]
+  partition-6: [12, 13]
+  partition-7: [14, 15]
 
 The exact simulator counts are not the point of the example; the useful part is
 that the compiled artifact contains both the circuit and the distributed
 topology projection.
+
+## Execution scope
+
+This example demonstrates topology-aware distributed orchestration:
+
+- `DistributedJob` workload classification;
+- propagation of cluster, partition, worker, and partition-to-qubit metadata;
+- compile, optimize, schedule, execute, persist, and finalize integration;
+- simulator-backed execution against `cluster:auto`.
+
+The example does **not** prove execution on eight physical workers. The current
+MVP uses:
+
+```text
+driver = simulator
+provider_profile = simulator
+device_id = cluster:auto
+```
+
+The result bundle currently has no per-partition execution records or physical
+assignment evidence such as `partition-0 -> worker-a`. Therefore this example
+must be described as **topology-aware distributed orchestration**, not as
+real multi-worker quantum execution.
+
+The `partition_qubits` mapping is propagated into the AQO topology envelope.
+It describes logical ownership of qubits and is not itself evidence that the
+partitions were executed independently.
 
 ## How to run
 
