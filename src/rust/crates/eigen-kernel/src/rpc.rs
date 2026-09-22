@@ -3280,6 +3280,12 @@ impl FixtureAdapters {
             )
         })?.connect_lazy();
         let mut client = DriverManagerServiceClient::new(channel);
+        let mut options = HashMap::from([
+            ("provider_profile".to_string(), "simulator".to_string()),
+        ]);
+        if matches!(submission.target.as_str(), "auto" | "cluster:auto") {
+            options.insert("driver_selection".to_string(), "auto".to_string());
+        }
         let request = Request::new(ExecuteCircuitRequest {
             job_id: submission.job_id.clone(),
             device_id: submission.target.clone(),
@@ -3288,7 +3294,7 @@ impl FixtureAdapters {
                 data: aqo_bytes,
             }),
             shots,
-            options: HashMap::from([("provider_profile".to_string(), "simulator".to_string())]),
+            options,
         });
 
         let response = client.execute_circuit(request).await.map_err(|status| {
