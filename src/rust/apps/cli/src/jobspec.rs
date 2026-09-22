@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::{Display, Formatter};
 use std::fs;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
@@ -2154,22 +2155,15 @@ mod tests {
     use std::fs;
 
     fn temp_dir() -> PathBuf {
-        let mut dir = std::env::temp_dir();
-        dir.push(format!("eigen-cli-tests-{}", std::process::id()));
-        dir.push(format!(
-            "{}",
-            sha256_hex(format!("{}", rand_seed()).as_bytes())
+        static NEXT_TEMP_DIR: AtomicU64 = AtomicU64::new(0);
+
+        let sequence = NEXT_TEMP_DIR.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "eigen-cli-tests-{}-{sequence}",
+            std::process::id()
         ));
         fs::create_dir_all(&dir).expect("temp dir");
         dir
-    }
-
-    fn rand_seed() -> u128 {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos()
     }
 
     #[test]
@@ -2548,28 +2542,13 @@ spec:
         )
         .unwrap();
 
-        let req = build_submit_request_from_job_file(&yaml_path)
-            .expect("policy conflict fixture must produce a valid submit request");
-
-        let err = runtime_intelligence_hints_for_compile(&req)
-            .expect_err("policy conflict must be reported by runtime diagnostics");
-
-        assert_eq!(err.code, "RUNTIME_INTELLIGENCE_DIAGNOSTIC");
-        assert_eq!(err.violations.len(), 2);
-        assert!(err.violations.iter().any(|v| {
-            v.description
-                .contains("policy conflict with spec.metadata.runtime.policy")
-        }));
-        assert!(err.violations.iter().any(|v| {
-            v.description
-                .contains("runtime.require_backend=qpu cannot target simulator")
-        }));
-
-        let
+        let err = compile_job_to_aqo_json(&yaml_path)
+            .expect_err("unsupported runtime target must be rejected");
 
         match err {
             SubmitBuildError::Validation(validation) => {
                 assert_eq!(validation.code, "RUNTIME_INTELLIGENCE_DIAGNOSTIC");
+                assert_eq!(validation.violations.len(), 1);
                 assert_eq!(
                     validation.violations[0].description,
                     "unsupported runtime target 'edge:gpu' (supported prefixes: sim:, qpu:, hw:)"
