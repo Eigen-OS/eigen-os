@@ -55,3 +55,9 @@ def test_minimize_never_fabricates_a_runtime_result():
     with pytest.raises(RuntimeError, match="declarative Eigen-Lang construct"):
         minimize(ExpectationValue("ansatz"), [0.1])
 
+
+def test_pauli_hamiltonian_accepts_tensor_product_mapping():
+    from eigen_lang import PauliHamiltonian
+
+    hamiltonian = PauliHamiltonian({"Z0 Z1": 0.5, "I0": -0.25})
+    assert hamiltonian.terms == {"Z0 Z1": 0.5, "I0": -0.25}

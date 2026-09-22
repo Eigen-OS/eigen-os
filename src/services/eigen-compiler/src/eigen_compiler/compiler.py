@@ -80,6 +80,7 @@ _AQO_ALLOWED_TOP_LEVEL_FIELDS = {
     "checksums",
     "topology",
     "annotations",
+    "parameter_bindings",
 }
 
 _AQO_ALLOWED_OPS = {
@@ -459,6 +460,63 @@ def _literal_scalar(node: ast.AST) -> str | int | float | None:
     return None
 
 
+def bind_aqo_parameters(aqo: dict[str, object], bindings: dict[str, int | float]) -> dict[str, object]:
+    """Return a validated bound-circuit payload without mutating its symbolic ansatz.
+
+    Bindings are keyed by stable AQO parameter IDs. Every declared parameter
+    must be bound exactly once; symbolic references in rotation operations are
+    replaced by finite numeric values in the returned copy.
+    """
+    if not isinstance(aqo, dict):
+        raise CompilerValidationError(violations=(FieldViolation(field="aqo", description="AQO payload must be an object"),))
+    symbolic = copy.deepcopy(aqo)
+    declared = symbolic.get("parameters", {})
+    if not isinstance(declared, dict):
+        raise CompilerValidationError(violations=(FieldViolation(field="parameters", description="parameters must be an object"),))
+    if set(bindings) != set(declared):
+        raise CompilerValidationError(violations=(FieldViolation(field="bindings", description="bindings must contain every declared parameter ID exactly once"),))
+    for parameter_id, value in bindings.items():
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or (isinstance(value, float) and not isfinite(value)):
+            raise CompilerValidationError(violations=(FieldViolation(field=f"bindings.{parameter_id}", description="binding values must be finite numbers"),))
+    for operation in symbolic.get("operations", []):
+        if isinstance(operation, dict) and isinstance(operation.get("params"), dict):
+            theta = operation["params"].get("theta")
+            if isinstance(theta, str) and theta in bindings:
+                operation["params"]["theta"] = bindings[theta]
+    symbolic["parameter_bindings"] = {key: bindings[key] for key in sorted(bindings)}
+    violations = _validate_aqo_payload(symbolic)
+    if violations:
+        raise CompilerValidationError(violations=violations)
+    return json.loads(_canonical_json_bytes(symbolic))
+
+
+def _canonical_hamiltonian(terms: dict[str, object], qubits: int) -> dict[str, object]:
+    """Normalize Pauli-string coefficients into the replay-safe objective model."""
+    canonical_terms: list[dict[str, object]] = []
+    for term, coefficient in terms.items():
+        if isinstance(coefficient, bool) or not isinstance(coefficient, (int, float)) or (isinstance(coefficient, float) and not isfinite(coefficient)):
+            raise CompilerValidationError(violations=(FieldViolation(field=f"hamiltonian.{term}", description="Pauli coefficients must be finite numbers"),))
+        if not isinstance(term, str) or not term.strip():
+            raise CompilerValidationError(violations=(FieldViolation(field="hamiltonian", description="Pauli terms must be non-empty strings"),))
+        factors = []
+        seen_qubits: set[int] = set()
+        for factor in term.split():
+            match = re.fullmatch(r"([IXYZ])(\d+)", factor)
+            if match is None:
+                raise CompilerValidationError(violations=(FieldViolation(field=f"hamiltonian.{term}", description="Pauli terms must use I, X, Y, or Z followed by a qubit index"),))
+            pauli, raw_qubit = match.groups()
+            qubit = int(raw_qubit)
+            if qubit >= qubits:
+                raise CompilerValidationError(violations=(FieldViolation(field=f"hamiltonian.{term}", description="Pauli qubit index out of range"),))
+            if qubit in seen_qubits:
+                raise CompilerValidationError(violations=(FieldViolation(field=f"hamiltonian.{term}", description="Pauli term cannot contain multiple factors for one qubit"),))
+            seen_qubits.add(qubit)
+            factors.append({"pauli": pauli, "qubit": qubit})
+        canonical_terms.append({"coefficient": coefficient, "paulis": sorted(factors, key=lambda item: int(item["qubit"]))})
+    canonical_terms.sort(key=lambda item: _stable_json(item["paulis"]))
+    return {"kind": "pauli_hamiltonian", "terms": canonical_terms}
+
+
 def _validate_parameters_object(parameters: object) -> tuple[FieldViolation, ...]:
     if parameters is None:
         return ()
@@ -511,6 +569,7 @@ def _validate_aqo_payload(aqo: dict[str, object]) -> tuple[FieldViolation, ...]:
     violations.extend(_validate_optional_object(aqo.get("checksums"), "checksums"))
     violations.extend(_validate_optional_object(aqo.get("topology"), "topology"))
     violations.extend(_validate_optional_object(aqo.get("annotations"), "annotations"))
+    violations.extend(_validate_optional_object(aqo.get("parameter_bindings"), "parameter_bindings"))
 
     for idx, op in enumerate(operations):
         if not isinstance(op, dict):
@@ -1495,7 +1554,12 @@ def _literal_jsonish(node: ast.AST) -> object | None:
 
 
 def _resolve_observable_terms(node: ast.AST) -> dict[str, object] | None:
-    if not isinstance(node, ast.Call) or _call_name(node.func) != "Observable":
+    if not isinstance(node, ast.Call) or _call_name(node.func) not in {"Observable", "PauliHamiltonian"}:
+        return None
+    if len(node.args) == 1:
+        value = _literal_jsonish(node.args[0])
+        return value if isinstance(value, dict) and value else None
+    if node.args:
         return None
     terms: dict[str, object] = {}
     for keyword in node.keywords:
@@ -1520,7 +1584,11 @@ def _collect_observable_bindings(tree: ast.AST) -> tuple[dict[str, dict[str, obj
         terms = _resolve_observable_terms(node.value)
         if terms is None:
             continue
-        bindings[target] = terms
+        bindings[target] = (
+            {"__pauli_hamiltonian__": terms}
+            if isinstance(node.value, ast.Call) and _call_name(node.value.func) == "PauliHamiltonian"
+            else terms
+        )
     return bindings, tuple(violations)
 
 
@@ -1561,6 +1629,7 @@ def _collect_iterative_hybrid_workflow(
     tree: ast.AST,
     params: dict[str, dict[str, object]],
     execution_defaults: dict[str, object],
+    observable_bindings: dict[str, dict[str, object]],
 ) -> dict[str, object] | None:
     """Lower the supported ``minimize`` declaration without evaluating Python."""
     calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call) and _call_name(node.func) == "minimize"]
@@ -1606,7 +1675,12 @@ def _collect_iterative_hybrid_workflow(
     if not isinstance(convergence, dict) or not convergence:
         raise CompilerValidationError(violations=(FieldViolation(field="minimize.convergence", description="convergence must be a non-empty literal object"),))
     optimizer_config = {name: _workflow_literal(value, field=f"minimize.{name}") for name, value in sorted(keywords.items())}
-    observable = _collect_expectation_annotation(ast.Module(body=[ast.Expr(value=objective)], type_ignores=[]), {}) or {"kind": "ExpectationValue"}
+    observable = _collect_expectation_annotation(
+        ast.Module(body=[ast.Expr(value=objective)], type_ignores=[]), observable_bindings
+    ) or {"kind": "ExpectationValue"}
+    objective_model: dict[str, object] = {"kind": "expectation_value", **observable}
+    if isinstance(observable.get("observable_name"), str):
+        objective_model["hamiltonian_ref"] = f"aqo://annotations/observables/{observable['observable_name']}"
     return {
         "version": ITERATIVE_HYBRID_WORKFLOW_VERSION,
         "workflow_kind": "iterative_hybrid",
@@ -1615,7 +1689,7 @@ def _collect_iterative_hybrid_workflow(
             {"id": param["name"], "initial_value": initial}
             for param, initial in zip(ordered_params, initial_values, strict=True)
         ],
-        "objective": {"kind": "expectation_value", **observable},
+        "objective": objective_model,
         "optimizer": {"method": method, "config": optimizer_config},
         "convergence": convergence,
         "execution": {
@@ -2080,7 +2154,14 @@ def _build_aqo_payload(
 
     annotations: dict[str, object] = {}
     if observable_bindings:
-        annotations["observables"] = observable_bindings
+        annotations["observables"] = {
+            name: (
+                _canonical_hamiltonian(terms["__pauli_hamiltonian__"], qubits)
+                if "__pauli_hamiltonian__" in terms
+                else terms
+            )
+            for name, terms in sorted(observable_bindings.items())
+        }
     if has_expectation:
         annotations["expectation"] = expectation_annotation or {"kind": "ExpectationValue"}
     if iterative_hybrid_workflow is not None:
@@ -2201,7 +2282,7 @@ def compile_eigen_lang(
 
     params, observable_bindings, expectation_annotation = _run_stage("annotate", observer, _annotate_tree)
     iterative_hybrid_workflow = _collect_iterative_hybrid_workflow(
-        tree, params, _collect_workflow_execution_defaults(tree)
+        tree, params, _collect_workflow_execution_defaults(tree), observable_bindings
     )
 
     def _lower_to_ir() -> tuple[list[dict], int]:
