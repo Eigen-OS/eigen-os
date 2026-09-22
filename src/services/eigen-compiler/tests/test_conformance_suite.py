@@ -320,8 +320,33 @@ def test_compile_preserves_annotations_and_topology() -> None:
         ).aqo_json.decode("utf-8")
     )
     assert compiled["annotations"]["expectation"] == {"kind": "ExpectationValue"}
-    assert compiled["annotations"]["hybrid_plan_marker"] == {"kind": "minimize", "expanded_by": "kernel"}
+    workflow = compiled["annotations"]["iterative_hybrid_workflow"]
+    assert workflow["version"] == "1.0.0"
+    assert workflow["workflow_kind"] == "iterative_hybrid"
+    assert workflow["parameters"] == [{"id": "theta", "initial_value": 0.1}]
+    assert workflow["ansatz"] == {"kind": "aqo_operations", "ref": "aqo://operations"}
     assert compiled["topology"]["partition_count"] == 4
+
+
+@pytest.mark.parametrize(
+    "declaration, message",
+    [
+        ('minimize(ExpectationValue("a"), [])', "non-empty literal numeric list"),
+        ('minimize(ExpectationValue("a"), [0.1], convergence={})', "convergence must be a non-empty"),
+        ('minimize(ExpectationValue("a"), [0.1], method=method)', "minimize.method must be statically declared"),
+    ],
+)
+def test_minimize_rejects_incomplete_or_dynamic_workflow_fields(declaration: str, message: str) -> None:
+    source = f'''from eigen_lang import Param, ExpectationValue, hybrid_program, minimize
+@hybrid_program(target="sim", shots=1000)
+def main():
+    theta = Param("theta")
+    method = "COBYLA"
+    {declaration}
+'''.encode()
+    with pytest.raises(CompilerValidationError) as exc_info:
+        compile_eigen_lang(source)
+    assert any(message in violation.description for violation in exc_info.value.violations)
 
 
 def test_compile_records_literal_observable_annotations() -> None:
