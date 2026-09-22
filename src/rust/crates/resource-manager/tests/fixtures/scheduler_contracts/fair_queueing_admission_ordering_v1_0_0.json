@@ -1,0 +1,64 @@
+{
+  "contract_version": "1.0.0",
+  "input": {
+    "seed": 424242,
+    "jobs": [
+      {
+        "job_id": "job-a1",
+        "tenant_id": "tenant-a",
+        "project_id": "project-a",
+        "priority": 5
+      },
+      {
+        "job_id": "job-b1",
+        "tenant_id": "tenant-b",
+        "project_id": "project-b",
+        "priority": 5
+      },
+      {
+        "job_id": "job-a2",
+        "tenant_id": "tenant-a",
+        "project_id": "project-a",
+        "priority": 5
+      },
+      {
+        "job_id": "job-c1",
+        "tenant_id": "tenant-c",
+        "project_id": "project-c",
+        "priority": 5
+      },
+      {
+        "job_id": "job-b2",
+        "tenant_id": "tenant-b",
+        "project_id": "project-b",
+        "priority": 5
+      },
+      {
+        "job_id": "job-a3",
+        "tenant_id": "tenant-a",
+        "project_id": "project-a",
+        "priority": 5
+      }
+    ]
+  },
+  "expected": {
+    "contract_version": "1.0.0",
+    "seed": 424242,
+    "dispatch_order": [
+      "job-a1",
+      "job-b1",
+      "job-c1",
+      "job-a2",
+      "job-b2",
+      "job-a3"
+    ],
+    "reason_codes": [
+      "WeightedFairness",
+      "WeightedFairness",
+      "WeightedFairness",
+      "WeightedFairness",
+      "WeightedFairness",
+      "WeightedFairness"
+    ]
+  }
+}

@@ -1,0 +1,16 @@
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /app
+
+COPY src/services/benchmark-service /app/src/services/benchmark-service
+
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -e /app/src/services/benchmark-service[dev]
+
+WORKDIR /app/src/services/benchmark-service
+
+CMD ["pytest", "-q", "tests"]

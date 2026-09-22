@@ -1,0 +1,48 @@
+{
+  "contract": "continuous_learning_control_plane",
+  "version": "1.0.0",
+  "lifecycle": {
+    "states": ["DRAFT", "TRAINED", "VALIDATED", "SHADOW", "CANARY", "PROMOTED", "RETIRED"],
+    "allowed_transitions": {
+      "DRAFT": ["TRAINED", "RETIRED"],
+      "TRAINED": ["VALIDATED", "RETIRED"],
+      "VALIDATED": ["SHADOW", "RETIRED"],
+      "SHADOW": ["CANARY", "RETIRED"],
+      "CANARY": ["PROMOTED", "ROLLBACK_TO_VALIDATED", "RETIRED"],
+      "PROMOTED": ["ROLLBACK_TO_VALIDATED", "RETIRED"],
+      "RETIRED": []
+    }
+  },
+  "commands": ["StartTraining", "RunEvaluation", "PromoteModel", "RollbackModel", "GetModelLifecycle"],
+  "idempotency": {
+    "required_fields": ["command", "model_version", "idempotency_key"],
+    "same_key_same_payload": "return_previous_result",
+    "same_key_different_payload": "LEARN_IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD"
+  },
+  "replay": {
+    "required_fields": ["replay_of_command_id", "replay_attempt"],
+    "max_side_effects": 1,
+    "result_consistency": "deterministic"
+  },
+  "audit_required_fields": ["command_id", "requested_by", "requested_at", "trace_id", "from_state", "to_state", "decision", "gate_results"],
+  "observability": {
+    "metrics": [
+      "learning_control_plane_transition_total",
+      "learning_control_plane_gate_failures_total",
+      "learning_control_plane_promotion_lead_time_seconds",
+      "learning_control_plane_rollback_total"
+    ]
+  },
+  "reason_codes": [
+    "LEARN_INVALID_STATE_TRANSITION",
+    "LEARN_EVAL_FAILED",
+    "LEARN_PROMOTION_BLOCKED",
+    "LEARN_ROLLBACK_FAILED",
+    "LEARN_IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD",
+    "LEARN_INTERNAL"
+  ],
+  "deprecation_policy": {
+    "min_supported_minor_releases": 2,
+    "min_supported_days": 90
+  }
+}

@@ -1,0 +1,101 @@
+groups:
+  - name: eigen-intelligent-runtime
+    interval: 30s
+    rules:
+      - alert: EigenRuntimeScoringFailuresSpike
+        expr: increase(eigen_runtime_scoring_failures_total[10m]) > 5
+        for: 10m
+        labels: { severity: critical, team: sre }
+        annotations:
+          summary: "Scoring failures exceed safe threshold over 10m"
+
+      - alert: EigenRuntimeScoringLatencyP95Degraded
+        expr: histogram_quantile(0.95, sum by (le) (rate(eigen_runtime_scoring_latency_ms_bucket[5m]))) > 150
+        for: 10m
+        labels: { severity: warning, team: runtime }
+        annotations:
+          summary: "Scoring latency p95 above 150ms"
+
+      - alert: EigenRuntimeFallbackRateHigh
+        expr: increase(eigen_runtime_fallback_total[15m]) / clamp_min(increase(eigen_runtime_decisions_total[15m]), 1) > 0.10
+        for: 15m
+        labels: { severity: warning, team: sre }
+        annotations:
+          summary: "Fallback rate above 10% in the last 15m"
+
+      - alert: EigenRuntimeExplainErrorRateCritical
+        expr: increase(eigen_runtime_explain_errors_total[10m]) / clamp_min(increase(eigen_runtime_explain_requests_total[10m]), 1) > 0.01
+        for: 10m
+        labels: { severity: critical, team: sre }
+        annotations:
+          summary: "Explain endpoint error rate exceeds 1% SLO budget"
+
+      - alert: EigenRuntimeExplainLatencyL1P95Critical
+        expr: histogram_quantile(0.95, sum by (le) (rate(eigen_runtime_explain_latency_ms_bucket{level="1"}[5m]))) > 100
+        for: 10m
+        labels: { severity: critical, team: sre }
+        annotations:
+          summary: "Explain L1_USER p95 latency above 100ms"
+
+      - alert: EigenRuntimeExplainLatencyL2P95Critical
+        expr: histogram_quantile(0.95, sum by (le) (rate(eigen_runtime_explain_latency_ms_bucket{level="2"}[5m]))) > 200
+        for: 10m
+        labels: { severity: critical, team: sre }
+        annotations:
+          summary: "Explain L2_ADMIN p95 latency above 200ms"
+
+      - alert: EigenRuntimeExplainLatencyL3P95Critical
+        expr: histogram_quantile(0.95, sum by (le) (rate(eigen_runtime_explain_latency_ms_bucket{level="3"}[5m]))) > 500
+        for: 10m
+        labels: { severity: critical, team: sre }
+        annotations:
+          summary: "Explain L3_FORENSIC p95 latency above 500ms"
+
+      - alert: EigenRuntimeOptimizerFallbackRateHigh
+        expr: sum(increase(eigen_runtime_optimizer_fallbacks_total[15m])) / clamp_min(sum(increase(eigen_runtime_optimizer_candidate_traces_total[15m])), 1) > 0.25
+        for: 15m
+        labels: { severity: warning, team: runtime }
+        annotations:
+          summary: "Optimizer fallback rate above 25% in the last 15m"
+
+      - alert: EigenRuntimeOptimizerConfidenceLow
+        expr: eigen_runtime_optimizer_last_confidence_score < 0.8
+        for: 10m
+        labels: { severity: warning, team: runtime }
+        annotations:
+          summary: "Optimizer confidence is below the policy threshold"
+
+      - alert: EigenRuntimeOptimizerTraceContinuityMismatch
+        expr: sum(increase(eigen_runtime_optimizer_trace_handoff_total[15m])) < (2 * sum(increase(eigen_runtime_optimizer_candidate_traces_total[15m])))
+        for: 15m
+        labels: { severity: warning, team: runtime }
+        annotations:
+          summary: "Optimizer trace handoff continuity is below the expected 2:1 rate"
+
+      - alert: EigenKBDecisionLogPressureHigh
+        expr: increase(eigen_kb_queries_total{kind="decision_logs"}[15m]) > 100
+        for: 15m
+        labels: { severity: warning, team: runtime }
+        annotations:
+          summary: "KB decision-log query pressure is elevated over 15m"
+
+      - alert: EigenKBLearningFailureRateHigh
+        expr: increase(eigen_kb_learning_failures_total[15m]) / clamp_min(increase(eigen_kb_queries_total[15m]), 1) > 0.05
+        for: 15m
+        labels: { severity: critical, team: runtime }
+        annotations:
+          summary: "KB learning-loop failures exceed the safe ratio over 15m"
+
+      - alert: EigenKBQuarantineEventsDetected
+        expr: increase(eigen_kb_quarantine_total[15m]) > 0
+        for: 15m
+        labels: { severity: warning, team: runtime }
+        annotations:
+          summary: "KB quarantine events were observed in the last 15m"
+
+      - alert: EigenKBTraceContinuityMismatch
+        expr: increase(eigen_kb_contract_requests_total{outcome="error"}[15m]) > 0
+        for: 15m
+        labels: { severity: warning, team: runtime }
+        annotations:
+          summary: "KB trace-contract continuity has drifted or failed validation in the last 15m"

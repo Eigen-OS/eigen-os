@@ -1,0 +1,871 @@
+{
+  "schema_version": "1.0.0",
+  "product_release_target": "1.0.0",
+  "created": "2026-06-01",
+  "version_policy": "docs/development/product-1.0-version-policy.md",
+  "inventory": "docs/development/product-1.0-contract-inventory.md",
+  "contracts": [
+    {
+      "name": "Public gRPC API",
+      "contract_version": "1.0.0-target",
+      "owner": "System API; client SDKs/CLI",
+      "sources": [
+        "docs/reference/api/grpc-public.md",
+        "docs/architecture/components/system-api.md"
+      ],
+      "proto_schema_files": [
+        "proto/eigen/api/v1/job_service.proto",
+        "proto/eigen/api/v1/device_service.proto",
+        "proto/eigen/api/v1/types.proto",
+        "proto/eigen/api/v1/knowledge_base_service.proto"
+      ],
+      "planned_proto_schema_files": [],
+      "conformance_tests": [
+        "src/services/system-api/tests/test_public_envelope_versioning.py",
+        "src/services/system-api/tests/test_idempotency.py",
+        "src/services/system-api/tests/test_public_error_conformance.py",
+        "src/services/system-api/tests/test_observability_smoke.py",
+        "src/rust/apps/cli/tests/",
+        "buf lint",
+        "buf breaking",
+        "docs/development/wave-1/product-1.0-wave-1-compatibility-report.md"
+      ],
+      "implementation_status": "implemented",
+      "compatibility_status": "compatible"
+    },
+    {
+      "name": "Internal gRPC API",
+      "contract_version": "1.0.0-target",
+      "owner": "Kernel/QRTX; compiler; driver-manager; optimizer",
+      "sources": [
+        "docs/reference/api/grpc-internal.md",
+        "docs/architecture/components/qrtx.md"
+      ],
+      "proto_schema_files": [
+        "proto/eigen/internal/v1/kernel_gateway.proto",
+        "proto/eigen/internal/v1/compilation_service.proto",
+        "proto/eigen/internal/v1/driver_manager_service.proto",
+        "proto/eigen/internal/v1/optimizer_service.proto",
+        "proto/eigen/internal/v1/types.proto"
+      ],
+      "planned_proto_schema_files": [],
+      "conformance_tests": [
+        "src/rust/crates/eigen-kernel/tests/",
+        "src/services/eigen-compiler/tests/",
+        "buf lint",
+        "buf breaking"
+      ],
+      "implementation_notes": [
+        "KernelGateway control-plane slice implemented in src/rust/crates/eigen-kernel/src/rpc.rs",
+        "Wave 2 DAG stage, deadline/cancellation, retry, and observability enforcement are kernel-owned"
+      ],
+      "implementation_status": "partial",
+      "compatibility_status": "needs-alignment"
+    },
+    {
+      "name": "JobSpec",
+      "contract_version": "1.0.0",
+      "owner": "System API; CLI; Kernel/QRTX; packaging",
+      "sources": [
+        "docs/reference/jobspec.md"
+      ],
+      "proto_schema_files": [
+        "docs/reference/schemas/jobspec-1.0.schema.json",
+        "proto/eigen/api/v1/job_service.proto"
+      ],
+      "planned_proto_schema_files": [
+        "JobSpec JSON Schema under specs/ or contracts/product-1.0/"
+      ],
+      "conformance_tests": [
+        "src/services/system-api/tests/test_jobspec_parser.py",
+        "docs/reference/fixtures/jobspec/1.0/",
+        "src/rust/apps/cli/tests/fixtures/jobspec-valid-minimal.yaml",
+        "src/rust/apps/cli/src/jobspec.rs"
+      ],
+      "implementation_status": "implemented",
+      "compatibility_status": "compatible"
+    },
+    {
+      "name": "Eigen-Lang",
+      "contract_version": "1.0.0",
+      "owner": "Compiler / Eigen-DPDA",
+      "sources": [
+        "docs/reference/eigen-lang.md",
+        "docs/architecture/components/compiler.md"
+      ],
+      "proto_schema_files": [
+        "proto/eigen/internal/v1/compilation_service.proto"
+      ],
+      "planned_proto_schema_files": [
+        "Eigen-Lang grammar/schema artifacts"
+      ],
+      "conformance_tests": [
+        "src/services/eigen-compiler/tests/test_conformance_suite.py"
+      ],
+      "implementation_status": "partial",
+      "compatibility_status": "needs-alignment"
+    },
+    {
+      "name": "AQO format",
+      "contract_version": "1.0.0",
+      "owner": "Compiler; optimizer; QFS; Kernel/QRTX",
+      "sources": [
+        "docs/reference/formats/aqo.md"
+      ],
+      "proto_schema_files": [
+        "proto/eigen/internal/v1/types.proto"
+      ],
+      "planned_proto_schema_files": [
+        "AQO schema under specs/ or contracts/product-1.0/"
+      ],
+      "conformance_tests": [
+        "src/services/eigen-compiler/tests/test_conformance_suite.py"
+      ],
+      "implementation_status": "documented",
+      "compatibility_status": "needs-alignment"
+    },
+    {
+      "name": "QFS layout (CircuitFS)",
+      "contract_version": "1.0.0",
+      "owner": "QFS; Kernel/QRTX; System API facades",
+      "sources": [
+        "docs/reference/formats/qfs-layout.md",
+        "docs/architecture/components/qfs.md"
+      ],
+      "proto_schema_files": [],
+      "planned_proto_schema_files": [
+        "QFS storage manifest schema under contracts/product-1.0/"
+      ],
+      "conformance_tests": [
+        "src/rust/crates/qfs/tests/"
+      ],
+      "implementation_status": "partial",
+      "compatibility_status": "needs-alignment"
+    },
+    {
+      "name": "Compiler contract (`eigen.internal.v1` compiler slice)",
+      "contract_version": "1.0.0",
+      "owner": "Compiler; System API; Kernel/QRTX",
+      "sources": [
+        "docs/architecture/components/compiler.md",
+        "docs/reference/eigen-lang.md",
+        "docs/reference/formats/aqo.md"
+      ],
+      "proto_schema_files": [
+        "proto/eigen/internal/v1/compilation_service.proto"
+      ],
+      "planned_proto_schema_files": [],
+      "conformance_tests": [
+        "src/services/eigen-compiler/tests/test_conformance_suite.py",
+        "src/services/eigen-compiler/tests/test_compilation_rpc.py",
+        "buf lint",
+        "buf breaking"
+      ],
+      "implementation_status": "partial",
+      "compatibility_status": "needs-alignment"
+    },
+    {
+      "name": "Compiler artifact persistence handoff",
+      "contract_version": "1.0.0",
+      "owner": "Compiler; QFS; Kernel/QRTX",
+      "sources": [
+        "docs/reference/formats/qfs-layout.md",
+        "docs/architecture/components/qfs.md"
+      ],
+      "proto_schema_files": [],
+      "planned_proto_schema_files": [
+        "QFS storage manifest schema under contracts/product-1.0/"
+      ],
+      "conformance_tests": [
+        "src/rust/crates/qfs/src/local_circuit_fs.rs",
+        "src/rust/crates/qfs/tests/"
+      ],
+      "implementation_status": "partial",
+      "compatibility_status": "needs-alignment"
+    },
+    {
+      "name": "Neuro-Symbolic Compiler final contract",
+      "contract_version": "1.0.0",
+      "owner": "Compiler; Neuro-Symbolic Core",
+      "sources": [
+        "docs/architecture/components/compiler.md",
+        "docs/architecture/components/neuro-symbolic-core.md",
+        "docs/reference/eigen-lang.md",
+        "docs/reference/formats/aqo.md",
+        "docs/reference/error-model.md"
+      ],
+      "proto_schema_files": [
+        "proto/eigen/internal/v1/compilation_service.proto"
+      ],
+      "planned_proto_schema_files": [],
+      "conformance_tests": [
+        "src/services/eigen-compiler/tests/test_conformance_suite.py",
+        "src/services/eigen-compiler/tests/test_compilation_rpc.py",
+        "buf lint",
+        "buf breaking"
+      ],
+      "implementation_status": "implemented",
+      "compatibility_status": "compatible"
+    },
+    {
+      "name": "GNN Optimizer final contract",
+      "contract_version": "1.0.0",
+      "owner": "GNN Optimizer; Neuro-Symbolic Core",
+      "sources": [
+        "docs/architecture/components/gnn-optimizer.md",
+        "docs/architecture/components/neuro-symbolic-core.md",
+        "docs/reference/api/grpc-internal.md",
+        "docs/reference/compiler-observability-contract.md",
+        "docs/reference/intelligent-runtime-observability-contract.md"
+      ],
+      "proto_schema_files": [
+        "proto/eigen/internal/v1/optimizer_service.proto"
+      ],
+      "planned_proto_schema_files": [],
+      "conformance_tests": [
+        "src/services/system-api/tests/test_optimizer_contract_fixture.py",
+        "src/services/benchmark-service/tests/test_optimizer_evaluation_harness.py",
+        "src/services/benchmark-service/src/benchmark_service/optimizer_evaluation.py",
+        "src/services/benchmark-service/tests/fixtures/optimizer_evaluation/offline_online_fixture.json"
+      ],
+      "implementation_status": "implemented",
+      "compatibility_status": "compatible",
+      "implementation_notes": [
+        "Kernel/QRTX production handoff is exercised through src/rust/crates/eigen-kernel/src/rpc.rs",
+        "Deterministic fallback and confidence visibility are covered by benchmark and optimizer fixture tests"
+      ]
+    },
+    {
+      "name": "Compiler ↔ Optimizer deterministic handoff",
+      "contract_version": "1.0.0",
+      "owner": "Compiler; GNN Optimizer",
+      "sources": [
+        "docs/architecture/components/compiler.md",
+        "docs/architecture/components/gnn-optimizer.md",
+        "docs/architecture/components/neuro-symbolic-core.md",
+        "docs/reference/formats/aqo.md"
+      ],
+      "proto_schema_files": [],
+      "planned_proto_schema_files": [
+        "AQO / IR payload boundary"
+      ],
+      "conformance_tests": [
+        "src/services/eigen-compiler/tests/test_handoff_contract.py",
+        "src/services/system-api/tests/test_optimizer_contract_fixture.py",
+        "src/services/benchmark-service/tests/test_optimizer_evaluation_harness.py"
+      ],
+      "implementation_status": "implemented",
+      "compatibility_status": "compatible",
+      "implementation_notes": [
+        "Kernel/QRTX request shaping keeps request_id, trace_id, traceparent, and AQO boundary evidence stable."
+      ]
+    },
+    {
+      "name": "Optimization explainability and confidence contract",
+      "contract_version": "1.0.0",
+      "owner": "GNN Optimizer; Observability",
+      "sources": [
+        "docs/reference/compiler-observability-contract.md",
+        "docs/architecture/components/observability.md",
+        "docs/reference/intelligent-runtime-observability-contract.md"
+      ],
+      "proto_schema_files": [],
+      "planned_proto_schema_files": [
+        "optimization trace schema"
+      ],
+      "conformance_tests": [
+        "src/services/system-api/tests/test_optimizer_contract_fixture.py",
+        "src/services/benchmark-service/tests/test_optimizer_evaluation_harness.py",
+        "src/services/system-api/tests/test_observability_smoke.py",
+        "docs/development/wave-7a/product-1.0-wave-7a-exit-evidence-bundle.md"
+      ],
+      "implementation_status": "implemented",
+      "compatibility_status": "compatible",
+      "implementation_notes": [
+        "Optimization traces and bounded observability evidence stay aligned with the intelligent-runtime contract."
+      ]
+    },
+    {
+      "name": "Knowledge Base decision lineage and continuous learning loop",
+      "contract_version": "1.0.0",
+      "owner": "Knowledge Base; Compiler; GNN Optimizer; Benchmark service; Kernel/QRTX; Neuro-Symbolic Service",
+      "sources": [
+        "docs/architecture/components/knowledge-base.md",
+        "docs/architecture/components/compiler.md",
+        "docs/architecture/components/observability.md",
+        "docs/architecture/components/neuro-symbolic-core.md",
+        "docs/reference/intelligent-runtime-observability-contract.md",
+        "docs/reference/orchestration-observability-contract.md",
+        "docs/reference/benchmark-observability-contract.md"
+      ],
+      "proto_schema_files": [
+        "proto/eigen/api/v1/knowledge_base_service.proto",
+        "src/services/neuro-symbolic-service/src/neuro_symbolic_service/knowledge_base.py",
+        "src/services/neuro-symbolic-service/src/neuro_symbolic_service/knowledge_base_versioned.py",
+        "src/services/neuro-symbolic-service/src/neuro_symbolic_service/observability.py",
+        "proto/eigen/internal/v1/kernel_gateway.proto",
+        "proto/eigen/internal/v1/optimizer_service.proto"
+      ],
+      "planned_proto_schema_files": [],
+      "conformance_tests": [
+        "src/services/neuro-symbolic-service/tests/test_knowledge_base_service.py",
+        "src/services/neuro-symbolic-service/tests/test_knowledge_base_contract_fixture.py",
+        "src/services/neuro-symbolic-service/tests/test_knowledge_base_versioning.py",
+        "src/services/benchmark-service/tests/test_optimizer_evaluation_harness.py",
+        "src/services/system-api/tests/test_observability_smoke.py"
+      ],
+      "implementation_status": "partial",
+      "compatibility_status": "needs-alignment"
+    },
+    {
+      "name": "Continuous learning control plane and dataset assembly governance",
+      "contract_version": "1.0.0",
+      "owner": "Knowledge Base; Benchmark service; Neuro-Symbolic Service; Architecture/Governance",
+      "sources": [
+        "docs/architecture/components/knowledge-base.md",
+        "docs/architecture/components/neuro-symbolic-core.md",
+        "docs/development/wave-8/product-1.0-wave-8-execution-plan.md",
+        "docs/development/wave-8/product-1.0-wave-8-issue-pack.md"
+      ],
+      "proto_schema_files": [
+        "src/services/neuro-symbolic-service/src/neuro_symbolic_service/knowledge_base.py",
+        "src/services/neuro-symbolic-service/src/neuro_symbolic_service/knowledge_base_versioned.py",
+        "src/services/neuro-symbolic-service/src/neuro_symbolic_service/observability.py"
+      ],
+      "planned_proto_schema_files": [],
+      "conformance_tests": [
+        "src/services/neuro-symbolic-service/tests/test_knowledge_base_service.py",
+        "src/services/neuro-symbolic-service/tests/test_learning_control_plane_contract_fixture.py",
+        "src/services/neuro-symbolic-service/tests/test_knowledge_base_contract_fixture.py",
+        "src/services/neuro-symbolic-service/tests/test_knowledge_base_versioning.py"
+      ],
+      "implementation_status": "implemented",
+      "compatibility_status": "compatible"
+    },
+    {
+      "name": "OKB deterministic reuse and query backend",
+      "contract_version": "1.0.0",
+      "owner": "Knowledge Base; Compiler; GNN Optimizer; Neuro-Symbolic Service",
+      "sources": [
+        "docs/architecture/components/knowledge-base.md",
+        "docs/reference/api/explain-backend-selection.md",
+        "docs/architecture/components/neuro-symbolic-core.md"
+      ],
+      "proto_schema_files": [
+        "src/services/neuro-symbolic-service/src/neuro_symbolic_service/knowledge_base.py",
+        "src/services/neuro-symbolic-service/src/neuro_symbolic_service/knowledge_base_versioned.py"
+      ],
+      "planned_proto_schema_files": [],
+      "conformance_tests": [
+        "src/services/neuro-symbolic-service/tests/test_knowledge_base_service.py",
+        "src/services/neuro-symbolic-service/tests/test_knowledge_base_contract_fixture.py",
+        "src/services/neuro-symbolic-service/tests/test_knowledge_base_versioning.py",
+        "src/services/benchmark-service/tests/test_optimizer_evaluation_harness.py"
+      ],
+      "implementation_status": "implemented",
+      "compatibility_status": "compatible"
+    },
+    {
+      "name": "Canonical error model",
+      "contract_version": "1.0.0",
+      "owner": "All public/internal services",
+      "sources": [
+        "docs/reference/error-model.md"
+      ],
+      "proto_schema_files": [
+        "docs/reference/error-model.md",
+        "proto/eigen/api/v1/types.proto",
+        "proto/eigen/api/v1/job_service.proto"
+      ],
+      "planned_proto_schema_files": [
+        "Structured error detail schema",
+        "gRPC status details in public/internal protos"
+      ],
+      "conformance_tests": [
+        "src/services/system-api/tests/test_public_error_conformance.py",
+        "src/services/system-api/tests/test_validation_errors.py"
+      ],
+      "implementation_status": "partial",
+      "compatibility_status": "compatible",
+      "wave_1_status": "implemented-public-boundary-slice"
+    },
+    {
+      "name": "Scheduling policy engine (`SchedulerDecision` v2.3.0 + policy bundle metadata)",
+      "contract_version": "2.3.0",
+      "owner": "Resource Manager; QRTX",
+      "sources": [
+        "docs/architecture/components/resource-manager.md",
+        "docs/architecture/components/qrtx.md",
+        "docs/reference/multi-device-execution-contract.md",
+        "docs/reference/orchestration-observability-contract.md",
+        "docs/reference/intelligent-runtime-observability-contract.md"
+      ],
+      "proto_schema_files": [
+        "src/rust/crates/resource-manager/src/lib.rs"
+      ],
+      "planned_proto_schema_files": [],
+      "conformance_tests": [
+        "src/rust/crates/resource-manager/src/lib.rs",
+        "src/rust/crates/resource-manager/tests/scheduler_contract_compatibility.rs",
+        "src/rust/crates/resource-manager/tests/deterministic_replay_gate.rs"
+      ],
+      "implementation_notes": [
+        "Scheduler decisions carry explicit policy bundle identity and version metadata.",
+        "Deadline-aware dispatch is deterministic for equivalent inputs."
+      ],
+      "implementation_status": "implemented",
+      "compatibility_status": "compatible"
+    },
+    {
+      "name": "Distributed queue delivery and dead-letter semantics",
+      "contract_version": "1.0.1",
+      "owner": "Resource Manager; QRTX; worker runtimes",
+      "sources": [
+        "docs/architecture/components/resource-manager.md",
+        "docs/reference/multi-device-execution-contract.md",
+        "docs/reference/orchestration-observability-contract.md"
+      ],
+      "proto_schema_files": [
+        "src/rust/crates/resource-manager/src/lib.rs"
+      ],
+      "planned_proto_schema_files": [],
+      "conformance_tests": [
+        "src/rust/crates/resource-manager/src/lib.rs",
+        "src/rust/crates/resource-manager/tests/queue_adapter_contract.rs",
+        "src/rust/crates/resource-manager/tests/deterministic_replay_gate.rs"
+      ],
+      "implementation_notes": [
+        "Lease acquisition, ack, requeue, redelivery, and dead-letter transitions are deterministic.",
+        "Queue ordering remains replay-safe for equivalent inputs."
+      ],
+      "implementation_status": "implemented",
+      "compatibility_status": "compatible"
+    },
+    {
+      "name": "Error mapping matrix",
+      "contract_version": "1.0.0",
+      "owner": "All public/internal services",
+      "sources": [
+        "docs/reference/error-mapping.md"
+      ],
+      "proto_schema_files": [
+        "docs/reference/error-mapping.md"
+      ],
+      "planned_proto_schema_files": [
+        "Machine-readable error matrix under contracts/product-1.0/"
+      ],
+      "conformance_tests": [
+        "src/services/system-api/tests/test_public_error_conformance.py",
+        "src/rust/crates/eigen-kernel/tests/"
+      ],
+      "implementation_status": "partial",
+      "compatibility_status": "compatible",
+      "wave_1_status": "implemented-public-boundary-slice"
+    },
+    {
+      "name": "Orchestration observability",
+      "contract_version": "3.1.0",
+      "owner": "Observability; Kernel/QRTX; Resource Manager; System API",
+      "sources": [
+        "docs/reference/orchestration-observability-contract.md",
+        "docs/architecture/components/observability.md"
+      ],
+      "proto_schema_files": [
+        "docs/reference/orchestration-observability-contract.md"
+      ],
+      "planned_proto_schema_files": [
+        "Prometheus/OpenTelemetry metric contract fixtures"
+      ],
+      "conformance_tests": [
+        "src/services/system-api/tests/test_observability_smoke.py",
+        "src/rust/crates/eigen-kernel/tests/"
+      ],
+      "implementation_notes": [
+        "Kernel/QRTX emits the approved orchestration contract marker family",
+        "Prometheus labels remain bounded; trace continuity is preserved in logs/traces rather than labels"
+      ],
+      "implementation_status": "partial",
+      "compatibility_status": "compatible",
+      "wave_1_status": "implemented-public-boundary-slice"
+    },
+    {
+      "name": "Resource Manager boundary (kernel-owned internal authority)",
+      "contract_version": "1.0.0",
+      "owner": "Kernel/QRTX; Resource Manager; Driver Manager",
+      "sources": [
+        "docs/architecture/components/resource-manager.md",
+        "docs/architecture/components/qrtx.md",
+        "docs/architecture/components/driver-manager.md",
+        "docs/architecture/contract-map.md",
+        "docs/reference/multi-device-execution-contract.md"
+      ],
+      "proto_schema_files": [
+        "proto/eigen/internal/v1/kernel_gateway.proto",
+        "proto/eigen/internal/v1/driver_manager_service.proto"
+      ],
+      "planned_proto_schema_files": [
+        "Resource Manager inventory snapshots materialized through Driver Manager topology/capability payloads"
+      ],
+      "conformance_tests": [
+        "src/rust/crates/eigen-kernel/tests/",
+        "src/services/system-api/tests/test_security_baseline.py",
+        "docs/development/wave-5/product-1.0-wave-5-issue-pack.md"
+      ],
+      "implementation_notes": [
+        "Resource Manager is a kernel-owned internal authority in Product 1.0, not a separate public service.",
+        "Deterministic inventory snapshots are sourced from Driver Manager topology metadata."
+      ],
+      "implementation_status": "documented",
+      "compatibility_status": "needs-alignment"
+    },
+    {
+      "name": "Reservation lifecycle and recovery semantics",
+      "contract_version": "1.0.0",
+      "owner": "System API; Resource Manager; Kernel/QRTX",
+      "sources": [
+        "docs/architecture/components/resource-manager.md",
+        "docs/architecture/contract-map.md",
+        "docs/reference/formats/qfs-layout.md",
+        "docs/reference/orchestration-observability-contract.md",
+        "docs/reference/api/grpc-public.md"
+      ],
+      "proto_schema_files": [
+        "proto/eigen/api/v1/device_service.proto"
+      ],
+      "planned_proto_schema_files": [],
+      "conformance_tests": [
+        "src/services/system-api/tests/test_validation_errors.py",
+        "src/services/system-api/src/system_api/grpc_impl.py"
+      ],
+      "implementation_notes": [
+        "Reservations are persisted as a compatibility bridge with deterministic replay-safe binding by purpose.",
+        "Active reservations renew identically normalized requests and reject double-booking on the same device."
+      ],
+      "implementation_status": "implemented",
+      "compatibility_status": "compatible"
+    },
+    {
+      "name": "Intelligent runtime observability",
+      "contract_version": "2.1.0",
+      "owner": "Observability; scheduler; policy engine; driver-manager",
+      "sources": [
+        "docs/reference/intelligent-runtime-observability-contract.md",
+        "docs/howto/intelligent-runtime-observability-runbook.md"
+      ],
+      "proto_schema_files": [],
+      "planned_proto_schema_files": [
+        "Prometheus/OpenTelemetry metric contract fixtures"
+      ],
+      "conformance_tests": [
+        "src/services/system-api/tests/test_observability_smoke.py",
+        "src/services/system-api/tests/test_optimizer_contract_fixture.py",
+        "src/services/benchmark-service/tests/test_optimizer_evaluation_harness.py",
+        "docs/development/wave-7a/product-1.0-wave-7a-exit-evidence-bundle.md"
+      ],
+      "implementation_status": "partial",
+      "compatibility_status": "needs-alignment",
+      "implementation_notes": [
+        "Trace continuity is preserved in logs, traces, dashboards, and release artifacts rather than metric labels.",
+        "Bounded dashboard and alert fixtures are part of the Wave 7a observability surface."
+      ]
+    },
+    {
+      "name": "Cluster runtime observability",
+      "contract_version": "1.0.0",
+      "owner": "Distributed runtime; Kernel/QRTX; Resource Manager",
+      "sources": [
+        "docs/reference/cluster-runtime-observability-contract.md"
+      ],
+      "proto_schema_files": [],
+      "planned_proto_schema_files": [
+        "Prometheus/OpenTelemetry metric contract fixtures"
+      ],
+      "conformance_tests": [
+        "scripts/ci/check-phase8b-gates.sh",
+        "Product 1.0 exporter conformance suite"
+      ],
+      "implementation_status": "documented",
+      "compatibility_status": "needs-alignment"
+    },
+    {
+      "name": "Benchmark observability",
+      "contract_version": "1.0.0",
+      "owner": "Benchmark service; Observability",
+      "sources": [
+        "docs/reference/benchmark-observability-contract.md"
+      ],
+      "proto_schema_files": [],
+      "planned_proto_schema_files": [
+        "Prometheus/OpenTelemetry metric contract fixtures"
+      ],
+      "conformance_tests": [
+        "scripts/ci/check-phase8c-gates.sh",
+        "scripts/ci/check-benchmark-reproducibility.sh"
+      ],
+      "implementation_status": "partial",
+      "compatibility_status": "needs-alignment"
+    },
+    {
+      "name": "Multi-device execution",
+      "contract_version": "3.1.0",
+      "owner": "Kernel/QRTX; Resource Manager; Driver Manager; QFS",
+      "sources": [
+        "docs/reference/multi-device-execution-contract.md"
+      ],
+      "proto_schema_files": [
+        "proto/eigen/internal/v1/kernel_gateway.proto"
+      ],
+      "planned_proto_schema_files": [
+        "Split/merge lifecycle internal proto expansion"
+      ],
+      "conformance_tests": [
+        "src/rust/crates/resource-manager/tests/multi_device_contract_integration.rs",
+        "src/rust/crates/resource-manager/tests/scheduler_contract_compatibility.rs"
+      ],
+      "implementation_status": "documented",
+      "implementation_notes": [
+        "Split-plan manifests carry replay-safe created_at_ms / trace_id metadata.",
+        "Partial result and partial failure envelopes are deterministically ordered for merge validation."
+      ],
+      "compatibility_status": "compatible"
+    },
+    {
+      "name": "Benchmark Run REST API",
+      "contract_version": "1.0.0",
+      "owner": "Benchmark service; System API gateway",
+      "sources": [
+        "docs/reference/api/benchmark-run.md"
+      ],
+      "proto_schema_files": [
+        "contracts/product-1.0/public-rest.openapi.json"
+      ],
+      "planned_proto_schema_files": [],
+      "conformance_tests": [
+        "src/services/system-api/tests/test_rest_parity_and_compatibility_matrix.py",
+        "src/services/system-api/tests/test_public_error_conformance.py",
+        "src/services/system-api/tests/test_validation_errors.py"
+      ],
+      "implementation_status": "partial",
+      "compatibility_status": "planned",
+      "implementation_notes": [
+        "Schema-first REST mirror published in contracts/product-1.0/public-rest.openapi.json; runtime adapter remains pending."
+      ]
+    },
+    {
+      "name": "Explain Backend Selection REST API",
+      "contract_version": "1.0.0",
+      "owner": "System API; intelligent runtime; Resource Manager",
+      "sources": [
+        "docs/reference/api/explain-backend-selection.md"
+      ],
+      "proto_schema_files": [
+        "contracts/product-1.0/public-rest.openapi.json"
+      ],
+      "planned_proto_schema_files": [],
+      "conformance_tests": [
+        "src/services/system-api/tests/test_rest_parity_and_compatibility_matrix.py",
+        "src/services/system-api/tests/test_explain_execution_contract.py"
+      ],
+      "implementation_status": "partial",
+      "compatibility_status": "planned",
+      "implementation_notes": [
+        "Schema-first REST mirror published in contracts/product-1.0/public-rest.openapi.json; runtime adapter remains pending."
+      ]
+    },
+    {
+      "name": "Public REST API envelope",
+      "contract_version": "1.0.0",
+      "owner": "System API; API gateway",
+      "sources": [
+        "docs/reference/api/rest-public.md"
+      ],
+      "proto_schema_files": [
+        "contracts/product-1.0/public-rest.openapi.json"
+      ],
+      "planned_proto_schema_files": [],
+      "conformance_tests": [
+        "src/services/system-api/tests/test_rest_parity_and_compatibility_matrix.py"
+      ],
+      "implementation_status": "partial",
+      "compatibility_status": "planned",
+      "implementation_notes": [
+        "Schema-first REST mirror published in contracts/product-1.0/public-rest.openapi.json; runtime adapter remains pending."
+      ]
+    },
+    {
+      "name": "Authorization and security policy",
+      "contract_version": "1.0.0",
+      "owner": "Security & Isolation; System API; all services",
+      "sources": [
+        "docs/reference/security/authz.md",
+        "docs/architecture/components/security-isolation.md"
+      ],
+      "proto_schema_files": [
+        "docs/reference/security/authz.md"
+      ],
+      "planned_proto_schema_files": [],
+      "conformance_tests": [
+        "src/services/system-api/tests/test_security_baseline.py",
+        "src/services/system-api/tests/test_public_error_conformance.py",
+        "src/services/system-api/tests/test_observability_smoke.py"
+      ],
+      "implementation_status": "implemented",
+      "compatibility_status": "compatible",
+      "implementation_notes": [
+        "Public ingress fails closed for authn/authz, service identity, and audit enforcement.",
+        "Security baseline is covered by System API security conformance and observability tests."
+      ]
+    },
+    {
+      "name": "Knowledge Base public API",
+      "contract_version": "1.0.0",
+      "owner": "Knowledge Base; Neuro-Symbolic Service",
+      "sources": [
+        "docs/architecture/components/knowledge-base.md",
+        "docs/architecture/components/neuro-symbolic-core.md"
+      ],
+      "proto_schema_files": [
+        "proto/eigen/api/v1/knowledge_base_service.proto",
+        "src/services/neuro-symbolic-service/src/neuro_symbolic_service/knowledge_base.py",
+        "src/services/neuro-symbolic-service/src/neuro_symbolic_service/knowledge_base_versioned.py"
+      ],
+      "planned_proto_schema_files": [],
+      "conformance_tests": [
+        "src/services/neuro-symbolic-service/tests/test_knowledge_base_service.py",
+        "src/services/neuro-symbolic-service/tests/test_knowledge_base_contract_fixture.py",
+        "src/services/neuro-symbolic-service/tests/test_knowledge_base_versioning.py",
+        "src/services/benchmark-service/tests/test_run_lifecycle.py"
+      ],
+      "implementation_status": "implemented",
+      "compatibility_status": "compatible",
+      "implementation_notes": [
+        "KnowledgeBaseService now serves public records and decision logs with replay-safe pagination and retention enforcement.",
+        "Runtime decision lineage is ingested from JobService.GetDispatchRationale and benchmark run lifecycle callbacks.",
+        "Privacy-sensitive attributes are anonymized before persistence."
+      ]
+    },
+    {
+      "name": "Component architecture boundary map",
+      "contract_version": "1.0.0-product-target-with-1.3.0-architecture-scope",
+      "owner": "Architecture governance; all component owners",
+      "sources": [
+        "docs/architecture/contract-map.md",
+        "docs/architecture/overview.md",
+        "docs/architecture/components.md",
+        "docs/architecture/data-flow.md"
+      ],
+      "proto_schema_files": [],
+      "planned_proto_schema_files": [
+        "Not applicable; architecture boundary map uses markdown source contracts"
+      ],
+      "conformance_tests": [
+        "python3 scripts/ci/check-docs-links.py",
+        "python3 scripts/ci/check-product-1-0-manifest.py"
+      ],
+      "implementation_status": "documented",
+      "compatibility_status": "frozen-for-wave-0"
+    },
+    {
+      "name": "Deterministic replay and audit lineage",
+      "contract_version": "1.0.0",
+      "owner": "Kernel/QRTX; Resource Manager; QFS; Observability",
+      "sources": [
+        "docs/architecture/components/observability.md",
+        "docs/architecture/components/qfs.md",
+        "docs/reference/orchestration-observability-contract.md",
+        "docs/reference/multi-device-execution-contract.md",
+        "docs/reference/error-model.md"
+      ],
+      "proto_schema_files": [
+        "src/rust/crates/eigen-kernel/src/durable_job_store.rs",
+        "src/rust/crates/qrtx/src/event_log.rs"
+      ],
+      "planned_proto_schema_files": [],
+      "conformance_tests": [
+        "src/rust/crates/eigen-kernel/tests/",
+        "src/rust/crates/eigen-kernel/src/durable_job_store.rs",
+        "src/rust/crates/qrtx/src/event_log.rs"
+      ],
+      "implementation_status": "implemented",
+      "compatibility_status": "compatible"
+    },
+    {
+      "name": "Wave 5 observability conformance",
+      "contract_version": "3.1.0 / 2.1.0 / 1.0.0",
+      "owner": "Observability; Kernel/QRTX; Resource Manager; multi-device execution",
+      "sources": [
+        "docs/architecture/components/observability.md",
+        "docs/architecture/components/qfs.md",
+        "docs/reference/orchestration-observability-contract.md",
+        "docs/reference/intelligent-runtime-observability-contract.md",
+        "docs/reference/multi-device-execution-contract.md"
+      ],
+      "proto_schema_files": [
+        "monitoring/metrics/prometheus/exporter.py"
+      ],
+      "planned_proto_schema_files": [],
+      "conformance_tests": [
+        "src/services/system-api/tests/test_observability_smoke.py",
+        "src/rust/crates/eigen-kernel/tests/",
+        "buf lint",
+        "buf breaking"
+      ],
+      "implementation_status": "implemented",
+      "compatibility_status": "compatible",
+      "implementation_notes": [
+        "Wave 5 observability conformance is the fixture-backed regression gate for bounded metrics and contract markers."
+      ]
+    },
+    {
+      "name": "Driver Manager and QDriver final contract",
+      "contract_version": "1.0.0",
+      "owner": "Driver Manager; Kernel/QRTX",
+      "sources": [
+        "docs/architecture/components/driver-manager.md",
+        "docs/reference/api/grpc-internal.md",
+        "docs/reference/api/qdriver.md",
+        "rfcs/0044-phase8d-qdriver-api-v1-final-contract-and-conformance-semantics.md",
+        "rfcs/0045-phase8d-provider-driver-matrix-contract-and-tolerance-profiles.md",
+        "docs/adr/0030-phase8d-qdriver-api-v1-final-contract-and-conformance-semantics.md",
+        "docs/adr/0031-phase8d-provider-driver-matrix-contract-and-tolerance-profiles.md"
+      ],
+      "proto_schema_files": [
+        "proto/eigen/internal/v1/driver_manager_service.proto"
+      ],
+      "planned_proto_schema_files": [],
+      "conformance_tests": [
+        "src/services/driver-manager/tests/test_qdriver_v1_conformance.py",
+        "src/services/driver-manager/tests/test_official_driver_matrix_fixture.py",
+        "src/services/driver-manager/tests/test_parity_policy_fixture.py",
+        "src/services/driver-manager/tests/test_parity_tolerance_suite.py",
+        "src/services/driver-manager/tests/test_secret_lifecycle.py"
+      ],
+      "implementation_notes": [
+        "docs/reference/api/qdriver.md is the canonical final-contract reference.",
+        "DriverManagerService remains the kernel-facing transport projection of the final QDriver v1 semantics."
+      ],
+      "implementation_status": "documented",
+      "compatibility_status": "needs-alignment"
+    },
+    {
+      "name": "Driver Manager capability registry and device profile negotiation",
+      "contract_version": "1.0.0",
+      "owner": "Driver Manager; Kernel/QRTX",
+      "sources": [
+        "docs/architecture/components/driver-manager.md",
+        "docs/architecture/components/qrtx.md",
+        "docs/reference/api/grpc-internal.md"
+      ],
+      "proto_schema_files": [
+        "src/services/driver-manager/src/driver_manager/registry.py"
+      ],
+      "planned_proto_schema_files": [],
+      "conformance_tests": [
+        "src/services/driver-manager/tests/test_device_profile_registry.py",
+        "src/services/driver-manager/tests/test_official_driver_matrix_fixture.py"
+      ],
+      "implementation_status": "implemented",
+      "compatibility_status": "compatible"
+    }
+  ]
+}

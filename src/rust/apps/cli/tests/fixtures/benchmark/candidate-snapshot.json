@@ -1,0 +1,1 @@
+{"contract_version":"1.0.0","snapshot_version":"1.0.0","run_id":"run-1111222233334444","created_at":"2026-01-02T00:00:00Z","workload":"vqe-h2","dataset":"qfs://datasets/vqe-h2/1.0.0","backend":"sim:local","seed":8,"metrics":{"latency_ms":112.0,"fidelity":0.9925,"throughput_qps":52.0}}

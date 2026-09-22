@@ -1,0 +1,19 @@
+{
+  "queue_contract_version": "1.0.0",
+  "lease_event_version": "1.0.0",
+  "first_lease_attempt": 1,
+  "redelivery_attempt": 2,
+  "dead_letter": {
+    "dead_letter_version": "1.0.0",
+    "task_id": "task-contract-01",
+    "attempt": 2,
+    "max_attempts": 2,
+    "reason": "contract-test-requeue"
+  },
+  "metrics": {
+    "queue_enqueued_total": 1,
+    "queue_lease_acquired_total": 2,
+    "queue_redelivery_total": 1,
+    "queue_dead_letter_total": 1
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "registry_version": "1.0.0",
+  "service_identity": "neuro-symbolic-service",
+  "tenant_id": "tenant-default",
+  "project_id": "project-default",
+  "policy_snapshot_version": "1.0.0",
+  "active_model_version": "dpda-model-v1",
+  "models": [
+    {
+      "model_version": "dpda-model-v1",
+      "artifact_path": "dpda-model-v1.bin",
+      "artifact_sha256": "7a7bd2b15422916c73c18350fafd11f4daa3355417041423e0c40563417e1f55",
+      "signature_key_id": "internal-neuro-dpda-key",
+      "service_identity": "neuro-symbolic-service",
+      "tenant_id": "tenant-default",
+      "project_id": "project-default",
+      "policy_snapshot_version": "1.0.0",
+      "active": true,
+      "signature": "8520b9f2b8ab4a2e7eee80f894fa66acb745b384be5d0eee1cac315a081e202b"
+    }
+  ]
+}

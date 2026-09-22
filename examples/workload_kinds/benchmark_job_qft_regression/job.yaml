@@ -1,0 +1,23 @@
+apiVersion: eigen.os/v1
+kind: QuantumJob
+metadata:
+  name: qft-16q
+  labels:
+    example: "true"
+    domain: quantum-algorithms
+    algorithm: qft
+spec:
+  program:
+    path: program.eigen.py
+    entrypoint: main
+  target: sim:pennylane
+  priority: 60
+  workload:
+    kind: BenchmarkJob
+    execution_profile: benchmark
+    replayable: false
+    backend_target: sim:pennylane
+    seed: 42
+  metadata:
+    optimizer: "none"
+    

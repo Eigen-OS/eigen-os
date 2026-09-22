@@ -1,0 +1,11 @@
+{
+  "rpc": "CompileJob",
+  "request": {
+    "language": "eigen-lang",
+    "source_ref": "qfs://src.eigen"
+  },
+  "expected": {
+    "code": "INVALID_ARGUMENT",
+    "fields": ["job_id"]
+  }
+}

@@ -1,0 +1,28 @@
+apiVersion: eigen.os/v1
+kind: QuantumJob
+metadata:
+  name: hybrid-vqe-chemistry-demo
+  labels:
+    example: "true"
+    domain: chemistry
+    workload: hybrid
+spec:
+  program:
+    path: program.eigen.py
+    entrypoint: main
+  target: sim:local
+  priority: 70
+  workload:
+    kind: HybridWorkflow
+    execution_profile: hybrid
+    replayable: true
+    backend_target: sim:local
+  metadata:
+    shots: "8192"
+    max_iters: "60"
+    optimizer: "cobyla"
+    molecule: "H2"
+    basis: "sto-3g"
+    seed: "7"
+    noise_model: "depolarizing:0.001"
+    domain: "quantum-chemistry"

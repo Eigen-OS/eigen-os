@@ -1,0 +1,89 @@
+{
+  "artifact": "phase9a.rollback_drill_evidence",
+  "version": "1.0.0",
+  "stage": "9A",
+  "generated_at_utc": "2026-05-20T00:00:00Z",
+  "mttr_target_minutes": 30,
+  "drills": [
+    {
+      "drill_id": "P9A-07-LQM-001",
+      "domain": "lqm",
+      "scenario": "atomic-allocation-regression",
+      "start_utc": "2026-05-18T09:00:00Z",
+      "end_utc": "2026-05-18T09:18:00Z",
+      "mttr_minutes": 18,
+      "within_target": true,
+      "rollback_levers": ["pin", "quarantine"],
+      "approvals": ["runtime-kernel-owner", "sre-oncall"],
+      "escalation": "none",
+      "evidence": {
+        "runbook": "docs/howto/stage-9a-rollback-runbook.md#A-lqm-regression-rollback",
+        "checks": ["allocation-invariant-audit", "allocation-error-taxonomy-smoke"]
+      },
+      "lessons_learned": [
+        "Automate allocation invariant snapshot at incident declaration",
+        "Add one-click pin profile for LQM + HAL pair"
+      ]
+    },
+    {
+      "drill_id": "P9A-07-QFS-001",
+      "domain": "qfs-l2",
+      "scenario": "restore-cache-eviction-regression",
+      "start_utc": "2026-05-18T10:30:00Z",
+      "end_utc": "2026-05-18T10:52:00Z",
+      "mttr_minutes": 22,
+      "within_target": true,
+      "rollback_levers": ["pin", "quarantine"],
+      "approvals": ["runtime-data-fabric-owner", "sre-oncall"],
+      "escalation": "none",
+      "evidence": {
+        "runbook": "docs/howto/stage-9a-rollback-runbook.md#B-qfs-l2-regression-rollback",
+        "checks": ["checkpoint-restore-smoke-matrix", "quota-error-class-verification"]
+      },
+      "lessons_learned": [
+        "Publish restore-cache health histogram in incident dashboard",
+        "Pre-stage pinned restore policy bundle in hot standby"
+      ]
+    },
+    {
+      "drill_id": "P9A-07-PDP-001",
+      "domain": "pdp",
+      "scenario": "deny-reason-code-drift",
+      "start_utc": "2026-05-19T08:15:00Z",
+      "end_utc": "2026-05-19T08:44:00Z",
+      "mttr_minutes": 29,
+      "within_target": true,
+      "rollback_levers": ["pin", "gate-disable-policy"],
+      "approvals": ["security-owner", "sre-lead"],
+      "escalation": "engineering-director-notified-at-15m",
+      "evidence": {
+        "runbook": "docs/howto/stage-9a-rollback-runbook.md#C-policy-engine-regression-rollback",
+        "checks": ["authz-negative-conformance", "audit-reason-code-consistency"]
+      },
+      "lessons_learned": [
+        "Gate-disable expiry timer should be auto-enforced",
+        "Policy bundle promotion precheck must include reason-code diff"
+      ]
+    },
+    {
+      "drill_id": "P9A-07-DRV-001",
+      "domain": "driver-trust",
+      "scenario": "signature-chain-metadata-mismatch",
+      "start_utc": "2026-05-19T11:00:00Z",
+      "end_utc": "2026-05-19T11:19:00Z",
+      "mttr_minutes": 19,
+      "within_target": true,
+      "rollback_levers": ["pin", "quarantine"],
+      "approvals": ["drivers-integrity-owner", "sre-oncall"],
+      "escalation": "none",
+      "evidence": {
+        "runbook": "docs/howto/stage-9a-rollback-runbook.md#D-driver-trust-regression-rollback",
+        "checks": ["driver-signature-conformance", "official-matrix-fixture-validation"]
+      },
+      "lessons_learned": [
+        "Automate quarantine route switch for compromised provider profiles",
+        "Add signature-chain freshness alert in pre-release gate"
+      ]
+    }
+  ]
+}

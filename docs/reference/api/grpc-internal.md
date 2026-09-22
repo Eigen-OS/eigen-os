@@ -1,0 +1,1230 @@
+# gRPC Internal API Specification (eigen.internal.v1)
+
+**Version**: 1.0.0  
+**Status**: Target Standard  
+**Compatibility**: Eigen OS v1.3.0+  
+**Primary Transport**: gRPC over HTTP/2  
+**Serialization**: Protocol Buffers v3  
+**Security Model**: mTLS + Service Identity Tokens  
+**Canonical Namespace**: `eigen.internal.v1`
+
+---
+
+## 1. Purpose
+
+This document defines the authoritative internal gRPC contracts used between Eigen OS services.
+
+The gRPC Internal API is the backbone of:
+- QRTX orchestration,
+- compilation pipelines,
+- scheduling,
+- driver execution,
+- optimizer execution,
+- observability propagation,
+- Knowledge Base ingestion,
+- Continuous Learning workflows,
+- storage operations.
+
+The authoritative semantic boundary for the neuro-DPDA compiler path, KB retrieval, optimizer advice, and driver-manager truth is defined in `docs/architecture/components/neuro-symbolic-core.md`.
+
+This specification supersedes informal implementation behavior and acts as the **source of truth** for all internal service-to-service communication. All implementations **MUST** conform to this document.
+
+---
+
+## 2. Architectural Alignment with Eigen OS
+
+This API layer directly implements the architecture defined in Eigen OS Target Standard v1.3.0.
+
+#### Integrated components:
+
+| **Component**               | **Role** |
+|-----------------------------|------|
+| System API                  | External ingress |
+| QRTX                        | Central orchestration |
+| Compilation Service         | Neuro-DPDA compiler |
+| Optimizer Service           | GNN routing & placement |
+| Neuro-Symbolic Service      | Internal-only Neuro-DPDA rewrite stages + ML advisor; source-of-truth boundary in `docs/architecture/components/neuro-symbolic-core.md` |
+| Driver Manager              | Hardware abstraction |
+| QFS                         | Artifact and state persistence |
+| Knowledge Base              | Long-term learning memory |
+| Security Module             | AuthN/AuthZ and policy |
+| Observability Stack         | Tracing, metrics, audit |
+| Dataset Pipeline            | Dataset ingestion |
+| Continuous Learning Pipeline| Retraining orchestration |
+
+---
+
+## 3. Transport Requirements
+
+#### Protocol
+
+All internal APIs **MUST** use:
+```http
+gRPC over HTTP/2
+```
+
+#### Serialization
+
+All payloads MUST use:
+
+```text
+Protocol Buffers v3
+```
+
+#### Connection Security
+
+All service-to-service communication MUST use:
+
+- TLS 1.3
+- mutual TLS (mTLS)
+
+Unencrypted internal traffic is prohibited.
+
+#### Identity Propagation
+
+Each request MUST propagate:
+
+| **Metadata Key**     | **Purpose** |
+|----------------------|------|
+| `x-eigen-user-id`    | External ingress |
+| `x-eigen-tenant-id`  | Central orchestration |
+| `x-eigen-request-id` | Neuro-DPDA compiler |
+| `x-eigen-trace-id`   | GNN routing & placement |
+| `x-eigen-service-id` | Hardware abstraction |
+| `authorization`      | Artifact and state persistence |
+| `traceparent`        | Long-term learning memory |
+
+These metadata keys are mandatory unless explicitly exempted.
+
+---
+
+## 4. Canonical Proto Namespace
+
+```text
+package eigen.internal.v1;
+```
+
+Canonical source location:
+```text
+proto/eigen/internal/v1/
+```
+
+All `.proto` files under this directory are authoritative schema definitions.
+
+---
+
+## 5. Core Services
+
+### 5.1 KernelGatewayService
+
+#### Purpose
+
+Primary orchestration interface into QRTX.
+
+Acts as the internal bridge between:
+- System API
+- QRTX Scheduler
+- Runtime services
+
+#### Service Definition
+
+
+
+#### GetPattern semantics
+
+`GetPattern` returns a canonical template, not just a similar historical object.
+
+Required request semantics:
+
+- `tenant_id` and `project_id` MUST be present.
+- capability boundary metadata (`capability_scope`, `capability_tags`, `capabilities`, or equivalent backend capability discriminator) MUST normalize deterministically.
+- `snapshot_id`, `circuit_id`, and `backend_class` MUST be present.
+- `schema_version`, `compiler_version`, `aqo_version`, `optimizer_version`, `policy_mode`, and `policy_digest` MUST be present.
+- compatibility metadata MUST be machine-verifiable by exact string equality.
+- incompatible patterns MUST remain visible only as candidates or diagnostics, never as the canonical result.
+- diagnostics, replay envelopes, and explanation payloads MUST remain scoped to the current tenant/project and MUST NOT echo foreign identifiers or payload fragments.
+
+Canonical selection semantics:
+
+- exact compatibility is the canonical eligibility gate,
+- among compatible candidates the canonical template is selected by `support` desc, `pattern_family` asc, then `pattern_id` asc,
+- canonical selection is independent from similarity scoring,
+- `GetPattern` MUST return a fallback/diagnostics envelope when no canonical template is found.
+
+Incompatibility reason codes:
+
+- `SCHEMA_MISMATCH`
+- `COMPILER_MISMATCH`
+- `AQO_MISMATCH`
+- `OPTIMIZER_MISMATCH`
+- `POLICY_MISMATCH`
+
+Returned responses MUST expose:
+
+- `tenant_id`
+- `project_id`
+- `candidate_budget`
+- `canonical_pattern_id`
+- `canonical_pattern`
+- `candidate_patterns`
+- `explanation_pattern`
+- `diagnostics`
+
+The canonical pattern MUST be distinct from the candidate pattern list and MUST not be recomputed from an arbitrary nearest neighbor.
+
+#### KB request/response contract
+
+The internal KnowledgeBaseService MUST use the same versioned envelope as the architecture contract in `docs/architecture/components/knowledge-base.md`.
+
+Canonical request/response shapes:
+
+```protobuf
+message KnowledgeContext {
+  string contract_version = 1;
+  string schema_version = 2;
+  string request_id = 3;
+  string tenant_id = 4;
+  string project_id = 5;
+  string caller_component = 6;
+  string request_kind = 7;
+  bool deterministic = 8;
+  uint64 seed = 9;
+  string snapshot_id = 10;
+  string policy_snapshot_version = 11;
+  string policy_mode = 12;
+  string policy_digest = 13;
+  string model_snapshot_id = 14;
+  string model_snapshot_digest = 15;
+  string compiler_version = 16;
+  string optimizer_version = 17;
+  string aqo_version = 18;
+  string backend_class = 19;
+  string circuit_id = 20;
+  string semantic_hash = 21;
+  string aqo_hash = 22;
+  string capability_scope = 23;
+  repeated string capability_tags = 24;
+  uint32 candidate_budget = 25;
+  string query_mode = 26;
+  bool include_provenance = 27;
+  string request_digest_sha256 = 28;
+}
+
+message CompatibilityWindow {
+  string schema_version = 1;
+  string compiler_version = 2;
+  string aqo_version = 3;
+  string optimizer_version = 4;
+  string policy_mode = 5;
+  string policy_digest = 6;
+  string snapshot_id = 7;
+  string backend_class = 8;
+  string capability_scope = 9;
+}
+
+message PatternQuery {
+  string semantic_hash = 1;
+  string aqo_hash = 2;
+  string circuit_id = 3;
+  string backend_class = 4;
+  CompatibilityWindow compatibility_window = 5;
+}
+
+message ResponseProvenance {
+  string contract_version = 1;
+  string request_id = 2;
+  string request_digest_sha256 = 3;
+  string response_digest_sha256 = 4;
+  string snapshot_id = 5;
+  string policy_snapshot_version = 6;
+  string model_snapshot_id = 7;
+  string retrieval_mode = 8;
+  string selected_pattern_id = 9;
+  repeated string source_record_ids = 10;
+  string generated_at = 11;
+  bool replay_safe = 12;
+}
+
+message PatternRecord {
+  string pattern_id = 1;
+  string pattern_family = 2;
+  string pattern_kind = 3;
+  string tenant_id = 4;
+  string project_id = 5;
+  string circuit_id = 6;
+  string backend_class = 7;
+  repeated string source_record_ids = 8;
+  uint64 support = 9;
+  CompatibilityWindow compatibility_window = 10;
+  string compatibility_signature = 11;
+  bool canonical_eligible = 12;
+  bool selected = 13;
+  uint32 rank = 14;
+  map<string, double> score_breakdown = 15;
+  double score_total = 16;
+  double confidence = 17;
+  repeated string incompatibility_reasons = 18;
+  map<string, string> metadata = 19;
+  ResponseProvenance provenance = 20;
+}
+
+`provenance` MUST be a bounded object with these subfields:
+
+- `source` — snapshot and source-record lineage, including `snapshot_id`, `config_digest`, `source_record_ids`, and `source_record_count`
+- `version` — pattern versioning data, including `contract_version`, `pattern_miner_version`, and `compatibility_signature`
+- `compilation_context` — normalized circuit/backend/query context, including `compatibility_window`, `query_signature`, `query_mode`, `candidate_budget`, and `deterministic`
+- `validation_status` — deterministic validation state, including `state`, `compatible`, `canonical_eligible`, `selected`, `rank`, and `incompatibility_reasons`
+
+Allowed validation states include `catalogued`, `compatible`, `incompatible`, `selected`, `canonical`, and `explanation`.
+
+message SearchSimilarRequest {
+  string contract_version = 1;
+  KnowledgeContext knowledge_context = 2;
+  PatternQuery pattern_query = 3;
+  uint32 candidate_budget = 4;
+  string query_mode = 5;
+  bool deterministic = 6;
+}
+
+message SearchSimilarResponse {
+  string contract_version = 1;
+  KnowledgeContext knowledge_context = 2;
+  repeated PatternRecord candidate_patterns = 3;
+  PatternRecord selected_candidate = 4;
+  PatternRecord explanation_pattern = 5;
+  ResponseProvenance provenance = 6;
+  Diagnostics diagnostics = 7;
+}
+
+message GetPatternRequest {
+  string contract_version = 1;
+  KnowledgeContext knowledge_context = 2;
+  PatternQuery pattern_query = 3;
+  uint32 candidate_budget = 4;
+  bool deterministic = 5;
+}
+
+message GetPatternResponse {
+  string contract_version = 1;
+  KnowledgeContext knowledge_context = 2;
+  PatternRecord canonical_pattern = 3;
+  repeated PatternRecord candidate_patterns = 4;
+  PatternRecord explanation_pattern = 5;
+  ResponseProvenance provenance = 6;
+  Diagnostics diagnostics = 7;
+}
+```
+
+Contract rules:
+
+- `knowledge_context` is the only request context that compiler queries may rely on.
+- `PatternRecord` is the only stable record shape returned to compiler, optimizer, and driver-manager integrations.
+- `ResponseProvenance` MUST be attached to every KB response, including empty results and diagnostics-only fallbacks.
+- The ML layer MAY rank candidates, but it MUST NOT infer the boundary fields in `KnowledgeContext`, the compatibility window, or the provenance fields.
+- The contract version is pinned to `1.0.0` for this interface family. Any incompatible schema change requires a version bump and a new documented contract.
+
+---
+
+```text
+service KnowledgeBaseService {
+    rpc SearchSimilar(SearchSimilarRequest)
+        returns (SearchSimilarResponse);
+
+    rpc QueryCircuits(QueryCircuitsRequest)
+        returns (QueryCircuitsResponse);
+
+    rpc GetPattern(GetPatternRequest)
+        returns (GetPatternResponse);
+
+    rpc IngestCircuit(IngestCircuitRequest)
+        returns (IngestCircuitResponse);
+
+    rpc IngestBatch(IngestBatchRequest)
+        returns (IngestBatchResponse);
+}
+```
+
+---
+
+#### SearchSimilar semantics
+
+`SearchSimilar` is a deterministic scoped similarity query.
+
+Required request semantics:
+
+- `tenant_id` and `project_id` MUST be present.
+- `query_mode` MUST be one of `structural`, `vector`, or `hybrid`.
+- `candidate_budget` MUST be clamped to the service maximum of `8`.
+- `deterministic=true` MUST replay to the same ordered results.
+
+Ranking semantics:
+
+- `structural`: final rank uses the structural score.
+- `vector`: final rank uses the vector score.
+- `hybrid`: final rank uses the combined score.
+- tie-breakers: `confidence` desc, then `candidate_id` asc.
+
+Scope semantics:
+
+- candidates MUST be filtered by tenant/project before scoring,
+- candidates MUST also be filtered by capability boundary before scoring,
+- capability metadata MUST be honored when present and must fail closed on mismatch,
+- diagnostics, selection digests, and replay outputs MUST not expose third-party identifiers or payload fragments.
+
+Returned responses MUST expose:
+
+- `tenant_id`
+- `project_id`
+- `candidate_budget`
+- `selected_candidate_id`
+- `okb_selection_digest`
+- `index_status`
+- `capability_scope`
+
+The `index_status` diagnostic envelope SHOULD report:
+
+- overall status,
+- per-index status,
+- source fingerprint,
+- desync detection,
+- recovery timestamps.
+
+---
+
+## 5.1.1 KB index lifecycle
+
+The KB storage layer uses the primary store as the source of truth and maintains structural/vector derived indexes as deterministic replicas.
+
+Required behavior:
+
+- derived indexes MUST be built in deterministic order: structural first, then vector,
+- rebuild and backfill operations MUST be idempotent,
+- cold-start recovery MUST rebuild from the primary store,
+- partial failure MUST mark the affected scope `degraded`,
+- `ready`, `rebuilding`, `degraded`, and `unavailable` are the canonical status values.
+
+Operational flow:
+
+1. inspect `index_status`,
+2. recover or rebuild the scope from the primary store when needed,
+3. backfill historical records after outage recovery,
+4. resume similarity queries only when the scope reports `ready`.
+
+---
+
+### 5.2 NeuroSymbolicService
+
+#### Purpose
+
+Internal-only DPDA service used for explicit symbolic rewrite stages and advisory scoring of compilation plans. The deployable service boundary lives under `src/services/neuro-symbolic-service/`.
+
+This service is callable only by authenticated internal service identities. Public ingress paths MUST NOT expose a direct route to this service. Kernel/QRTX is the primary runtime caller; eigen-compiler may call this service only through the bounded advisory scoring path. `System API` MUST NOT call this service directly. Internal model registry activation and rollback are constrained by signed artifact verification, frozen policy snapshot binding, and internal service identity.
+
+#### Security and versioning requirements
+
+- All requests MUST include an authenticated internal service identity. Kernel/QRTX is the primary runtime caller; eigen-compiler may call only through the bounded advisory interface.
+- Transport MUST use mTLS in deployment; service identity tokens MAY be used as the request-level assertion.
+- Each request MUST include a SemVer contract envelope.
+- Requests without a valid internal identity MUST fail closed with `UNAUTHENTICATED`.
+- Unsupported contract versions MUST be rejected before model scoring.
+- The request path MUST remain kernel-owned for runtime decisions and compiler-advisory only for compile-time scoring.
+
+#### Symbolic rewrite stage contract
+
+`RunSymbolicRewriteStage` exposes the symbolic rewrite pipeline as explicit stages. Exactly one stage is executed per request, and the stage outcome MUST be logged independently.
+
+Canonical stage order:
+
+1. parse
+2. normalize
+3. candidate_generation
+4. legality_check
+5. rewrite
+6. emit_aqo
+
+Required request semantics:
+
+- `contract_version` is required.
+- `stage` is required and MUST be one of the canonical stage names listed above.
+- `stage_index` is required and MUST match the canonical order when `deterministic=true`.
+- `tenant_id` and `project_id` are required.
+- `policy_snapshot_version` is required and MUST match the frozen immutable policy snapshot.
+- `model_snapshot_id` and `model_snapshot_digest` are required whenever the stage consults the ML advisor.
+- `kb_snapshot_id` and `kb_snapshot_digest` are required whenever the stage consults the KB.
+- `request_digest_sha256` is required.
+
+Returned responses MUST expose:
+
+- `contract_version`
+- `stage`
+- `stage_index`
+- `stage_outcome`
+- `replay_digest`
+- `diagnostics`
+
+`ScoreCompilationPlan` remains a compatibility wrapper that runs the full canonical stage sequence and returns the final `emit_aqo` result.
+
+#### Service definition
+
+```text
+service NeuroSymbolicService {
+    rpc RunSymbolicRewriteStage(RunSymbolicRewriteStageRequest)
+        returns (RunSymbolicRewriteStageResponse);
+
+    rpc ScoreCompilationPlan(ScoreCompilationPlanRequest)
+        returns (ScoreCompilationPlanResponse);
+}
+```
+
+#### Request/response envelope contract
+
+- `ScoreCompilationPlanRequest.envelope.contract_version` is required for the compatibility wrapper; `RunSymbolicRewriteStageRequest.contract_version` is required for the stage API.
+- `ScoreCompilationPlanRequest.context.feature_schema_version` is required.
+- `ScoreCompilationPlanRequest.context.policy_snapshot_version` is required.
+- The active policy snapshot MUST be frozen at service start and treated as immutable for the lifetime of the service process.
+- `ScoreCompilationPlanRequest.context.policy_snapshot_version` MUST match the active immutable snapshot version or the request MUST fail closed before scoring.
+- The service MUST run a mandatory feature-extraction redaction pass before scoring.
+- The service MUST minimize the inference payload before scoring by deleting raw payloads, full request bodies, unnecessary metadata, stack traces, and large trace dumps.
+- The redaction pass MUST delete bearer tokens, API keys, tenant-private secrets, credentials, session cookies, raw auth headers, internal endpoints, and secret-bearing paths.
+- The redaction pass MUST mask email addresses, phone numbers, and internal identifiers.
+- The minimized/redacted feature vector, not the raw payload, MUST be used for model scoring and replay digests.
+- The post-minimization feature payload MUST be bounded by policy, and oversized requests MUST fail closed with `RESOURCE_EXHAUSTED`.
+- Every edited field path MUST be emitted in audit/log metadata as redacted-only evidence.
+- `ScoreCompilationPlanRequest.context.tenant_id` is required.
+- `ScoreCompilationPlanRequest.context.project_id` is required.
+- Internal request metadata MUST also carry `x-eigen-tenant-id` and `x-eigen-project-id`, and those values MUST match the request context bound for scoring.
+- `ScoreCompilationPlanRequest.context.subject_id` is required.
+- `ScoreCompilationPlanRequest.context.workload_id` is required.
+- `ScoreCompilationPlanRequest.context.authz_decision_id` is required.
+- `x-eigen-tenant-id` and `x-eigen-project-id` gRPC metadata keys are required and MUST match the request context exactly.
+- Any tenant/project mismatch MUST fail closed with `PERMISSION_DENIED` before model scoring.
+- The normalized security context MUST be fully traceable in audit events and replay digests.
+- Raw bearer tokens and header values MUST be sanitized before normalization; only bounded, secret-free security context metadata may be forwarded into inference.
+- `ScoreCompilationPlanResponse.contract_version` MUST echo the accepted request contract version.
+- `ScoreCompilationPlanResponse.policy_snapshot_version` MUST echo the active immutable snapshot version used for scoring.
+- Responses SHOULD echo the normalized security context fields for bounded auditability.
+- Responses MUST carry a bounded explainability envelope in audit/log form that includes:
+  - `model_version`,
+  - `feature_set`,
+  - `confidence`,
+  - `retrieval_references`.
+- `feature_set.telemetry_feature_set` MUST expose the stable tabular telemetry schema shared by compiler and KB telemetry. Its `schema_version` MUST be `telemetry-tabular-v1`, and the schema MUST carry graph size, fanout, stage counts, historical success rate, latency, backend, and policy-state features in a deterministic order.
+- The same tabular schema MUST be serialized in compiler metadata as `telemetry_feature_set_json` and `telemetry_feature_set_sha256` so offline KB ingestion and online scoring use the same columns.
+- `RunSymbolicRewriteStageResponse` MUST include the executed `stage`, the `stage_index`, the stage-specific `stage_outcome`, and the `replay_digest` for that stage.
+- Stage log entries MUST be emitted with the same `stage` and `stage_index` values so each DPDA step can be replayed and audited independently.
+- Every scoring request MUST also emit an immutable audit record containing caller identity, tenant, active policy snapshot version, model version, retrieval sources, and final decision.
+- The explainability envelope MUST be derived from the minimized/redacted feature vector and the immutable policy snapshot, not from raw payloads.
+- Responses MUST remain bounded and MUST NOT return raw secrets, bearer tokens, or unredacted payload fragments.
+- Offline production-trace training is handled by the internal Neuro-DPDA service boundary via the KB-backed ingestion CLI/module path, not by a request-time RPC.
+- That offline path MUST only accept redacted, tenant-scoped bundles with explicit selection, approval, provenance, and replay metadata.
+
+#### Determinism requirements
+
+- The service MUST be deterministic for the same feature vector, contract version, active policy snapshot version, model snapshot version, stage, and deterministic seed.
+- The stage API MUST reproduce the same response for the same canonical input, stage index, and frozen snapshots.
+- The response MUST include a replay digest and a bounded confidence value.
+- The service output is advisory only and MUST NOT directly change security-relevant decisions.
+- Any recommendation intended for security-sensitive use MUST pass through validation before the policy engine sees it.
+- There MUST be no direct model-to-execution path.
+
+### 5.3 OptimizerService Graph Interface
+
+The internal optimizer contract MUST distinguish between the compiler-owned logical graph emitted by the compiler and the Driver Manager-owned physical graph emitted by the Driver Manager.
+
+Canonical request / response binding:
+
+```protobuf
+message LogicalGraphContext {
+  string graph_id = 1;
+  string graph_pair_id = 2;
+  string schema_version = 3;
+  string canonical_format = 4;
+  string canonical_graph_json = 5;
+  string canonical_sha256 = 6;
+  bool round_trip_stability = 7;
+}
+
+message PhysicalGraphContext {
+  string graph_id = 1;
+  string graph_pair_id = 2;
+  string schema_version = 3;
+  string canonical_format = 4;
+  string canonical_graph_json = 5;
+  string canonical_sha256 = 6;
+  bool round_trip_stability = 7;
+}
+
+message GraphInterfaceContext {
+  string graph_interface_id = 1;
+  LogicalGraphContext logical_graph = 2;
+  PhysicalGraphContext physical_graph = 3;
+  string alignment_sha256 = 4;
+}
+```
+
+Normative rules:
+
+- `graph_interface_id` MUST remain stable across request/response echoes for the same optimizer invocation.
+- `logical_graph.graph_pair_id` and `physical_graph.graph_pair_id` MUST be identical.
+- `graph_encoding` is a deprecated legacy alias for `logical_graph` only and MUST NOT be used to carry the physical graph.
+- The logical graph schema version MUST be `logical-compiler-graph-v1`.
+- The physical graph schema version MUST be `physical-topology-graph-v1`.
+- The optimizer MUST consume the compiler output directly through this interface; no ad hoc translation layer is permitted between compiler and driver-manager snapshots.
+- The optimizer MAY reject a request with `FAILED_PRECONDITION` when the logical/physical pair identifiers do not match.
+
+---
+
+## 6. Common Types
+
+Canonical shared types include:
+
+| **Type** | **Purpose** |
+|----------------------|------|
+| `CircuitPayload` | Circuit representation |
+| `AQOPayload` | AQO intermediate representation |
+| `DeviceInfo` | Device metadata |
+| `DeviceStatus` | Live telemetry |
+| `ExecutionMetrics` | Runtime metrics |
+| `CompilerTrace` | DPDA trace |
+| `TopologyGraph` | Device topology |
+| `JobSpec` | Workflow specification |
+
+---
+
+## 7. Error Model
+
+Internal APIs MUST use canonical gRPC status codes.
+
+No:
+```text
+success = false
+```
+
+patterns are permitted.
+
+### 7.1 Canonical gRPC Codes
+
+| **Code** | **Usage** |
+|----------------------|------|
+| `INVALID_ARGUMENT` | Validation failure |
+| `NOT_FOUND` | Missing resource |
+| `FAILED_PRECONDITION` | Invalid lifecycle state |
+| `RESOURCE_EXHAUSTED` | Quota exhaustion |
+| `UNAUTHENTICATED` | Missing auth |
+| `PERMISSION_DENIED` | Access denied |
+| `UNAVAILABLE` | Temporary outage |
+| `DEADLINE_EXCEEDED` | Timeout |
+| `UNIMPLEMENTED` | Unsupported RPC |
+| `INTERNAL` | Unexpected failure |
+
+---
+
+### 7.2 Retry Semantics
+
+Retry recommendations:
+
+| **Status** | **Retry** |
+|----------------------|------|
+| `UNAVAILABLE` | yes |
+| `DEADLINE_EXCEEDED` | yes |
+| `RESOURCE_EXHAUSTED` | backoff |
+| `INTERNAL` | conditional |
+| `INVALID_ARGUMENT` | never |
+| `PERMISSION_DENIED` | never |
+
+Exponential backoff REQUIRED.
+
+---
+
+## 8. Determinism Requirements
+
+All services MUST support deterministic replay where applicable.
+
+Deterministic replay requires:
+
+- fixed seeds,
+- version-pinned models,
+- topology snapshots,
+- compiler trace persistence,
+- immutable artifacts.
+
+---
+
+## 9. Observability Requirements
+
+#### OpenTelemetry
+
+All RPCs MUST create spans.
+
+Required attributes:
+
+| **Attribute** | **Description** |
+|----------------------|------|
+| `rpc.service` | gRPC service |
+| `rpc.method` | RPC method |
+| `eigen.job_id` | Job ID |
+| `eigen.device_id` | Backend |
+| `eigen.user_id` | User |
+| `eigen.trace_id` | Trace |
+
+#### Metrics
+
+Each RPC MUST expose:
+
+| **Metric** | **Type** |
+|----------------------|------|
+| `grpc_requests_total` | counter |
+| `grpc_failures_total` | counter |
+| `grpc_latency_ms` | histogram |
+
+#### Structured Logging
+
+All services MUST emit structured logs.
+
+Required fields:
+
+- `trace_id`,
+- `request_id`,
+- `service_id`,
+- `rpc_name`,
+- `latency_ms`,
+- `result_code`.
+
+---
+
+## 10. Security Requirements
+
+#### Mutual TLS
+
+Mandatory for ALL internal traffic.
+
+#### Service Identity
+
+Each service MUST authenticate using:
+
+- SPIFFE/SPIRE,
+- or signed JWT service identities.
+
+#### Least Privilege
+
+Each service account MUST have minimal scopes.
+
+Example:
+
+| **Service** | **Allowed Actions** |
+|----------------------|------|
+| Compiler | compile only |
+| Optimizer | optimize only |
+| Driver Manager | backend execution only |
+
+#### Auditability
+
+All privileged operations MUST be auditable.
+
+---
+
+## 11. Versioning Rules
+
+Proto contracts follow SemVer.
+
+#### Minor Versions
+
+May:
+
+- add optional fields,
+- add RPCs,
+- extend enums safely.
+
+#### Major Versions
+
+Required for:
+
+- field removal,
+- semantic changes,
+- required field additions.
+
+---
+
+## 12. CI/CD Requirements
+
+CI MUST enforce:
+
+- Buf breaking-change checks,
+- deterministic proto generation,
+- linting,
+- metadata propagation tests,
+- replay fixture validation,
+- backward compatibility tests.
+
+---
+
+## 13. Acceptance Criteria
+
+Implementation is compliant only if:
+
+- all RPCs use mTLS,
+- metadata propagation is enforced,
+- streaming APIs work,
+- deterministic replay passes,
+- observability instrumentation exists,
+- retries follow policy,
+- stubs are fully implemented,
+- QFS/KB services are exposed,
+- proto contracts are CI-protected.
+
+---
+
+## 14. Migration Requirements
+
+The following legacy behaviors MUST be removed:
+
+| Legacy Behavior | Replacement |
+|----------------------|------|
+| unsecured gRPC | mTLS |
+| missing metadata | mandatory propagation |
+| unary-only execution | async + streaming |
+| unimplemented stubs | fully implemented RPCs |
+| implicit auth trust | explicit service identity |
+
+---
+
+## 15. Source of Truth Statement
+
+This document is the authoritative specification for all internal gRPC APIs in Eigen OS.
+
+All implementations:
+
+- Rust,
+- Python,
+- Go,
+- SDKs,
+- test harnesses,
+- mock servers,
+
+MUST conform to this specification.
+
+If code diverges from this document, the implementation MUST be corrected.
+
+---
+
+## Appendix A. Diagrams
+
+### A.1 Architectural Alignment with Eigen OS
+
+![Architectural Alignment with Eigen OS](https://i.imgur.com/UASV5gf.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  subgraph Ingress[Ingress]
+    SA["System API<br/>(public boundary)"] --> KG[KernelGatewayService]
+  end
+
+  subgraph Orchestration[Orchestration]
+    KG --> QRTX[QRTX Orchestrator]
+  end
+
+  subgraph RuntimeServices[Runtime Services]
+    QRTX --> COMP[CompilationService]
+    QRTX --> OPT[OptimizerService]
+    QRTX --> DM[DriverManagerService]
+    QRTX --> QFS[QFSService]
+    QRTX --> KB[KnowledgeBaseService]
+  end
+
+  subgraph Hardware[Backend Boundary]
+    DM --> QDR[QDriver gRPC]
+    QDR --> BK["Backend / Provider"]
+  end
+
+  subgraph CrossCutting[Cross-cutting]
+    SEC["Security Module<br/>(mTLS + identity + policy)"] --- Ingress
+    OBS["Observability<br/>(OTel traces/metrics/logs)"] --- Orchestration
+    OBS --- RuntimeServices
+  end
+	style CrossCutting fill:#FFFFFF
+```
+
+</details>
+
+---
+
+### A.2 Transport Requirements
+
+![Transport Requirements](https://i.imgur.com/34laUka.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant A as Service A (caller)
+  participant B as Service B (callee)
+  participant CA as mTLS / CA
+  participant OTel as OTel Collector
+
+  A->>CA: mTLS handshake (client cert + server cert validation)
+  CA-->>A: session established
+  A->>B: gRPC over HTTP/2\nmetadata: traceparent, authorization,\nx-eigen-tenant-id, x-eigen-request-id,\nx-eigen-service-id, x-eigen-user-id
+  B-->>A: gRPC response\n(status + details)
+  A->>OTel: export spans/metrics/logs (bounded labels)
+  B->>OTel: export spans/metrics/logs (bounded labels)
+```
+
+</details>
+
+---
+
+### A.3 Core Services
+
+![Core Services](https://i.imgur.com/0mebOJO.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  KG[KernelGatewayService] -->|orchestrates| COMP[CompilationService]
+  KG -->|orchestrates| OPT[OptimizerService]
+  KG -->|orchestrates| DM[DriverManagerService]
+  KG -->|persists| QFS[QFSService]
+  KG -->|learn/ingest| KB[KnowledgeBaseService]
+
+  DM -->|exec| QDR[QDriver]
+  QDR --> BK[Backend]
+
+  %% side channels
+  COMP -. compiler trace refs .-> QFS
+  OPT -. placement/routing artifacts .-> QFS
+  DM -. execution telemetry refs .-> QFS
+  KG -. decision/explain artifacts .-> QFS
+  KG -. records/feedback .-> KB
+```
+
+</details>
+
+---
+
+### A.4 KernelGatewayService
+
+![KernelGatewayService](https://i.imgur.com/2fN7UmR.png)
+
+<details>
+<summary>code</summary>
+
+```text
+stateDiagram-v2
+  [*] --> PENDING
+  PENDING --> COMPILING
+  COMPILING --> QUEUED
+  QUEUED --> RUNNING
+  RUNNING --> DONE
+  RUNNING --> ERROR
+  QUEUED --> CANCELLED
+  RUNNING --> CANCELLED
+  COMPILING --> CANCELLED
+  PENDING --> CANCELLED
+
+  %% timeout is a reason, not a public state
+  RUNNING --> ERROR: deadline_exceeded
+```
+
+</details>
+
+---
+
+### A.5 PollJobUpdates
+
+![PollJobUpdates](https://i.imgur.com/DatbBWG.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant Client as Internal Client
+  participant KG as KernelGatewayService
+  participant QRTX as QRTX
+
+  Client->>KG: PollJobUpdates(job_id) (stream)
+  KG->>QRTX: Subscribe(job_id)
+  loop stream events
+    QRTX-->>KG: JobUpdateEvent(state/progress/refs)
+    KG-->>Client: JobUpdateEvent
+  end
+  Note over Client,KG: Heartbeats MUST be emitted under idle periods
+  Client->>KG: Cancel stream / deadline exceeded
+  KG->>QRTX: Cancel subscription + propagate cancellation
+```
+
+</details>
+
+---
+
+### A.6 CompilationService
+
+![CompilationService](https://i.imgur.com/k8SuINm.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant QRTX
+  participant COMP as CompilationService
+  participant QFS as QFSService
+
+  QRTX->>COMP: CompileJob / CompileCircuit\n(seed, policy_digest, traceparent)
+  COMP-->>QRTX: AQO + diagnostics + compiler_trace_ref
+  QRTX->>QFS: StoreArtifact(compiled/a qo + diagnostics + trace)
+  QFS-->>QRTX: artifact refs + digests
+```
+
+</details>
+
+---
+
+### A.7 DriverManagerService
+
+![DriverManagerService](https://i.imgur.com/c42q1X6.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant QRTX
+  participant DM as DriverManagerService
+  participant QDR as QDriver
+  participant BK as Backend
+  participant QFS as QFSService
+
+  QRTX->>DM: ExecuteCircuitAsync(payload or qfs_ref)
+  DM-->>QRTX: ExecutionHandle(handle_id)
+  QRTX->>DM: StreamExecutionUpdates(handle_id) (stream)
+  DM->>QDR: Execute(handle_id, translated payload)
+  QDR->>BK: Provider execute
+  loop updates
+    BK-->>QDR: queue/executing/done/error
+    QDR-->>DM: ExecutionEvent(...)
+    DM-->>QRTX: ExecutionEvent(...)
+  end
+  QRTX->>QFS: StoreArtifact(results / error / telemetry snapshots)
+```
+
+</details>
+
+---
+
+### A.8 OptimizerService
+
+![OptimizerService](https://i.imgur.com/2e7xiEa.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TD
+  A[OptimizeCircuitRequest] --> B["Feature extraction<br/>AQO graph + topology + calibration"]
+  B --> C["GNN inference (seeded if deterministic)"]
+  C --> D{"confidence >= threshold<br/>and policy allows?"}
+  D -->|yes| E[Generate placement/routing plan]
+  D -->|no| F[Deterministic fallback chain]
+  E --> V[Symbolic/structural validation]
+  F --> V
+  V -->|pass| OUT["OptimizeCircuitResponse<br/>optimized_circuit + plans + digest"]
+  V -->|fail| ERR["INVALID_ARGUMENT / FAILED_PRECONDITION<br/>+ EIGEN_OPT_* reason"]
+```
+
+</details>
+
+---
+
+### A.9 QFSService
+
+![QFSService](https://i.imgur.com/87glRWf.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant S as Any Service
+  participant QFS as QFSService
+
+  S->>QFS: StoreArtifact(ref_path, bytes, content_type, schema_version)
+  QFS-->>S: ArtifactHandle(ref, digest, size_bytes, created_at, producer)
+  S->>QFS: GetArtifact(ref)
+  QFS-->>S: bytes + handle
+  S->>QFS: ListArtifacts(prefix)
+  QFS-->>S: refs[] + handles[]
+  S->>QFS: CheckpointState / RestoreState (Phase-1)
+  QFS-->>S: checkpoint_ref / restored_ref
+```
+
+</details>
+
+---
+
+### A.10 Common Types
+
+![Common Types](https://i.imgur.com/G5z5z6b.png)
+
+<details>
+<summary>code</summary>
+
+```text
+classDiagram
+  class CircuitPayload {
+    +format: enum
+    +payload_bytes: bytes?
+    +qfs_ref: string?
+    +shots: int
+    +options: map<string,string>
+  }
+
+  class AQOPayload {
+    +version: string
+    +canonical_bytes: bytes
+    +digest: string
+  }
+
+  class TopologyGraph {
+    +nodes: int
+    +edges: int
+    +snapshot_digest: string
+  }
+
+  class ArtifactHandle {
+    +ref: string
+    +digest: string
+    +size_bytes: int
+    +content_type: string
+    +producer: string
+    +schema_version: string
+  }
+
+  CircuitPayload --> AQOPayload : may_wrap
+  AQOPayload --> TopologyGraph : optimized_against
+  CircuitPayload --> ArtifactHandle : may_reference
+```
+
+</details>
+
+---
+
+### A.11 Error Model
+
+![Error Model](https://i.imgur.com/zIn43vi.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  A[gRPC Status] --> B[google.rpc.ErrorInfo<br/>reason=EIGEN_*]
+  A --> C[google.rpc.BadRequest<br/>field violations]
+  A --> D[google.rpc.ResourceInfo<br/>resource context]
+  A --> E[google.rpc.RetryInfo<br/>retry delay]
+  A --> F["google.rpc.DebugInfo<br/>(internal only)"]
+  B --> Z[Client/Caller handling]
+  C --> Z
+  D --> Z
+  E --> Z
+  F --> Z
+```
+
+</details>
+
+---
+
+### A.12 Determinism Requirements
+
+![Determinism Requirements](https://i.imgur.com/WoW7lC0.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart TB
+  subgraph CanonInputs[Canonical deterministic inputs]
+    I1[contract_version]
+    I2[canonical request bytes]
+    I3[topology_snapshot_digest]
+    I4["calibration_snapshot_digest (or sentinel)"]
+    I5["policy_envelope_digest"]
+    I6["seed (required if deterministic=true)"]
+    I7["model_version / fallback marker"]
+  end
+
+  CanonInputs --> H["sha256(canonical_inputs)"]
+  H --> DEC[Deterministic decision output]
+  DEC --> OUT[Canonical outputs]
+  OUT --> DIG["replay_digest = sha256(inputs + outputs)"]
+  DIG --> QFS["Persist replay bundle + digest refs (QFS)"]
+	style CanonInputs fill:#FFFFFF
+```
+
+</details>
+
+---
+
+### A.13 Observability Requirements
+
+![Observability Requirements](https://i.imgur.com/WSf8Xwf.png)
+
+<details>
+<summary>code</summary>
+
+```text
+sequenceDiagram
+  autonumber
+  participant Caller
+  participant Callee
+  participant OTel as OTel Collector
+
+  Caller->>Callee: RPC (traceparent + bounded metadata)
+  Caller->>OTel: span.client (rpc.service, rpc.method, grpc.status_code)
+  Callee->>OTel: span.server (rpc.service, rpc.method, grpc.status_code)
+  Callee->>OTel: metrics grpc_requests_total{rpc,code}
+  Callee->>OTel: metrics grpc_latency_ms_bucket{rpc}
+  Callee->>OTel: logs {trace_id, request_id, service_id, rpc_name, result_code}
+  Note over Caller,Callee: job_id/tenant/user belong in traces/logs only (NOT metric labels)
+```
+
+</details>
+
+---
+
+### A.14 Security Requirements
+
+![Security Requirements](https://i.imgur.com/1w8lmPc.png)
+
+<details>
+<summary>code</summary>
+
+```text
+flowchart LR
+  subgraph Identity["mTLS + Service Identity"]
+    A["Caller cert / SPIFFE ID"] --> MTLS[mTLS]
+    MTLS --> B[Callee verifies identity]
+  end
+
+  B --> AuthZ["Policy decision (RBAC/ABAC)"]
+  AuthZ -->|allow| Exec[Execute RPC]
+  AuthZ -->|deny| Deny["PERMISSION_DENIED + ErrorInfo.reason"]
+
+  Exec --> Audit[Emit audit event]
+  Audit --> OBS[Observability stack]
+  Exec --> Redact[Redaction rules]
+  Redact --> Logs["Structured logs (no secrets)"]
+```
+
+</details>

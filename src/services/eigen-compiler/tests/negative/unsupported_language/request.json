@@ -1,0 +1,11 @@
+{
+  "rpc": "CompileCircuit",
+  "request": {
+    "language": "qasm3",
+    "source": "OPENQASM 3;"
+  },
+  "expected": {
+    "code": "INVALID_ARGUMENT",
+    "fields": ["language"]
+  }
+}

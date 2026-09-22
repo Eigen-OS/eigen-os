@@ -1,0 +1,16 @@
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+COPY src/services/neuro-symbolic-service /app/src/services/neuro-symbolic-service
+COPY proto /app/proto
+
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -e /app/src/services/neuro-symbolic-service
+
+EXPOSE 50081 50082
+
+CMD ["neuro-symbolic-service"]

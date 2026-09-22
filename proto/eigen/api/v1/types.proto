@@ -1,0 +1,155 @@
+syntax = "proto3";
+
+package eigen.api.v1;
+
+import "google/protobuf/timestamp.proto";
+
+import "google/protobuf/duration.proto";
+
+// Common types for the public Eigen OS API (MVP).
+// Source of truth: proto/ (see RFC 0004).
+
+
+// Canonical public request envelope for Product 1.0 public-boundary
+// closure. Servers MAY derive missing identity fields from transport
+// metadata, but persisted requests and conformance fixtures MUST use
+// these normalized semantics.
+message ApiRequestEnvelope {
+  // SemVer for the public contract payload. Default accepted value is
+  // "1.0.0" on the eigen.api.v1 compatibility line.
+  string contract_version = 1;
+
+  // Client request/correlation identifier. Mirrors x-request-id when
+  // carried in transport metadata.
+  string request_id = 2;
+
+  // Retry identity for idempotent mutating calls such as SubmitJob.
+  // Mirrors x-idempotency-key when carried in transport metadata.
+  string idempotency_key = 3;
+
+  // W3C TraceContext traceparent value. Mirrors traceparent metadata.
+  string traceparent = 4;
+
+  // Optional client deadline hint normalized by the System API before
+  // forwarding to internal services.
+  google.protobuf.Duration deadline = 5;
+
+  // Canonical tenant scope derived from auth context or request payload.
+  string tenant_id = 6;
+
+  // Canonical project scope inside tenant derived from auth context or
+  // request payload.
+  string project_id = 7;
+
+  // Optional SDK/CLI version. Mirrors x-client-version metadata.
+  string client_version = 8;
+}
+
+// --- Jobs ---
+
+enum JobState {
+  JOB_STATE_UNSPECIFIED = 0;
+  JOB_STATE_PENDING = 1;
+  JOB_STATE_COMPILING = 2;
+  JOB_STATE_QUEUED = 3;
+  JOB_STATE_RUNNING = 4;
+  JOB_STATE_DONE = 5;
+  JOB_STATE_ERROR = 6;
+  JOB_STATE_CANCELLED = 7;
+  JOB_STATE_TIMEOUT = 8;
+}
+
+message JobStatus {
+  string job_id = 1;
+  JobState state = 2;
+
+  // Optional stage label for UI/observability (e.g. "COMPILING", "EXECUTING").
+  string stage = 3;
+
+  // Optional progress hint in range [0..1].
+  float progress = 4;
+
+  // Optional human-readable message.
+  string message = 5;
+
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp updated_at = 7;
+
+  // Error payload for terminal ERROR state (see docs/reference/error-model.md).
+  string error_code = 20;        // Stable machine-readable reason.
+  string error_summary = 21;     // Human-readable summary.
+  string error_details_ref = 22; // QFS reference with full details (logs/trace).
+
+  // Topology lineage envelope for distributed tracing/debugging.
+  TopologyEnvelope topology = 23;
+}
+
+message JobUpdate {
+  string job_id = 1;
+  JobState state = 2;
+
+  string stage = 3;
+  float progress = 4;
+  string message = 5;
+
+  // Monotonic per-job sequence number, starts at 1.
+  uint64 event_seq = 6;
+
+  google.protobuf.Timestamp timestamp = 7;
+
+  // Topology lineage envelope for distributed tracing/debugging.
+  TopologyEnvelope topology = 8;
+}
+
+message TopologyEnvelope {
+  // SemVer for topology lineage contract.
+  string contract_version = 1;
+  string lineage_version = 2;
+  string cluster_id = 3;
+  string worker_id = 4;
+  string partition_id = 5;
+  uint32 attempt = 6;
+}
+
+// Job program sources for MVP.
+message EigenLangSource {
+  bytes source = 1;
+  string entrypoint = 2; // default: "main"
+  string sha256 = 3;     // optional; may be used for deduplication
+}
+
+message QasmSource {
+  bytes source = 1;
+  string version = 2; // e.g. "3"
+}
+
+message AqoRef {
+  // QFS ref of an AQO artifact.
+  string qfs_ref = 1;
+}
+
+// --- Devices ---
+
+enum DeviceStatus {
+  DEVICE_STATUS_UNSPECIFIED = 0;
+  DEVICE_STATUS_ONLINE = 1;
+  DEVICE_STATUS_OFFLINE = 2;
+  DEVICE_STATUS_CALIBRATING = 3;
+  DEVICE_STATUS_MAINTENANCE = 4;
+  DEVICE_STATUS_ERROR_STATUS = 5;
+}
+
+message DeviceInfo {
+  string device_id = 1;
+  string name = 2;
+
+  // e.g. "simulator", "ibmq", "rigetti".
+  string backend_type = 3;
+
+  DeviceStatus status = 4;
+
+  int32 queue_depth = 5;
+  int32 estimated_wait_sec = 6;
+
+  map<string, string> capabilities = 7;
+}

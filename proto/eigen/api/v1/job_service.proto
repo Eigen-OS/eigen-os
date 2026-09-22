@@ -1,0 +1,172 @@
+syntax = "proto3";
+
+package eigen.api.v1;
+
+import "google/protobuf/timestamp.proto";
+
+import "eigen/api/v1/types.proto";
+
+// Public job lifecycle service (MVP).
+// Source of truth: RFC 0004 + docs/reference/api/grpc-public.md
+service JobService {
+  rpc SubmitJob(SubmitJobRequest) returns (SubmitJobResponse);
+  rpc GetJobStatus(GetJobStatusRequest) returns (GetJobStatusResponse);
+  rpc CancelJob(CancelJobRequest) returns (CancelJobResponse);
+  rpc StreamJobUpdates(StreamJobUpdatesRequest) returns (stream StreamJobUpdatesResponse);
+  rpc GetJobResults(GetJobResultsRequest) returns (GetJobResultsResponse);
+  rpc GetDispatchRationale(GetDispatchRationaleRequest) returns (GetDispatchRationaleResponse);
+}
+
+message SubmitJobRequest {
+  message TenantQuotaEnvelope {
+    // Contract SemVer for tenant envelope.
+    string contract_version = 1;
+    // Canonical tenant scope. If omitted server defaults to "tenant-default".
+    string tenant_id = 2;
+    // Canonical project scope inside tenant. If omitted server defaults to "project-default".
+    string project_id = 3;
+    // Baseline per-tenant concurrent queued jobs (0 => server default policy).
+    uint32 tenant_max_queued_jobs = 4;
+    // Baseline per-project concurrent queued jobs (0 => server default policy).
+    uint32 project_max_queued_jobs = 5;
+  }
+
+  ApiRequestEnvelope envelope = 12;
+
+  string name = 1;
+
+  oneof program {
+    EigenLangSource eigen_lang = 2;
+    QasmSource qasm = 3;
+    AqoRef aqo_ref = 4;
+  }
+
+  // Target identifier, e.g. "sim:local" or "vendor:device".
+  string target = 5;
+
+  // 0..100, default 50.
+  int32 priority = 6;
+
+  map<string, string> compiler_options = 7;
+  map<string, string> metadata = 8;
+  repeated string dependencies = 9;
+  TenantQuotaEnvelope tenant = 10;
+  string reservation_id = 11;
+
+  WorkloadContract workload = 13;
+}
+
+enum WorkloadFamilyKind {
+  WORKLOAD_FAMILY_KIND_UNSPECIFIED = 0;
+  WORKLOAD_FAMILY_KIND_QUANTUM_JOB = 1;
+  WORKLOAD_FAMILY_KIND_HYBRID_WORKFLOW = 2;
+  WORKLOAD_FAMILY_KIND_DISTRIBUTED_JOB = 3;
+  WORKLOAD_FAMILY_KIND_BENCHMARK_JOB = 4;
+  WORKLOAD_FAMILY_KIND_PIPELINE_JOB = 5;
+  WORKLOAD_FAMILY_KIND_REPLAY_JOB = 6;
+}
+
+message WorkloadTopology {
+  string cluster_id = 1;
+  int32 partition_count = 2;
+  repeated string partition_ids = 3;
+  repeated string preferred_workers = 4;
+}
+
+message WorkloadContract {
+  WorkloadFamilyKind kind = 1;
+  string execution_profile = 2;
+  bool replayable = 3;
+  WorkloadTopology topology = 4;
+}
+
+message SubmitJobResponse {
+  string job_id = 1;
+  JobStatus status = 2;
+}
+
+message GetJobStatusRequest {
+  ApiRequestEnvelope envelope = 10;
+
+  string job_id = 1;
+}
+
+message GetJobStatusResponse {
+  JobStatus status = 1;
+}
+
+message CancelJobRequest {
+  ApiRequestEnvelope envelope = 10;
+
+  string job_id = 1;
+}
+
+message CancelJobResponse {
+  // true if a cancellation request was accepted.
+  bool accepted = 1;
+}
+
+message StreamJobUpdatesRequest {
+  ApiRequestEnvelope envelope = 10;
+
+  string job_id = 1;
+
+  // Best-effort resume point (MVP): server MAY start from the next event.
+  uint64 last_event_seq = 2;
+}
+
+message StreamJobUpdatesResponse {
+  JobUpdate update = 1;
+}
+
+message GetJobResultsRequest {
+  ApiRequestEnvelope envelope = 10;
+
+  string job_id = 1;
+}
+
+message GetJobResultsResponse {
+  string job_id = 1;
+  JobState state = 2;
+
+  // Generic quantum result payload (MVP): normalized histogram.
+  map<string, int64> counts = 10;
+  map<string, string> metadata = 11;
+
+  // If job ended in ERROR, these fields provide the reason + details pointer.
+  string error_code = 20;
+  string error_summary = 21;
+  string error_details_ref = 22;
+
+  google.protobuf.Timestamp completed_at = 30;
+}
+
+message GetDispatchRationaleRequest {
+  ApiRequestEnvelope envelope = 10;
+  
+  string job_id = 1;
+}
+
+message DispatchRationale {
+  // Explicit explainability contract version (SemVer).
+  string version = 1;
+  // Scheduler/device-aware policy version used for this decision.
+  string policy_version = 2;
+  // Stable dispatch reason codes. Removing codes is a MAJOR change.
+  repeated string reason_codes = 3;
+  // Chosen backend target (for example: "sim:local").
+  string selected_backend = 4;
+  // Logical queue label used at dispatch time.
+  string selected_queue = 5;
+  // Additional non-breaking metadata.
+  map<string, string> attributes = 6;
+  // Correlation fields for troubleshooting.
+  string timeline_ref = 7;
+  string logs_ref = 8;
+  string trace_id = 9;
+  string trace_ref = 10;
+}
+
+message GetDispatchRationaleResponse {
+  DispatchRationale rationale = 1;
+}

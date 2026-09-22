@@ -1,0 +1,37 @@
+groups:
+  - name: eigen-stage-slo
+    interval: 30s
+    rules:
+      - alert: EigenStageQueueLatencyP95Degraded
+        expr: eigen_stage_latency_seconds{stage="queue",quantile="0.95"} > 0.5
+        for: 5m
+        labels: { severity: warning, team: runtime }
+        annotations:
+          summary: "Queue stage p95 latency above SLO"
+
+      - alert: EigenStageCompileLatencyP95Degraded
+        expr: eigen_stage_latency_seconds{stage="compile",quantile="0.95"} > 2.5
+        for: 5m
+        labels: { severity: warning, team: runtime }
+        annotations:
+          summary: "Compile stage p95 latency above SLO"
+
+      - alert: EigenStageExecuteLatencyP99Critical
+        expr: eigen_stage_latency_seconds{stage="execute",quantile="0.99"} > 12
+        for: 10m
+        labels: { severity: critical, team: runtime }
+        annotations:
+          summary: "Execute stage p99 latency above SLO"
+
+      - alert: EigenStageErrorRateCritical
+        expr: |
+          eigen_stage_error_rate{stage="queue"} > 0.005 or
+          eigen_stage_error_rate{stage="compile"} > 0.01 or
+          eigen_stage_error_rate{stage="schedule"} > 0.005 or
+          eigen_stage_error_rate{stage="execute"} > 0.02 or
+          eigen_stage_error_rate{stage="result"} > 0.01
+        for: 10m
+        labels: { severity: critical, team: runtime }
+        annotations:
+          summary: "Stage error rate above SLO"
+          

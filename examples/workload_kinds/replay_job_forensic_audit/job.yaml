@@ -1,0 +1,31 @@
+apiVersion: eigen.os/v1
+kind: QuantumJob
+metadata:
+  name: vqe-forensic-replay
+  labels:
+    example: "true"
+    domain: audit
+    workload: replay
+spec:
+  target: runtime:deterministic
+  program:
+    uri: qfs://artifacts/jobs/vqe-2026-06-18/program.py
+  entrypoint: main
+  priority: 90
+  workload:
+    kind: ReplayJob
+    execution_profile: replay
+    replayable: true
+    backend_target: runtime:deterministic
+    replay:
+      enabled: true
+      deterministic_seed: 12345
+  security:
+    sandbox: strict
+  observability:
+    tracing: true
+    explainability_level: L3_FORENSIC
+  metadata:
+    source_job_id: "job-8cc4447b4a304c61"
+    trace_id: "trace-vqe-2026-06-18"
+    domain: "audit"

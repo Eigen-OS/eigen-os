@@ -1,0 +1,7 @@
+[
+  "DeviceScore",
+  "DeviceScoreTieBreak",
+  "QueueEmpty",
+  "StarvationPrevention",
+  "WeightedFairness"
+]

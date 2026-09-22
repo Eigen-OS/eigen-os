@@ -1,0 +1,29 @@
+{
+  "fixture_version": "1.0.0",
+  "captured_at": "2026-05-16T00:00:00Z",
+  "probes": {
+    "compile_latency_ms": {
+      "sample_size": 20,
+      "p50": 41,
+      "p95": 58,
+      "budget_ms": 70
+    },
+    "scheduler_enqueue_p95_ms": {
+      "sample_size": 100,
+      "p95": 22,
+      "budget_ms": 40
+    },
+    "kb_indexed_query_latency_ms": {
+      "sample_size": 100,
+      "p50": 8,
+      "p95": 15,
+      "budget_ms": 30
+    },
+    "dataset_ingestion_seconds": {
+      "dataset_id": "phase8a-bounded-fixture-v1",
+      "records": 1000,
+      "duration": 12,
+      "max_seconds": 20
+    }
+  }
+}

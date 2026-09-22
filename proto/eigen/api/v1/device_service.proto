@@ -1,0 +1,64 @@
+syntax = "proto3";
+
+package eigen.api.v1;
+
+import "google/protobuf/timestamp.proto";
+
+import "eigen/api/v1/types.proto";
+
+// Public device querying/reservation service (MVP).
+// Source of truth: RFC 0004 + docs/reference/api/grpc-public.md
+service DeviceService {
+  rpc ListDevices(ListDevicesRequest) returns (ListDevicesResponse);
+  rpc GetDeviceDetails(GetDeviceDetailsRequest) returns (GetDeviceDetailsResponse);
+  rpc GetDeviceStatus(GetDeviceStatusRequest) returns (GetDeviceStatusResponse);
+  rpc ReserveDevice(ReserveDeviceRequest) returns (ReserveDeviceResponse);
+}
+
+message ListDevicesRequest {
+  ApiRequestEnvelope envelope = 10;
+
+  // Optional filter, e.g. "simulator".
+  string backend_type = 1;
+}
+
+message ListDevicesResponse {
+  repeated DeviceInfo devices = 1;
+}
+
+message GetDeviceDetailsRequest {
+  ApiRequestEnvelope envelope = 10;
+
+  string device_id = 1;
+}
+
+message GetDeviceDetailsResponse {
+  DeviceInfo device = 1;
+}
+
+message GetDeviceStatusRequest {
+  ApiRequestEnvelope envelope = 10;
+
+  string device_id = 1;
+}
+
+message GetDeviceStatusResponse {
+  string device_id = 1;
+  DeviceStatus status = 2;
+  int32 queue_depth = 3;
+  int32 estimated_wait_sec = 4;
+  map<string, string> metadata = 5;
+}
+
+message ReserveDeviceRequest {
+  ApiRequestEnvelope envelope = 10;
+  
+  string device_id = 1;
+  int32 ttl_seconds = 2;
+  string purpose = 3;
+}
+
+message ReserveDeviceResponse {
+  string reservation_id = 1;
+  google.protobuf.Timestamp expires_at = 2;
+}

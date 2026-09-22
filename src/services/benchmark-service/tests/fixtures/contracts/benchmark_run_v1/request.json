@@ -1,0 +1,9 @@
+{
+  "idempotency_key": "phase3-run-001",
+  "config": {
+    "dataset": "qsbench-core",
+    "dataset_version": "2026.04.27",
+    "backend": "simulator",
+    "seed": 42
+  }
+}

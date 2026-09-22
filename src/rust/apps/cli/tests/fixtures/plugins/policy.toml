@@ -1,0 +1,16 @@
+manifest_schema_version = "2.1.0"
+plugin_id = "io.eigen.fixture.policy"
+plugin_version = "0.1.0"
+plugin_type = "policy"
+plugin_api_version = "2.1.0"
+eigen_os_compatibility = ">=0.6.0,<1.0.0"
+eigen_lang_version = "0.1.0"
+signature_bundle_ref = "oci://fixtures/policy.sig"
+
+[capabilities]
+hooks = ["schedule.plan"]
+
+[policy]
+reason_codes = ["POLICY_TIMEOUT", "POLICY_OUTPUT_INVALID"]
+timeout_ms = 500
+fallback_mode = "deterministic_kernel"

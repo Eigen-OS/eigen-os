@@ -1,0 +1,27 @@
+{
+  "schema_version": "policy_capability_matrix.v1",
+  "matrix_version": "1.0.0",
+  "stage": "phase-9c",
+  "ownership": {
+    "core": [
+      "deterministic_weighted_fair_queueing",
+      "tenant_project_quota_admission",
+      "starvation_prevention"
+    ],
+    "plugin": [
+      "batch_dispatch",
+      "preemption",
+      "backfill",
+      "drift_aware_scoring"
+    ]
+  },
+  "contracts": {
+    "policy_plugin_api_version": "1.0.0",
+    "fallback_reason_schema_version": "1.0.0"
+  },
+  "determinism_guards": [
+    "core_scheduler_operates_with_plugins_disabled",
+    "plugin_timeout_isolation_with_deterministic_fallback",
+    "plugin_malformed_output_isolation_with_reason_codes"
+  ]
+}

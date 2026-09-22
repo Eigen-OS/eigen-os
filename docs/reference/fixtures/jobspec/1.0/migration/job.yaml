@@ -1,0 +1,8 @@
+apiVersion: eigen.os/v0.1
+kind: QuantumJob
+metadata:
+  name: legacy-migration
+spec:
+  program_path: program.eigen.py
+  target: sim:local
+  

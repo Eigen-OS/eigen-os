@@ -1,0 +1,348 @@
+services:
+  system-api:
+    build:
+      context: ../../..
+      dockerfile: deploy/local/docker/Dockerfile.api
+    container_name: eigen-system-api
+    environment:
+      SYSTEM_API_GRPC_BIND: 0.0.0.0:50051
+      SYSTEM_API_METRICS_PORT: 9090
+      SYSTEM_API_AUTH_MODE: allow_all
+      OTEL_SERVICE_NAME: eigen-system-api
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      OTEL_TRACES_EXPORTER: otlp
+      OTEL_METRICS_EXPORTER: none
+      OTEL_LOGS_EXPORTER: none
+      EIGEN_QFS_BACKEND: s3
+      EIGEN_QFS_S3_BUCKET: eigen-qfs
+      EIGEN_QFS_S3_ENDPOINT: http://minio:9000
+      AWS_ACCESS_KEY_ID: eigen
+      AWS_SECRET_ACCESS_KEY: eigen-password
+      AWS_REGION: us-east-1
+      KERNEL_ENDPOINT: eigen-kernel:50052
+      EIGEN_KERNEL_ENDPOINT: eigen-kernel:50052
+      EIGEN_COMPILER_ENDPOINT: eigen-compiler:50071
+      DRIVER_MANAGER_ENDPOINT: driver-manager:50061
+    ports:
+      - "50051:50051"
+      - "9090:9090"
+      
+    depends_on:
+      - minio
+      - minio-init
+      - eigen-kernel
+      - eigen-compiler
+      - driver-manager
+    restart: unless-stopped
+
+  neuro-symbolic-service:
+    build:
+      context: ../../..
+      dockerfile: deploy/local/docker/Dockerfile.neuro-symbolic-service
+    container_name: eigen-neuro-symbolic-service
+    environment:
+      NEURO_SYMBOLIC_GRPC_BIND: 0.0.0.0:50081
+      NEURO_SYMBOLIC_METRICS_PORT: 50082
+      NEURO_SYMBOLIC_INTERNAL_TOKEN: dev-internal-token
+      NEURO_SYMBOLIC_ALLOWED_CALLERS: eigen-kernel,eigen-compiler
+      NEURO_SYMBOLIC_POLICY_SNAPSHOT_VERSION: 1.0.0
+      NEURO_SYMBOLIC_MODEL_VERSION: dpda-model-v1
+
+      OTEL_SERVICE_NAME: eigen-neuro-symbolic-service
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      OTEL_TRACES_EXPORTER: otlp
+      OTEL_METRICS_EXPORTER: none
+      OTEL_LOGS_EXPORTER: none
+      NEURO_SYMBOLIC_SERVICE_IDENTITY: neuro-symbolic-service
+      NEURO_SYMBOLIC_MODEL_REGISTRY_PATH: /models/model-registry.json
+      NEURO_SYMBOLIC_MODEL_ARTIFACT_ROOT: /models
+      NEURO_SYMBOLIC_MODEL_REGISTRY_SIGNING_KEY: registry-secret-key
+    ports:
+      - "50081:50081"
+      - "50082:50082"
+    volumes:
+      - ../../../deploy/local/fixtures/neuro-symbolic:/models:ro
+
+  eigen-kernel:
+    build:
+      context: ../../..
+      dockerfile: deploy/local/docker/Dockerfile.kernel
+    container_name: eigen-kernel
+    environment:
+      EIGEN_KERNEL_ADDR: 0.0.0.0:50052
+      EIGEN_QFS_BACKEND: s3
+      EIGEN_QFS_S3_BUCKET: eigen-qfs
+      EIGEN_QFS_S3_ENDPOINT: http://minio:9000
+      EIGEN_QFS_LOCAL_ROOT: /tmp/eigen/qfs
+      OTEL_SERVICE_NAME: eigen-kernel
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      OTEL_TRACES_EXPORTER: otlp
+      OTEL_METRICS_EXPORTER: none
+      OTEL_LOGS_EXPORTER: none
+      AWS_ACCESS_KEY_ID: eigen
+      AWS_SECRET_ACCESS_KEY: eigen-password
+      AWS_REGION: us-east-1
+      EIGEN_COMPILER_ENDPOINT: http://eigen-compiler:50071
+      DRIVER_MANAGER_ENDPOINT: http://driver-manager:50061
+      RUST_LOG: info
+    ports:
+      - "50052:50052"
+    depends_on:
+      - eigen-compiler
+      - driver-manager
+      - minio
+      - minio-init
+    restart: unless-stopped
+
+  eigen-compiler:
+    build:
+      context: ../../..
+      dockerfile: deploy/local/docker/Dockerfile.compiler
+    container_name: eigen-compiler
+    environment:
+      EIGEN_COMPILER_GRPC_BIND: 0.0.0.0:50071
+      EIGEN_COMPILER_METRICS_PORT: 9093
+      OTEL_SERVICE_NAME: eigen-compiler
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      OTEL_TRACES_EXPORTER: otlp
+      OTEL_METRICS_EXPORTER: none
+      OTEL_LOGS_EXPORTER: none
+      EIGEN_QFS_BACKEND: s3
+      EIGEN_QFS_S3_BUCKET: eigen-qfs
+      EIGEN_QFS_S3_ENDPOINT: http://minio:9000
+      AWS_ACCESS_KEY_ID: eigen
+      AWS_SECRET_ACCESS_KEY: eigen-password
+      AWS_REGION: us-east-1
+    ports:
+      - "50071:50071"
+      - "9093:9093"
+    restart: unless-stopped
+
+  driver-manager:
+    build:
+      context: ../../..
+      dockerfile: deploy/local/docker/Dockerfile.driver-manager
+    container_name: eigen-driver-manager
+    environment:
+      DRIVER_MANAGER_GRPC_BIND: 0.0.0.0:50061
+      DRIVER_MANAGER_METRICS_PORT: 9092
+      OTEL_SERVICE_NAME: eigen-driver-manager
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      OTEL_TRACES_EXPORTER: otlp
+      OTEL_METRICS_EXPORTER: none
+      OTEL_LOGS_EXPORTER: none
+      DRIVER_MANAGER_PLUGIN_PENNYLANE_ENABLED: "true"
+      DRIVER_MANAGER_PLUGIN_PENNYLANE_DEVICE: default.qubit
+    ports:
+      - "50061:50061"
+      - "9092:9092"
+    restart: unless-stopped
+  
+  benchmark-service:
+    build:
+      context: ../../..
+      dockerfile: deploy/local/docker/Dockerfile.benchmark-service
+    container_name: eigen-benchmark-service
+    profiles:
+      - benchmark
+    working_dir: /app/src/services/benchmark-service
+    command: ["pytest", "-q", "tests"]
+    
+  minio:
+    image: quay.io/minio/minio:latest
+    container_name: eigen-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: eigen
+      MINIO_ROOT_PASSWORD: eigen-password
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/ready"]
+      interval: 5s
+      timeout: 2s
+      retries: 20
+    restart: unless-stopped
+
+  minio-init:
+    image: quay.io/minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -lc "
+      mc alias set eigen http://minio:9000 eigen eigen-password &&
+      mc mb -p eigen/eigen-qfs || true
+      "
+    
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.121.0
+    container_name: eigen-otel-collector
+    command: ["--config=/etc/otelcol/config.yml"]
+    ports:
+    - "4317:4317"
+    - "4318:4318"
+    volumes:
+      - ../observability/otel-collector.yml:/etc/otelcol/config.yml:ro
+    depends_on:
+      - tempo
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.5.4
+    container_name: eigen-prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+      - --web.external-url=http://localhost:9091
+    ports:
+      - "9091:9090"
+    volumes:
+      - ../observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../../../monitoring/metrics/prometheus:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+    depends_on:
+      - system-api
+      - neuro-symbolic-service
+      - eigen-kernel
+      - eigen-compiler
+      - driver-manager
+      - observability-metrics
+    restart: unless-stopped
+
+  loki:
+    image: grafana/loki:latest
+    container_name: eigen-loki
+    command: -config.file=/etc/loki/loki.yml
+    volumes:
+      - ../observability/loki.yml:/etc/loki/loki.yml:ro
+      - loki-data:/loki
+    restart: unless-stopped
+
+  tempo:
+    image: grafana/tempo:2.10.7
+    container_name: eigen-tempo
+    command: ["-config.file=/etc/tempo/tempo.yml"]
+    volumes:
+      - ../observability/tempo.yml:/etc/tempo/tempo.yml:ro
+      - tempo-data:/var/tempo
+    restart: unless-stopped
+
+  observability-metrics:
+    image: python:3.12-slim
+    container_name: eigen-observability-metrics
+    working_dir: /repo
+    command:
+      - python
+      - /repo/deploy/local/observability/observability_gateway.py
+      - --mode
+      - metrics
+      - --port
+      - "9100"
+    volumes:
+      - ../../..:/repo:ro
+    ports:
+      - "9100:9100"
+    restart: unless-stopped
+
+  loki-landing:
+    image: python:3.12-slim
+    container_name: eigen-loki-landing
+    working_dir: /repo
+    command:
+      - python
+      - /repo/deploy/local/observability/observability_gateway.py
+      - --mode
+      - proxy
+      - --port
+      - "3100"
+      - --title
+      - Loki
+      - --upstream-base-url
+      - http://loki:3100
+    volumes:
+      - ../../..:/repo:ro
+    ports:
+      - "3100:3100"
+    depends_on:
+      - loki
+    restart: unless-stopped
+
+  tempo-landing:
+    image: python:3.12-slim
+    container_name: eigen-tempo-landing
+    working_dir: /repo
+    command:
+      - python
+      - /repo/deploy/local/observability/observability_gateway.py
+      - --mode
+      - proxy
+      - --port
+      - "3200"
+      - --title
+      - Tempo
+      - --upstream-base-url
+      - http://tempo:3200
+    volumes:
+      - ../../..:/repo:ro
+    ports:
+      - "3200:3200"
+    depends_on:
+      - tempo
+    restart: unless-stopped
+
+  promtail:
+    image: grafana/promtail:3.6.11
+    container_name: eigen-promtail
+    command: -config.file=/etc/promtail/promtail.yml
+    volumes:
+      - ../observability/promtail.yml:/etc/promtail/promtail.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - promtail-positions:/tmp
+    depends_on:
+      - loki
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:13.0.2
+    container_name: eigen-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_USERS_DEFAULT_THEME: dark
+      GF_PLUGINS_DISABLE_PLUGINS: elasticsearch
+      GF_FEATURE_TOGGLES_tempoSearch: "true"
+      GF_FEATURE_TOGGLES_lokiLogsDataplane: "true"
+      GF_FEATURE_TOGGLES_traceQLStreaming: "true"
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ../observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../../../monitoring/dashboards:/var/lib/grafana/dashboards/eigen:ro
+    depends_on:
+      - prometheus
+      - loki
+      - tempo
+    restart: unless-stopped
+
+volumes:
+  minio-data:
+  grafana-data:
+  loki-data:
+  tempo-data:
+  promtail-positions:
+  prometheus-data:
+  

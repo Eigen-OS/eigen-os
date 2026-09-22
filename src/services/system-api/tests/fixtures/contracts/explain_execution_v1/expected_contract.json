@@ -1,0 +1,23 @@
+{
+  "response_required_fields": [
+    "version",
+    "policy_version",
+    "reason_codes",
+    "selected_backend",
+    "selected_queue",
+    "attributes",
+    "timeline_ref",
+    "logs_ref",
+    "trace_id",
+    "trace_ref"
+  ],
+  "attributes_required_keys": [
+    "policy_branch",
+    "fallback_reason",
+    "artifact_version",
+    "topology_contract_version"
+  ],
+  "timing_required_fields": [],
+  "error_expected_invalid_reason": "EIGEN_PUBLIC_EXPLAIN_INVALID_REQUEST",
+  "error_expected_missing_reason": "EIGEN_PUBLIC_EXPLAIN_DECISION_NOT_FOUND"
+}

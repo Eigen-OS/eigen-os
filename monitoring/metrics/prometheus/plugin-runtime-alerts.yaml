@@ -1,0 +1,39 @@
+groups:
+  - name: eigen-plugin-runtime
+    interval: 30s
+    rules:
+      - alert: EigenPluginFailureRateHigh
+        expr: increase(eigen_plugin_failures_total[15m]) / clamp_min(increase(eigen_plugin_attempts_total[15m]), 1) > 0.10
+        for: 15m
+        labels: { severity: critical, team: sre }
+        annotations:
+          summary: "Plugin failure rate above 10% over 15m"
+
+      - alert: EigenPluginStartupSLOBreach
+        expr: histogram_quantile(0.95, sum by (le) (rate(eigen_plugin_startup_critical_path_ms_bucket[5m]))) > 2000
+        for: 10m
+        labels: { severity: critical, team: runtime }
+        annotations:
+          summary: "Plugin startup critical path p95 exceeds 2000ms SLO"
+
+      - alert: EigenPluginTrustRejectBurst
+        expr: increase(eigen_plugin_signature_rejects_total[15m]) > 5
+        for: 10m
+        labels: { severity: warning, team: security }
+        annotations:
+          summary: "Signature/trust rejections exceed baseline"
+
+      - alert: EigenPluginSandboxRejectDetected
+        expr: increase(eigen_plugin_sandbox_rejects_total[10m]) > 0
+        for: 5m
+        labels: { severity: critical, team: security }
+        annotations:
+          summary: "Sandbox policy rejected one or more plugin activations"
+
+      - alert: EigenPluginCompatibilityRejectBurst
+        expr: increase(eigen_plugin_compatibility_rejects_total[15m]) > 10
+        for: 10m
+        labels: { severity: warning, team: runtime }
+        annotations:
+          summary: "Compatibility gate rejects exceed baseline"
+          

@@ -1,0 +1,8 @@
+apiVersion: eigen.os/v1
+kind: QuantumJob
+metadata:
+  name: invalid
+spec:
+  target: sim:local
+  program:
+    path: ../escape.py

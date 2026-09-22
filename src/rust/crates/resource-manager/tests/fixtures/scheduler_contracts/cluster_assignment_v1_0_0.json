@@ -1,0 +1,23 @@
+{
+  "cluster_contract_version": "1.0.0",
+  "assignment_id": "job-contract-cluster-01-a-000011",
+  "job_id": "job-contract-cluster-01",
+  "candidate_workers": [
+    "worker-a",
+    "worker-b"
+  ],
+  "selected_worker_id": "worker-a",
+  "assignment_trace": [
+    "filter-offline-draining-and-lost",
+    "sort-by-load-asc-worker-id-asc"
+  ],
+  "lineage": {
+    "lineage_version": "1.0.0",
+    "cluster_id": "cluster-contract-01",
+    "assignment_id": "job-contract-cluster-01-a-000011",
+    "assignment_sequence": 11,
+    "assignment_epoch_ms": 1746200000000
+  },
+  "fallback_applied": false,
+  "fallback_reason": null
+}

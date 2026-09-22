@@ -1,0 +1,18 @@
+{
+  "fixture_version": "1.0.0",
+  "generated_at": "2026-05-17T00:00:00Z",
+  "queue_scale": {
+    "jobs_total": 10000,
+    "min_required": 10000,
+    "profile": "phase8b.synthetic.queue-scale.v1"
+  },
+  "enqueue_latency_trend": {
+    "p95_ms": 92,
+    "budget_ms": 100,
+    "profile": "phase8b.benchmark.enqueue-latency.v1"
+  },
+  "integrity": {
+    "artifact_suite_passed": true,
+    "checkpoint_suite_passed": true
+  }
+}

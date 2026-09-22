@@ -1,0 +1,22 @@
+{
+  "contract": "knowledge_base_api",
+  "version": "1.0.0",
+  "reason_codes": [
+    "KB_INVALID_ARGUMENT",
+    "KB_NOT_FOUND",
+    "KB_INDEX_UNAVAILABLE",
+    "KB_RATE_LIMITED",
+    "KB_INTERNAL"
+  ],
+  "retry_semantics": {
+    "KB_INVALID_ARGUMENT": "NEVER",
+    "KB_NOT_FOUND": "NEVER",
+    "KB_INDEX_UNAVAILABLE": "RETRY_WITH_BACKOFF",
+    "KB_RATE_LIMITED": "RETRY_WITH_BACKOFF",
+    "KB_INTERNAL": "SAFE_RETRY"
+  },
+  "deprecation_policy": {
+    "min_supported_minor_releases": 2,
+    "min_supported_days": 90
+  }
+}

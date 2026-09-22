@@ -1,0 +1,25 @@
+apiVersion: eigen.os/v1
+kind: QuantumJob
+metadata:
+  name: materials-state-prep-demo
+  labels:
+    example: "true"
+    domain: materials-science
+    workload: quantum
+spec:
+  program:
+    path: program.eigen.py
+    entrypoint: main
+  target: sim:local
+  priority: 55
+  workload:
+    kind: QuantumJob
+    execution_profile: circuit
+    replayable: false
+    backend_target: sim:local
+  metadata:
+    shots: "4096"
+    seed: "11"
+    ansatz: "state-preparation"
+    domain: "materials-science"
+    backend: "simulator"

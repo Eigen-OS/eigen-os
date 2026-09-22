@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=80.9.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "eigen-compiler"
+version = "0.4.0"
+description = "Eigen OS compiler service (MVP scaffold)."
+requires-python = ">=3.12"
+
+dependencies = [
+  "grpcio>=1.76",
+  "grpcio-status>=1.76",
+  "protobuf>=6.33",
+  "googleapis-common-protos>=1.72",
+  "boto3>=1.34",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

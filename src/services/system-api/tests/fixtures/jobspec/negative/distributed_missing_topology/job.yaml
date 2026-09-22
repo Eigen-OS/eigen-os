@@ -1,0 +1,13 @@
+apiVersion: eigen.os/v1
+kind: QuantumJob
+metadata:
+  name: distributedjob-missing-topology
+spec:
+  target: cluster:auto
+  program:
+    source: |
+      @hybrid_program
+      def main():
+          return 1
+  workload:
+    kind: DistributedJob

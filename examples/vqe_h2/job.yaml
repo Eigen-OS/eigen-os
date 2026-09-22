@@ -1,0 +1,26 @@
+apiVersion: eigen.os/v0.1
+kind: QuantumJob
+metadata:
+  name: vqe-h2-demo
+  labels:
+    example: "false"
+    algorithm: "vqe"
+    molecule: "H2"
+spec:
+  program_path: program.eigen.py
+  entrypoint: vqe_h2
+  target: sim:local
+  priority: 60
+  workload:
+    kind: HybridWorkflow
+    execution_profile: hybrid
+    backend_target: sim:local
+  metadata:
+    shots: "8192"
+    max_iters: "60"
+    optimizer: "cobyla"
+    basis: "sto-3g"
+    molecule: "H2"
+    seed: "7"
+    noise_model: "depolarizing:0.001"
+    

@@ -1,0 +1,72 @@
+{
+  "artifacts": [
+    {
+      "path": "proto/eigen/api/v1/device_service.proto",
+      "sha256": "f4f5b84aba86a27afae33e1fd82959d8cc09bf94c855da789d0bdaf3c6cb912d"
+    },
+    {
+      "path": "proto/eigen/api/v1/job_service.proto",
+      "sha256": "48a761c3d440a392e8edd2066e035202268f61ac037ae9d2ebbccc3b834874f6"
+    },
+    {
+      "path": "proto/eigen/api/v1/knowledge_base_service.proto",
+      "sha256": "1f1c1c9a3c13599c513dcb0ddd5b6196cdc1acb93b0a666fe3999cae1aaac529"
+    },
+    {
+      "path": "proto/eigen/api/v1/types.proto",
+      "sha256": "598a2180e2eca2279e200ac800d1c2b66fe85b7073dc64d9a1f57b2125b0efda"
+    },
+    {
+      "path": "proto/eigen/internal/v1/compilation_service.proto",
+      "sha256": "672605192d1f892b5392f4d754d697b5eee928d202c4212522db9d46bd77d679"
+    },
+    {
+      "path": "proto/eigen/internal/v1/driver_manager_service.proto",
+      "sha256": "d34151466bcde68ed2a0b7688e245c8bd547701b3b64e1c32e19ccecb5197b0a"
+    },
+    {
+      "path": "proto/eigen/internal/v1/kernel_gateway.proto",
+      "sha256": "36267af3a26b3ad583a11eee62712448d5f4a330d2d3f452e91cc6a8dfc8fdee"
+    },
+    {
+      "path": "proto/eigen/internal/v1/types.proto",
+      "sha256": "e6afd3fb3bcb2ea4c5093df9453a7b917add8c93b8d75967bac89359572262c0"
+    },
+    {
+      "path": "src/rust/apps/cli/tests/fixtures/plugin_compatibility_matrix_v1.json",
+      "sha256": "70c8606d6017d06a8ae78fc306b48cd84817b8d50686fcc31797e14ce1dcef89"
+    },
+    {
+      "path": "src/rust/crates/resource-manager/tests/fixtures/scheduler_contracts/queue_delivery_contract_v1_0_0.json",
+      "sha256": "efc8b8ff1cb1b064a6248c111ed0b2332571c908d23ca241b20c22ac1f02bad5"
+    },
+    {
+      "path": "src/rust/crates/resource-manager/tests/fixtures/scheduler_contracts/queue_delivery_contract_v1_0_1.json",
+      "sha256": "7530003ad5dcd5a1c77434c04843fc91c52fed7ef81899fc0825fa02f4a88207"
+    },
+    {
+      "path": "src/services/neuro-symbolic-service/tests/fixtures/contracts/knowledge_base_v1/error_model_v1_0_0.json",
+      "sha256": "06bcabb1b49239b93bf78307bc849bfb9bee6f906fb9fbb7f35c48e10e26d337"
+    },
+    {
+      "path": "proto/eigen/internal/v1/optimizer_service.proto",
+      "sha256": "bb658a8407b01d3512b79c905c34e452d512ef09990f1c38532c5d52b4f51960"
+    },
+    {
+      "path": "src/services/system-api/tests/fixtures/contracts/optimizer_v1/service_contract_v1_0_0.json",
+      "sha256": "7ef76e61bb4f6325947d5f8ae4f8881976e2f0dfa911c1a8af509954932ff0c8"
+    },
+    {
+      "path": "src/services/neuro-symbolic-service/tests/fixtures/contracts/learning_control_plane_v1/control_plane_contract_v1_0_0.json",
+      "sha256": "585f2cca4615b66776c7e6d91b34c0584984e86d9993e9cb0a9a1deffd097692"
+    },
+    {
+      "path": "src/services/neuro-symbolic-service/tests/fixtures/contracts/knowledge_base_v1/decision_log_lineage_contract_v1_1_0.json",
+      "sha256": "9be0f3b2b20aa71f3f42cfb8d3774c54bb1348b92a5b55c5de18a987b09d18be"
+    },
+    {
+      "path": "src/services/system-api/tests/fixtures/contracts/system_api_rest_v1/parity_matrix_v1_0_0.json",
+      "sha256": "b7668ae89c4212a25415c76e9a414deac3c346cc7ae2a549c4699bb041dcc990"
+    }
+  ]
+}

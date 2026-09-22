@@ -1,0 +1,19 @@
+{
+  "feature_flags": {
+    "feature.kb_v1": "true",
+    "feature.optimizer_v1": "true",
+    "feature.learning_pipeline_v1": "true",
+    "feature.qfs_l2_checkpoint_v1": "true"
+  },
+  "required_results_metadata_keys": [
+    "results_ref",
+    "artifact_version",
+    "producer_version",
+    "result_envelope_ref",
+    "result_manifest_ref",
+    "feature.kb_v1",
+    "feature.optimizer_v1",
+    "feature.learning_pipeline_v1",
+    "feature.qfs_l2_checkpoint_v1"
+  ]
+}

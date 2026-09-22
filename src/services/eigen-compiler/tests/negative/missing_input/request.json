@@ -1,0 +1,10 @@
+{
+  "rpc": "CompileCircuit",
+  "request": {
+    "language": "eigen-lang"
+  },
+  "expected": {
+    "code": "INVALID_ARGUMENT",
+    "fields": ["input"]
+  }
+}

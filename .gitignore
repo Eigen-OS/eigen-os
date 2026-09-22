@@ -1,0 +1,33 @@
+# Rust
+/target/
+**/.rs.bk
+**/.rs~
+
+# Python
+**/__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs / runtime
+*.log
+logs/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Misc
+*.tmp
+*.bak

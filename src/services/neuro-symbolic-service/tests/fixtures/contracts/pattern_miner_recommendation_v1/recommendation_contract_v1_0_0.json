@@ -1,0 +1,36 @@
+{
+  "contract": "pattern_miner.recommendation",
+  "version": "1.0.0",
+  "semver_impact": "MINOR",
+  "determinism": {
+    "idempotent_ingest": true,
+    "cadence_seconds": 300,
+    "reproducible_for_same_snapshot_and_config_digest": true
+  },
+  "required_fields": [
+    "contract",
+    "version",
+    "snapshot_id",
+    "config_digest",
+    "query",
+    "recommendation",
+    "provenance",
+    "timing"
+  ],
+  "recommendation": {
+    "requires_confidence": true,
+    "requires_fallback_used": true,
+    "requires_fallback_reason_when_fallback_used": true
+  },
+  "provenance": {
+    "requires_source_record_ids": true,
+    "queryable_link_prefix": "kb://records/"
+  },
+  "deprecation_policy": {
+    "min_supported_minor_releases": 2,
+    "min_supported_days": 90
+  },
+  "compatibility": {
+    "breaking": false
+  }
+}
