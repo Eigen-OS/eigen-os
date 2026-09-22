@@ -22,6 +22,7 @@ __all__ = [
     "Operation",
     "OptimizationResult",
     "Param",
+    "PauliHamiltonian",
     "ProgramMetadata",
     "QubitRegister",
     "cp",
@@ -74,8 +75,18 @@ class Param:
 class Observable:
     terms: dict[str, Any] = field(default_factory=dict)
 
-    def __init__(self, **terms: Any):
-        object.__setattr__(self, "terms", dict(terms))
+    def __init__(self, terms: Mapping[str, Any] | None = None, **named_terms: Any):
+        if terms is not None and named_terms:
+            raise ValueError("provide either a term mapping or keyword terms, not both")
+        object.__setattr__(self, "terms", dict(terms if terms is not None else named_terms))
+
+
+@dataclass(frozen=True)
+class PauliHamiltonian(Observable):
+    """A numeric Pauli-string Hamiltonian for a reusable expectation objective."""
+
+    def __init__(self, terms: Mapping[str, Any]):
+        super().__init__(terms)
 
 
 @dataclass(frozen=True)
