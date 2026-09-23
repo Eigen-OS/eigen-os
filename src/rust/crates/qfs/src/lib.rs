@@ -23,6 +23,7 @@ pub use qfs_l2_checkpoint::{
     CheckpointBudgetPolicy, CheckpointCompatibilityWindow, CheckpointEnvelopeV1,
     CheckpointEnvelopeValidationError, CheckpointExtensions, CheckpointGuardrails,
     CheckpointIntegrity, CheckpointPayloadRefs, CheckpointProvenance, CheckpointTraceLinks,
+    CheckpointRestoreLineage, CheckpointRetentionPolicy,
     CHECKPOINT_ENVELOPE_SCHEMA_VERSION, CHECKPOINT_RUNTIME_API_VERSION,
     DEFAULT_MAX_CHECKPOINT_SIZE_BYTES, DEFAULT_MAX_RESTORE_COST_UNITS,
 };
