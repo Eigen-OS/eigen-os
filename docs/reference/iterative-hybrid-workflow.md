@@ -20,9 +20,18 @@ The lifecycle is strictly ordered:
 - **Optimize** supplies the evaluated parameters, objective, and iteration
   context to the activated optimizer plugin. Plugins cannot execute circuits or
   persist checkpoints.
-- **Checkpoint** persists the next candidate, opaque optimizer state, completed
-  step/evaluation counters, and prior objective in the QFS checkpoint envelope.
-  Resume restores exactly this state and never replays or invents evaluations.
+- **Checkpoint** persists an immutable QFS `CheckpointEnvelopeV1` after every
+  completed optimizer step. Its state payload contains the next candidate,
+  opaque optimizer state, completed step/evaluation counters, and prior
+  objective; its pinned provenance contains the workflow ID, optimizer plugin
+  ID/version/API version, seed, backend, shots, source checksum, compiled AQO
+  artifact reference, configuration checksum, and compatibility metadata.
+  These are identifiers and checksums only: credentials and raw provider
+  payloads are never written to checkpoint or lineage artifacts. Resume reads
+  the newest checkpoint only after envelope, payload-hash, runtime-version,
+  and complete provenance validation. A corrupt or incompatible checkpoint
+  fails the workflow rather than silently starting again at iteration zero.
+  Restore begins at the checkpoint's next evaluation, so it neither replays nor
 - **Converge** evaluates the configured termination policy after each objective
   observation.
 - **Finalize** runs for every terminal result, including failure and
@@ -54,7 +63,7 @@ state, and bounded metadata. Results and metrics consumers can rely on:
 |---|---|
 | `CONVERGED` | An objective or parameter tolerance was met. |
 | `MAX_ITERATIONS` | The configured optimizer steps completed without convergence. |
-| `FAILED` | Validation, Driver Manager evaluation, optimizer, checkpoint, or finalization failed. The first failure is retained deterministically. |
+| `FAILED` | Validation, Driver Manager evaluation, optimizer, checkpoint validation/persistence, or finalization failed. The first failure is retained deterministically. |
 | `CANCELLED` | Cancellation was observed before an evaluation or optimizer step. |
 
 An evaluator failure is terminal and propagates unchanged through the Kernel
@@ -66,3 +75,22 @@ This is an additive Kernel/AQO Hybrid IR runtime contract. Existing single-shot
 `QuantumJob` execution is unchanged. Optimizer plugin API v`1.0.0` remains the
 plugin boundary; the engine uses its existing initialize, step, state, restore,
 and finalize operations.
+
+## Checkpoint layout and replay lineage
+
+For workflow `<workflow-id>` and completed optimizer step `<N>`, the Kernel
+writes immutable artifacts under
+`qfs://jobs/<workflow-id>/checkpoints/iterative/<N padded to 20 digits>/`:
+
+- `state.json` is the hash-verified serialized cursor and opaque optimizer
+  state; and
+- `envelope.json` is the QFS checkpoint envelope referring to that payload and
+  the compiled artifact lineage.
+
+`run_or_resume` selects the lexically latest envelope, validates it against the
+current runtime and all pinned deterministic inputs, restores the optimizer,
+and continues with cursor `N + 1`. No “best effort” substitution of optimizer
+state, backend, plugin, source, compiled artifact, seed, shots, or
+configuration is permitted. Backend result comparison remains subject to the
+configured backend determinism tolerance; checkpoint cursor and provenance
+comparison are exact.
