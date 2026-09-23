@@ -335,8 +335,8 @@ not values substituted during lowering. A bound payload adds the optional
 finite numeric values. It MUST bind every declared ID exactly once. Binding is
 an immutable transformation: the symbolic AQO artifact is never rewritten.
 Parameter IDs MUST be unique, and every symbolic `params.theta` reference MUST
-match a declared ID; binders reject undeclared references instead of leaving
-them symbolic in an execution payload.
+match a declared ID. AQO validation rejects undeclared references before
+binding, so they can never be left symbolic in an execution payload.
 
 A reusable expectation objective is encoded independently of the ansatz in
 `annotations.observables` as a canonical Pauli Hamiltonian:
