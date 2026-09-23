@@ -353,3 +353,10 @@ qubit indices are unique within a term and in range. Terms and factors are
 canonically sorted before serialization. An iterative workflow objective uses
 an `hamiltonian_ref` to this model, preserving ansatz, objective, and optimizer
 as distinct reusable artifacts.
+
+At runtime, `annotations.iterative_hybrid_workflow` is executed by the generic
+Kernel iterative workflow engine. Each bound candidate is evaluated through
+Driver Manager before the optimizer can propose the next candidate; the
+symbolic AQO artifact remains immutable. See the [iterative hybrid workflow
+runtime contract](../iterative-hybrid-workflow.md) for lifecycle, checkpoint,
+convergence, and terminal-accounting semantics.

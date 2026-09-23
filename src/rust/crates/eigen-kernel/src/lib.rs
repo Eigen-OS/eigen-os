@@ -8,6 +8,7 @@
 //! - Audit trail for all transitions
 
 pub mod durable_job_store;
+pub mod iterative_hybrid_workflow;
 pub mod job_store;
 pub mod rpc;
 
