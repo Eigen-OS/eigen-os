@@ -211,4 +211,30 @@ def test_aqo_version_is_required() -> None:
 
     assert invalid.value.code == grpc.StatusCode.INVALID_ARGUMENT
     assert invalid.value.message == "aqo.version is required"
-    
+
+
+def test_bound_execution_and_measurement_plan_return_real_expectations() -> None:
+    drv = _driver()
+    payload = _aqo([{"op": "RY", "q": [0], "params": {"theta": "theta"}}, {"op": "MEASURE", "q": [0], "c": [0]}], qubits=1)
+    plan = {"measurement_basis": "PAULI", "terms": [{"term_id": "z0", "operator": "Z", "qubits": [0], "coefficient": 2.0}]}
+
+    _, _, zero = drv.execute_circuit("sim:local", payload, 32, {"param.theta": "0", "observable_measurement_plan": json.dumps(plan)})
+    _, _, pi = drv.execute_circuit("sim:local", payload, 32, {"param.theta": str(math.pi), "observable_measurement_plan": json.dumps(plan)})
+
+    assert json.loads(zero["expectations"]) == {"z0": pytest.approx(2.0)}
+    assert json.loads(pi["expectations"]) == {"z0": pytest.approx(-2.0)}
+
+
+def test_depolarizing_noise_changes_execution_and_rejects_unknown_model() -> None:
+    drv = _driver()
+    payload = _aqo([{"op": "MEASURE", "q": [0], "c": [0]}], qubits=1)
+
+    ideal, _, _ = drv.execute_circuit("sim:local", payload, 128, {"seed": "19"})
+    noisy, _, meta = drv.execute_circuit("sim:local", payload, 128, {"seed": "19", "noise_model": "depolarizing:1"})
+
+    assert ideal == {"0": 128}
+    assert noisy == {"1": 128}
+    assert meta["noise_model"] == "depolarizing:1"
+    with pytest.raises(DriverExecutionError) as unsupported:
+        drv.execute_circuit("sim:local", payload, 1, {"noise_model": "bit_flip:0.1"})
+    assert unsupported.value.code == grpc.StatusCode.FAILED_PRECONDITION

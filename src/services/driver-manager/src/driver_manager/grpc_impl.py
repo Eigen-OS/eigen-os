@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -110,6 +111,27 @@ class DriverManagerService:
             abort_invalid_argument(context, message="validation failed", violations=violations)
 
         options = dict(request.options)
+        for name, value in request.parameter_bindings.items():
+            options[f"param.{name}"] = str(value)
+        if request.noise_model:
+            options["noise_model"] = request.noise_model
+        if request.observable_measurement_plan.terms:
+            options["observable_measurement_plan"] = json.dumps(
+                {
+                    "measurement_basis": request.observable_measurement_plan.measurement_basis,
+                    "terms": [
+                        {
+                            "term_id": term.term_id,
+                            "operator": term.operator,
+                            "qubits": list(term.qubits),
+                            "coefficient": term.coefficient,
+                        }
+                        for term in request.observable_measurement_plan.terms
+                    ],
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
         try:
             target = resolve_execution_target(
                 self._registry,
@@ -125,6 +147,27 @@ class DriverManagerService:
                 provider="driver_selection",
             )
         driver = target.driver
+        device = next((item for item in driver.get_devices() if item.device_id == target.device_id), None)
+        capabilities = dict(device.capabilities) if device is not None else {}
+        required_capabilities = []
+        if request.parameter_bindings:
+            required_capabilities.append(("parameter_binding", "parameter binding"))
+        if request.observable_measurement_plan.terms:
+            required_capabilities.extend((("measurement_basis", "observable measurement basis"), ("observable_expectation", "observable expectation")))
+        if request.noise_model and request.noise_model != "ideal":
+            model = request.noise_model.partition(":")[0]
+            supported = {value.strip() for value in capabilities.get("noise_models", "").split(",") if value.strip()}
+            if model not in supported:
+                required_capabilities.append(("noise_models", f"noise model {model}"))
+        missing = [label for key, label in required_capabilities if capabilities.get(key, "").lower() not in {"true", "pauli"} and key != "noise_models"]
+        if missing or any(key == "noise_models" for key, _label in required_capabilities):
+            labels = missing or [label for key, label in required_capabilities if key == "noise_models"]
+            abort_normalized(
+                context,
+                normalized=map_backend_error(grpc.StatusCode.FAILED_PRECONDITION, f"backend {target.device_id} does not support: {', '.join(labels)}"),
+                job_id=request.job_id,
+                provider=target.driver_name,
+            )
 
         aqo_json_format = _circuit_format_value(self._types_pb, "CIRCUIT_FORMAT_AQO_JSON", "AQO_JSON")
         if request.payload.format != aqo_json_format:
@@ -157,10 +200,16 @@ class DriverManagerService:
             )
 
 
+        normalized_metadata = _normalize_metadata(metadata)
+        try:
+            expectations = json.loads(normalized_metadata.get("expectations", "{}"))
+        except json.JSONDecodeError:
+            expectations = {}
         resp = self._drv_pb.ExecuteCircuitResponse(
             counts=_normalize_counts(counts),
             execution_time_sec=_normalize_execution_time_sec(execution_time_sec),
-            metadata=_normalize_metadata(metadata),
+            metadata=normalized_metadata,
+            expectations={str(key): float(value) for key, value in expectations.items()},
         )
         from . import main as driver_manager_main
 

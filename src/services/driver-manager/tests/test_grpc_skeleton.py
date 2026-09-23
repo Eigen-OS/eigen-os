@@ -435,3 +435,37 @@ def test_execute_circuit_reports_simulator_out_of_memory(grpc_addr: str) -> None
 
     assert err.value.code() == grpc.StatusCode.RESOURCE_EXHAUSTED
     assert "Simulator Out of Memory" in err.value.details()
+
+
+def test_execute_circuit_returns_contract_expectations_for_bound_noisy_request(grpc_addr: str) -> None:
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = drv_pb_grpc.DriverManagerServiceStub(channel)
+    response = stub.ExecuteCircuit(
+        drv_pb.ExecuteCircuitRequest(
+            job_id="vqe-1",
+            device_id="sim:local",
+            payload=types_pb.CircuitPayload(format=_enum_value(types_pb, "CIRCUIT_FORMAT_AQO_JSON", "AQO_JSON"), data=_aqo([{"op": "RY", "q": [0], "params": {"theta": "theta"}}, {"op": "MEASURE", "q": [0], "c": [0]}], qubits=1)),
+            shots=128,
+            parameter_bindings={"theta": 0.0},
+            noise_model="depolarizing:0.25",
+            observable_measurement_plan=drv_pb.ObservableMeasurementPlan(
+                measurement_basis="PAULI",
+                terms=[drv_pb.ObservableTerm(term_id="z0", operator="Z", qubits=[0], coefficient=1.0)],
+            ),
+        )
+    )
+    assert response.expectations["z0"] == pytest.approx(0.75)
+    assert response.metadata["expectation_evaluator"] == "simulator_statevector"
+
+
+def test_execute_circuit_rejects_unadvertised_noise_capability(grpc_addr: str) -> None:
+    _ensure_normalized_driver_registered()
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = drv_pb_grpc.DriverManagerServiceStub(channel)
+    with pytest.raises(grpc.RpcError) as err:
+        stub.ExecuteCircuit(
+            drv_pb.ExecuteCircuitRequest(job_id="noise-unsupported", device_id="norm:0", payload=types_pb.CircuitPayload(format=_enum_value(types_pb, "CIRCUIT_FORMAT_AQO_JSON", "AQO_JSON"), data=_aqo([{"op": "MEASURE", "q": [0], "c": [0]}], qubits=1)), shots=4, noise_model="depolarizing:0.1")
+        )
+    assert err.value.code() == grpc.StatusCode.FAILED_PRECONDITION
+    assert _extract_error_info(err.value).reason == "EIGEN_BACKEND_PRECONDITION"
+    
