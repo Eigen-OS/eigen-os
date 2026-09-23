@@ -572,7 +572,12 @@ provenance. It is generic and is not a VQE runtime format.
 `objective` MUST be an `ExpectationValue` declaration, `initial_params` MUST
 be a non-empty literal numeric list that binds every declared `Param` in
 stable name order, and all optimizer/configuration values MUST be literal.
-`convergence` MUST be a non-empty literal object. Invalid or ambiguous
+`convergence` MUST be a non-empty literal object that conforms to the Kernel
+contract: `max_iterations` is a required positive integer; optional
+`absolute_objective_tolerance`, `relative_objective_tolerance`, and
+`parameter_tolerance` are finite non-negative numbers. Unknown settings are
+rejected. The compiler sorts accepted settings before emitting AQO so equivalent
+source declarations produ
 declarations fail static compilation; no runtime optimization loop, simulator,
 or optimizer implementation is supplied by this API.
 
