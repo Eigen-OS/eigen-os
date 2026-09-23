@@ -18,9 +18,6 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 
 ### Added
 
-- Optimizer plugin steps now validate that the generated next candidate remains
-  finite and preserve the prior state when a restored extreme trust-region
-  radius would overflow it.
 - Optimizer plugin runtime now rejects an objective observation whose parameter
   vector is not the current optimizer candidate, preventing stale or
   cross-run observations from mutating COBYLA state.
@@ -86,6 +83,12 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 - RFC 0020 and ADR 0008 for benchmark run lifecycle contract governance.
 - Phase-3 P3-09 RFC package for benchmark contracts (run lifecycle, dataset ingestion, compare/history) with explicit statuses and indexed docs links (RFC 0020/0021/0022).
 - Phase-3 P3-02 QSBench-compatible dataset ingestion pipeline (`benchmark-service` package `0.2.0`) with manifest schema validation, checksum/provenance verification, and queryable dataset version catalog.
+
+### Fixed
+
+- Optimizer plugin steps now validate that the generated next candidate remains
+  finite and preserve the prior state when a restored extreme trust-region
+  radius would overflow it.
 
 ### Phase-6: SRE Pack for Plugin Health, Trust, and Sandbox Violations (P6-07)
 
