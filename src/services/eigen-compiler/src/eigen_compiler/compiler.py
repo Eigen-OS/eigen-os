@@ -478,22 +478,11 @@ def bind_aqo_parameters(aqo: dict[str, object], bindings: dict[str, int | float]
     for parameter_id, value in bindings.items():
         if isinstance(value, bool) or not isinstance(value, (int, float)) or (isinstance(value, float) and not isfinite(value)):
             raise CompilerValidationError(violations=(FieldViolation(field=f"bindings.{parameter_id}", description="binding values must be finite numbers"),))
-    symbolic_reference_violations: list[FieldViolation] = []
-    for operation_index, operation in enumerate(symbolic.get("operations", [])):
+    for operation in symbolic.get("operations", []):
         if isinstance(operation, dict) and isinstance(operation.get("params"), dict):
             theta = operation["params"].get("theta")
-            if isinstance(theta, str):
-                if theta not in declared:
-                    symbolic_reference_violations.append(
-                        FieldViolation(
-                            field=f"operations[{operation_index}].params.theta",
-                            description="symbolic parameter ID must be declared in parameters",
-                        )
-                    )
-                else:
-                    operation["params"]["theta"] = bindings[theta]
-    if symbolic_reference_violations:
-        raise CompilerValidationError(violations=tuple(symbolic_reference_violations))
+            if isinstance(theta, str) and theta in declared:
+                operation["params"]["theta"] = bindings[theta]
     symbolic["parameter_bindings"] = {key: bindings[key] for key in sorted(bindings)}
     violations = _validate_aqo_payload(symbolic)
     if violations:
@@ -625,7 +614,14 @@ def _validate_aqo_payload(aqo: dict[str, object]) -> tuple[FieldViolation, ...]:
                 theta = params["theta"]
                 if not isinstance(theta, (int, float, str)) or (isinstance(theta, float) and not isfinite(theta)):
                     violations.append(FieldViolation(field=f"operations[{idx}].params.theta", description="theta must be integer, float, or string"))
-        else:
+                elif isinstance(theta, str) and (not isinstance(aqo.get("parameters"), dict) or theta not in aqo["parameters"]):
+                    violations.append(
+                        FieldViolation(
+                            field=f"operations[{idx}].params.theta",
+                            description="symbolic parameter ID must be declared in parameters",
+                        )
+                    )
+        else:   
             if params:
                 violations.append(FieldViolation(field=f"operations[{idx}].params", description=f"{op_name} must not include params"))
 
