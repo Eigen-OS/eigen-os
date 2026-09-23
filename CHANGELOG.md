@@ -18,6 +18,16 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 
 ### Added
 
+- Optimizer plugin runtime now rejects an objective observation whose parameter
+  vector is not the current optimizer candidate, preventing stale or
+  cross-run observations from mutating COBYLA state.
+- Optimizer plugin runtime now validates optional gradient dimensions and
+  values, iteration bounds, and restored COBYLA state before any optimizer
+  state mutation, so malformed plugin inputs fail closed.
+- Kernel and Eigen-Lang now validate and canonicalize iterative-workflow
+  convergence settings before AQO emission or execution: `max_iterations` is
+  required and positive, supported tolerances are finite and non-negative, and
+  unknown settings are rejected.
 - Eigen-Lang now enforces stable parameter identity: duplicate `Param` IDs and
   undeclared symbolic gate references are rejected before execution, preventing
   accidental aliasing or unbound symbolic values in bound AQO payloads.
@@ -73,6 +83,12 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 - RFC 0020 and ADR 0008 for benchmark run lifecycle contract governance.
 - Phase-3 P3-09 RFC package for benchmark contracts (run lifecycle, dataset ingestion, compare/history) with explicit statuses and indexed docs links (RFC 0020/0021/0022).
 - Phase-3 P3-02 QSBench-compatible dataset ingestion pipeline (`benchmark-service` package `0.2.0`) with manifest schema validation, checksum/provenance verification, and queryable dataset version catalog.
+
+### Fixed
+
+- Optimizer plugin steps now validate that the generated next candidate remains
+  finite and preserve the prior state when a restored extreme trust-region
+  radius would overflow it.
 
 ### Phase-6: SRE Pack for Plugin Health, Trust, and Sandbox Violations (P6-07)
 
