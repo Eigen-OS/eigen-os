@@ -20,6 +20,11 @@ The next candidate is also required to remain finite. If a valid observation
 would produce an infinite candidate (for example, after restoring an unusually
 large finite trust-region radius), `step` rejects it and retains the previous
 pending candidate and state.
+
+This is a backward-compatible validation tightening: the optimizer-plugin
+envelope and serialized state schema are unchanged. Callers should handle the
+existing `InvalidInput` step failure and may safely retry or inspect the
+unchanged state without restoring a checkpoint.
 `state` and `restore` use deterministic JSON serialization of a typed state
 record. Restore rejects malformed, non-finite, or internally inconsistent state,
 so a restored optimizer produces the same next output for the same objective

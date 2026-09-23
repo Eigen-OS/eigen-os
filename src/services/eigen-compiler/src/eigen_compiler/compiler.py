@@ -1692,7 +1692,11 @@ def _collect_iterative_hybrid_workflow(
     if not isinstance(method, str) or not method:
         raise CompilerValidationError(violations=(FieldViolation(field="minimize.method", description="method must be a non-empty literal string"),))
     convergence_expr = keywords.pop("convergence", None)
-    convergence = _workflow_literal(convergence_expr, field="minimize.convergence") if convergence_expr else {"max_iterations": 1000}
+    convergence = (
+        _workflow_literal(convergence_expr, field="minimize.convergence")
+        if convergence_expr is not None
+        else {"max_iterations": 1000}
+    )
     convergence = _validate_workflow_convergence(convergence)
     optimizer_config = {name: _workflow_literal(value, field=f"minimize.{name}") for name, value in sorted(keywords.items())}
     observable = _collect_expectation_annotation(
@@ -1724,12 +1728,24 @@ def _collect_iterative_hybrid_workflow(
 
 def _validate_workflow_convergence(value: object) -> dict[str, object]:
     """Validate the literal convergence contract emitted for the Kernel."""
-    if not isinstance(value, dict) or not value:
+    if not isinstance(value, dict):
         raise CompilerValidationError(
             violations=(
                 FieldViolation(
                     field="minimize.convergence",
-                    description="convergence must be a non-empty literal object",
+                    description="convergence must be a literal object",
+                ),
+            )
+        )
+    if not value:
+        raise CompilerValidationError(
+            violations=(
+                FieldViolation(
+                    field="minimize.convergence.max_iterations",
+                    description=(
+                        "max_iterations must be a positive integer; "
+                        "convergence must be a non-empty literal object"
+                    ),
                 ),
             )
         )
