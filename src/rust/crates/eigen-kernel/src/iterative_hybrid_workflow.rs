@@ -28,6 +28,11 @@ pub struct ConvergencePolicy {
 
 impl ConvergencePolicy {
     fn validate(&self) -> Result<(), WorkflowError> {
+        if self.max_iterations == 0 {
+            return Err(WorkflowError::InvalidConfiguration(
+                "max_iterations must be a positive integer",
+            ));
+        }
         for tolerance in [
             self.absolute_objective_tolerance,
             self.relative_objective_tolerance,
@@ -802,6 +807,43 @@ mod tests {
                 report.actual_evaluations
             ),
             (3, 3, 4)
+        );
+    }
+
+    #[test]
+    fn rejects_zero_max_iterations_before_evaluating_or_optimizing() {
+        struct CountingEvaluator(Arc<AtomicUsize>);
+        impl ObjectiveEvaluator for CountingEvaluator {
+            fn evaluate(&mut self, _: &[f64]) -> Result<f64, WorkflowError> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                Ok(0.0)
+            }
+        }
+
+        let evaluations = Arc::new(AtomicUsize::new(0));
+        let mut optimizer = runtime();
+        let report = IterativeHybridWorkflowEngine::new(
+            CountingEvaluator(Arc::clone(&evaluations)),
+            NeverCancelled,
+            &mut optimizer,
+            policy(0),
+            BTreeMap::new(),
+        )
+        .run(vec![1.0]);
+
+        assert_eq!(report.termination_reason, TerminationReason::Failed);
+        assert_eq!(report.actual_optimizer_steps, 0);
+        assert_eq!(report.actual_evaluations, 0);
+        assert_eq!(evaluations.load(Ordering::SeqCst), 0);
+        assert_eq!(report.evaluations.len(), 0);
+        assert_eq!(report.optimizer_steps.len(), 0);
+        assert_eq!(
+            report.error.as_deref(),
+            Some("InvalidConfiguration(\"max_iterations must be a positive integer\")")
+        );
+        assert_eq!(
+            report.phases,
+            vec![WorkflowPhase::Initialize, WorkflowPhase::Finalize]
         );
     }
 

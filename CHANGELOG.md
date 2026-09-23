@@ -18,7 +18,10 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 
 ### Added
 
-- Eigen-Lang now validates and canonicalizes iterative-workflow convergence settings before AQO emission: `max_iterations` is required and positive, supported tolerances are fi
+- Kernel and Eigen-Lang now validate and canonicalize iterative-workflow
+  convergence settings before AQO emission or execution: `max_iterations` is
+  required and positive, supported tolerances are finite and non-negative, and
+  unknown settings are rejected.
 - Eigen-Lang now enforces stable parameter identity: duplicate `Param` IDs and
   undeclared symbolic gate references are rejected before execution, preventing
   accidental aliasing or unbound symbolic values in bound AQO payloads.
