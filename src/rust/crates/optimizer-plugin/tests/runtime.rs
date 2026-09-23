@@ -109,6 +109,21 @@ fn step_rejects_invalid_gradient_and_exhausted_iteration_context() {
 }
 
 #[test]
+fn step_rejects_an_observation_for_a_different_parameter_candidate() {
+    let mut plugin = CobylaPlugin::default();
+    plugin.initialize(init()).unwrap();
+    let expected_state = plugin.state().unwrap();
+
+    assert_eq!(
+        plugin.step(step(vec![1.0, 3.0], 4.0)),
+        Err(OptimizerError::InvalidInput(
+            "parameters do not match the pending optimizer candidate"
+        ))
+    );
+    assert_eq!(plugin.state().unwrap(), expected_state);
+}
+
+#[test]
 fn restore_rejects_malformed_or_invalid_state() {
     let mut plugin = CobylaPlugin::default();
     assert_eq!(

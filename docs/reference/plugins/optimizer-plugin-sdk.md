@@ -13,6 +13,9 @@ and iteration context. When `max_iterations` is present, it must be positive and
 the zero-based `iteration` must be smaller than that bound. The call returns the
 next parameter vector, opaque deterministic state bytes, and bounded step
 metadata. The SDK validates these invariants before mutating optimizer state.
+An observation's parameter vector must exactly match the currently pending
+candidate returned by `initialize`, `restore`, or the preceding `step`; stale,
+cross-run, or substituted observations fail closed without changing state.
 `state` and `restore` use deterministic JSON serialization of a typed state
 record. Restore rejects malformed, non-finite, or internally inconsistent state,
 so a restored optimizer produces the same next output for the same objective

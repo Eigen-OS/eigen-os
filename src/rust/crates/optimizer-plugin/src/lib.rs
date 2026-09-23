@@ -169,7 +169,7 @@ impl OptimizerPlugin for CobylaPlugin {
             || input.parameters.iter().any(|p| !p.is_finite())
         {
             return Err(OptimizerError::InvalidInput(
-                 "objective and parameters must be non-empty finite values",
+                "objective and parameters must be non-empty finite values",
             ));
         }
         if input.gradient.as_ref().is_some_and(|gradient| {
@@ -193,6 +193,11 @@ impl OptimizerPlugin for CobylaPlugin {
         let state = self.state.as_mut().ok_or(OptimizerError::InvalidState)?;
         if input.parameters.len() != state.parameters.len() {
             return Err(OptimizerError::InvalidInput("parameter dimension changed"));
+        }
+        if input.parameters != state.parameters {
+            return Err(OptimizerError::InvalidInput(
+                "parameters do not match the pending optimizer candidate",
+            ));
         }
         let improved = state
             .best_objective
