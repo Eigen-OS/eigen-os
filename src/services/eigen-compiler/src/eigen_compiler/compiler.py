@@ -478,11 +478,22 @@ def bind_aqo_parameters(aqo: dict[str, object], bindings: dict[str, int | float]
     for parameter_id, value in bindings.items():
         if isinstance(value, bool) or not isinstance(value, (int, float)) or (isinstance(value, float) and not isfinite(value)):
             raise CompilerValidationError(violations=(FieldViolation(field=f"bindings.{parameter_id}", description="binding values must be finite numbers"),))
-    for operation in symbolic.get("operations", []):
+    symbolic_reference_violations: list[FieldViolation] = []
+    for operation_index, operation in enumerate(symbolic.get("operations", [])):
         if isinstance(operation, dict) and isinstance(operation.get("params"), dict):
             theta = operation["params"].get("theta")
-            if isinstance(theta, str) and theta in bindings:
-                operation["params"]["theta"] = bindings[theta]
+            if isinstance(theta, str):
+                if theta not in declared:
+                    symbolic_reference_violations.append(
+                        FieldViolation(
+                            field=f"operations[{operation_index}].params.theta",
+                            description="symbolic parameter ID must be declared in parameters",
+                        )
+                    )
+                else:
+                    operation["params"]["theta"] = bindings[theta]
+    if symbolic_reference_violations:
+        raise CompilerValidationError(violations=tuple(symbolic_reference_violations))
     symbolic["parameter_bindings"] = {key: bindings[key] for key in sorted(bindings)}
     violations = _validate_aqo_payload(symbolic)
     if violations:
@@ -1490,6 +1501,7 @@ def _validate_single_entrypoint(tree: ast.AST) -> tuple[FieldViolation, ...]:
 
 def _collect_params(tree: ast.AST) -> tuple[dict[str, dict[str, object]], tuple[FieldViolation, ...]]:
     params: dict[str, dict[str, object]] = {}
+    parameter_targets: dict[str, str] = {}
     violations: list[FieldViolation] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Assign):
@@ -1515,7 +1527,20 @@ def _collect_params(tree: ast.AST) -> tuple[dict[str, dict[str, object]], tuple[
                     )
                     continue
                 default_value = explicit_default
-            params[target] = {"name": name_arg.value, "default": default_value}
+            parameter_id = name_arg.value
+            if parameter_id in parameter_targets:
+                violations.append(
+                    FieldViolation(
+                        field="source",
+                        description=(
+                            f"duplicate Param ID {parameter_id!r}; IDs must uniquely identify "
+                            "declared parameters"
+                        ),
+                    )
+                )
+                continue
+            parameter_targets[parameter_id] = target
+            params[target] = {"name": parameter_id, "default": default_value}
     return params, tuple(violations)
 
 

@@ -18,6 +18,9 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 
 ### Added
 
+- Eigen-Lang now enforces stable parameter identity: duplicate `Param` IDs and
+  undeclared symbolic gate references are rejected before execution, preventing
+  accidental aliasing or unbound symbolic values in bound AQO payloads.
 - Driver Manager now preserves noise-model integrity across the typed
   `noise_model` field and legacy `options.noise_model` alias: both undergo the
   same capability negotiation, and conflicting values fail validation rather
