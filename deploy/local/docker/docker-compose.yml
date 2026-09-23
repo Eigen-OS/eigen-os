@@ -91,10 +91,14 @@ services:
     ports:
       - "50052:50052"
     depends_on:
-      - eigen-compiler
-      - driver-manager
-      - minio
-      - minio-init
+      eigen-compiler:
+        condition: service_started
+      driver-manager:
+        condition: service_healthy
+      minio:
+        condition: service_started
+      minio-init:
+        condition: service_started
     restart: unless-stopped
 
   eigen-compiler:
@@ -141,6 +145,12 @@ services:
     ports:
       - "50061:50061"
       - "9092:9092"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9092/healthz')"]
+      interval: 5s
+      timeout: 2s
+      retries: 20
+      start_period: 5s
     restart: unless-stopped
   
   benchmark-service:
