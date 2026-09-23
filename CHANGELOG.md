@@ -18,6 +18,9 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 
 ### Added
 
+- Optimizer plugin runtime now validates optional gradient dimensions and
+  values, iteration bounds, and restored COBYLA state before any optimizer
+  state mutation, so malformed plugin inputs fail closed.
 - Kernel and Eigen-Lang now validate and canonicalize iterative-workflow
   convergence settings before AQO emission or execution: `max_iterations` is
   required and positive, supported tolerances are finite and non-negative, and

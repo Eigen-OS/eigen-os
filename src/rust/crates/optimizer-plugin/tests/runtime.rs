@@ -83,3 +83,48 @@ fn second_compatible_optimizer_uses_the_same_runtime_boundary() {
         OptimizerPluginRuntime::activate(Box::new(SecondOptimizer), "optimizer", "1.0.0").is_ok()
     );
 }
+
+#[test]
+fn step_rejects_invalid_gradient_and_exhausted_iteration_context() {
+    let mut plugin = CobylaPlugin::default();
+    plugin.initialize(init()).unwrap();
+
+    let mut invalid_gradient = step(vec![1.0, 2.0], 4.0);
+    invalid_gradient.gradient = Some(vec![f64::NAN, 0.0]);
+    assert_eq!(
+        plugin.step(invalid_gradient),
+        Err(OptimizerError::InvalidInput(
+            "gradient must have the parameter dimension and finite values"
+        ))
+    );
+
+    let mut exhausted = step(vec![1.0, 2.0], 4.0);
+    exhausted.context.iteration = 10;
+    assert_eq!(
+        plugin.step(exhausted),
+        Err(OptimizerError::InvalidInput(
+            "iteration must be within a positive max_iterations bound"
+        ))
+    );
+}
+
+#[test]
+fn restore_rejects_malformed_or_invalid_state() {
+    let mut plugin = CobylaPlugin::default();
+    assert_eq!(
+        plugin.restore(b"not-json"),
+        Err(OptimizerError::InvalidState)
+    );
+    assert_eq!(
+        plugin.restore(
+            br#"{"parameters":[1.0],"best_objective":null,"radius":0.0,"coordinate":0,"direction":-1.0}"#,
+        ),
+        Err(OptimizerError::InvalidState)
+    );
+    assert_eq!(
+        plugin.restore(
+            br#"{"parameters":[1.0],"best_objective":null,"radius":0.1,"coordinate":1,"direction":-1.0}"#,
+        ),
+        Err(OptimizerError::InvalidState)
+    );
+}

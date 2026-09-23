@@ -6,7 +6,17 @@ The Optimizer Plugin SDK is the execution boundary for iterative-hybrid optimize
 
 The API version is `1.0.0`. An optimizer implementation supplies `initialize`, `step`, `state`, `restore`, and `finalize`. The permitted lifecycle is `DISCOVERED → VALIDATED → ACTIVE → DEACTIVATED`; calls outside `ACTIVE` fail closed. Activation rejects a non-optimizer manifest type or an API-version mismatch.
 
-`initialize` receives finite initial parameters plus bounded metadata. `step` receives the parameter vector evaluated by the Kernel/Driver Manager path, its finite objective value, an optional gradient, and iteration context; it returns the next parameter vector, opaque deterministic state bytes, and bounded step metadata. The SDK validates finite values and an unchanged parameter dimension. `state` and `restore` use deterministic JSON serialization of a typed state record, so a restored optimizer produces the same next output for the same objective observation. `finalize` releases runtime-local state only.
+`initialize` receives non-empty finite initial parameters plus bounded metadata.
+`step` receives the parameter vector evaluated by the Kernel/Driver Manager path,
+its finite objective value, an optional finite gradient of the same dimension,
+and iteration context. When `max_iterations` is present, it must be positive and
+the zero-based `iteration` must be smaller than that bound. The call returns the
+next parameter vector, opaque deterministic state bytes, and bounded step
+metadata. The SDK validates these invariants before mutating optimizer state.
+`state` and `restore` use deterministic JSON serialization of a typed state
+record. Restore rejects malformed, non-finite, or internally inconsistent state,
+so a restored optimizer produces the same next output for the same objective
+observation. `finalize` releases runtime-local state only.
 
 Plugins do **not** receive provider credentials, QFS handles, backend-execution APIs, filesystem or network APIs, or user source. The Driver Manager remains the sole circuit/provider boundary and QFS remains the durable checkpoint authority. The caller stores state bytes in the existing QFS checkpoint envelope; the SDK never writes checkpoints itself.
 
