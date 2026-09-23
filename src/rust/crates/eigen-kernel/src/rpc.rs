@@ -3295,6 +3295,9 @@ impl FixtureAdapters {
             }),
             shots,
             options,
+            parameter_bindings: HashMap::new(),
+            observable_measurement_plan: None,
+            noise_model: String::new(),
         });
 
         let response = client.execute_circuit(request).await.map_err(|status| {
