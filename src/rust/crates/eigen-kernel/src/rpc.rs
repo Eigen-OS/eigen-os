@@ -3286,7 +3286,7 @@ impl FixtureAdapters {
         if matches!(submission.target.as_str(), "auto" | "cluster:auto") {
             options.insert("driver_selection".to_string(), "auto".to_string());
         }
-        let request = Request::new(ExecuteCircuitRequest {
+        let execute_request = ExecuteCircuitRequest {
             job_id: submission.job_id.clone(),
             device_id: submission.target.clone(),
             payload: Some(CircuitPayload {
@@ -3298,14 +3298,42 @@ impl FixtureAdapters {
             parameter_bindings: HashMap::new(),
             observable_measurement_plan: None,
             noise_model: String::new(),
-        });
+        };
 
-        let response = client.execute_circuit(request).await.map_err(|status| {
-            KernelStageError::execute(
-                format!("driver-manager execute failed: {}", status.message()),
-                format!("status::{:?}", status.code()),
-            )
-        })?.into_inner();
+        // Docker's embedded DNS can briefly be unavailable while the
+        // driver-manager container is joining the compose network.  A DNS
+        // failure happens before the RPC reaches the driver, so retrying it
+        // cannot duplicate a quantum execution.
+        const DNS_RETRY_DELAYS: [Duration; 3] = [
+            Duration::from_millis(100),
+            Duration::from_millis(250),
+            Duration::from_millis(500),
+        ];
+        let mut retry_delays = DNS_RETRY_DELAYS.into_iter();
+        let response = loop {
+            match client.execute_circuit(Request::new(execute_request.clone())).await {
+                Ok(result) => break result.into_inner(),
+                Err(status) if is_driver_manager_dns_error(&status) => {
+                    if let Some(delay) = retry_delays.next() {
+                        tracing::warn!(
+                            job_id = %submission.job_id,
+                            retry_delay_ms = delay.as_millis(),
+                            "driver-manager DNS lookup failed; retrying execution request"
+                        );
+                        tokio::time::sleep(delay).await;
+                    } else {
+                        return Err(KernelStageError::execute(
+                            format!("driver-manager execute failed: {}", status.message()),
+                            format!("status::{:?}", status.code()),
+                        ));
+                    }
+                }
+                Err(status) => return Err(KernelStageError::execute(
+                    format!("driver-manager execute failed: {}", status.message()),
+                    format!("status::{:?}", status.code()),
+                )),
+            }
+        };
 
         let counts: BTreeMap<String, i64> = response.counts.into_iter().collect();
         let counts_json = counts.clone();
@@ -5468,6 +5496,11 @@ fn hash_bytes_hex(input: &[u8]) -> String {
     format!("{:016x}", fnv1a64(input))
 }
 
+fn is_driver_manager_dns_error(status: &Status) -> bool {
+    status.code() == Code::Unavailable
+        && status.message().to_ascii_lowercase().contains("dns error")
+}
+
 fn fnv1a64(input: &[u8]) -> u64 {
     const OFFSET: u64 = 0xcbf29ce484222325;
     const PRIME: u64 = 0x100000001b3;
@@ -6892,6 +6925,13 @@ spec:
             job_id: job_id.to_string(),
         }
     }
+
+    #[test]
+    fn driver_manager_dns_errors_are_retryable() {
+        assert!(is_driver_manager_dns_error(&Status::unavailable("dns error: name not found")));
+        assert!(!is_driver_manager_dns_error(&Status::unavailable("connection refused")));
+        assert!(!is_driver_manager_dns_error(&Status::internal("dns error: name not found")));
+    }
 }
 
 fn unix_epoch_ms_u64() -> u64 {
@@ -7100,4 +7140,3 @@ fn scientific_measurements(
         assert_eq!(summary.get("objective").map(String::as_str), Some("balanced"));
         assert_eq!(summary.get("confidence").map(String::as_str), Some("0.92"));
     }
-
