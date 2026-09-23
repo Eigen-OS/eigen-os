@@ -9,10 +9,11 @@ use std::time::Instant;
 
 use optimizer_plugin::{InitializeInput, IterationContext, OptimizerPluginRuntime, StepInput};
 use qfs::{
-    CHECKPOINT_ENVELOPE_SCHEMA_VERSION, CHECKPOINT_RUNTIME_API_VERSION, CheckpointArtifactRef,
-    CheckpointCompatibilityWindow, CheckpointEnvelopeV1, CheckpointExtensions,
-    CheckpointGuardrails, CheckpointIntegrity, CheckpointPayloadRefs, CheckpointProvenance,
-    CheckpointRestoreLineage, CheckpointRetentionPolicy, CheckpointTraceLinks, CircuitFsLocal,
+    CheckpointArtifactRef, CheckpointCompatibilityWindow, CheckpointEnvelopeV1,
+    CheckpointExtensions, CheckpointGuardrails, CheckpointIntegrity, CheckpointPayloadRefs,
+    CheckpointProvenance, CheckpointRestoreLineage, CheckpointRetentionPolicy,
+    CheckpointTraceLinks, CircuitFsLocal, CHECKPOINT_ENVELOPE_SCHEMA_VERSION,
+    CHECKPOINT_RUNTIME_API_VERSION,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -303,6 +304,51 @@ pub struct WorkflowReport {
     pub error: Option<String>,
 }
 
+/// Stable, consumer-facing result for a VQE invocation of the generic
+/// iterative workflow.  The workflow itself remains objective-agnostic; this
+/// projection gives VQE callers the lowest observed energy and its parameters
+/// without changing the optimizer or Driver Manager boundaries.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VqeResult {
+    pub schema_version: String,
+    pub termination_reason: TerminationReason,
+    /// Lowest finite objective observed during evaluation, interpreted as
+    /// energy by the VQE caller. `None` means no evaluation completed.
+    pub optimal_energy: Option<f64>,
+    /// Parameters from the evaluation that produced `optimal_energy`.
+    pub optimal_parameters: Option<Vec<f64>>,
+    /// One-based evaluation number that produced the optimum.
+    pub optimal_evaluation: Option<u64>,
+    pub claimed_iterations: u64,
+    pub actual_optimizer_steps: u64,
+    pub actual_evaluations: u64,
+    pub error: Option<String>,
+}
+
+impl WorkflowReport {
+    /// Projects this generic workflow report into the VQE result contract.
+    /// Equal energies select the earliest evaluation, which makes the result
+    /// deterministic even when an optimizer revisits a point.
+    pub fn vqe_result(&self) -> VqeResult {
+        let best = self.evaluations.iter().min_by(|left, right| {
+            left.objective_value
+                .total_cmp(&right.objective_value)
+                .then_with(|| left.evaluation.cmp(&right.evaluation))
+        });
+        VqeResult {
+            schema_version: "1.0.0".into(),
+            termination_reason: self.termination_reason,
+            optimal_energy: best.map(|record| record.objective_value),
+            optimal_parameters: best.map(|record| record.parameters.clone()),
+            optimal_evaluation: best.map(|record| record.evaluation),
+            claimed_iterations: self.claimed_iterations,
+            actual_optimizer_steps: self.actual_optimizer_steps,
+            actual_evaluations: self.actual_evaluations,
+            error: self.error.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorkflowError {
     InvalidConfiguration(&'static str),
@@ -558,6 +604,7 @@ impl<'a, E: ObjectiveEvaluator, C: CancellationSignal> IterativeHybridWorkflowEn
                     error = Some(value.to_string());
                     break;
                 }
+            }
         }
         if error.is_some() {
             reason = TerminationReason::Failed;
@@ -607,6 +654,8 @@ fn failed_report(parameters: Vec<f64>, error: String) -> WorkflowReport {
         },
         phases: vec![WorkflowPhase::Initialize, WorkflowPhase::Finalize],
         error: Some(error),
+    }
+}
    
 fn has_converged(
     policy: &ConvergencePolicy,
@@ -638,7 +687,9 @@ mod tests {
     use super::*;
     use optimizer_plugin::CobylaPlugin;
     use std::sync::{
+        atomic::{AtomicUsize, Ordering},
         Arc,
+    };
 
     struct NeverCancelled;
     impl CancellationSignal for NeverCancelled {
@@ -747,6 +798,80 @@ mod tests {
             (0, 0)
         );
         assert!(report.error.unwrap().contains("driver manager unavailable"));
+    }
+
+    #[test]
+    fn vqe_result_returns_the_lowest_observed_energy_not_the_last_evaluation() {
+        let report = WorkflowReport {
+            termination_reason: TerminationReason::MaxIterations,
+            claimed_iterations: 2,
+            actual_optimizer_steps: 2,
+            actual_evaluations: 3,
+            evaluations: vec![
+                EvaluationRecord {
+                    iteration: 0,
+                    evaluation: 1,
+                    parameters: vec![0.0],
+                    objective_value: -1.0,
+                    elapsed_millis: 1,
+                    optimizer_state: vec![],
+                    optimizer_metadata: BTreeMap::new(),
+                },
+                EvaluationRecord {
+                    iteration: 1,
+                    evaluation: 2,
+                    parameters: vec![0.5],
+                    objective_value: -2.0,
+                    elapsed_millis: 2,
+                    optimizer_state: vec![],
+                    optimizer_metadata: BTreeMap::new(),
+                },
+                EvaluationRecord {
+                    iteration: 2,
+                    evaluation: 3,
+                    parameters: vec![1.0],
+                    objective_value: -1.5,
+                    elapsed_millis: 3,
+                    optimizer_state: vec![],
+                    optimizer_metadata: BTreeMap::new(),
+                },
+            ],
+            optimizer_steps: vec![],
+            checkpoint: WorkflowCheckpoint {
+                parameters: vec![1.0],
+                optimizer_state: vec![],
+                actual_optimizer_steps: 2,
+                actual_evaluations: 3,
+                previous_objective: Some(-1.5),
+            },
+            phases: vec![WorkflowPhase::Finalize],
+            error: None,
+        };
+
+        assert_eq!(
+            report.vqe_result(),
+            VqeResult {
+                schema_version: "1.0.0".into(),
+                termination_reason: TerminationReason::MaxIterations,
+                optimal_energy: Some(-2.0),
+                optimal_parameters: Some(vec![0.5]),
+                optimal_evaluation: Some(2),
+                claimed_iterations: 2,
+                actual_optimizer_steps: 2,
+                actual_evaluations: 3,
+                error: None,
+            }
+        );
+    }
+
+    #[test]
+    fn vqe_result_has_no_optimum_when_evaluation_never_completed() {
+        let report = failed_report(vec![0.0], "driver manager unavailable".into());
+        let result = report.vqe_result();
+        assert_eq!(result.optimal_energy, None);
+        assert_eq!(result.optimal_parameters, None);
+        assert_eq!(result.optimal_evaluation, None);
+        assert_eq!(result.error.as_deref(), Some("driver manager unavailable"));
     }
 
     #[test]
