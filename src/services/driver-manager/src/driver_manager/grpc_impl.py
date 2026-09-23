@@ -111,10 +111,26 @@ class DriverManagerService:
             abort_invalid_argument(context, message="validation failed", violations=violations)
 
         options = dict(request.options)
+        option_noise_model = options.get("noise_model", "")
+        if request.noise_model and option_noise_model and request.noise_model != option_noise_model:
+            abort_invalid_argument(
+                context,
+                message="validation failed",
+                violations=[
+                    FieldViolation(
+                        field="noise_model",
+                        description="must match options.noise_model when both are supplied",
+                    )
+                ],
+            )
+        # `options.noise_model` is retained for older callers.  Treat it as
+        # the same execution-affecting input as the typed field so that it
+        # cannot bypass capability negotiation or be silently overwritten.
+        effective_noise_model = request.noise_model or option_noise_model
+        if effective_noise_model:
+            options["noise_model"] = effective_noise_model
         for name, value in request.parameter_bindings.items():
             options[f"param.{name}"] = str(value)
-        if request.noise_model:
-            options["noise_model"] = request.noise_model
         if request.observable_measurement_plan.terms:
             options["observable_measurement_plan"] = json.dumps(
                 {
@@ -154,8 +170,8 @@ class DriverManagerService:
             required_capabilities.append(("parameter_binding", "parameter binding"))
         if request.observable_measurement_plan.terms:
             required_capabilities.extend((("measurement_basis", "observable measurement basis"), ("observable_expectation", "observable expectation")))
-        if request.noise_model and request.noise_model != "ideal":
-            model = request.noise_model.partition(":")[0]
+        if effective_noise_model and effective_noise_model != "ideal":
+            model = effective_noise_model.partition(":")[0]
             supported = {value.strip() for value in capabilities.get("noise_models", "").split(",") if value.strip()}
             if model not in supported:
                 required_capabilities.append(("noise_models", f"noise model {model}"))

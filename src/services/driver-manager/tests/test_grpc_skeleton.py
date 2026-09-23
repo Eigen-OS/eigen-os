@@ -468,4 +468,44 @@ def test_execute_circuit_rejects_unadvertised_noise_capability(grpc_addr: str) -
         )
     assert err.value.code() == grpc.StatusCode.FAILED_PRECONDITION
     assert _extract_error_info(err.value).reason == "EIGEN_BACKEND_PRECONDITION"
-    
+
+
+def test_execute_circuit_validates_legacy_noise_option_and_rejects_conflicts(grpc_addr: str) -> None:
+    _ensure_normalized_driver_registered()
+    channel = grpc.insecure_channel(grpc_addr)
+    stub = drv_pb_grpc.DriverManagerServiceStub(channel)
+    payload = types_pb.CircuitPayload(
+        format=_enum_value(types_pb, "CIRCUIT_FORMAT_AQO_JSON", "AQO_JSON"),
+        data=_aqo([{"op": "MEASURE", "q": [0], "c": [0]}], qubits=1),
+    )
+
+    with pytest.raises(grpc.RpcError) as unsupported:
+        stub.ExecuteCircuit(
+            drv_pb.ExecuteCircuitRequest(
+                job_id="legacy-noise-unsupported",
+                device_id="norm:0",
+                payload=payload,
+                shots=4,
+                options={"noise_model": "depolarizing:0.1"},
+            )
+        )
+    assert unsupported.value.code() == grpc.StatusCode.FAILED_PRECONDITION
+    assert _extract_error_info(unsupported.value).reason == "EIGEN_BACKEND_PRECONDITION"
+
+    with pytest.raises(grpc.RpcError) as conflict:
+        stub.ExecuteCircuit(
+            drv_pb.ExecuteCircuitRequest(
+                job_id="noise-conflict",
+                device_id="sim:local",
+                payload=payload,
+                shots=4,
+                noise_model="depolarizing:0.1",
+                options={"noise_model": "ideal"},
+            )
+        )
+    assert conflict.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+    detail = _extract_detail(conflict.value, error_details_pb2.BadRequest)
+    assert detail is not None
+    assert [(violation.field, violation.description) for violation in detail.field_violations] == [
+        ("noise_model", "must match options.noise_model when both are supplied")
+    ]

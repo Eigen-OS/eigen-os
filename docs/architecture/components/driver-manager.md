@@ -305,6 +305,13 @@ message ExecuteCircuitResponse {
 
 Driver Manager is the sole execution boundary: VQE orchestration MUST not import a simulator or provider SDK. It must request these capabilities through DM. Devices advertise `parameter_binding`, `measurement_basis`, `observable_expectation`, and comma-separated `noise_models` values in `DeviceInfo.capabilities`. DM MUST reject any missing requested capability with normalized `FAILED_PRECONDITION`, rather than dropping bindings, changing bases, or ignoring noise.
 
+`noise_model` is execution-affecting. The typed request field is canonical, while
+`options.noise_model` remains a legacy-compatible alias. Driver Manager applies
+the same capability check to either spelling. If both are supplied, they MUST
+be byte-for-byte equal; otherwise the request fails with `INVALID_ARGUMENT`.
+This prevents an option from bypassing capability negotiation or being silently
+replaced by a conflicting typed value.
+
 `sim:local` is the reference implementation. It evaluates PAULI expectations from the executed statevector and implements `depolarizing:<probability>` for probabilities in `[0, 1]`; the model alters sampled counts and contracts returned PAULI expectations. `ideal` (or an omitted model) is noiseless.
 
 #### Determinism Rules
