@@ -124,6 +124,25 @@ fn step_rejects_an_observation_for_a_different_parameter_candidate() {
 }
 
 #[test]
+fn step_rejects_an_overflowing_next_candidate_without_mutating_state() {
+    let mut plugin = CobylaPlugin::default();
+    plugin
+        .restore(
+            br#"{"parameters":[1.7976931348623157e308],"best_objective":null,"radius":1.7976931348623157e308,"coordinate":0,"direction":1.0}"#,
+        )
+        .unwrap();
+    let expected_state = plugin.state().unwrap();
+
+    assert_eq!(
+        plugin.step(step(vec![f64::MAX], 4.0)),
+        Err(OptimizerError::InvalidInput(
+            "next optimizer candidate must contain finite values"
+        ))
+    );
+    assert_eq!(plugin.state().unwrap(), expected_state);
+}
+
+#[test]
 fn restore_rejects_malformed_or_invalid_state() {
     let mut plugin = CobylaPlugin::default();
     assert_eq!(

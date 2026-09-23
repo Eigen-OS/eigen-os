@@ -190,7 +190,15 @@ impl OptimizerPlugin for CobylaPlugin {
                 "iteration must be within a positive max_iterations bound",
             ));
         }
-        let state = self.state.as_mut().ok_or(OptimizerError::InvalidState)?;
+        // Build and validate the next state before committing it. In
+        // particular, a restored (but finite) large trust-region radius can
+        // otherwise overflow a finite pending candidate. A failed step must
+        // not leave an unusable candidate in the plugin state.
+        let mut state = self
+            .state
+            .as_ref()
+            .ok_or(OptimizerError::InvalidState)?
+            .clone();
         if input.parameters.len() != state.parameters.len() {
             return Err(OptimizerError::InvalidInput("parameter dimension changed"));
         }
@@ -213,16 +221,23 @@ impl OptimizerPlugin for CobylaPlugin {
         let index = state.coordinate % state.parameters.len();
         state.parameters[index] += state.direction * state.radius;
         state.coordinate = (state.coordinate + 1) % state.parameters.len();
-        let bytes = Self::encode(state)?;
+        if state.parameters.iter().any(|value| !value.is_finite()) {
+            return Err(OptimizerError::InvalidInput(
+                "next optimizer candidate must contain finite values",
+            ));
+        }
+        let bytes = Self::encode(&state)?;
         let mut metadata = BTreeMap::new();
         metadata.insert("method".into(), "COBYLA-compatible".into());
         metadata.insert("accepted_observation".into(), improved.to_string());
         metadata.insert("trust_region_radius".into(), state.radius.to_string());
-        Ok(StepOutput {
+        let output = StepOutput {
             parameters: state.parameters.clone(),
             state: bytes,
             metadata,
-        })
+        };
+        self.state = Some(state);
+        Ok(output)
     }
     fn state(&self) -> Result<Vec<u8>, OptimizerError> {
         Self::encode(self.state.as_ref().ok_or(OptimizerError::InvalidState)?)

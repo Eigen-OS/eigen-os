@@ -18,6 +18,9 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 
 ### Added
 
+- Optimizer plugin steps now validate that the generated next candidate remains
+  finite and preserve the prior state when a restored extreme trust-region
+  radius would overflow it.
 - Optimizer plugin runtime now rejects an objective observation whose parameter
   vector is not the current optimizer candidate, preventing stale or
   cross-run observations from mutating COBYLA state.

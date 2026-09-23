@@ -16,6 +16,10 @@ metadata. The SDK validates these invariants before mutating optimizer state.
 An observation's parameter vector must exactly match the currently pending
 candidate returned by `initialize`, `restore`, or the preceding `step`; stale,
 cross-run, or substituted observations fail closed without changing state.
+The next candidate is also required to remain finite. If a valid observation
+would produce an infinite candidate (for example, after restoring an unusually
+large finite trust-region radius), `step` rejects it and retains the previous
+pending candidate and state.
 `state` and `restore` use deterministic JSON serialization of a typed state
 record. Restore rejects malformed, non-finite, or internally inconsistent state,
 so a restored optimizer produces the same next output for the same objective
