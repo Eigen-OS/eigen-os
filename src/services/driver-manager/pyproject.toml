@@ -12,7 +12,9 @@ dependencies = [
   "grpcio-tools>=1.80",
   "grpcio-status>=1.80",
   "googleapis-common-protos>=1.74",
-  "protobuf>=6.31.1,<7.0.0",
+  # Checked-in driver-manager stubs are generated with protobuf 7.35.1.
+  # The protobuf runtime must not be older than the generated code.
+  "protobuf>=7.35.1,<8.0.0",
 ]
 
 [project.optional-dependencies]
