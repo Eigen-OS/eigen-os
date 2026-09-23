@@ -18,6 +18,9 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 
 ### Added
 
+- Optimizer plugin runtime now rejects an objective observation whose parameter
+  vector is not the current optimizer candidate, preventing stale or
+  cross-run observations from mutating COBYLA state.
 - Optimizer plugin runtime now validates optional gradient dimensions and
   values, iteration bounds, and restored COBYLA state before any optimizer
   state mutation, so malformed plugin inputs fail closed.
