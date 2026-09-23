@@ -567,6 +567,38 @@ def main():
     assert bound["parameter_bindings"] == {"phi": -0.5, "theta": 1.25}
 
 
+def test_parameter_ids_are_unique_and_bindings_reject_undeclared_symbols() -> None:
+    from eigen_compiler.compiler import bind_aqo_parameters
+
+    duplicate_parameter_source = b'''from eigen_lang import Param, hybrid_program, ry, rz
+@hybrid_program(target="sim")
+def main():
+    theta_a = Param("theta", 0.1)
+    theta_b = Param("theta", 0.2)
+    ry(0, theta=theta_a)
+    rz(0, theta=theta_b)
+'''
+    with pytest.raises(CompilerValidationError) as duplicate:
+        compile_eigen_lang(duplicate_parameter_source)
+    assert [(violation.field, violation.description) for violation in duplicate.value.violations] == [
+        ("source", "duplicate Param ID 'theta'; IDs must uniquely identify declared parameters")
+    ]
+
+    with pytest.raises(CompilerValidationError) as undeclared:
+        bind_aqo_parameters(
+            {
+                "version": "1.0.0",
+                "qubits": 1,
+                "parameters": {"theta": 0.0},
+                "operations": [{"op": "RY", "q": [0], "params": {"theta": "phi"}}],
+            },
+            {"theta": 1.0},
+        )
+    assert [(violation.field, violation.description) for violation in undeclared.value.violations] == [
+        ("operations[0].params.theta", "symbolic parameter ID must be declared in parameters")
+    ]
+
+
 @pytest.mark.parametrize(
     "hamiltonian, message",
     [
