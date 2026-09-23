@@ -63,7 +63,10 @@ When a workflow resumes, the Kernel restores the persisted histories before
 performing the next evaluation. Therefore the final `WorkflowReport` and its
 VQE projection account for the entire execution rather than only the segment
 that ran after the last resume. Checkpoints written by earlier runtimes remain
-readable, but cannot reconstruct history that they did not store.
+readable: absent history fields decode as empty histories. They cannot,
+however, reconstruct observations that were never persisted, so a report
+resumed from a legacy checkpoint only includes observations made after that
+checkpoint.
 
 ## Terminal outcomes
 
