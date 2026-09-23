@@ -18,6 +18,10 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 
 ### Added
 
+- Driver Manager now preserves noise-model integrity across the typed
+  `noise_model` field and legacy `options.noise_model` alias: both undergo the
+  same capability negotiation, and conflicting values fail validation rather
+  than being silently overwritten.
 - Iterative VQE workflow checkpoints now retain completed evaluation and
   optimizer-step histories, so resumed results expose every persisted parameter
   vector/objective observation and derive counters from the complete run.
