@@ -349,6 +349,48 @@ def main():
     assert any(message in violation.description for violation in exc_info.value.violations)
 
 
+@pytest.mark.parametrize(
+    ("convergence", "field", "message"),
+    [
+        ('{}', "minimize.convergence.max_iterations", "positive integer"),
+        ('{"max_iterations": 0}', "minimize.convergence.max_iterations", "positive integer"),
+        ('{"max_iterations": 1.5}', "minimize.convergence.max_iterations", "positive integer"),
+        ('{"max_iterations": 1, "parameter_tolerance": -0.1}', "minimize.convergence.parameter_tolerance", "finite non-negative"),
+        ('{"max_iterations": 1, "unexpected": 1}', "minimize.convergence.unexpected", "unsupported convergence setting"),
+    ],
+)
+def test_minimize_validates_kernel_convergence_contract(
+    convergence: str, field: str, message: str
+) -> None:
+    source = f"""from eigen_lang import Param, ExpectationValue, hybrid_program, minimize
+@hybrid_program(target="sim", shots=1000)
+def main():
+    theta = Param("theta")
+    minimize(ExpectationValue("a"), [0.1], convergence={convergence})
+""".encode()
+    with pytest.raises(CompilerValidationError) as exc_info:
+        compile_eigen_lang(source)
+    assert any(
+        violation.field == field and message in violation.description
+        for violation in exc_info.value.violations
+    )
+
+
+def test_minimize_canonicalizes_valid_kernel_convergence_contract() -> None:
+    source = b'''from eigen_lang import Param, ExpectationValue, hybrid_program, minimize
+@hybrid_program(target="sim", shots=1000)
+def main():
+    theta = Param("theta")
+    minimize(ExpectationValue("a"), [0.1], convergence={"parameter_tolerance": 0.01, "max_iterations": 2, "absolute_objective_tolerance": 0})
+'''
+    payload = json.loads(compile_eigen_lang(source).aqo_json.decode("utf-8"))
+    assert payload["annotations"]["iterative_hybrid_workflow"]["convergence"] == {
+        "absolute_objective_tolerance": 0,
+        "max_iterations": 2,
+        "parameter_tolerance": 0.01,
+    }
+
+
 def test_compile_records_literal_observable_annotations() -> None:
     source = b"""from eigen_lang import Observable, ExpectationValue, hybrid_program
 @hybrid_program(target="sim")
