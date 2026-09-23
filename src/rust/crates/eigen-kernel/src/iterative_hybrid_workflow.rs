@@ -8,7 +8,14 @@ use std::collections::BTreeMap;
 use std::time::Instant;
 
 use optimizer_plugin::{InitializeInput, IterationContext, OptimizerPluginRuntime, StepInput};
+use qfs::{
+    CHECKPOINT_ENVELOPE_SCHEMA_VERSION, CHECKPOINT_RUNTIME_API_VERSION, CheckpointArtifactRef,
+    CheckpointCompatibilityWindow, CheckpointEnvelopeV1, CheckpointExtensions,
+    CheckpointGuardrails, CheckpointIntegrity, CheckpointPayloadRefs, CheckpointProvenance,
+    CheckpointRestoreLineage, CheckpointRetentionPolicy, CheckpointTraceLinks, CircuitFsLocal,
+};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ConvergencePolicy {
@@ -86,6 +93,203 @@ pub struct WorkflowCheckpoint {
     pub previous_objective: Option<f64>,
 }
 
+/// Deterministic inputs pinned to an iterative checkpoint.  These identifiers
+/// and checksums intentionally exclude credentials and raw provider payloads.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkflowCheckpointProvenance {
+    pub workflow_id: String,
+    pub optimizer_plugin_id: String,
+    pub optimizer_plugin_version: String,
+    pub optimizer_plugin_api_version: String,
+    pub seed: u64,
+    pub backend: String,
+    pub shots: u64,
+    pub source_checksum: String,
+    pub compiled_artifact_ref: String,
+    pub configuration_checksum: String,
+    #[serde(default)]
+    pub compatibility_metadata: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct PersistedWorkflowCheckpoint {
+    provenance: WorkflowCheckpointProvenance,
+    checkpoint: WorkflowCheckpoint,
+}
+
+/// QFS-backed immutable checkpoint persistence for iterative workflows.
+#[derive(Debug, Clone)]
+pub struct WorkflowCheckpointStore {
+    qfs: CircuitFsLocal,
+}
+
+impl WorkflowCheckpointStore {
+    pub fn new(qfs: CircuitFsLocal) -> Self {
+        Self { qfs }
+    }
+
+    pub fn persist(
+        &self,
+        provenance: &WorkflowCheckpointProvenance,
+        checkpoint: &WorkflowCheckpoint,
+    ) -> Result<String, WorkflowError> {
+        validate_provenance(provenance)?;
+        let iteration = checkpoint.actual_optimizer_steps;
+        let base = format!(
+            "qfs://jobs/{}/checkpoints/iterative/{iteration:020}",
+            provenance.workflow_id
+        );
+        let payload_ref = format!("{base}/state.json");
+        let envelope_ref = format!("{base}/envelope.json");
+        let payload = serde_json::to_vec(&PersistedWorkflowCheckpoint {
+            provenance: provenance.clone(),
+            checkpoint: checkpoint.clone(),
+        })
+        .map_err(|e| WorkflowError::Checkpoint(e.to_string()))?;
+        let hash = format!("sha256:{:x}", Sha256::digest(&payload));
+        let envelope = CheckpointEnvelopeV1 {
+            schema_version: CHECKPOINT_ENVELOPE_SCHEMA_VERSION.into(),
+            checkpoint_id: format!("{}-{iteration:020}", provenance.workflow_id),
+            job_id: provenance.workflow_id.clone(),
+            created_at: format!("iteration:{iteration}"),
+            runtime_version: CHECKPOINT_RUNTIME_API_VERSION.into(),
+            payload_refs: CheckpointPayloadRefs {
+                state_segments: vec![CheckpointArtifactRef {
+                    path: payload_ref.clone(),
+                    content_hash: hash.clone(),
+                    size_bytes: payload.len() as u64,
+                }],
+                memory_graph_ref: provenance.compiled_artifact_ref.clone(),
+                execution_cursor_ref: payload_ref.clone(),
+            },
+            integrity: CheckpointIntegrity {
+                checksum_set: hash,
+                signature_ref: String::new(),
+            },
+            provenance: CheckpointProvenance {
+                compiler_version: provenance.source_checksum.clone(),
+                optimizer_version: provenance.optimizer_plugin_version.clone(),
+                model_version: provenance.configuration_checksum.clone(),
+                backend_profile: provenance.backend.clone(),
+                deterministic_seed: provenance.seed,
+            },
+            trace_links: CheckpointTraceLinks {
+                artifact_manifest_ref: provenance.compiled_artifact_ref.clone(),
+                dataset_metadata_ref: format!(
+                    "qfs://jobs/{}/input/source.checksum",
+                    provenance.workflow_id
+                ),
+                checkpoint_chain_ref: format!(
+                    "qfs://jobs/{}/checkpoints/iterative/",
+                    provenance.workflow_id
+                ),
+            },
+            guardrails: CheckpointGuardrails {
+                declared_size_bytes: payload.len() as u64,
+                estimated_restore_cost_units: 1,
+                ttl_class: "workflow".into(),
+            },
+            compatibility: CheckpointCompatibilityWindow {
+                min_reader_version: Some(CHECKPOINT_RUNTIME_API_VERSION.into()),
+                max_reader_version: Some(CHECKPOINT_RUNTIME_API_VERSION.into()),
+            },
+            extensions: CheckpointExtensions {
+                extension_keys: vec!["io.eigen.iterative-workflow/v1".into()],
+            },
+            retention: CheckpointRetentionPolicy::default(),
+            restore_lineage: CheckpointRestoreLineage::default(),
+        };
+        envelope
+            .validate()
+            .map_err(|e| WorkflowError::Checkpoint(e.to_string()))?;
+        self.qfs
+            .write_bytes(&payload_ref, &payload)
+            .map_err(|e| WorkflowError::Checkpoint(e.to_string()))?;
+        self.qfs
+            .write_bytes(
+                &envelope_ref,
+                &serde_json::to_vec(&envelope)
+                    .map_err(|e| WorkflowError::Checkpoint(e.to_string()))?,
+            )
+            .map_err(|e| WorkflowError::Checkpoint(e.to_string()))?;
+        Ok(envelope_ref)
+    }
+
+    /// Returns `None` only before the first completed iteration. Invalid or
+    /// incompatible persisted state fails closed instead of restarting at zero.
+    pub fn load_latest_compatible(
+        &self,
+        expected: &WorkflowCheckpointProvenance,
+    ) -> Result<Option<WorkflowCheckpoint>, WorkflowError> {
+        validate_provenance(expected)?;
+        let prefix = format!("qfs://jobs/{}/checkpoints/iterative/", expected.workflow_id);
+        let envelope_ref = match self
+            .qfs
+            .list_refs(&prefix)
+            .map_err(|e| WorkflowError::Checkpoint(e.to_string()))?
+            .into_iter()
+            .filter(|r| r.ends_with("/envelope.json"))
+            .max()
+        {
+            Some(r) => r,
+            None => return Ok(None),
+        };
+        let envelope: CheckpointEnvelopeV1 = serde_json::from_slice(
+            &self
+                .qfs
+                .read_bytes(&envelope_ref)
+                .map_err(|e| WorkflowError::Checkpoint(e.to_string()))?,
+        )
+        .map_err(|e| WorkflowError::Checkpoint(format!("invalid checkpoint envelope: {e}")))?;
+        envelope
+            .validate()
+            .map_err(|e| WorkflowError::Checkpoint(e.to_string()))?;
+        let payload_ref = envelope
+            .payload_refs
+            .state_segments
+            .first()
+            .ok_or_else(|| WorkflowError::Checkpoint("checkpoint has no state segment".into()))?
+            .path
+            .clone();
+        let payload = self
+            .qfs
+            .read_bytes(&payload_ref)
+            .map_err(|e| WorkflowError::Checkpoint(e.to_string()))?;
+        envelope
+            .verify_payload_integrity(&payload)
+            .map_err(|e| WorkflowError::Checkpoint(e.to_string()))?;
+        let persisted: PersistedWorkflowCheckpoint = serde_json::from_slice(&payload)
+            .map_err(|e| WorkflowError::Checkpoint(format!("invalid checkpoint payload: {e}")))?;
+        if persisted.provenance != *expected {
+            return Err(WorkflowError::Checkpoint(
+                "checkpoint provenance is incompatible with this replay".into(),
+            ));
+        }
+        Ok(Some(persisted.checkpoint))
+    }
+}
+
+fn validate_provenance(value: &WorkflowCheckpointProvenance) -> Result<(), WorkflowError> {
+    if [
+        &value.workflow_id,
+        &value.optimizer_plugin_id,
+        &value.optimizer_plugin_version,
+        &value.optimizer_plugin_api_version,
+        &value.backend,
+        &value.source_checksum,
+        &value.compiled_artifact_ref,
+        &value.configuration_checksum,
+    ]
+    .iter()
+    .any(|field| field.is_empty())
+    {
+        return Err(WorkflowError::InvalidConfiguration(
+            "checkpoint provenance fields must be non-empty",
+        ));
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WorkflowReport {
     pub termination_reason: TerminationReason,
@@ -104,6 +308,7 @@ pub enum WorkflowError {
     InvalidConfiguration(&'static str),
     Evaluator(String),
     Optimizer(String),
+    Checkpoint(String),
 }
 
 impl std::fmt::Display for WorkflowError {
@@ -151,19 +356,40 @@ impl<'a, E: ObjectiveEvaluator, C: CancellationSignal> IterativeHybridWorkflowEn
     }
 
     pub fn run(mut self, initial_parameters: Vec<f64>) -> WorkflowReport {
-        self.run_from(initial_parameters, None)
+        self.run_from(initial_parameters, None, None)
     }
 
     /// Resumes from a durable QFS checkpoint.  The checkpoint describes the
     /// next evaluation, so its counters are never fabricated or replayed.
     pub fn resume(mut self, checkpoint: WorkflowCheckpoint) -> WorkflowReport {
-        self.run_from(checkpoint.parameters.clone(), Some(checkpoint))
+        self.run_from(checkpoint.parameters.clone(), Some(checkpoint), None)
+    }
+
+    /// Resumes the latest matching QFS checkpoint or starts a new workflow when
+    /// no completed iteration exists. Corruption and provenance mismatch fail
+    /// the workflow; neither condition may silently reinitialize an optimizer.
+    pub fn run_or_resume(
+        mut self,
+        initial_parameters: Vec<f64>,
+        store: &WorkflowCheckpointStore,
+        provenance: &WorkflowCheckpointProvenance,
+    ) -> WorkflowReport {
+        match store.load_latest_compatible(provenance) {
+            Ok(Some(checkpoint)) => self.run_from(
+                checkpoint.parameters.clone(),
+                Some(checkpoint),
+                Some((store, provenance)),
+            ),
+            Ok(None) => self.run_from(initial_parameters, None, Some((store, provenance))),
+            Err(error) => failed_report(initial_parameters, error.to_string()),
+        }
     }
 
     fn run_from(
         &mut self,
         initial_parameters: Vec<f64>,
         resume: Option<WorkflowCheckpoint>,
+        checkpoint_store: Option<(&WorkflowCheckpointStore, &WorkflowCheckpointProvenance)>,
     ) -> WorkflowReport {
         let mut phases = vec![WorkflowPhase::Initialize];
         let started = Instant::now();
@@ -320,6 +546,18 @@ impl<'a, E: ObjectiveEvaluator, C: CancellationSignal> IterativeHybridWorkflowEn
             steps += 1;
             phases.push(WorkflowPhase::Checkpoint);
             previous_objective = Some(objective);
+            if let Some((store, provenance)) = checkpoint_store {
+                let checkpoint = WorkflowCheckpoint {
+                    parameters: parameters.clone(),
+                    optimizer_state: state.clone(),
+                    actual_optimizer_steps: steps,
+                    actual_evaluations: evaluations,
+                    previous_objective,
+                };
+                if let Err(value) = store.persist(provenance, &checkpoint) {
+                    error = Some(value.to_string());
+                    break;
+                }
         }
         if error.is_some() {
             reason = TerminationReason::Failed;
@@ -352,6 +590,24 @@ impl<'a, E: ObjectiveEvaluator, C: CancellationSignal> IterativeHybridWorkflowEn
     }
 }
 
+fn failed_report(parameters: Vec<f64>, error: String) -> WorkflowReport {
+    WorkflowReport {
+        termination_reason: TerminationReason::Failed,
+        claimed_iterations: 0,
+        actual_optimizer_steps: 0,
+        actual_evaluations: 0,
+        evaluations: Vec::new(),
+        optimizer_steps: Vec::new(),
+        checkpoint: WorkflowCheckpoint {
+            parameters,
+            optimizer_state: Vec::new(),
+            actual_optimizer_steps: 0,
+            actual_evaluations: 0,
+            previous_objective: None,
+        },
+        phases: vec![WorkflowPhase::Initialize, WorkflowPhase::Finalize],
+        error: Some(error),
+   
 fn has_converged(
     policy: &ConvergencePolicy,
     objective: f64,
@@ -381,6 +637,8 @@ fn has_converged(
 mod tests {
     use super::*;
     use optimizer_plugin::CobylaPlugin;
+    use std::sync::{
+        Arc,
 
     struct NeverCancelled;
     impl CancellationSignal for NeverCancelled {
@@ -404,6 +662,22 @@ mod tests {
             absolute_objective_tolerance: None,
             relative_objective_tolerance: None,
             parameter_tolerance: None,
+        }
+    }
+
+    fn provenance() -> WorkflowCheckpointProvenance {
+        WorkflowCheckpointProvenance {
+            workflow_id: "iterative-resume".into(),
+            optimizer_plugin_id: "io.eigen.optimizer.cobyla".into(),
+            optimizer_plugin_version: "1.0.0".into(),
+            optimizer_plugin_api_version: "1.0.0".into(),
+            seed: 7,
+            backend: "simulator".into(),
+            shots: 1024,
+            source_checksum: "sha256:source".into(),
+            compiled_artifact_ref: "qfs://jobs/iterative-resume/compiled/circuit.aqo.json".into(),
+            configuration_checksum: "sha256:config".into(),
+            compatibility_metadata: BTreeMap::new(),
         }
     }
 
@@ -473,5 +747,85 @@ mod tests {
             (0, 0)
         );
         assert!(report.error.unwrap().contains("driver manager unavailable"));
+    }
+
+    #[test]
+    fn qfs_checkpoint_resume_continues_at_the_next_iteration_with_identical_state() {
+        struct CancelAfter(Arc<AtomicUsize>);
+        impl CancellationSignal for CancelAfter {
+            fn is_cancelled(&self) -> bool {
+                self.0.fetch_add(1, Ordering::SeqCst) >= 2
+            }
+        }
+        let root = tempfile::tempdir().unwrap();
+        let store = WorkflowCheckpointStore::new(CircuitFsLocal::new(root.path()));
+        let inputs = provenance();
+        let mut interrupted_optimizer = runtime();
+        let interrupted = IterativeHybridWorkflowEngine::new(
+            Function(|p| (p[0] - 100.0).powi(2)),
+            CancelAfter(Arc::new(AtomicUsize::new(0))),
+            &mut interrupted_optimizer,
+            policy(3),
+            BTreeMap::new(),
+        )
+        .run_or_resume(vec![0.0], &store, &inputs);
+        assert_eq!(interrupted.termination_reason, TerminationReason::Cancelled);
+        assert_eq!(interrupted.actual_optimizer_steps, 1);
+
+        let mut resumed_optimizer = runtime();
+        let resumed = IterativeHybridWorkflowEngine::new(
+            Function(|p| (p[0] - 100.0).powi(2)),
+            NeverCancelled,
+            &mut resumed_optimizer,
+            policy(3),
+            BTreeMap::new(),
+        )
+        .run_or_resume(vec![999.0], &store, &inputs);
+        assert_eq!(resumed.termination_reason, TerminationReason::MaxIterations);
+        assert_eq!(resumed.actual_optimizer_steps, 3);
+        assert_eq!(resumed.actual_evaluations, 4);
+
+        let mut uninterrupted_optimizer = runtime();
+        let uninterrupted = IterativeHybridWorkflowEngine::new(
+            Function(|p| (p[0] - 100.0).powi(2)),
+            NeverCancelled,
+            &mut uninterrupted_optimizer,
+            policy(3),
+            BTreeMap::new(),
+        )
+        .run(vec![0.0]);
+        assert_eq!(resumed.checkpoint, uninterrupted.checkpoint);
+    }
+
+    #[test]
+    fn incompatible_checkpoint_fails_closed_instead_of_restarting() {
+        let root = tempfile::tempdir().unwrap();
+        let store = WorkflowCheckpointStore::new(CircuitFsLocal::new(root.path()));
+        let inputs = provenance();
+        store
+            .persist(
+                &inputs,
+                &WorkflowCheckpoint {
+                    parameters: vec![1.0],
+                    optimizer_state: vec![1],
+                    actual_optimizer_steps: 1,
+                    actual_evaluations: 1,
+                    previous_objective: Some(1.0),
+                },
+            )
+            .unwrap();
+        let mut incompatible = inputs.clone();
+        incompatible.backend = "other-backend".into();
+        let mut optimizer = runtime();
+        let report = IterativeHybridWorkflowEngine::new(
+            Function(|p| p[0]),
+            NeverCancelled,
+            &mut optimizer,
+            policy(3),
+            BTreeMap::new(),
+        )
+        .run_or_resume(vec![0.0], &store, &incompatible);
+        assert_eq!(report.termination_reason, TerminationReason::Failed);
+        assert!(report.error.unwrap().contains("incompatible"));
     }
 }
