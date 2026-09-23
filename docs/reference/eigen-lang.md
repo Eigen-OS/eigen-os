@@ -491,9 +491,9 @@ rather than their defaults. A runtime binds an immutable symbolic AQO ansatz
 with `bind_aqo_parameters(aqo, {"theta": 1.0})`; it returns a copied,
 canonical bound-circuit payload and requires exactly one finite numeric value
 for every declared ID. IDs must be unique within a source program, and every
-symbolic gate reference must name a declared ID; duplicate or undeclared IDs
-are rejected rather than being silently aliased. The original AQO artifact
-remains unchanged. Iterative
+symbolic gate reference must name a declared ID; compiler and AQO validation
+reject duplicate or undeclared IDs rather than silently aliasing them. The
+original AQO artifact remains unchanged. Iterative
 `ExpectationValue` objectives refer to the named Hamiltonian through
 `hamiltonian_ref`, rather than carrying workload- or simulator-specific
 annotations.

@@ -567,7 +567,7 @@ def main():
     assert bound["parameter_bindings"] == {"phi": -0.5, "theta": 1.25}
 
 
-def test_parameter_ids_are_unique_and_bindings_reject_undeclared_symbols() -> None:
+def test_parameter_ids_are_unique_and_aqo_validation_rejects_undeclared_symbols() -> None:
     from eigen_compiler.compiler import bind_aqo_parameters
 
     duplicate_parameter_source = b'''from eigen_lang import Param, hybrid_program, ry, rz
@@ -584,19 +584,21 @@ def main():
         ("source", "duplicate Param ID 'theta'; IDs must uniquely identify declared parameters")
     ]
 
+    undeclared_aqo = {
+        "version": "1.0.0",
+        "qubits": 1,
+        "parameters": {"theta": 0.0},
+        "operations": [{"op": "RY", "q": [0], "params": {"theta": "phi"}}],
+    }
     with pytest.raises(CompilerValidationError) as undeclared:
-        bind_aqo_parameters(
-            {
-                "version": "1.0.0",
-                "qubits": 1,
-                "parameters": {"theta": 0.0},
-                "operations": [{"op": "RY", "q": [0], "params": {"theta": "phi"}}],
-            },
-            {"theta": 1.0},
-        )
+        _encode_aqo_payload(undeclared_aqo)
     assert [(violation.field, violation.description) for violation in undeclared.value.violations] == [
         ("operations[0].params.theta", "symbolic parameter ID must be declared in parameters")
     ]
+
+    with pytest.raises(CompilerValidationError) as binding:
+        bind_aqo_parameters(undeclared_aqo, {"theta": 1.0})
+    assert binding.value.violations == undeclared.value.violations
 
 
 @pytest.mark.parametrize(
