@@ -3,6 +3,7 @@ resolver = "2"
 members = [
   "apps/cli",
   "crates/observability",
+  "crates/optimizer-plugin",
   "crates/qrtx",
   "crates/qfs",
   "crates/resource-manager",
