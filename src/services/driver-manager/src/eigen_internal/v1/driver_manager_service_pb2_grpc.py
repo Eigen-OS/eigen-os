@@ -43,7 +43,7 @@ class DriverManagerServiceStub:
                 _registered_method=True)
         self.GetDeviceStatus = channel.unary_unary(
                 '/eigen.internal.v1.DriverManagerService/GetDeviceStatus',
-                rrequest_serializer=eigen_dot_internal_dot_v1_dot_driver__manager__service__pb2.DeviceStatusRequest.SerializeToString,
+                request_serializer=eigen_dot_internal_dot_v1_dot_driver__manager__service__pb2.DeviceStatusRequest.SerializeToString,
                 response_deserializer=eigen_dot_internal_dot_v1_dot_driver__manager__service__pb2.DeviceStatusResponse.FromString,
                 _registered_method=True)
         self.ExecuteCircuit = channel.unary_unary(
@@ -53,8 +53,8 @@ class DriverManagerServiceStub:
                 _registered_method=True)
         self.CalibrateDevice = channel.unary_unary(
                 '/eigen.internal.v1.DriverManagerService/CalibrateDevice',
-                request_serializer=eigen_dot_internal_dot_v1_dot_driver__manager__service__pb2.ExecuteCircuitRequest.SerializeToString,
-                response_deserializer=eigen_dot_internal_dot_v1_dot_driver__manager__service__pb2.ExecuteCircuitResponse.FromString,
+                request_serializer=eigen_dot_internal_dot_v1_dot_driver__manager__service__pb2.CalibrateDeviceRequest.SerializeToString,
+                response_deserializer=eigen_dot_internal_dot_v1_dot_driver__manager__service__pb2.CalibrateDeviceResponse.FromString,
                 _registered_method=True)
 
 
