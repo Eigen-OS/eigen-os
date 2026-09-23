@@ -31,7 +31,7 @@ The lifecycle is strictly ordered:
   the newest checkpoint only after envelope, payload-hash, runtime-version,
   and complete provenance validation. A corrupt or incompatible checkpoint
   fails the workflow rather than silently starting again at iteration zero.
-  Restore begins at the checkpoint's next evaluation, so it neither replays nor
+  Restore begins at the checkpoint's next evaluation, so it neither replays nor invents evaluations.
 - **Converge** evaluates the configured termination policy after each objective
   observation.
 - **Finalize** runs for every terminal result, including failure and
@@ -75,6 +75,13 @@ This is an additive Kernel/AQO Hybrid IR runtime contract. Existing single-shot
 `QuantumJob` execution is unchanged. Optimizer plugin API v`1.0.0` remains the
 plugin boundary; the engine uses its existing initialize, step, state, restore,
 and finalize operations.
+
+Checkpoint persistence and restore are likewise additive QFS behavior. The
+existing `CheckpointEnvelopeV1` schema and runtime compatibility rules remain
+unchanged; iterative workflows only use that envelope to persist their cursor
+and optimizer state. Consequently, this contract has a **MINOR** version
+impact, is backward-compatible for existing workloads and checkpoint readers,
+and requires no migration.
 
 ## Checkpoint layout and replay lineage
 
