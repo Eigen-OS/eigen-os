@@ -22,8 +22,10 @@ The lifecycle is strictly ordered:
   persist checkpoints.
 - **Checkpoint** persists an immutable QFS `CheckpointEnvelopeV1` after every
   completed optimizer step. Its state payload contains the next candidate,
-  opaque optimizer state, completed step/evaluation counters, and prior
-  objective; its pinned provenance contains the workflow ID, optimizer plugin
+  opaque optimizer state, completed step/evaluation counters, prior objective,
+  and the complete evaluation and optimizer-step histories accumulated so far.
+  Each retained evaluation includes its parameter vector and finite objective
+  value. Its pinned provenance contains the workflow ID, optimizer plugin
   ID/version/API version, seed, backend, shots, source checksum, compiled AQO
   artifact reference, configuration checksum, and compatibility metadata.
   These are identifiers and checksums only: credentials and raw provider
@@ -56,6 +58,12 @@ state, and bounded metadata. Results and metrics consumers can rely on:
   `actual_evaluations >= actual_optimizer_steps + 1` for successful/max-iteration
   terminal runs; and
 - counters describe completed work only, including after a failure.
+
+When a workflow resumes, the Kernel restores the persisted histories before
+performing the next evaluation. Therefore the final `WorkflowReport` and its
+VQE projection account for the entire execution rather than only the segment
+that ran after the last resume. Checkpoints written by earlier runtimes remain
+readable, but cannot reconstruct history that they did not store.
 
 ## Terminal outcomes
 
