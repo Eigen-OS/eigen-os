@@ -909,6 +909,27 @@ mod tests {
     }
     
     #[test]
+    fn legacy_checkpoint_without_histories_remains_readable() {
+        let checkpoint: WorkflowCheckpoint = serde_json::from_str(
+            r#"{
+                "parameters": [1.0],
+                "optimizer_state": [1, 2],
+                "actual_optimizer_steps": 2,
+                "actual_evaluations": 3,
+                "previous_objective": -1.5
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(checkpoint.parameters, vec![1.0]);
+        assert_eq!(checkpoint.actual_optimizer_steps, 2);
+        assert_eq!(checkpoint.actual_evaluations, 3);
+        assert_eq!(checkpoint.previous_objective, Some(-1.5));
+        assert!(checkpoint.evaluation_history.is_empty());
+        assert!(checkpoint.optimizer_step_history.is_empty());
+    }
+
+    #[test]
     fn vqe_result_ignores_non_finite_energies_and_keeps_the_earliest_tie() {
         let mut report = failed_report(vec![0.0], "later evaluation failed".into());
         report.actual_evaluations = 4;
