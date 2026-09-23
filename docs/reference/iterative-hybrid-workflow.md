@@ -69,6 +69,28 @@ state, and bounded metadata. Results and metrics consumers can rely on:
 An evaluator failure is terminal and propagates unchanged through the Kernel
 result surface. The engine makes no provider-specific retry decision.
 
+## VQE result projection
+
+VQE is a minimization use of the generic workflow. Once a workflow report is
+available, the Kernel exposes the stable `VqeResult` projection (schema version
+`1.0.0`) for VQE consumers; it does not give VQE-specific privileges to an
+optimizer plugin or Driver Manager.
+
+| Field | Meaning |
+|---|---|
+| `termination_reason` | The terminal workflow reason: `CONVERGED`, `MAX_ITERATIONS`, `FAILED`, or `CANCELLED`. |
+| `optimal_energy` | The lowest finite objective from a completed evaluation, interpreted as VQE energy. It is absent if no evaluation completed. |
+| `optimal_parameters` | The parameter vector evaluated for `optimal_energy`; absent together with the energy. |
+| `optimal_evaluation` | The one-based evaluation number that produced the optimum. Equal energies select the earliest evaluation deterministically. |
+| `claimed_iterations`, `actual_optimizer_steps`, `actual_evaluations` | Completed-work counters with the accounting guarantees above. |
+| `error` | Terminal failure text, if any. A partial optimum remains available when earlier evaluations completed before a later failure. |
+
+The result intentionally reports the best **observed** energy rather than the
+last candidate or checkpoint cursor. Consumers must treat an absent optimum as
+an unsuccessful evaluation, not as a zero energy or an empty parameter vector.
+The generic `WorkflowReport` retains the full evaluation and optimizer-step
+history for diagnostics; `VqeResult` is its concise result surface.
+
 ## Compatibility
 
 This is an additive Kernel/AQO Hybrid IR runtime contract. Existing single-shot
