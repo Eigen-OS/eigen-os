@@ -92,6 +92,16 @@ pub struct WorkflowCheckpoint {
     pub actual_optimizer_steps: u64,
     pub actual_evaluations: u64,
     pub previous_objective: Option<f64>,
+    /// Completed observations retained across checkpoint/resume boundaries.
+    ///
+    /// Defaults preserve readability of checkpoints written before history was
+    /// made durable; those legacy checkpoints cannot recreate observations
+    /// that were never persisted.
+    #[serde(default)]
+    pub evaluation_history: Vec<EvaluationRecord>,
+    /// Optimizer transitions corresponding to `evaluation_history`.
+    #[serde(default)]
+    pub optimizer_step_history: Vec<OptimizerStepRecord>,
 }
 
 /// Deterministic inputs pinned to an iterative checkpoint.  These identifiers
@@ -446,39 +456,48 @@ impl<'a, E: ObjectiveEvaluator, C: CancellationSignal> IterativeHybridWorkflowEn
     ) -> WorkflowReport {
         let mut phases = vec![WorkflowPhase::Initialize];
         let started = Instant::now();
-        let mut records = Vec::new();
-        let mut step_records = Vec::new();
-        let (mut parameters, mut steps, mut evaluations, mut previous_objective, init_error) =
-            match resume {
-                Some(checkpoint) => {
-                    let restored = self
-                        .optimizer
-                        .plugin_mut()
-                        .and_then(|plugin| plugin.restore(&checkpoint.optimizer_state));
-                    (
-                        checkpoint.parameters,
-                        checkpoint.actual_optimizer_steps,
-                        checkpoint.actual_evaluations,
-                        checkpoint.previous_objective,
-                        restored.err().map(|error| error.to_string()),
-                    )
-                }
-                None => {
-                    let initialized = self.optimizer.plugin_mut().and_then(|plugin| {
-                        plugin.initialize(InitializeInput {
-                            parameters: initial_parameters.clone(),
-                            metadata: self.metadata.clone(),
-                        })
-                    });
-                    (
-                        initial_parameters,
-                        0,
-                        0,
-                        None,
-                        initialized.err().map(|error| error.to_string()),
-                    )
-                }
-            };
+        let (
+            mut parameters,
+            mut steps,
+            mut evaluations,
+            mut previous_objective,
+            mut records,
+            mut step_records,
+            init_error,
+        ) = match resume {
+            Some(checkpoint) => {
+                let restored = self
+                    .optimizer
+                    .plugin_mut()
+                    .and_then(|plugin| plugin.restore(&checkpoint.optimizer_state));
+                (
+                    checkpoint.parameters,
+                    checkpoint.actual_optimizer_steps,
+                    checkpoint.actual_evaluations,
+                    checkpoint.previous_objective,
+                    checkpoint.evaluation_history,
+                    checkpoint.optimizer_step_history,
+                    restored.err().map(|error| error.to_string()),
+                )
+            }
+            None => {
+                let initialized = self.optimizer.plugin_mut().and_then(|plugin| {
+                    plugin.initialize(InitializeInput {
+                        parameters: initial_parameters.clone(),
+                        metadata: self.metadata.clone(),
+                    })
+                });
+                (
+                    initial_parameters,
+                    0,
+                    0,
+                    None,
+                    Vec::new(),
+                    Vec::new(),
+                    initialized.err().map(|error| error.to_string()),
+                )
+            }
+        };
         let mut state = Vec::new();
         let mut reason = TerminationReason::Failed;
         let mut error = init_error;
@@ -606,6 +625,8 @@ impl<'a, E: ObjectiveEvaluator, C: CancellationSignal> IterativeHybridWorkflowEn
                     actual_optimizer_steps: steps,
                     actual_evaluations: evaluations,
                     previous_objective,
+                    evaluation_history: records.clone(),
+                    optimizer_step_history: step_records.clone(),
                 };
                 if let Err(value) = store.persist(provenance, &checkpoint) {
                     error = Some(value.to_string());
@@ -629,6 +650,8 @@ impl<'a, E: ObjectiveEvaluator, C: CancellationSignal> IterativeHybridWorkflowEn
             actual_optimizer_steps: steps,
             actual_evaluations: evaluations,
             previous_objective,
+            evaluation_history: records.clone(),
+            optimizer_step_history: step_records.clone(),
         };
         WorkflowReport {
             termination_reason: reason,
@@ -658,6 +681,8 @@ fn failed_report(parameters: Vec<f64>, error: String) -> WorkflowReport {
             actual_optimizer_steps: 0,
             actual_evaluations: 0,
             previous_objective: None,
+            evaluation_history: Vec::new(),
+            optimizer_step_history: Vec::new(),
         },
         phases: vec![WorkflowPhase::Initialize, WorkflowPhase::Finalize],
         error: Some(error),
@@ -850,6 +875,8 @@ mod tests {
                 actual_optimizer_steps: 2,
                 actual_evaluations: 3,
                 previous_objective: Some(-1.5),
+                evaluation_history: vec![],
+                optimizer_step_history: vec![],
             },
             phases: vec![WorkflowPhase::Finalize],
             error: None,
@@ -966,6 +993,21 @@ mod tests {
         assert_eq!(resumed.termination_reason, TerminationReason::MaxIterations);
         assert_eq!(resumed.actual_optimizer_steps, 3);
         assert_eq!(resumed.actual_evaluations, 4);
+        assert_eq!(resumed.evaluations.len(), 4);
+        assert_eq!(resumed.optimizer_steps.len(), 3);
+        assert!(resumed
+            .optimizer_steps
+            .iter()
+            .all(|step| step.evaluated_parameters != step.next_parameters));
+        assert!(resumed
+            .evaluations
+            .iter()
+            .enumerate()
+            .all(|(index, record)| record.evaluation == index as u64 + 1));
+        assert!(resumed
+            .evaluations
+            .iter()
+            .all(|record| record.objective_value.is_finite()));
 
         let mut uninterrupted_optimizer = runtime();
         let uninterrupted = IterativeHybridWorkflowEngine::new(
@@ -993,6 +1035,8 @@ mod tests {
                     actual_optimizer_steps: 1,
                     actual_evaluations: 1,
                     previous_objective: Some(1.0),
+                    evaluation_history: vec![],
+                    optimizer_step_history: vec![],
                 },
             )
             .unwrap();
