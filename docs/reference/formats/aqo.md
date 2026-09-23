@@ -358,8 +358,11 @@ an `hamiltonian_ref` to this model, preserving ansatz, objective, and optimizer
 as distinct reusable artifacts.
 
 At runtime, `annotations.iterative_hybrid_workflow` is executed by the generic
-Kernel iterative workflow engine. Each bound candidate is evaluated through
-Driver Manager before the optimizer can propose the next candidate; the
-symbolic AQO artifact remains immutable. See the [iterative hybrid workflow
-runtime contract](../iterative-hybrid-workflow.md) for lifecycle, checkpoint,
-convergence, and terminal-accounting semantics.
+Kernel iterative workflow engine. Its `convergence` object requires positive
+integer `max_iterations` and may contain finite non-negative
+`absolute_objective_tolerance`, `relative_objective_tolerance`, and
+`parameter_tolerance`; other keys are invalid. Each bound candidate is
+evaluated through Driver Manager before the optimizer can propose the next
+candidate; the symbolic AQO artifact remains immutable. See the [iterative
+hybrid workflow runtime contract](../iterative-hybrid-workflow.md) for
+lifecycle, checkpoint, convergence, and terminal-accounting semantics.
