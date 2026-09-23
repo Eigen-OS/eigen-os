@@ -79,15 +79,17 @@ optimizer plugin or Driver Manager.
 | Field | Meaning |
 |---|---|
 | `termination_reason` | The terminal workflow reason: `CONVERGED`, `MAX_ITERATIONS`, `FAILED`, or `CANCELLED`. |
-| `optimal_energy` | The lowest finite objective from a completed evaluation, interpreted as VQE energy. It is absent if no evaluation completed. |
+| `optimal_energy` | The lowest finite objective from a completed evaluation, interpreted as VQE energy. `NaN` and positive or negative infinity are ignored. It is absent if no finite evaluation completed. |
 | `optimal_parameters` | The parameter vector evaluated for `optimal_energy`; absent together with the energy. |
 | `optimal_evaluation` | The one-based evaluation number that produced the optimum. Equal energies select the earliest evaluation deterministically. |
 | `claimed_iterations`, `actual_optimizer_steps`, `actual_evaluations` | Completed-work counters with the accounting guarantees above. |
 | `error` | Terminal failure text, if any. A partial optimum remains available when earlier evaluations completed before a later failure. |
 
-The result intentionally reports the best **observed** energy rather than the
-last candidate or checkpoint cursor. Consumers must treat an absent optimum as
-an unsuccessful evaluation, not as a zero energy or an empty parameter vector.
+The result intentionally reports the best **observed finite** energy rather than
+the last candidate or checkpoint cursor. Consumers must treat an absent optimum
+as an unsuccessful evaluation, not as a zero energy or an empty parameter
+vector. Non-finite evaluator output must not be presented as an optimum.
+
 The generic `WorkflowReport` retains the full evaluation and optimizer-step
 history for diagnostics; `VqeResult` is its concise result surface.
 

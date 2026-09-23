@@ -18,6 +18,7 @@ Before `1.0.0`, breaking changes may occur in minor versions. After `1.0.0`, bre
 
 ### Added
 
+- VQE result projection ignores non-finite objective values and deterministically keeps the
 - Kernel iterative hybrid workflow VQE result projection (`VqeResult` schema `1.0.0`) with deterministic best-observed energy selection, its evaluated parameter vector and evaluation index, completed-work counters, and explicit no-observation failure behavior.
 - Product 1.0 Wave-1 W1-05 public error conformance (`system-api` package `1.0.0-major-marker`) with canonical `google.rpc.Status` construction, `EIGEN_PUBLIC_*` reason codes, retryability metadata, and conformance coverage for validation, auth, idempotency conflict, version mismatch, payload limit, deadline, cancellation, unavailable, and internal failure shapes.
 - Phase-9B P9B-06 canary rollout + auto-rollback safety pack (`benchmark-service` package `0.11.0`) with deterministic canary cohort/window policy fields, auditable stable canary reason codes, and automatic rollback envelopes that pin stable target model version and 15-minute restore SLO metadata.

@@ -330,11 +330,18 @@ impl WorkflowReport {
     /// Equal energies select the earliest evaluation, which makes the result
     /// deterministic even when an optimizer revisits a point.
     pub fn vqe_result(&self) -> VqeResult {
-        let best = self.evaluations.iter().min_by(|left, right| {
-            left.objective_value
-                .total_cmp(&right.objective_value)
-                .then_with(|| left.evaluation.cmp(&right.evaluation))
-        });
+        let best = self
+            .evaluations
+            .iter()
+            // A VQE optimum is an observed *finite* energy.  Do not expose a
+            // NaN or infinity as a best result merely because it is present in
+            // an otherwise completed report.
+            .filter(|record| record.objective_value.is_finite())
+            .min_by(|left, right| {
+                left.objective_value
+                    .total_cmp(&right.objective_value)
+                    .then_with(|| left.evaluation.cmp(&right.evaluation))
+            });
         VqeResult {
             schema_version: "1.0.0".into(),
             termination_reason: self.termination_reason,
@@ -872,6 +879,56 @@ mod tests {
         assert_eq!(result.optimal_parameters, None);
         assert_eq!(result.optimal_evaluation, None);
         assert_eq!(result.error.as_deref(), Some("driver manager unavailable"));
+    }
+    
+    #[test]
+    fn vqe_result_ignores_non_finite_energies_and_keeps_the_earliest_tie() {
+        let mut report = failed_report(vec![0.0], "later evaluation failed".into());
+        report.actual_evaluations = 4;
+        report.evaluations = vec![
+            EvaluationRecord {
+                iteration: 0,
+                evaluation: 1,
+                parameters: vec![0.0],
+                objective_value: f64::NAN,
+                elapsed_millis: 0,
+                optimizer_state: vec![],
+                optimizer_metadata: BTreeMap::new(),
+            },
+            EvaluationRecord {
+                iteration: 1,
+                evaluation: 2,
+                parameters: vec![1.0],
+                objective_value: -2.0,
+                elapsed_millis: 0,
+                optimizer_state: vec![],
+                optimizer_metadata: BTreeMap::new(),
+            },
+            EvaluationRecord {
+                iteration: 2,
+                evaluation: 3,
+                parameters: vec![2.0],
+                objective_value: f64::NEG_INFINITY,
+                elapsed_millis: 0,
+                optimizer_state: vec![],
+                optimizer_metadata: BTreeMap::new(),
+            },
+            EvaluationRecord {
+                iteration: 3,
+                evaluation: 4,
+                parameters: vec![3.0],
+                objective_value: -2.0,
+                elapsed_millis: 0,
+                optimizer_state: vec![],
+                optimizer_metadata: BTreeMap::new(),
+            },
+        ];
+
+        let result = report.vqe_result();
+        assert_eq!(result.optimal_energy, Some(-2.0));
+        assert_eq!(result.optimal_parameters, Some(vec![1.0]));
+        assert_eq!(result.optimal_evaluation, Some(2));
+        assert_eq!(result.error.as_deref(), Some("later evaluation failed"));
     }
 
     #[test]
