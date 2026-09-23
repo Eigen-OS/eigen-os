@@ -13,7 +13,7 @@ option java_package = "com.eigen.api.internal.v1";
 // Source of truth: RFC 0006.
 service DriverManagerService {
   rpc ListDevices(ListDevicesRequest) returns (ListDevicesResponse);
-  rpc GetDeviceStatus(GetDeviceStatusRequest) returns (GetDeviceStatusResponse);
+  rpc GetDeviceStatus(DeviceStatusRequest) returns (DeviceStatusResponse);
   rpc ExecuteCircuit(ExecuteCircuitRequest) returns (ExecuteCircuitResponse);
   rpc CalibrateDevice(CalibrateDeviceRequest) returns (CalibrateDeviceResponse);
 }
