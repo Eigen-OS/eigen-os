@@ -47,24 +47,23 @@ def _observable_terms_from_payload(payload: dict) -> dict[str, dict[str, object]
 
 def _statevector_expectation(state: list[complex], qubits: list[int], operator: str) -> float:
     operator = operator.upper()
-    if not qubits or operator not in {"X", "Y", "Z"}:
+    if not qubits or len(operator) != len(qubits) or set(operator) - {"X", "Y", "Z"}:
         return 0.0
 
     total = 0j
     for basis, amplitude in enumerate(state):
         target = basis
         phase = 1 + 0j
-        for qubit in qubits:
+        for pauli, qubit in zip(operator, qubits, strict=True):
             bit = (basis >> qubit) & 1
-            if operator in {"X", "Y"}:
+            if pauli in {"X", "Y"}:
                 target ^= 1 << qubit
-            if operator in {"Z", "Y"} and bit:
+            if pauli in {"Z", "Y"} and bit:
                 phase *= -1
-            if operator == "Y":
+            if pauli == "Y":
                 phase *= 1j if bit == 0 else -1j
         total += amplitude.conjugate() * phase * state[target]
     return float(total.real)
-
 
 class DriverExecutionError(Exception):
     """Driver-level execution error mapped to a gRPC status."""
@@ -107,6 +106,10 @@ class SimulatorDriver:
             features={
                 "execution": "aqo_json",
                 "backend_type": "simulator",
+                "parameter_binding": "true",
+                "measurement_basis": "pauli",
+                "observable_expectation": "true",
+                "noise_models": "depolarizing",
             },
         )
 
@@ -118,6 +121,10 @@ class SimulatorDriver:
             "formats": "AQO_JSON",
             "ops": "RX,RY,RZ,H,X,CP,CX,SWAP,MEASURE",
             "bitstring_order": "msb_first_by_classical_index",
+            "parameter_binding": "true",
+            "measurement_basis": "pauli",
+            "observable_expectation": "true",
+            "noise_models": "depolarizing",
         }
         return [
             self._types_pb.DeviceInfo(
@@ -161,6 +168,7 @@ class SimulatorDriver:
 
         self._validate_provider_profile(options)
         self._simulate_error(options)
+        noise_probability = self._parse_noise_model(options.get("noise_model", ""))
         payload = self._parse_payload(circuit)
         qubits = self._parse_qubits(payload)
         operations = payload.get("operations")
@@ -170,7 +178,7 @@ class SimulatorDriver:
         state = [0j] * (1 << qubits)
         state[0] = 1 + 0j
         measure_map = self._run_operations(state=state, qubits=qubits, payload=payload, operations=operations, options=options)
-        counts = self._sample_counts(state=state, qubits=qubits, shots=shots, measure_map=measure_map, options=options)
+        counts = self._sample_counts(state=state, qubits=qubits, shots=shots, measure_map=measure_map, options=options, noise_probability=noise_probability)
 
         elapsed = time.perf_counter() - start
         metadata = {
@@ -180,12 +188,25 @@ class SimulatorDriver:
             "qubits": str(qubits),
             "shots": str(shots),
             "bitstring_order": "msb_first_by_classical_index",
+            "noise_model": options.get("noise_model", "ideal") or "ideal",
         }
 
+        measurement_plan = self._parse_measurement_plan(options.get("observable_measurement_plan", ""))
+        if measurement_plan:
+            expectations: dict[str, float] = {}
+            for term in measurement_plan:
+                expectation = _statevector_expectation(state, term["qubits"], term["operator"])
+                # Local depolarizing noise contracts each Pauli expectation once per measured qubit.
+                expectation *= (1.0 - noise_probability) ** len(term["qubits"])
+                expectations[term["term_id"]] = term["coefficient"] * expectation
+            metadata["expectations"] = json.dumps(expectations, sort_keys=True, separators=(",", ":"))
+            metadata["expectation_evaluator"] = "simulator_statevector"
+
+        # Legacy AQO annotation support remains metadata-only for existing callers.
         observable_bindings = _observable_terms_from_payload(payload)
         annotations = payload.get("annotations") if isinstance(payload.get("annotations"), dict) else {}
         expectation_info = annotations.get("expectation") if isinstance(annotations, dict) else None
-        if isinstance(expectation_info, dict):
+        if isinstance(expectation_info, dict) and not measurement_plan:
             observable_terms = expectation_info.get("observable_terms")
             if not isinstance(observable_terms, dict):
                 observable_name = expectation_info.get("observable_name")
@@ -194,15 +215,10 @@ class SimulatorDriver:
             if isinstance(observable_terms, dict):
                 energy = 0.0
                 for operator_name, qubit_spec in observable_terms.items():
-                    if isinstance(qubit_spec, int):
-                        qubit_indices = [qubit_spec]
-                    elif isinstance(qubit_spec, list) and all(isinstance(item, int) for item in qubit_spec):
-                        qubit_indices = list(qubit_spec)
-                    else:
-                        continue
-                    energy += _statevector_expectation(state, qubit_indices, operator_name)
+                    qubit_indices = [qubit_spec] if isinstance(qubit_spec, int) else qubit_spec
+                    if isinstance(qubit_indices, list) and all(isinstance(item, int) for item in qubit_indices):
+                        energy += _statevector_expectation(state, qubit_indices, operator_name)
                 metadata["energy"] = f"{energy:.6f}"
-
         return counts, elapsed, metadata
 
     def get_device_status(self, device_id: str) -> DeviceStatusInfo:
@@ -255,6 +271,39 @@ class SimulatorDriver:
                 grpc.StatusCode.RESOURCE_EXHAUSTED,
                 "simulated backend resource exhausted",
             )
+
+    def _parse_noise_model(self, raw: str) -> float:
+        if not raw or raw == "ideal":
+            return 0.0
+        prefix, separator, probability = raw.partition(":")
+        if prefix != "depolarizing" or not separator:
+            raise DriverExecutionError(grpc.StatusCode.FAILED_PRECONDITION, f"unsupported noise model: {raw}")
+        try:
+            value = float(probability)
+        except ValueError as exc:
+            raise DriverExecutionError(grpc.StatusCode.INVALID_ARGUMENT, f"invalid depolarizing probability: {probability}") from exc
+        if not 0.0 <= value <= 1.0:
+            raise DriverExecutionError(grpc.StatusCode.INVALID_ARGUMENT, "depolarizing probability must be between 0 and 1")
+        return value
+
+    def _parse_measurement_plan(self, raw: str) -> list[dict[str, object]]:
+        if not raw:
+            return []
+        try:
+            plan = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise DriverExecutionError(grpc.StatusCode.INVALID_ARGUMENT, "observable_measurement_plan must be JSON") from exc
+        if not isinstance(plan, dict) or plan.get("measurement_basis") != "PAULI" or not isinstance(plan.get("terms"), list):
+            raise DriverExecutionError(grpc.StatusCode.INVALID_ARGUMENT, "observable measurement plan requires PAULI basis and terms")
+        normalized = []
+        for index, term in enumerate(plan["terms"]):
+            if not isinstance(term, dict):
+                raise DriverExecutionError(grpc.StatusCode.INVALID_ARGUMENT, f"observable term[{index}] must be an object")
+            term_id, operator, qubits, coefficient = term.get("term_id"), term.get("operator"), term.get("qubits"), term.get("coefficient")
+            if not isinstance(term_id, str) or not term_id or not isinstance(operator, str) or not operator or not isinstance(qubits, list) or not all(isinstance(q, int) for q in qubits) or len(operator) != len(qubits) or set(operator.upper()) - {"X", "Y", "Z"} or not isinstance(coefficient, (int, float)):
+                raise DriverExecutionError(grpc.StatusCode.INVALID_ARGUMENT, f"invalid observable term[{index}]")
+            normalized.append({"term_id": term_id, "operator": operator.upper(), "qubits": qubits, "coefficient": float(coefficient)})
+        return normalized
 
     def _parse_payload(self, circuit: bytes) -> dict:
         if not circuit:
@@ -437,6 +486,7 @@ class SimulatorDriver:
         shots: int,
         measure_map: list[_MeasureMap],
         options: dict[str, str],
+        noise_probability: float = 0.0,
     ) -> dict[str, int]:
         if shots <= 0:
             raise DriverExecutionError(grpc.StatusCode.INVALID_ARGUMENT, "shots must be > 0")
@@ -455,7 +505,10 @@ class SimulatorDriver:
             basis_state = rnd.choices(range(1 << qubits), weights=probabilities, k=1)[0]
             classical = [0] * cwidth
             for mapping in measure_map:
-                classical[mapping.cbit] = (basis_state >> mapping.qubit) & 1
+                bit = (basis_state >> mapping.qubit) & 1
+                if noise_probability and rnd.random() < noise_probability:
+                    bit ^= 1
+                classical[mapping.cbit] = bit
             bitstring = "".join(str(classical[i]) for i in range(cwidth - 1, -1, -1))
             counts[bitstring] = counts.get(bitstring, 0) + 1
 
