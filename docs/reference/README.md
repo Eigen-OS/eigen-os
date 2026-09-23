@@ -20,6 +20,7 @@ They should stay precise, explicit, and implementation-agnostic.
 - Multi-device execution (split/merge): [`multi-device-execution-contract.md`](multi-device-execution-contract.md)
 - Orchestration observability contract: [`orchestration-observability-contract.md`](orchestration-observability-contract.md)
 - Iterative hybrid workflow runtime: [`iterative-hybrid-workflow.md`](iterative-hybrid-workflow.md)
+- Optimizer plugin SDK and runtime: [`plugins/optimizer-plugin-sdk.md`](plugins/optimizer-plugin-sdk.md)
 - Intelligent runtime observability contract: [`intelligent-runtime-observability-contract.md`](intelligent-runtime-observability-contract.md)
 - Cluster runtime observability contract: [`cluster-runtime-observability-contract.md`](cluster-runtime-observability-contract.md)
 - Formats:

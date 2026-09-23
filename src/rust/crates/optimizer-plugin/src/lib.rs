@@ -164,9 +164,30 @@ impl OptimizerPlugin for CobylaPlugin {
         self.state()
     }
     fn step(&mut self, input: StepInput) -> Result<StepOutput, OptimizerError> {
-        if !input.objective_value.is_finite() || input.parameters.iter().any(|p| !p.is_finite()) {
+        if input.parameters.is_empty()
+            || !input.objective_value.is_finite()
+            || input.parameters.iter().any(|p| !p.is_finite())
+        {
             return Err(OptimizerError::InvalidInput(
-                "objective and parameters must be finite",
+                 "objective and parameters must be non-empty finite values",
+            ));
+        }
+        if input.gradient.as_ref().is_some_and(|gradient| {
+            gradient.len() != input.parameters.len()
+                || gradient.iter().any(|value| !value.is_finite())
+        }) {
+            return Err(OptimizerError::InvalidInput(
+                "gradient must have the parameter dimension and finite values",
+            ));
+        }
+        if input.context.max_iterations.is_some_and(|limit| limit == 0)
+            || input
+                .context
+                .max_iterations
+                .is_some_and(|limit| input.context.iteration >= limit)
+        {
+            return Err(OptimizerError::InvalidInput(
+                "iteration must be within a positive max_iterations bound",
             ));
         }
         let state = self.state.as_mut().ok_or(OptimizerError::InvalidState)?;
@@ -204,7 +225,16 @@ impl OptimizerPlugin for CobylaPlugin {
     fn restore(&mut self, state: &[u8]) -> Result<(), OptimizerError> {
         let parsed: CobylaState =
             serde_json::from_slice(state).map_err(|_| OptimizerError::InvalidState)?;
-        if parsed.parameters.is_empty() || !parsed.radius.is_finite() {
+        if parsed.parameters.is_empty()
+            || parsed.parameters.iter().any(|value| !value.is_finite())
+            || parsed
+                .best_objective
+                .is_some_and(|value| !value.is_finite())
+            || !parsed.radius.is_finite()
+            || parsed.radius <= 0.0
+            || parsed.coordinate >= parsed.parameters.len()
+            || !matches!(parsed.direction, -1.0 | 1.0)
+        {
             return Err(OptimizerError::InvalidState);
         }
         self.state = Some(parsed);
