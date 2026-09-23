@@ -24,7 +24,7 @@ Hardware diversity is the main integration risk. A small, strict QDriver API let
 ## Non-Goals
 
 - Pulse-level control.
-- Full calibration pipelines and noise models (Phase 2).
+- Full calibration pipelines and noise channels beyond the portable `depolarizing:<probability>` model.
 
 ## Guide-level explanation
 
@@ -52,21 +52,39 @@ service DriverManagerService {
   rpc CalibrateDevice(CalibrateDeviceRequest) returns (CalibrateDeviceResponse);
 }
 
+message ObservableTerm {
+  string term_id = 1;
+  string operator = 2; // Pauli product such as Z or XZ
+  repeated uint32 qubits = 3;
+  double coefficient = 4;
+}
+
 message ExecuteCircuitRequest {
   string job_id = 1;
   string device_id = 2;
   CircuitPayload payload = 3;  // AQO/QASM/native bytes + format enum
   int32 shots = 4;
   map<string,string> options = 5;
+  map<string,double> parameter_bindings = 6;
+  ObservableMeasurementPlan observable_measurement_plan = 7;
+  string noise_model = 8; // `ideal` or `depolarizing:<probability>`
 }
 
 message ExecuteCircuitResponse {
   map<string,int64> counts = 1;
   double execution_time_sec = 2;
   map<string,string> metadata = 3;
+  map<string,double> expectations = 4;
 }
 ```
 
+### VQE execution capabilities
+
+This contract returns **term expectations from Driver Manager** in `ExecuteCircuitResponse.expectations`; the generic evaluator does not call providers or simulators directly. Values include the supplied term coefficient and are keyed by `ObservableTerm.term_id`.
+
+A driver device advertises `parameter_binding`, `measurement_basis`, `observable_expectation`, and `noise_models` in its `DeviceInfo.capabilities`. Driver Manager validates every requested binding, PAULI measurement plan, and noise model before dispatch. A missing capability is a normalized `FAILED_PRECONDITION`; requests are never downgraded or silently ignored.
+
+The `sim:local` reference backend supports symbolic parameter bindings, PAULI observable plans, and `depolarizing:<probability>` (`0 ≤ probability ≤ 1`). Its noise model changes both sampled counts and returned Pauli expectations. Other backend support remains opt-in through advertised capabilities.
 
 ### Data model
 

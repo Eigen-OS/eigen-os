@@ -24,16 +24,32 @@ message ListDevicesResponse {
   repeated DeviceInfo devices = 1;
 }
 
-message GetDeviceStatusRequest {
+message DeviceStatusRequest {
   string device_id = 1;
 }
 
-message GetDeviceStatusResponse {
+message DeviceStatusResponse {
   string device_id = 1;
   DeviceStatus status = 2;
   int32 queue_depth = 3;
   int32 estimated_wait_sec = 4;
   map<string, string> metadata = 5;
+}
+
+message ObservableTerm {
+  // Stable caller-supplied identifier returned in ExecuteCircuitResponse.expectations.
+  string term_id = 1;
+  // Pauli product, for example "Z" or "XZ". Its length must match qubits.
+  string operator = 2;
+  repeated uint32 qubits = 3;
+  double coefficient = 4;
+}
+
+message ObservableMeasurementPlan {
+  // Terms are evaluated by the selected backend; all requested terms are mandatory.
+  repeated ObservableTerm terms = 1;
+  // Required measurement basis family, currently PAULI for Pauli-product terms.
+  string measurement_basis = 2;
 }
 
 message ExecuteCircuitRequest {
@@ -42,12 +58,20 @@ message ExecuteCircuitRequest {
   CircuitPayload payload = 3;
   int32 shots = 4;
   map<string, string> options = 5;
+  // Additive bound values applied to symbolic AQO parameters for this execution.
+  map<string, double> parameter_bindings = 6;
+  // Optional observable request. A backend must reject unsupported plans.
+  ObservableMeasurementPlan observable_measurement_plan = 7;
+  // Optional canonical model identifier, e.g. "depolarizing:0.001".
+  string noise_model = 8;
 }
 
 message ExecuteCircuitResponse {
   map<string, int64> counts = 1;
   double execution_time_sec = 2;
   map<string, string> metadata = 3;
+  // Term expectations keyed by ObservableTerm.term_id, including each coefficient.
+  map<string, double> expectations = 4;
 }
 
 message CalibrateDeviceRequest {

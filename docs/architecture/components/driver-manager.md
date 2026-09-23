@@ -299,6 +299,14 @@ message ExecuteCircuitResponse {
 }
 ```
 
+#### VQE capability negotiation and result semantics
+
+`ExecuteCircuitRequest` additionally accepts additive `parameter_bindings`, an `observable_measurement_plan`, and a canonical `noise_model`. The plan is a set of coefficient-bearing PAULI terms keyed by `term_id`; all requested terms are mandatory. `ExecuteCircuitResponse.expectations` returns the resulting coefficient-weighted term values, keyed by `term_id`.
+
+Driver Manager is the sole execution boundary: VQE orchestration MUST not import a simulator or provider SDK. It must request these capabilities through DM. Devices advertise `parameter_binding`, `measurement_basis`, `observable_expectation`, and comma-separated `noise_models` values in `DeviceInfo.capabilities`. DM MUST reject any missing requested capability with normalized `FAILED_PRECONDITION`, rather than dropping bindings, changing bases, or ignoring noise.
+
+`sim:local` is the reference implementation. It evaluates PAULI expectations from the executed statevector and implements `depolarizing:<probability>` for probabilities in `[0, 1]`; the model alters sampled counts and contracts returned PAULI expectations. `ideal` (or an omitted model) is noiseless.
+
 #### Determinism Rules
 
 - If `seed` is provided and the backend is a simulator, DM/drivers MUST ensure the simulator uses that seed so the result is replay-stable.

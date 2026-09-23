@@ -3,9 +3,9 @@
 import grpc
 import warnings
 
-from eigen_internal.v1 import driver_manager_service_pb2 as eigen__internal_dot_v1_dot_driver__manager__service__pb2
+from eigen_internal.v1 import driver_manager_service_pb2 as eigen_dot_internal_dot_v1_dot_driver__manager__service__pb2
 
-GRPC_GENERATED_VERSION = '1.80.0'
+GRPC_GENERATED_VERSION = '1.84.0'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -18,14 +18,14 @@ except ImportError:
 if _version_not_supported:
     raise RuntimeError(
         f'The grpc package installed is at version {GRPC_VERSION},'
-        + ' but the generated code in eigen_internal/v1/driver_manager_service_pb2_grpc.py depends on'
+        + ' but the generated code in eigen/internal/v1/driver_manager_service_pb2_grpc.py depends on'
         + f' grpcio>={GRPC_GENERATED_VERSION}.'
         + f' Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}'
         + f' or downgrade your generated code using grpcio-tools<={GRPC_VERSION}.'
     )
 
 
-class DriverManagerServiceStub(object):
+class DriverManagerServiceStub:
     """Kernel-facing driver manager contract.
     Source of truth: RFC 0006.
     """
@@ -38,27 +38,27 @@ class DriverManagerServiceStub(object):
         """
         self.ListDevices = channel.unary_unary(
                 '/eigen.internal.v1.DriverManagerService/ListDevices',
-                request_serializer=eigen__internal_dot_v1_dot_driver__manager__service__pb2.ListDevicesRequest.SerializeToString,
-                response_deserializer=eigen__internal_dot_v1_dot_driver__manager__service__pb2.ListDevicesResponse.FromString,
+                request_serializer=eigen_dot_internal_dot_v1_dot_driver__manager__service__pb2.ListDevicesRequest.SerializeToString,
+                response_deserializer=eigen_dot_internal_dot_v1_dot_driver__manager__service__pb2.ListDevicesResponse.FromString,
                 _registered_method=True)
         self.GetDeviceStatus = channel.unary_unary(
                 '/eigen.internal.v1.DriverManagerService/GetDeviceStatus',
-                request_serializer=eigen__internal_dot_v1_dot_driver__manager__service__pb2.DeviceStatusRequest.SerializeToString,
-                response_deserializer=eigen__internal_dot_v1_dot_driver__manager__service__pb2.DeviceStatusResponse.FromString,
+                rrequest_serializer=eigen_dot_internal_dot_v1_dot_driver__manager__service__pb2.DeviceStatusRequest.SerializeToString,
+                response_deserializer=eigen_dot_internal_dot_v1_dot_driver__manager__service__pb2.DeviceStatusResponse.FromString,
                 _registered_method=True)
         self.ExecuteCircuit = channel.unary_unary(
                 '/eigen.internal.v1.DriverManagerService/ExecuteCircuit',
-                request_serializer=eigen__internal_dot_v1_dot_driver__manager__service__pb2.ExecuteCircuitRequest.SerializeToString,
-                response_deserializer=eigen__internal_dot_v1_dot_driver__manager__service__pb2.ExecuteCircuitResponse.FromString,
+                request_serializer=eigen_dot_internal_dot_v1_dot_driver__manager__service__pb2.ExecuteCircuitRequest.SerializeToString,
+                response_deserializer=eigen_dot_internal_dot_v1_dot_driver__manager__service__pb2.ExecuteCircuitResponse.FromString,
                 _registered_method=True)
         self.CalibrateDevice = channel.unary_unary(
                 '/eigen.internal.v1.DriverManagerService/CalibrateDevice',
-                request_serializer=eigen__internal_dot_v1_dot_driver__manager__service__pb2.CalibrateDeviceRequest.SerializeToString,
-                response_deserializer=eigen__internal_dot_v1_dot_driver__manager__service__pb2.CalibrateDeviceResponse.FromString,
+                request_serializer=eigen_dot_internal_dot_v1_dot_driver__manager__service__pb2.ExecuteCircuitRequest.SerializeToString,
+                response_deserializer=eigen_dot_internal_dot_v1_dot_driver__manager__service__pb2.ExecuteCircuitResponse.FromString,
                 _registered_method=True)
 
 
-class DriverManagerServiceServicer(object):
+class DriverManagerServiceServicer:
     """Kernel-facing driver manager contract.
     Source of truth: RFC 0006.
     """
@@ -92,23 +92,23 @@ def add_DriverManagerServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
             'ListDevices': grpc.unary_unary_rpc_method_handler(
                     servicer.ListDevices,
-                    request_deserializer=eigen__internal_dot_v1_dot_driver__manager__service__pb2.ListDevicesRequest.FromString,
-                    response_serializer=eigen__internal_dot_v1_dot_driver__manager__service__pb2.ListDevicesResponse.SerializeToString,
+                    request_deserializer=eigen_dot_internal_dot_v1_dot_driver__manager__service__pb2.ListDevicesRequest.FromString,
+                    response_serializer=eigen_dot_internal_dot_v1_dot_driver__manager__service__pb2.ListDevicesResponse.SerializeToString,
             ),
             'GetDeviceStatus': grpc.unary_unary_rpc_method_handler(
                     servicer.GetDeviceStatus,
-                    request_deserializer=eigen__internal_dot_v1_dot_driver__manager__service__pb2.DeviceStatusRequest.FromString,
-                    response_serializer=eigen__internal_dot_v1_dot_driver__manager__service__pb2.DeviceStatusResponse.SerializeToString,
+                    request_deserializer=eigen_dot_internal_dot_v1_dot_driver__manager__service__pb2.DeviceStatusRequest.FromString,
+                    response_serializer=eigen_dot_internal_dot_v1_dot_driver__manager__service__pb2.DeviceStatusResponse.SerializeToString,
             ),
             'ExecuteCircuit': grpc.unary_unary_rpc_method_handler(
                     servicer.ExecuteCircuit,
-                    request_deserializer=eigen__internal_dot_v1_dot_driver__manager__service__pb2.ExecuteCircuitRequest.FromString,
-                    response_serializer=eigen__internal_dot_v1_dot_driver__manager__service__pb2.ExecuteCircuitResponse.SerializeToString,
+                    request_deserializer=eigen_dot_internal_dot_v1_dot_driver__manager__service__pb2.ExecuteCircuitRequest.FromString,
+                    response_serializer=eigen_dot_internal_dot_v1_dot_driver__manager__service__pb2.ExecuteCircuitResponse.SerializeToString,
             ),
             'CalibrateDevice': grpc.unary_unary_rpc_method_handler(
                     servicer.CalibrateDevice,
-                    request_deserializer=eigen__internal_dot_v1_dot_driver__manager__service__pb2.CalibrateDeviceRequest.FromString,
-                    response_serializer=eigen__internal_dot_v1_dot_driver__manager__service__pb2.CalibrateDeviceResponse.SerializeToString,
+                    request_deserializer=eigen_dot_internal_dot_v1_dot_driver__manager__service__pb2.CalibrateDeviceRequest.FromString,
+                    response_serializer=eigen_dot_internal_dot_v1_dot_driver__manager__service__pb2.CalibrateDeviceResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -118,7 +118,7 @@ def add_DriverManagerServiceServicer_to_server(servicer, server):
 
 
  # This class is part of an EXPERIMENTAL API.
-class DriverManagerService(object):
+class DriverManagerService:
     """Kernel-facing driver manager contract.
     Source of truth: RFC 0006.
     """
@@ -138,8 +138,8 @@ class DriverManagerService(object):
             request,
             target,
             '/eigen.internal.v1.DriverManagerService/ListDevices',
-            eigen__internal_dot_v1_dot_driver__manager__service__pb2.ListDevicesRequest.SerializeToString,
-            eigen__internal_dot_v1_dot_driver__manager__service__pb2.ListDevicesResponse.FromString,
+            eigen_dot_internal_dot_v1_dot_driver__manager__service__pb2.ListDevicesRequest.SerializeToString,
+            eigen_dot_internal_dot_v1_dot_driver__manager__service__pb2.ListDevicesResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -165,8 +165,8 @@ class DriverManagerService(object):
             request,
             target,
             '/eigen.internal.v1.DriverManagerService/GetDeviceStatus',
-            eigen__internal_dot_v1_dot_driver__manager__service__pb2.DeviceStatusRequest.SerializeToString,
-            eigen__internal_dot_v1_dot_driver__manager__service__pb2.DeviceStatusResponse.FromString,
+            eigen_dot_internal_dot_v1_dot_driver__manager__service__pb2.DeviceStatusRequest.SerializeToString,
+            eigen_dot_internal_dot_v1_dot_driver__manager__service__pb2.DeviceStatusResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -192,8 +192,8 @@ class DriverManagerService(object):
             request,
             target,
             '/eigen.internal.v1.DriverManagerService/ExecuteCircuit',
-            eigen__internal_dot_v1_dot_driver__manager__service__pb2.ExecuteCircuitRequest.SerializeToString,
-            eigen__internal_dot_v1_dot_driver__manager__service__pb2.ExecuteCircuitResponse.FromString,
+            eigen_dot_internal_dot_v1_dot_driver__manager__service__pb2.ExecuteCircuitRequest.SerializeToString,
+            eigen_dot_internal_dot_v1_dot_driver__manager__service__pb2.ExecuteCircuitResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -219,8 +219,8 @@ class DriverManagerService(object):
             request,
             target,
             '/eigen.internal.v1.DriverManagerService/CalibrateDevice',
-            eigen__internal_dot_v1_dot_driver__manager__service__pb2.CalibrateDeviceRequest.SerializeToString,
-            eigen__internal_dot_v1_dot_driver__manager__service__pb2.CalibrateDeviceResponse.FromString,
+            eigen_dot_internal_dot_v1_dot_driver__manager__service__pb2.CalibrateDeviceRequest.SerializeToString,
+            eigen_dot_internal_dot_v1_dot_driver__manager__service__pb2.CalibrateDeviceResponse.FromString,
             options,
             channel_credentials,
             insecure,
