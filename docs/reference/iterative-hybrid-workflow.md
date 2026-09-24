@@ -41,9 +41,11 @@ The lifecycle is strictly ordered:
 
 ## Convergence and accounting
 
-`max_iterations` limits completed optimizer steps. The engine also accepts
-non-negative finite absolute-objective, relative-objective, and per-parameter
-tolerances. Absolute convergence is `abs(objective) <= tolerance`. Relative
+`max_iterations` is required and must be a positive integer; it limits
+completed optimizer steps. The Kernel independently rejects zero even when a
+workflow did not originate from Eigen-Lang. The engine also accepts non-negative
+finite absolute-objective, relative-objective, and per-parameter tolerances.
+Absolute convergence is `abs(objective) <= tolerance`. Relative
 convergence compares consecutive observations using
 `abs(current - previous) <= tolerance * max(abs(previous), 1)`. Parameter
 convergence requires every candidate coordinate to differ from the preceding
