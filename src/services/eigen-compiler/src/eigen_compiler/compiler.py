@@ -1692,9 +1692,12 @@ def _collect_iterative_hybrid_workflow(
     if not isinstance(method, str) or not method:
         raise CompilerValidationError(violations=(FieldViolation(field="minimize.method", description="method must be a non-empty literal string"),))
     convergence_expr = keywords.pop("convergence", None)
-    convergence = _workflow_literal(convergence_expr, field="minimize.convergence") if convergence_expr else {"max_iterations": 1000}
-    if not isinstance(convergence, dict) or not convergence:
-        raise CompilerValidationError(violations=(FieldViolation(field="minimize.convergence", description="convergence must be a non-empty literal object"),))
+    convergence = (
+        _workflow_literal(convergence_expr, field="minimize.convergence")
+        if convergence_expr is not None
+        else {"max_iterations": 1000}
+    )
+    convergence = _validate_workflow_convergence(convergence)
     optimizer_config = {name: _workflow_literal(value, field=f"minimize.{name}") for name, value in sorted(keywords.items())}
     observable = _collect_expectation_annotation(
         ast.Module(body=[ast.Expr(value=objective)], type_ignores=[]), observable_bindings
@@ -1721,6 +1724,75 @@ def _collect_iterative_hybrid_workflow(
         },
         "provenance": {"source": "eigen_lang_ast", "replay": "canonical_aqo_sha256"},
     }
+
+
+def _validate_workflow_convergence(value: object) -> dict[str, object]:
+    """Validate the literal convergence contract emitted for the Kernel."""
+    if not isinstance(value, dict):
+        raise CompilerValidationError(
+            violations=(
+                FieldViolation(
+                    field="minimize.convergence",
+                    description="convergence must be a literal object",
+                ),
+            )
+        )
+    if not value:
+        raise CompilerValidationError(
+            violations=(
+                FieldViolation(
+                    field="minimize.convergence.max_iterations",
+                    description=(
+                        "max_iterations must be a positive integer; "
+                        "convergence must be a non-empty literal object"
+                    ),
+                ),
+            )
+        )
+
+    allowed = {
+        "max_iterations",
+        "absolute_objective_tolerance",
+        "relative_objective_tolerance",
+        "parameter_tolerance",
+    }
+    violations: list[FieldViolation] = []
+    unknown = sorted(set(value) - allowed)
+    for name in unknown:
+        violations.append(
+            FieldViolation(
+                field=f"minimize.convergence.{name}",
+                description="unsupported convergence setting",
+            )
+        )
+
+    max_iterations = value.get("max_iterations")
+    if isinstance(max_iterations, bool) or not isinstance(max_iterations, int) or max_iterations <= 0:
+        violations.append(
+            FieldViolation(
+                field="minimize.convergence.max_iterations",
+                description="max_iterations must be a positive integer",
+            )
+        )
+
+    for name in sorted(allowed - {"max_iterations"}):
+        tolerance = value.get(name)
+        if tolerance is not None and (
+            isinstance(tolerance, bool)
+            or not isinstance(tolerance, (int, float))
+            or not isfinite(tolerance)
+            or tolerance < 0
+        ):
+            violations.append(
+                FieldViolation(
+                    field=f"minimize.convergence.{name}",
+                    description="tolerance must be a finite non-negative number",
+                )
+            )
+
+    if violations:
+        raise CompilerValidationError(violations=tuple(violations))
+    return {name: value[name] for name in sorted(value)}
 
 
 def _collect_workflow_execution_defaults(tree: ast.AST) -> dict[str, object]:
