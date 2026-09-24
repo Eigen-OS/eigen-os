@@ -83,3 +83,82 @@ fn second_compatible_optimizer_uses_the_same_runtime_boundary() {
         OptimizerPluginRuntime::activate(Box::new(SecondOptimizer), "optimizer", "1.0.0").is_ok()
     );
 }
+
+#[test]
+fn step_rejects_invalid_gradient_and_exhausted_iteration_context() {
+    let mut plugin = CobylaPlugin::default();
+    plugin.initialize(init()).unwrap();
+
+    let mut invalid_gradient = step(vec![1.0, 2.0], 4.0);
+    invalid_gradient.gradient = Some(vec![f64::NAN, 0.0]);
+    assert_eq!(
+        plugin.step(invalid_gradient),
+        Err(OptimizerError::InvalidInput(
+            "gradient must have the parameter dimension and finite values"
+        ))
+    );
+
+    let mut exhausted = step(vec![1.0, 2.0], 4.0);
+    exhausted.context.iteration = 10;
+    assert_eq!(
+        plugin.step(exhausted),
+        Err(OptimizerError::InvalidInput(
+            "iteration must be within a positive max_iterations bound"
+        ))
+    );
+}
+
+#[test]
+fn step_rejects_an_observation_for_a_different_parameter_candidate() {
+    let mut plugin = CobylaPlugin::default();
+    plugin.initialize(init()).unwrap();
+    let expected_state = plugin.state().unwrap();
+
+    assert_eq!(
+        plugin.step(step(vec![1.0, 3.0], 4.0)),
+        Err(OptimizerError::InvalidInput(
+            "parameters do not match the pending optimizer candidate"
+        ))
+    );
+    assert_eq!(plugin.state().unwrap(), expected_state);
+}
+
+#[test]
+fn step_rejects_an_overflowing_next_candidate_without_mutating_state() {
+    let mut plugin = CobylaPlugin::default();
+    plugin
+        .restore(
+            br#"{"parameters":[1.7976931348623157e308],"best_objective":null,"radius":1.7976931348623157e308,"coordinate":0,"direction":1.0}"#,
+        )
+        .unwrap();
+    let expected_state = plugin.state().unwrap();
+
+    assert_eq!(
+        plugin.step(step(vec![f64::MAX], 4.0)),
+        Err(OptimizerError::InvalidInput(
+            "next optimizer candidate must contain finite values"
+        ))
+    );
+    assert_eq!(plugin.state().unwrap(), expected_state);
+}
+
+#[test]
+fn restore_rejects_malformed_or_invalid_state() {
+    let mut plugin = CobylaPlugin::default();
+    assert_eq!(
+        plugin.restore(b"not-json"),
+        Err(OptimizerError::InvalidState)
+    );
+    assert_eq!(
+        plugin.restore(
+            br#"{"parameters":[1.0],"best_objective":null,"radius":0.0,"coordinate":0,"direction":-1.0}"#,
+        ),
+        Err(OptimizerError::InvalidState)
+    );
+    assert_eq!(
+        plugin.restore(
+            br#"{"parameters":[1.0],"best_objective":null,"radius":0.1,"coordinate":1,"direction":-1.0}"#,
+        ),
+        Err(OptimizerError::InvalidState)
+    );
+}
