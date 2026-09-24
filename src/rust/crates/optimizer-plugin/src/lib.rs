@@ -164,14 +164,48 @@ impl OptimizerPlugin for CobylaPlugin {
         self.state()
     }
     fn step(&mut self, input: StepInput) -> Result<StepOutput, OptimizerError> {
-        if !input.objective_value.is_finite() || input.parameters.iter().any(|p| !p.is_finite()) {
+        if input.parameters.is_empty()
+            || !input.objective_value.is_finite()
+            || input.parameters.iter().any(|p| !p.is_finite())
+        {
             return Err(OptimizerError::InvalidInput(
-                "objective and parameters must be finite",
+                "objective and parameters must be non-empty finite values",
             ));
         }
-        let state = self.state.as_mut().ok_or(OptimizerError::InvalidState)?;
+        if input.gradient.as_ref().is_some_and(|gradient| {
+            gradient.len() != input.parameters.len()
+                || gradient.iter().any(|value| !value.is_finite())
+        }) {
+            return Err(OptimizerError::InvalidInput(
+                "gradient must have the parameter dimension and finite values",
+            ));
+        }
+        if input.context.max_iterations.is_some_and(|limit| limit == 0)
+            || input
+                .context
+                .max_iterations
+                .is_some_and(|limit| input.context.iteration >= limit)
+        {
+            return Err(OptimizerError::InvalidInput(
+                "iteration must be within a positive max_iterations bound",
+            ));
+        }
+        // Build and validate the next state before committing it. In
+        // particular, a restored (but finite) large trust-region radius can
+        // otherwise overflow a finite pending candidate. A failed step must
+        // not leave an unusable candidate in the plugin state.
+        let mut state = self
+            .state
+            .as_ref()
+            .ok_or(OptimizerError::InvalidState)?
+            .clone();
         if input.parameters.len() != state.parameters.len() {
             return Err(OptimizerError::InvalidInput("parameter dimension changed"));
+        }
+        if input.parameters != state.parameters {
+            return Err(OptimizerError::InvalidInput(
+                "parameters do not match the pending optimizer candidate",
+            ));
         }
         let improved = state
             .best_objective
@@ -187,16 +221,23 @@ impl OptimizerPlugin for CobylaPlugin {
         let index = state.coordinate % state.parameters.len();
         state.parameters[index] += state.direction * state.radius;
         state.coordinate = (state.coordinate + 1) % state.parameters.len();
-        let bytes = Self::encode(state)?;
+        if state.parameters.iter().any(|value| !value.is_finite()) {
+            return Err(OptimizerError::InvalidInput(
+                "next optimizer candidate must contain finite values",
+            ));
+        }
+        let bytes = Self::encode(&state)?;
         let mut metadata = BTreeMap::new();
         metadata.insert("method".into(), "COBYLA-compatible".into());
         metadata.insert("accepted_observation".into(), improved.to_string());
         metadata.insert("trust_region_radius".into(), state.radius.to_string());
-        Ok(StepOutput {
+        let output = StepOutput {
             parameters: state.parameters.clone(),
             state: bytes,
             metadata,
-        })
+        };
+        self.state = Some(state);
+        Ok(output)
     }
     fn state(&self) -> Result<Vec<u8>, OptimizerError> {
         Self::encode(self.state.as_ref().ok_or(OptimizerError::InvalidState)?)
@@ -204,7 +245,16 @@ impl OptimizerPlugin for CobylaPlugin {
     fn restore(&mut self, state: &[u8]) -> Result<(), OptimizerError> {
         let parsed: CobylaState =
             serde_json::from_slice(state).map_err(|_| OptimizerError::InvalidState)?;
-        if parsed.parameters.is_empty() || !parsed.radius.is_finite() {
+        if parsed.parameters.is_empty()
+            || parsed.parameters.iter().any(|value| !value.is_finite())
+            || parsed
+                .best_objective
+                .is_some_and(|value| !value.is_finite())
+            || !parsed.radius.is_finite()
+            || parsed.radius <= 0.0
+            || parsed.coordinate >= parsed.parameters.len()
+            || !matches!(parsed.direction, -1.0 | 1.0)
+        {
             return Err(OptimizerError::InvalidState);
         }
         self.state = Some(parsed);
